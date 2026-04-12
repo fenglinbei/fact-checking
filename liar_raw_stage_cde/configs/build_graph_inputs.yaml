@@ -1,0 +1,29 @@
+data:
+  raw_train_path: data/raw/train.json
+  raw_val_path: data/raw/val.json
+  raw_test_path: data/raw/test.json
+
+  stage_b_train_predictions: outputs/predictions/train.predictions.jsonl
+  stage_b_val_predictions: outputs/predictions/val.predictions.jsonl
+  stage_b_test_predictions: outputs/predictions/test.predictions.jsonl
+
+output:
+  dir: outputs/graph_inputs
+
+decomposition:
+  method: hf_local     # heuristic | hf_local
+  hf_model_name: data/liaozijie/hate_speech_detection/models/base/Llama-3-8B-Instruct   # 例如 Qwen/Qwen2.5-3B-Instruct
+  max_new_tokens: 192
+  max_subclaims: 4
+  min_claim_tokens_to_split: 14
+  min_subclaim_tokens: 4
+
+assignment:
+  embedder_model: sentence-transformers/all-MiniLM-L6-v2
+  top_k_support_per_subclaim: 2
+  top_k_refute_per_subclaim: 2
+
+graph:
+  add_same_report_edges: true
+  add_lexical_overlap_edges: true
+  lexical_overlap_jaccard_threshold: 0.18

@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(ROOT / "src"))
+
+from liar_raw_cde.stage_c.assign import SubclaimEvidenceAssigner
+from liar_raw_cde.stage_c.decompose import HFLocalClaimDecomposer, HeuristicClaimDecomposer
+from liar_raw_cde.stage_c.gating import ComplexityGate
+from liar_raw_cde.stage_d.graph_builder import build_graph_item
+from liar_raw_cde.utils.io import ensure_dir, load_yaml, read_json, read_jsonl, write_jsonl
+
+
+def _build_one_split(
+    raw_path: str,
+    pred_path: str,
+    out_path: str,
+    cfg: dict,
+    device: str | None = None,
+):
+    raw_items = read_json(raw_path)
+    pred_items = read_jsonl(pred_path)
+    raw_by_id = {str(x["event_id"]): x for x in raw_items}
+    pred_by_id = {str(x["event_id"]): x for x in pred_items}
+
+    gate = ComplexityGate(
+        min_claim_tokens_to_split=cfg["decomposition"]["min_claim_tokens_to_split"]
+    )
+
+    method = cfg["decomposition"]["method"]
+    if method == "hf_local":
+        decomposer = HFLocalClaimDecomposer(
+            model_name=cfg["decomposition"]["hf_model_name"],
+            max_new_tokens=cfg["decomposition"]["max_new_tokens"],
+            max_subclaims=cfg["decomposition"]["max_subclaims"],
+        )
+    else:
+        decomposer = HeuristicClaimDecomposer(
+            max_subclaims=cfg["decomposition"]["max_subclaims"],
+            min_subclaim_tokens=cfg["decomposition"]["min_subclaim_tokens"],
+        )
+
+    assigner = SubclaimEvidenceAssigner(
+        embedder_model=cfg["assignment"]["embedder_model"],
+        top_k_support_per_subclaim=cfg["assignment"]["top_k_support_per_subclaim"],
+        top_k_refute_per_subclaim=cfg["assignment"]["top_k_refute_per_subclaim"],
+        device=device,
+    )
+
+    outputs = []
+    for event_id, raw_item in raw_by_id.items():
+        pred = pred_by_id.get(event_id)
+        if pred is None:
+            continue
+
+        claim = raw_item["claim"]
+        gate_decision = gate.decide(claim)
+        if gate_decision.should_split:
+            decomp = decomposer.decompose(claim)
+            subclaims = decomp.subclaims
+            method_used = decomp.method
+        else:
+            subclaims = [claim]
+            method_used = "no_split"
+
+        assignments = assigner.assign(
+            subclaims=subclaims,
+            support_evidence=pred.get("support_evidence", []),
+            refute_evidence=pred.get("refute_evidence", []),
+        )
+
+        decomposition_info = {
+            "subclaims": subclaims,
+            "method": method_used,
+            "gate": {
+                "should_split": gate_decision.should_split,
+                "reason": gate_decision.reason,
+                "features": gate_decision.features,
+            },
+            "assignments": assignments,
+        }
+
+        graph_item = build_graph_item(
+            raw_item=raw_item,
+            stage_b_pred_item=pred,
+            decomposition_info=decomposition_info,
+            add_same_report_edges=cfg["graph"]["add_same_report_edges"],
+            add_lexical_overlap_edges=cfg["graph"]["add_lexical_overlap_edges"],
+            lexical_overlap_jaccard_threshold=cfg["graph"]["lexical_overlap_jaccard_threshold"],
+        )
+        outputs.append(graph_item)
+
+    write_jsonl(outputs, out_path)
+    print(f"Saved {len(outputs)} graph items to {out_path}")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--device", type=str, default=None)
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    cfg = load_yaml(args.config)
+    out_dir = ensure_dir(cfg["output"]["dir"])
+
+    _build_one_split(cfg["data"]["raw_train_path"], cfg["data"]["stage_b_train_predictions"], str(Path(out_dir) / "train.graph.jsonl"), cfg, device=args.device)
+    _build_one_split(cfg["data"]["raw_val_path"], cfg["data"]["stage_b_val_predictions"], str(Path(out_dir) / "val.graph.jsonl"), cfg, device=args.device)
+    _build_one_split(cfg["data"]["raw_test_path"], cfg["data"]["stage_b_test_predictions"], str(Path(out_dir) / "test.graph.jsonl"), cfg, device=args.device)
+
+
+if __name__ == "__main__":
+    main()

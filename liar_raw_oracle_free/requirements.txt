@@ -1,0 +1,7 @@
+torch>=2.2.0
+transformers>=4.40.0
+scikit-learn>=1.4.0
+PyYAML>=6.0.0
+tqdm>=4.66.0
+numpy>=1.26.0
+sentencepiece>=0.1.99

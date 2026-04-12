@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "liar-raw-oracle-free"
+version = "0.1.0"
+description = "Oracle-free Stage A/B pipeline for LIAR-RAW"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "OpenAI"}]
+dependencies = [
+  "torch>=2.2.0",
+  "transformers>=4.40.0",
+  "scikit-learn>=1.4.0",
+  "PyYAML>=6.0.0",
+  "tqdm>=4.66.0",
+  "numpy>=1.26.0",
+  "sentencepiece>=0.1.99",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

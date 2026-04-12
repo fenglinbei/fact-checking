@@ -1,0 +1,28 @@
+data:
+  train_path: outputs/graph_inputs/train.graph.jsonl
+  val_path: outputs/graph_inputs/val.graph.jsonl
+  test_path: outputs/graph_inputs/test.graph.jsonl
+
+model:
+  encoder_name: sentence-transformers/all-MiniLM-L6-v2
+  hidden_size: 256
+  num_layers: 2
+  dropout: 0.1
+  num_labels: 6
+  use_ordinal_head: true
+
+train:
+  batch_size: 8
+  num_epochs: 10
+  lr: 2.0e-4
+  encoder_lr: 1.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  max_grad_norm: 1.0
+  beta_for_cb: 0.999
+  lambda_ordinal: 0.4
+  seed: 13
+  num_workers: 0
+
+output:
+  dir: outputs/graph_verifier

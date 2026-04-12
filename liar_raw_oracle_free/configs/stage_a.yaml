@@ -1,0 +1,17 @@
+output_dir: outputs/liar-raw/stage_a
+
+data:
+  train_path: ../data/raw/LIAR-RAW/train.json
+  val_path: ../data/raw/LIAR-RAW/val.json
+  test_path: ../data/raw/LIAR-RAW/test.json
+
+retrieval:
+  embedder_model: BAAI/bge-base-en-v1.5
+  device: cuda
+  max_length: 256
+  batch_size: 64
+  top_k: 24
+  alpha_dense: 0.70
+  alpha_lexical: 0.20
+  alpha_bm25: 0.10
+  mmr_lambda: 0.70

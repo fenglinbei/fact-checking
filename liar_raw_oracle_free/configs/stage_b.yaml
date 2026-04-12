@@ -1,0 +1,31 @@
+output_dir: outputs/liar-raw/stage_b
+
+data:
+  train_candidates: outputs/liar-raw/stage_a/stage_a_train.jsonl
+  val_candidates: outputs/liar-raw/stage_a/stage_a_val.jsonl
+  test_candidates: outputs/liar-raw/stage_a/stage_a_test.jsonl
+  top_k: 24
+
+model:
+  backbone_model: microsoft/deberta-v3-base
+  max_length: 256
+  dropout: 0.10
+  unfreeze_last_n_layers: 2
+
+train:
+  seed: 13
+  device: cuda
+  batch_size: 4
+  eval_batch_size: 4
+  num_workers: 0
+  epochs: 5
+  lr: 2.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.10
+  grad_clip: 1.0
+  patience: 2
+  log_every: 20
+  lambda_ordinal: 0.50
+  lambda_margin: 0.20
+  lambda_overlap: 0.05
+  lambda_entropy: 0.01
