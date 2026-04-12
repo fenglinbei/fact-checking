@@ -1,11 +1,11 @@
 data:
-  raw_train_path: data/raw/train.json
-  raw_val_path: data/raw/val.json
-  raw_test_path: data/raw/test.json
+  raw_train_path: data/raw/LIAR-RAW/train.json
+  raw_val_path: data/raw/LIAR-RAW/val.json
+  raw_test_path: data/raw/LIAR-RAW/test.json
 
-  stage_b_train_predictions: outputs/predictions/train.predictions.jsonl
-  stage_b_val_predictions: outputs/predictions/val.predictions.jsonl
-  stage_b_test_predictions: outputs/predictions/test.predictions.jsonl
+  stage_b_train_predictions: stage_ab/outputs/liar-raw/stage_b/stage_b_predictions_train.jsonl
+  stage_b_val_predictions: stage_ab/outputs/liar-raw/stage_b/stage_b_predictions_val.jsonl
+  stage_b_test_predictions: stage_ab/outputs/liar-raw/stage_b/stage_b_predictions_test.jsonl
 
 output:
   dir: outputs/graph_inputs
