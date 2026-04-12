@@ -207,7 +207,7 @@ marimo/_lsp/
 __marimo__/
 
 # Dataset
-/liar_raw_oracle_free/outputs/liar-raw/stage_a/*.jsonl
+stage_ab/outputs/liar-raw/stage_a/*.jsonl
 
 # models
 *.pt
