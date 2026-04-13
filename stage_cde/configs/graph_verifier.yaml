@@ -4,7 +4,7 @@ data:
   test_path: outputs/graph_inputs/test.graph.jsonl
 
 model:
-  encoder_name: sentence-transformers/all-MiniLM-L6-v2
+  encoder_name: /data/liaozijie/models/bge-base-en-v1.5
   hidden_size: 256
   num_layers: 2
   dropout: 0.1
@@ -26,3 +26,12 @@ train:
 
 output:
   dir: outputs/graph_verifier
+
+wandb:
+  enable: true
+  project: graph-verifier
+  run_name: exp-001
+  mode: online
+  log_interval_steps: 10
+  watch_model: false
+  tags: ["stage_d", "graph_verifier"]
