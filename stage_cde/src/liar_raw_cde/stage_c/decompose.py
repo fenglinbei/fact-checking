@@ -82,6 +82,7 @@ class HFLocalClaimDecomposer:
                 model=model_name,
                 tensor_parallel_size=vllm_tensor_parallel_size,
                 gpu_memory_utilization=vllm_gpu_memory_utilization,
+                enforce_eager=True,
             )
         else:
             self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
