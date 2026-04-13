@@ -14,6 +14,7 @@ ID_TO_LABEL = {idx: label for label, idx in LABEL_TO_ID.items()}
 
 ALIASES = {
     "pants on fire": "pants-fire",
+    "pants fire": "pants-fire",
     "pants_fire": "pants-fire",
     "pants-fire": "pants-fire",
     "false": "false",
