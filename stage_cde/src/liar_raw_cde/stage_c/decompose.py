@@ -153,7 +153,7 @@ JSON:"""
             top_p=1.0,
             max_tokens=self.max_new_tokens,
         )
-        outputs = self.vllm_llm.generate(prompts, sampling_params, use_tqdm=False)
+        outputs = self.vllm_llm.generate(prompts, sampling_params, use_tqdm=True)
 
         results: list[DecompositionResult] = []
         for claim, prompt, output in zip(claims, prompts, outputs):
