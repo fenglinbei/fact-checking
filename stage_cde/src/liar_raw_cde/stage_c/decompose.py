@@ -90,14 +90,29 @@ class HFLocalClaimDecomposer:
         self.max_new_tokens = max_new_tokens
         self.max_subclaims = max_subclaims
 
-    def decompose(self, claim: str) -> DecompositionResult:
-        prompt = f"""Decompose the following factual claim into the minimum number of atomic subclaims.
+    def _build_prompt(self, claim: str) -> str:
+        return f"""Decompose the following factual claim into the minimum number of atomic subclaims.
 Rules:
 - preserve entities, numbers, and time expressions
 - do not add new facts
 - return a JSON array of strings only
 Claim: {claim}
 JSON:"""
+
+    def _parse_subclaims(self, text: str, claim: str) -> list[str]:
+        json_start = text.rfind("[")
+        json_text = text[json_start:] if json_start >= 0 else "[]"
+        try:
+            items = json.loads(json_text)
+            subclaims = [clean_text(str(x)) for x in items if clean_text(str(x))]
+        except Exception:
+            subclaims = [clean_text(claim)]
+        if not subclaims:
+            subclaims = [clean_text(claim)]
+        return subclaims[: self.max_subclaims]
+
+    def decompose(self, claim: str) -> DecompositionResult:
+        prompt = self._build_prompt(claim)
         if self.use_vllm:
             from vllm import SamplingParams
 
@@ -106,7 +121,7 @@ JSON:"""
                 top_p=1.0,
                 max_tokens=self.max_new_tokens,
             )
-            outputs = self.vllm_llm.generate([prompt], sampling_params)
+            outputs = self.vllm_llm.generate([prompt], sampling_params, use_tqdm=False)
             generated_text = outputs[0].outputs[0].text if outputs and outputs[0].outputs else ""
             text = prompt + generated_text
         else:
@@ -120,14 +135,30 @@ JSON:"""
                 pad_token_id=self.tokenizer.eos_token_id,
             )
             text = self.tokenizer.decode(out[0], skip_special_tokens=True)
-        json_start = text.rfind("[")
-        json_text = text[json_start:] if json_start >= 0 else "[]"
-        try:
-            items = json.loads(json_text)
-            subclaims = [clean_text(str(x)) for x in items if clean_text(str(x))]
-        except Exception:
-            subclaims = [clean_text(claim)]
-        if not subclaims:
-            subclaims = [clean_text(claim)]
-        subclaims = subclaims[: self.max_subclaims]
+        subclaims = self._parse_subclaims(text=text, claim=claim)
         return DecompositionResult(subclaims, "hf_local")
+
+    def decompose_many(self, claims: list[str]) -> list[DecompositionResult]:
+        if not claims:
+            return []
+
+        if not self.use_vllm:
+            return [self.decompose(claim) for claim in claims]
+
+        from vllm import SamplingParams
+
+        prompts = [self._build_prompt(claim) for claim in claims]
+        sampling_params = SamplingParams(
+            temperature=0.0,
+            top_p=1.0,
+            max_tokens=self.max_new_tokens,
+        )
+        outputs = self.vllm_llm.generate(prompts, sampling_params, use_tqdm=False)
+
+        results: list[DecompositionResult] = []
+        for claim, prompt, output in zip(claims, prompts, outputs):
+            generated_text = output.outputs[0].text if output and output.outputs else ""
+            text = prompt + generated_text
+            subclaims = self._parse_subclaims(text=text, claim=claim)
+            results.append(DecompositionResult(subclaims, "hf_local"))
+        return results
