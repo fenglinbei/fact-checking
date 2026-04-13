@@ -13,8 +13,8 @@ output:
 decomposition:
   method: hf_local     # heuristic | hf_local
   hf_model_name: /data/liaozijie/models/Llama-3-8B-Instruct   # 例如 Qwen/Qwen2.5-3B-Instruct
-  use_vllm: false
-  vllm_tensor_parallel_size: 1
+  use_vllm: true
+  vllm_tensor_parallel_size: 2
   vllm_gpu_memory_utilization: 0.9
   max_new_tokens: 192
   max_subclaims: 4
