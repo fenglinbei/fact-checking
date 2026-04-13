@@ -209,6 +209,7 @@ __marimo__/
 # Dataset
 stage_ab/outputs/liar-raw/stage_a/*.jsonl
 data/raw/LIAR-RAW/
+stage_cde/outputs/graph_inputs/*.jsonl
 
 # models
 *.pt
