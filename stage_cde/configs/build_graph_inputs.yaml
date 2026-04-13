@@ -12,14 +12,14 @@ output:
 
 decomposition:
   method: hf_local     # heuristic | hf_local
-  hf_model_name: ../data/liaozijie/models/Llama-3-8B-Instruct   # 例如 Qwen/Qwen2.5-3B-Instruct
+  hf_model_name: /data/liaozijie/models/Llama-3-8B-Instruct   # 例如 Qwen/Qwen2.5-3B-Instruct
   max_new_tokens: 192
   max_subclaims: 4
   min_claim_tokens_to_split: 14
   min_subclaim_tokens: 4
 
 assignment:
-  embedder_model: ../data/liaozijie/models/bge-base-en-v1.5
+  embedder_model: /data/liaozijie/models/bge-base-en-v1.5
   top_k_support_per_subclaim: 2
   top_k_refute_per_subclaim: 2
 
