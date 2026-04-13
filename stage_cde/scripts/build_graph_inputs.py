@@ -6,6 +6,10 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
+try:
+    from jtqdm import jtqdm
+except ImportError:
+    from tqdm.auto import tqdm as jtqdm
 
 from liar_raw_cde.stage_c.assign import SubclaimEvidenceAssigner
 from liar_raw_cde.stage_c.decompose import HFLocalClaimDecomposer, HeuristicClaimDecomposer
@@ -36,6 +40,9 @@ def _build_one_split(
             model_name=cfg["decomposition"]["hf_model_name"],
             max_new_tokens=cfg["decomposition"]["max_new_tokens"],
             max_subclaims=cfg["decomposition"]["max_subclaims"],
+            use_vllm=cfg["decomposition"].get("use_vllm", False),
+            vllm_tensor_parallel_size=cfg["decomposition"].get("vllm_tensor_parallel_size", 1),
+            vllm_gpu_memory_utilization=cfg["decomposition"].get("vllm_gpu_memory_utilization", 0.9),
         )
     else:
         decomposer = HeuristicClaimDecomposer(
@@ -51,7 +58,11 @@ def _build_one_split(
     )
 
     outputs = []
-    for event_id, raw_item in raw_by_id.items():
+    for event_id, raw_item in jtqdm(
+        raw_by_id.items(),
+        total=len(raw_by_id),
+        desc=f"Build graph inputs [{Path(out_path).stem}]",
+    ):
         pred = pred_by_id.get(event_id)
         if pred is None:
             continue
