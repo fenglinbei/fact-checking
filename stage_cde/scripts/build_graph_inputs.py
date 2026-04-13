@@ -57,6 +57,23 @@ def _build_one_split(
         device=device,
     )
 
+    split_event_ids: list[str] = []
+    split_claims: list[str] = []
+    split_claims_map: dict[str, list[str]] = {}
+    for event_id, raw_item in raw_by_id.items():
+        pred = pred_by_id.get(event_id)
+        if pred is None:
+            continue
+        claim = raw_item["claim"]
+        gate_decision = gate.decide(claim)
+        if gate_decision.should_split:
+            split_event_ids.append(event_id)
+            split_claims.append(claim)
+
+    if split_claims and hasattr(decomposer, "decompose_many"):
+        decomp_results = decomposer.decompose_many(split_claims)
+        split_claims_map = {event_id: result.subclaims for event_id, result in zip(split_event_ids, decomp_results)}
+
     outputs = []
     for event_id, raw_item in jtqdm(
         raw_by_id.items(),
@@ -70,9 +87,13 @@ def _build_one_split(
         claim = raw_item["claim"]
         gate_decision = gate.decide(claim)
         if gate_decision.should_split:
-            decomp = decomposer.decompose(claim)
-            subclaims = decomp.subclaims
-            method_used = decomp.method
+            if event_id in split_claims_map:
+                subclaims = split_claims_map[event_id]
+                method_used = "hf_local"
+            else:
+                decomp = decomposer.decompose(claim)
+                subclaims = decomp.subclaims
+                method_used = decomp.method
         else:
             subclaims = [claim]
             method_used = "no_split"
