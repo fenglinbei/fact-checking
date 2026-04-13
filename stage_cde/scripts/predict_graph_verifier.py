@@ -36,7 +36,10 @@ def main():
     graph_path = cfg["data"][f"{args.split}_path"]
     ds = GraphDataset(graph_path)
     tokenizer = AutoTokenizer.from_pretrained(cfg["model"]["encoder_name"], use_fast=True)
-    collator = GraphBatchCollator(tokenizer=tokenizer, max_length=128)
+    collator = GraphBatchCollator(
+        tokenizer=tokenizer,
+        max_length=int(cfg["model"].get("max_length", 128)),
+    )
     loader = DataLoader(ds, batch_size=cfg["train"]["batch_size"], shuffle=False, collate_fn=collator, num_workers=cfg["train"]["num_workers"])
 
     model = GraphVerifier(

@@ -86,7 +86,10 @@ def main():
     val_ds = GraphDataset(cfg["data"]["val_path"])
 
     tokenizer = AutoTokenizer.from_pretrained(cfg["model"]["encoder_name"], use_fast=True)
-    collator = GraphBatchCollator(tokenizer=tokenizer, max_length=128)
+    collator = GraphBatchCollator(
+        tokenizer=tokenizer,
+        max_length=int(cfg["model"].get("max_length", 128)),
+    )
 
     train_loader = DataLoader(
         train_ds,
@@ -152,6 +155,10 @@ def main():
             run.log(data, step=step)
 
     best_f1 = -1.0
+    best_epoch = -1
+    epochs_without_improvement = 0
+    early_stopping_patience = int(cfg["train"].get("early_stopping_patience", 0))
+    early_stopping_min_delta = float(cfg["train"].get("early_stopping_min_delta", 0.0))
     history = []
     global_step = 0
 
@@ -189,8 +196,11 @@ def main():
             show_progress=is_main_process(),
         )
 
-        if val_metrics["macro_f1"] > best_f1:
+        improved = val_metrics["macro_f1"] > (best_f1 + early_stopping_min_delta)
+        if improved:
             best_f1 = val_metrics["macro_f1"]
+            best_epoch = epoch
+            epochs_without_improvement = 0
             save_checkpoint(
                 model,
                 cfg["model"]["encoder_name"],
@@ -198,6 +208,8 @@ def main():
                 output_dir / "best_model.pt",
             )
             print(f"Saved best checkpoint. val_macro_f1={best_f1:.4f}")
+        else:
+            epochs_without_improvement += 1
 
         history.append(
             {
@@ -228,11 +240,20 @@ def main():
                 "epoch": epoch,
                 "global_step": global_step,
                 "best/val_macro_f1": float(best_f1),
+                "best/epoch": int(best_epoch),
             }
             payload.update(prefix_numeric_metrics(train_metrics, "train_epoch"))
             payload.update(prefix_numeric_metrics(val_metrics, "val"))
             log_fn(payload, step=global_step)
             run.summary["best_val_macro_f1"] = float(best_f1)
+            run.summary["best_epoch"] = int(best_epoch)
+
+        if early_stopping_patience > 0 and epochs_without_improvement >= early_stopping_patience:
+            print(
+                "Early stopping triggered at epoch "
+                f"{epoch}. best_epoch={best_epoch}, best_val_macro_f1={best_f1:.4f}"
+            )
+            break
 
     save_history(history, output_dir / "train_history.json")
 
