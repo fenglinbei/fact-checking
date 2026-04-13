@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import sys
 
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
+from tqdm.auto import tqdm
+
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
@@ -33,6 +40,42 @@ def parse_args():
     return parser.parse_args()
 
 
+def is_main_process() -> bool:
+    return int(os.environ.get("RANK", "0")) == 0
+
+
+def build_wandb_run(cfg: dict, output_dir: Path):
+    wb_cfg = cfg.get("wandb", {})
+    enabled = bool(wb_cfg.get("enable", False))
+    if not enabled:
+        return None
+
+    if wandb is None:
+        raise ImportError(
+            "wandb is enabled in config, but the package is not installed. "
+            "Please run: pip install wandb"
+        )
+
+    run = wandb.init(
+        project=wb_cfg.get("project", "graph-verifier"),
+        name=wb_cfg.get("run_name"),
+        entity=wb_cfg.get("entity"),
+        tags=wb_cfg.get("tags"),
+        mode=wb_cfg.get("mode"),  # e.g. online / offline / disabled
+        dir=str(output_dir),
+        config=cfg,
+    )
+    return run
+
+
+def prefix_numeric_metrics(metrics: dict, prefix: str) -> dict:
+    out = {}
+    for k, v in metrics.items():
+        if isinstance(v, (int, float)):
+            out[f"{prefix}/{k}"] = float(v)
+    return out
+
+
 def main():
     args = parse_args()
     cfg = load_yaml(args.config)
@@ -44,8 +87,21 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained(cfg["model"]["encoder_name"], use_fast=True)
     collator = GraphBatchCollator(tokenizer=tokenizer, max_length=128)
-    train_loader = DataLoader(train_ds, batch_size=cfg["train"]["batch_size"], shuffle=True, collate_fn=collator, num_workers=cfg["train"]["num_workers"])
-    val_loader = DataLoader(val_ds, batch_size=cfg["train"]["batch_size"], shuffle=False, collate_fn=collator, num_workers=cfg["train"]["num_workers"])
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=cfg["train"]["batch_size"],
+        shuffle=True,
+        collate_fn=collator,
+        num_workers=cfg["train"]["num_workers"],
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=cfg["train"]["batch_size"],
+        shuffle=False,
+        collate_fn=collator,
+        num_workers=cfg["train"]["num_workers"],
+    )
 
     model = GraphVerifier(
         encoder_name=cfg["model"]["encoder_name"],
@@ -56,8 +112,16 @@ def main():
         use_ordinal_head=cfg["model"]["use_ordinal_head"],
     ).to(device)
 
-    class_weights = build_class_balanced_weights(train_ds.label_ids(), num_classes=cfg["model"]["num_labels"], beta=cfg["train"]["beta_for_cb"]).to(device)
-    criterion = GraphVerifierCriterion(class_weights=class_weights, lambda_ordinal=cfg["train"]["lambda_ordinal"]).to(device)
+    class_weights = build_class_balanced_weights(
+        train_ds.label_ids(),
+        num_classes=cfg["model"]["num_labels"],
+        beta=cfg["train"]["beta_for_cb"],
+    ).to(device)
+
+    criterion = GraphVerifierCriterion(
+        class_weights=class_weights,
+        lambda_ordinal=cfg["train"]["lambda_ordinal"],
+    ).to(device)
 
     optimizer, scheduler = build_optimizer_and_scheduler(
         model=model,
@@ -69,12 +133,37 @@ def main():
         warmup_ratio=cfg["train"]["warmup_ratio"],
     )
 
-    output_dir = ensure_dir(cfg["output"]["dir"])
+    output_dir = Path(ensure_dir(cfg["output"]["dir"]))
+
+    run = build_wandb_run(cfg, output_dir) if is_main_process() else None
+    wandb_cfg = cfg.get("wandb", {})
+    log_interval_steps = int(wandb_cfg.get("log_interval_steps", 10))
+    watch_model = bool(wandb_cfg.get("watch_model", False))
+
+    if run is not None and watch_model:
+        run.watch(model, log="all", log_freq=log_interval_steps)
+
+    def log_fn(data: dict, step: int | None = None):
+        if run is None:
+            return
+        if step is None:
+            run.log(data)
+        else:
+            run.log(data, step=step)
+
     best_f1 = -1.0
     history = []
+    global_step = 0
 
-    for epoch in range(1, cfg["train"]["num_epochs"] + 1):
-        train_metrics = train_one_epoch(
+    epoch_bar = tqdm(
+        range(1, cfg["train"]["num_epochs"] + 1),
+        desc="Epochs",
+        dynamic_ncols=True,
+        disable=not is_main_process(),
+    )
+
+    for epoch in epoch_bar:
+        train_metrics, global_step = train_one_epoch(
             model=model,
             loader=train_loader,
             optimizer=optimizer,
@@ -82,19 +171,73 @@ def main():
             criterion=criterion,
             device=device,
             max_grad_norm=cfg["train"]["max_grad_norm"],
+            epoch=epoch,
+            global_step=global_step,
+            log_interval_steps=log_interval_steps,
+            log_fn=log_fn if run is not None else None,
+            progress_desc=f"Train {epoch}/{cfg['train']['num_epochs']}",
+            show_progress=is_main_process(),
         )
-        val_metrics, _ = evaluate(model, val_loader, criterion, device, export_predictions=False)
-        history.append({"epoch": epoch, "train": train_metrics, "val": val_metrics})
-        print(
-            f"Epoch {epoch}: train_loss={train_metrics['loss']:.4f} "
-            f"val_loss={val_metrics['loss']:.4f} val_macro_f1={val_metrics['macro_f1']:.4f}"
+
+        val_metrics, _ = evaluate(
+            model=model,
+            loader=val_loader,
+            criterion=criterion,
+            device=device,
+            export_predictions=False,
+            progress_desc=f"Eval {epoch}/{cfg['train']['num_epochs']}",
+            show_progress=is_main_process(),
         )
+
         if val_metrics["macro_f1"] > best_f1:
             best_f1 = val_metrics["macro_f1"]
-            save_checkpoint(model, cfg["model"]["encoder_name"], cfg, Path(output_dir) / "best_model.pt")
+            save_checkpoint(
+                model,
+                cfg["model"]["encoder_name"],
+                cfg,
+                output_dir / "best_model.pt",
+            )
             print(f"Saved best checkpoint. val_macro_f1={best_f1:.4f}")
 
-    save_history(history, Path(output_dir) / "train_history.json")
+        history.append(
+            {
+                "epoch": epoch,
+                "global_step": global_step,
+                "train": train_metrics,
+                "val": val_metrics,
+            }
+        )
+
+        print(
+            f"Epoch {epoch}: "
+            f"train_loss={train_metrics['loss']:.4f} "
+            f"train_acc={train_metrics['accuracy']:.4f} "
+            f"val_loss={val_metrics['loss']:.4f} "
+            f"val_acc={val_metrics['accuracy']:.4f} "
+            f"val_macro_f1={val_metrics['macro_f1']:.4f}"
+        )
+
+        epoch_bar.set_postfix(
+            train_loss=f"{train_metrics['loss']:.4f}",
+            val_loss=f"{val_metrics['loss']:.4f}",
+            val_f1=f"{val_metrics['macro_f1']:.4f}",
+        )
+
+        if run is not None:
+            payload = {
+                "epoch": epoch,
+                "global_step": global_step,
+                "best/val_macro_f1": float(best_f1),
+            }
+            payload.update(prefix_numeric_metrics(train_metrics, "train_epoch"))
+            payload.update(prefix_numeric_metrics(val_metrics, "val"))
+            log_fn(payload, step=global_step)
+            run.summary["best_val_macro_f1"] = float(best_f1)
+
+    save_history(history, output_dir / "train_history.json")
+
+    if run is not None:
+        run.finish()
 
 
 if __name__ == "__main__":
