@@ -62,9 +62,30 @@ class HFLocalClaimDecomposer:
         max_new_tokens: int = 192,
         max_subclaims: int = 4,
         device_map: str = "auto",
+        use_vllm: bool = False,
+        vllm_tensor_parallel_size: int = 1,
+        vllm_gpu_memory_utilization: float = 0.9,
     ) -> None:
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
-        self.model = AutoModelForCausalLM.from_pretrained(model_name, device_map=device_map)
+        self.model_name = model_name
+        self.use_vllm = use_vllm
+        self.vllm_llm = None
+
+        if self.use_vllm:
+            try:
+                from vllm import LLM
+            except ImportError as e:
+                raise ImportError(
+                    "use_vllm=True but vLLM is not installed. Install with `pip install vllm`."
+                ) from e
+
+            self.vllm_llm = LLM(
+                model=model_name,
+                tensor_parallel_size=vllm_tensor_parallel_size,
+                gpu_memory_utilization=vllm_gpu_memory_utilization,
+            )
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+            self.model = AutoModelForCausalLM.from_pretrained(model_name, device_map=device_map)
         self.max_new_tokens = max_new_tokens
         self.max_subclaims = max_subclaims
 
@@ -76,16 +97,28 @@ Rules:
 - return a JSON array of strings only
 Claim: {claim}
 JSON:"""
-        enc = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-        out = self.model.generate(
-            **enc,
-            do_sample=False,
-            temperature=0.0,
-            top_p=1.0,
-            max_new_tokens=self.max_new_tokens,
-            pad_token_id=self.tokenizer.eos_token_id,
-        )
-        text = self.tokenizer.decode(out[0], skip_special_tokens=True)
+        if self.use_vllm:
+            from vllm import SamplingParams
+
+            sampling_params = SamplingParams(
+                temperature=0.0,
+                top_p=1.0,
+                max_tokens=self.max_new_tokens,
+            )
+            outputs = self.vllm_llm.generate([prompt], sampling_params)
+            generated_text = outputs[0].outputs[0].text if outputs and outputs[0].outputs else ""
+            text = prompt + generated_text
+        else:
+            enc = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+            out = self.model.generate(
+                **enc,
+                do_sample=False,
+                temperature=0.0,
+                top_p=1.0,
+                max_new_tokens=self.max_new_tokens,
+                pad_token_id=self.tokenizer.eos_token_id,
+            )
+            text = self.tokenizer.decode(out[0], skip_special_tokens=True)
         json_start = text.rfind("[")
         json_text = text[json_start:] if json_start >= 0 else "[]"
         try:
