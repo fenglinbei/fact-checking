@@ -55,6 +55,7 @@ class SubclaimEvidenceAssigner:
 
     def assign(
         self,
+        claim: str,
         subclaims: list[str],
         support_evidence: list[dict[str, Any]],
         refute_evidence: list[dict[str, Any]],
@@ -62,14 +63,17 @@ class SubclaimEvidenceAssigner:
         if not subclaims:
             return []
 
+        claim_emb = self.encode([claim])[0]
         sub_embs = self.encode(subclaims)
         assignments: list[dict[str, Any]] = []
         for subclaim, emb in zip(subclaims, sub_embs):
             assigned_support = self._rank(emb, support_evidence, self.top_k_support_per_subclaim)
             assigned_refute = self._rank(emb, refute_evidence, self.top_k_refute_per_subclaim)
+            claim_similarity = cosine_from_numpy(claim_emb, emb)
             assignments.append(
                 {
                     "subclaim": subclaim,
+                    "subclaim_claim_similarity": float(claim_similarity),
                     "support_evidence": assigned_support,
                     "refute_evidence": assigned_refute,
                 }

@@ -99,10 +99,22 @@ def _build_one_split(
             method_used = "no_split"
 
         assignments = assigner.assign(
+            claim=claim,
             subclaims=subclaims,
             support_evidence=pred.get("support_evidence", []),
             refute_evidence=pred.get("refute_evidence", []),
         )
+        subclaim_claim_similarities = [
+            float(a.get("subclaim_claim_similarity", 0.0))
+            for a in assignments
+            if isinstance(a.get("subclaim_claim_similarity"), (int, float))
+        ]
+        subclaim_claim_similarity_stats = {
+            "count": len(subclaim_claim_similarities),
+            "mean": float(sum(subclaim_claim_similarities) / max(1, len(subclaim_claim_similarities))),
+            "min": float(min(subclaim_claim_similarities)) if subclaim_claim_similarities else 0.0,
+            "max": float(max(subclaim_claim_similarities)) if subclaim_claim_similarities else 0.0,
+        }
 
         decomposition_info = {
             "subclaims": subclaims,
@@ -112,6 +124,7 @@ def _build_one_split(
                 "reason": gate_decision.reason,
                 "features": gate_decision.features,
             },
+            "subclaim_claim_similarity_stats": subclaim_claim_similarity_stats,
             "assignments": assignments,
         }
 
