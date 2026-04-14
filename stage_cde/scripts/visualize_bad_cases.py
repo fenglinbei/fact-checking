@@ -158,27 +158,41 @@ def plot_error_distance(rows: list[dict[str, Any]], save_path: Path, title: str)
 def summarize_stage_c_gating(graph_items: list[dict[str, Any]], save_path: Path) -> None:
     reason_counter: Counter[str] = Counter()
     split_counter = Counter({"split": 0, "no_split": 0})
+    subclaim_claim_sims: list[float] = []
 
     for item in graph_items:
-        gate = item.get("decomposition", {}).get("gate", {})
+        decomp = item.get("decomposition", {})
+        gate = decomp.get("gate", {})
         should_split = bool(gate.get("should_split", False))
         split_counter["split" if should_split else "no_split"] += 1
         reason = str(gate.get("reason", "unknown"))
         reason_counter[reason] += 1
+        for a in decomp.get("assignments", []):
+            sim = a.get("subclaim_claim_similarity")
+            if isinstance(sim, (int, float)):
+                subclaim_claim_sims.append(float(sim))
 
     labels = ["split", "no_split"]
     values = [split_counter[k] for k in labels]
 
-    plt.figure(figsize=(9, 4))
-    plt.subplot(1, 2, 1)
+    plt.figure(figsize=(13, 4))
+    plt.subplot(1, 3, 1)
     plt.bar(labels, values, color=["#54A24B", "#4C78A8"])
     plt.title("Stage C gating decisions")
     plt.ylabel("Count")
 
     top_reason = reason_counter.most_common(8)
-    plt.subplot(1, 2, 2)
+    plt.subplot(1, 3, 2)
     plt.barh([x[0] for x in reversed(top_reason)], [x[1] for x in reversed(top_reason)], color="#72B7B2")
     plt.title("Top gating reasons")
+
+    plt.subplot(1, 3, 3)
+    if subclaim_claim_sims:
+        plt.hist(subclaim_claim_sims, bins=20, color="#F58518", alpha=0.85)
+        plt.axvline(sum(subclaim_claim_sims) / len(subclaim_claim_sims), color="#E45756", linestyle="--", linewidth=1.5)
+    plt.title("Subclaim-claim similarity")
+    plt.xlabel("Cosine similarity")
+    plt.ylabel("Count")
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=200)
