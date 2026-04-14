@@ -225,3 +225,36 @@ python scripts/generate_explanations.py --config configs/explainer.yaml --split 
 - Stage E 只用 `template` 模式
 
 等 graph verifier 稳定以后，再训练 abstractive explainer。
+
+## Stage B/C Bad Case 可视化
+
+新增脚本：`stage_cde/scripts/visualize_bad_cases.py`，可用于：
+
+- Stage B 预测错误分布可视化（混淆矩阵、ordinal 距离分布）
+- Stage C/D 图判别错误分析（按 subclaim 数量的误差趋势）
+- 导出 bad case CSV，方便后续人工排查
+- （可选）基于 Stage C 构图结果渲染 bad case 图拓扑（需 `networkx`）
+
+示例命令：
+
+```bash
+python stage_cde/scripts/visualize_bad_cases.py \
+  --stage_b_predictions stage_ab/outputs/liar-raw/stage_b/stage_b_predictions_test.jsonl \
+  --graph_predictions stage_cde/outputs/graph_verifier/test.graph_predictions.jsonl \
+  --graph_inputs stage_cde/outputs/graph_inputs/test.graph.jsonl \
+  --output_dir stage_cde/outputs/badcase_viz \
+  --top_n_badcases 80 \
+  --max_graph_cases 8
+```
+
+输出产物示例：
+
+- `stage_b_confusion_matrix.png`
+- `stage_b_error_distance.png`
+- `stage_b_badcases.csv`
+- `graph_confusion_matrix.png`
+- `graph_error_distance.png`
+- `graph_subclaim_vs_error.png`
+- `graph_badcases.csv`
+- `stage_c_gating_summary.png`
+- `badcase_graph_*.png`
