@@ -1,0 +1,81 @@
+event_id,claim,gold_label,pred_label,rank_distance,support_evidence_count,refute_evidence_count,subclaim_count
+11083.json,Says Bill and Hillary Clinton attended Donald Trumps last wedding.,true,pants-fire,5,2,2,1
+8941.json,"The words subhuman mongrel, which Ted Nugent called President Barack Obama, were used by the Nazis to justify the genocide of the Jewish community.",true,pants-fire,5,2,2,1
+12873.json,"In the 2012 election, there were more votes cast than registered voters in St. Lucie County, and Palm Beach County had 141 percent turnout.",pants-fire,true,5,2,2,1
+5723.json,About 78 to 81 House Democrats are members of the Communist Party. ... Its called the Congressional Progressive Caucus.,pants-fire,true,5,2,2,1
+2594.json,John Raeses wife is registered to vote in Florida so she cant even vote for him.,true,pants-fire,5,2,2,1
+11972.json,Building a wall on the U.S.-Mexico border will take literally years.,true,false,4,2,2,1
+9524.json,"When asked by a reporter whether hes at the center of a criminal scheme to violate campaign laws, Gov. Scott Walker nodded yes.",pants-fire,mostly-true,4,2,2,1
+5962.json,Over the past five years the federal government has paid out $601 million in retirement and disability benefits to deceased former federal employees.,true,false,4,2,2,1
+7070.json,Says that Tennessee law requires that schools receive half of proceeds -- $31 million per year -- from a half-cent increase in the Shelby County sales tax.,true,false,4,2,2,1
+3331.json,Unfortunately we have documented instances where people defecated in the (Statehouse) building.,pants-fire,mostly-true,4,2,2,1
+1051.json,"Contends that President Obama literally said (if) his cap-and-trade proposals were to pass, that utility rates, his words now, would, necessarily skyrocket.",true,false,4,2,2,1
+2092.json,Sixty percent of the Hispanics support the Arizona immigration law,pants-fire,mostly-true,4,2,2,1
+10163.json,"Before World War II, very few people actually had health insurance.",true,false,4,2,2,1
+2796.json,Half of children struck by cars near schools are hit by parents driving children to school.,false,true,4,2,2,1
+934.json,Putting three Republicans in my Cabinet...is unprecedented.,true,false,4,2,2,1
+8667.json,Iran President Hassan Rouhani has more Cabinet members with Ph.D.s from American universities than members of Barack Obamas Cabinet.,true,false,4,2,2,1
+9269.json,Many of the founding fathers were very actively involved in cockfighting.,false,true,4,2,2,1
+769.json,Barack Obama ... 96 percent of his votes have been solely along party line.,true,false,4,2,2,1
+1251.json,Health care premiums for consumers have doubled since 2001.,true,false,4,2,2,1
+2652.json,Says Rick Perry recently said he wanted another (Texas) business tax.,pants-fire,mostly-true,4,2,2,1
+2547.json,I said no to these big bank bailouts.,true,false,4,2,2,1
+3575.json,On federal stimulus money for expanding rail service.,true,false,4,2,2,1
+12994.json,"The Clinton Foundation is a charity where President and Secretary Clinton and their daughter, they take no salary, they get no money from it, they take no personal benefit from it.",mostly-true,pants-fire,4,2,2,1
+737.json,"McCain ""has opposed stem cell research.""",false,true,4,2,2,1
+5753.json,Rhode Islands exports have increased by 53 percent in the last two years.,true,false,4,2,2,1
+8558.json,Rhode Islands unemployment insurance system is the most expensive such system in the country.,false,true,4,2,2,1
+664.json,"McCain ""still thinks it's okay when women don't earn equal pay for equal work.""",false,true,4,2,2,1
+1199.json,"The Baucus bill ""contains provisions that would send massive federal subsidies directly to both private insurance plans and government-chartered cooperatives that pay for elective abortion.""",true,false,4,2,2,1
+3021.json,State governments have little ability to stimulate job growth in the short run.,true,false,4,2,2,1
+683.json,"Sarah Palin ""already has more executive experience"" than Barack Obama and Joe Biden ""combined.""",true,false,4,2,2,1
+7834.json,Nothing in the Constitution explicitly guarantees our right to vote.,true,false,4,2,2,1
+1052.json,Obama has more czars than the Romanovs.,true,false,4,2,2,1
+5993.json,Says Larry Taylor gave in-state tuition to illegal immigrants.,pants-fire,mostly-true,4,2,2,1
+12987.json,Both the Democratic and Republican candidates for president in 2016 are quite unpopular.,true,false,4,2,2,1
+211.json,He was a member of the Iraq Study Group and was either fired or quit from a very important commission that was trying to figure out the way forward in Iraq.,true,false,4,2,2,1
+10943.json,Ninety-seven percent of Americans do not receive subsidies for health care under the Affordable Care Act.,true,false,4,2,2,1
+2720.json,Says state Senate candidate Monk Elmer voted to exceed the (school district property tax) spending caps.,pants-fire,mostly-true,4,2,2,1
+605.json,Senator Obama has voted 94 times to either increase your taxes or against tax cuts.,false,true,4,2,2,1
+8798.json,And weve constantly been the lowest unemployed county in the state.,false,true,4,2,2,1
+11925.json,"We are almost halfway to our goal of 1,000 rapes prosecuted!",true,false,4,2,2,1
+1106.json,All private healthcare plans must conform to government rules to participate in a Healthcare Exchange.,true,false,4,2,2,1
+8089.json,Says HJM 20 was the only bill not assigned to a House committee.,false,true,4,2,2,1
+9737.json,The music industry is the biggest export from Africa after oil and gas.,false,true,4,2,2,1
+2986.json,The Milwaukee business community did not speak about the facts -- and in support of train manufacturer Talgo -- as the Milwaukee-Madison rail link was being killed.,true,false,4,2,2,1
+9957.json,"Congress includes 36 people accused of spousal abuse, 84 arrested for drunk driving in the past year, 71 with terrible creditand more.",pants-fire,mostly-true,4,2,2,1
+2305.json,"Under the new health care law, if a landscaper wants to buy a new lawnmower, or a restaurant needs a new ice-maker, they have to report that to the feds.",true,false,4,2,2,1
+8011.json,Says Austin is the largest city in America without a congressional district anchored in it.,true,false,4,2,2,1
+9151.json,"When people enter the service, theres not a mental health evaluation.",true,false,4,2,2,1
+7426.json,Theres more murders with hammers last year than...shotguns and pistols and AK-47s.,pants-fire,mostly-true,4,2,2,1
+1462.json,Uses headlines to portray Gov. Rick Perry as beholden to special interests.,mostly-true,pants-fire,4,2,2,1
+13324.json,Ford is moving all of their small-car production to Mexico.,mostly-true,pants-fire,4,2,2,1
+8336.json,"If sea levels rise six feet due to climate change, Waterplace Park in Providence and Wickford village would be swamped",true,false,4,2,2,1
+11150.json,Caution: Kissing and cuddling chickens can be hazardous to your health.,true,false,4,2,2,1
+2958.json,Beaverton enjoys the most diverse population (by percentage of population) among Oregon cities.,false,true,4,2,2,1
+2723.json,Congressman Kasich wants to use our tax dollars to give secret bonuses to his corporate friends.,pants-fire,mostly-true,4,2,2,1
+2625.json,"Rand Paul wants to end all federal faith-based initiatives, and even end the deduction for religious charities.",mostly-true,pants-fire,4,2,2,1
+809.json,"98 percent of small businesses make less than $250,000 and would not see a tax increase under Barack Obama's plan.",true,false,4,2,2,1
+7447.json,Says the last non-partisan commission to improve the voting experience in America concluded that #VoterID was necessary.,true,false,4,2,2,1
+574.json,McCain got more money from Airbus' U.S. executives than any other politician.,true,false,4,2,2,1
+8557.json,"The United States has never been richer, if you look at per capita GDP.",true,false,4,2,2,1
+11917.json,North Koreas missiles are not going to have a capability to reach the United States anytime real soon.,true,false,4,2,2,1
+10978.json,More than half of women under 30 who give birth do so outside of marriage...,true,false,4,2,2,1
+11887.json,Says President John F. Kennedy released a star Green Bay Packer from military reserve duty so that he could play in the 1961 NFL Championship Game.,true,false,4,2,2,1
+1950.json,"Four years as a congressman, he [U.S. Rep. Hank Johnson] never talked about MARTA.",pants-fire,mostly-true,4,2,2,1
+2470.json,"If you look at the application for a security clearance, I have a clearance that even the president of the United States cannot obtain because of my background.",pants-fire,mostly-true,4,2,2,1
+339.json,"In the Illinois Legislature, Barack Obama ""voted 'present,' instead of yes or no"" on seven votes involving abortion rights.",true,false,4,2,2,1
+5746.json,The U.S. Supreme Court has not traditionally asked a lot of questions during oral arguments.,true,false,4,2,2,1
+11269.json,Denali is the Kenyan word for black power.,pants-fire,half-true,3,2,2,1
+11200.json,"Says 57 percent of federal spending goes to the military and just 1 percent goes to food and agriculture, including food stamps.",false,mostly-true,3,2,2,1
+73.json,"Each year, 18,000 people die in America because they don't have health care.",true,barely-true,3,2,2,1
+1328.json,Ronald Reagan faced an even worse recession than the current one.,false,mostly-true,3,2,2,1
+4513.json,"The Fed created $1.2 trillion out of nothing, gave it to banks, and some of them foreign banks, so that they could stabilize their operations.",true,barely-true,3,2,2,1
+6313.json,"A proposed tax to fund transportation projects would spend $90,000 to take a single vehicle off the road during the morning and afternoon commute.",false,mostly-true,3,2,2,1
+2854.json,Rebuilding three high schools will benefit 40 percent of Portland Public School students.,pants-fire,half-true,3,2,2,1
+2679.json,"I am very proud, as governor of Florida, that we signed the first divestment act, as it relates to Iran, divesting any investments in companies that would invest in Iran.",true,barely-true,3,2,2,1
+12398.json,"Says Donald Trump said of women, And you can tell them to go f--- themselves.",pants-fire,half-true,3,2,2,1
+2690.json,"The Taliban has been there for years and years, I mean, hundreds of thousands of years.",pants-fire,half-true,3,2,2,1
+6821.json,"(Barack Obama) says hes going to reduce the long-term debt and deficit by $4 trillion, doesnt say how hes going to do it.",pants-fire,half-true,3,2,2,1
+2585.json,Delaware Democratic Senate candidate Chris Coons thought that a 911 call should be taxed.,barely-true,true,3,2,2,1
+6026.json,"The federal government reviewed and verified his administrations numbers showing Wisconsin added 23,608 jobs in 2011.",half-true,pants-fire,3,2,2,1
