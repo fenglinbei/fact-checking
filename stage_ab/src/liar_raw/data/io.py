@@ -18,15 +18,33 @@ def clean_text(text: str) -> str:
     return text
 
 
-_SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_PLACEHOLDER_DOT = "<DOT>"
+_COMMON_ABBREVIATIONS = (
+    "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "st.", "vs.", "etc.",
+    "i.e.", "e.g.", "u.s.", "u.k.", "no.", "fig.",
+)
+_SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[\"'(\[]*[A-Z0-9])")
 
 
-def naive_sentence_split(text: str) -> list[str]:
+def robust_sentence_split(text: str) -> list[str]:
+    """Split report content into sentences with simple abbreviation protection."""
     text = clean_text(text)
     if not text:
         return []
-    sentences = [s.strip() for s in _SENT_SPLIT_RE.split(text) if s.strip()]
-    return sentences
+
+    protected = text
+    for abbr in _COMMON_ABBREVIATIONS:
+        escaped = re.escape(abbr)
+        protected = re.sub(
+            escaped,
+            lambda m: m.group(0).replace(".", _PLACEHOLDER_DOT),
+            protected,
+            flags=re.IGNORECASE,
+        )
+
+    parts = [p.strip() for p in _SENT_SPLIT_RE.split(protected) if p.strip()]
+    sentences = [p.replace(_PLACEHOLDER_DOT, ".").strip() for p in parts]
+    return [s for s in sentences if s]
 
 
 
@@ -56,32 +74,16 @@ def iter_sentences(sample: SampleRecord, min_char_len: int = 10) -> Iterable[Sen
         report_id = report.get("report_id", "unknown")
         link = report.get("link")
         domain = report.get("domain")
-        tokenized = report.get("tokenized")
-        if tokenized:
-            for sent_idx, token in enumerate(tokenized):
-                sent = clean_text(str(token.get("sent", "")))
-                if len(sent) < min_char_len:
-                    continue
-                yield SentenceRecord(
-                    event_id=sample.event_id,
-                    report_id=report_id,
-                    sent_idx=sent_idx,
-                    text=sent,
-                    link=link,
-                    domain=domain,
-                    raw=token,
-                )
-        else:
-            content = clean_text(str(report.get("content", "")))
-            for sent_idx, sent in enumerate(naive_sentence_split(content)):
-                if len(sent) < min_char_len:
-                    continue
-                yield SentenceRecord(
-                    event_id=sample.event_id,
-                    report_id=report_id,
-                    sent_idx=sent_idx,
-                    text=sent,
-                    link=link,
-                    domain=domain,
-                    raw={},
-                )
+        content = clean_text(str(report.get("content", "")))
+        for sent_idx, sent in enumerate(robust_sentence_split(content)):
+            if len(sent) < min_char_len:
+                continue
+            yield SentenceRecord(
+                event_id=sample.event_id,
+                report_id=report_id,
+                sent_idx=sent_idx,
+                text=sent,
+                link=link,
+                domain=domain,
+                raw=report,
+            )
