@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, get_linear_schedule_with_warmup
 
-from liar_raw_cde.utils.io import ensure_dir, save_json
+from liar_raw.utils.io import ensure_dir, save_json
 
 
 class Seq2SeqCollator:

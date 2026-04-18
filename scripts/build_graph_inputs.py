@@ -11,11 +11,11 @@ try:
 except ImportError:
     from tqdm.auto import tqdm as jtqdm
 
-from liar_raw_cde.stage_c.assign import SubclaimEvidenceAssigner
-from liar_raw_cde.stage_c.decompose import HFLocalClaimDecomposer, HeuristicClaimDecomposer
-from liar_raw_cde.stage_c.gating import ComplexityGate
-from liar_raw_cde.stage_d.graph_builder import build_graph_item
-from liar_raw_cde.utils.io import ensure_dir, load_yaml, read_json, read_jsonl, write_jsonl
+from liar_raw.stage_c.assign import SubclaimEvidenceAssigner
+from liar_raw.stage_c.decompose import HFLocalClaimDecomposer, HeuristicClaimDecomposer
+from liar_raw.stage_c.gating import ComplexityGate
+from liar_raw.stage_d.graph_builder import build_graph_item
+from liar_raw.utils.io import ensure_dir, load_yaml, read_json, read_jsonl, write_jsonl
 
 
 def _build_one_split(

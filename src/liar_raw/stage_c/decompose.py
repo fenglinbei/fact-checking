@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from liar_raw_cde.utils.text import clean_text, jaccard, word_tokens
+from liar_raw.utils.text import clean_text, jaccard, word_tokens
 
 
 _SPLIT_RE = re.compile(

@@ -5,7 +5,7 @@ from typing import Any
 import torch
 from transformers import PreTrainedTokenizerBase
 
-from liar_raw_cde.stage_d.graph_builder import REL_TYPES
+from liar_raw.stage_d.graph_builder import REL_TYPES
 
 
 class GraphBatchCollator:
