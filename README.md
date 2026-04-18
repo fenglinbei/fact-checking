@@ -56,6 +56,9 @@ python -m pip install -U pip setuptools wheel
 pip install -r requirements.txt
 ```
 
+> `requirements.txt` 已固定 PyTorch/torchvision/torchaudio 为 **CUDA 12.4 (`+cu124`)** 版本，
+> 并通过 `https://download.pytorch.org/whl/cu124` 获取对应 wheel，以避免误装 CUDA 13.x 相关包。
+
 ### 2.2 accelerate 安装与配置
 
 ```bash

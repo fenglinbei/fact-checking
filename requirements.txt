@@ -1,4 +1,10 @@
-torch>=2.1
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+# Pin PyTorch stack to CUDA 12.4 wheels to avoid accidentally pulling CUDA 13.x builds.
+torch==2.6.0+cu124 ; platform_system == "Linux"
+torchvision==0.21.0+cu124 ; platform_system == "Linux"
+torchaudio==2.6.0+cu124 ; platform_system == "Linux"
+
 transformers>=4.39
 sentence-transformers>=2.6
 scikit-learn>=1.4
