@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -62,6 +63,7 @@ def main() -> None:
     data_cfg = cfg["data"]
     baseline_cfg = cfg["baseline"]
     train_cfg = cfg["sft_train"]
+    wandb_cfg = cfg.get("wandb", {})
 
     train_rows = load_jsonl(data_cfg["train_candidates"])
     val_rows = load_jsonl(data_cfg["val_candidates"])
@@ -90,6 +92,17 @@ def main() -> None:
 
     output_dir = Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline")) / ("b1" if use_context else "b0")
     output_dir.mkdir(parents=True, exist_ok=True)
+    baseline_name = "b1" if use_context else "b0"
+
+    wandb_enabled = bool(wandb_cfg.get("enabled", False))
+    report_to = "wandb" if wandb_enabled else "none"
+    run_name = str(wandb_cfg.get("run_name", f"llm_baseline_{baseline_name}_sft"))
+    if wandb_enabled:
+        os.environ.setdefault("WANDB_PROJECT", str(wandb_cfg.get("project", "fact-checking-stage-ab")))
+        if wandb_cfg.get("entity"):
+            os.environ["WANDB_ENTITY"] = str(wandb_cfg["entity"])
+        os.environ.setdefault("WANDB_LOG_MODEL", str(wandb_cfg.get("log_model", "false")))
+        os.environ.setdefault("WANDB_WATCH", str(wandb_cfg.get("watch", "false")))
 
     training_args = TrainingArguments(
         output_dir=str(output_dir),
@@ -106,7 +119,8 @@ def main() -> None:
         eval_steps=int(train_cfg.get("eval_steps", 500)),
         evaluation_strategy="steps",
         save_strategy="steps",
-        report_to="none",
+        report_to=report_to,
+        run_name=run_name,
         deepspeed=str(train_cfg["deepspeed_config"]),
         dataloader_num_workers=int(train_cfg.get("dataloader_num_workers", 0)),
     )

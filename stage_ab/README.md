@@ -47,3 +47,4 @@ bash scripts/train_llm_baseline_b1.sh
 ```
 
 > few-shot 模式下，会先用 train claims 建索引，然后用 embedding + MMR 检索 top-10 相似案例拼进 prompt。
+> baseline_b0 / baseline_b1 默认已开启 wandb 上报（见各自 yaml 的 `wandb.enabled: true`），训练过程中的 loss / eval 指标会同步到 `fact-checking-stage-ab` 项目。
