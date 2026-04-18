@@ -18,19 +18,19 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
 
-from liar_raw_cde.stage_d.collator import GraphBatchCollator
-from liar_raw_cde.stage_d.dataset import GraphDataset
-from liar_raw_cde.stage_d.losses import GraphVerifierCriterion, build_class_balanced_weights
-from liar_raw_cde.stage_d.model import GraphVerifier
-from liar_raw_cde.stage_d.trainer import (
+from liar_raw.stage_d.collator import GraphBatchCollator
+from liar_raw.stage_d.dataset import GraphDataset
+from liar_raw.stage_d.losses import GraphVerifierCriterion, build_class_balanced_weights
+from liar_raw.stage_d.model import GraphVerifier
+from liar_raw.stage_d.trainer import (
     build_optimizer_and_scheduler,
     evaluate,
     save_checkpoint,
     save_history,
     train_one_epoch,
 )
-from liar_raw_cde.utils.io import ensure_dir, load_yaml
-from liar_raw_cde.utils.seed import set_seed
+from liar_raw.utils.io import ensure_dir, load_yaml
+from liar_raw.utils.seed import set_seed
 
 
 def parse_args():

@@ -7,9 +7,9 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-from liar_raw_cde.stage_e.dataset import build_structured_input
-from liar_raw_cde.stage_e.faithfulness import FaithfulnessFilter
-from liar_raw_cde.stage_e.templater import TemplateExplainer
+from liar_raw.stage_e.dataset import build_structured_input
+from liar_raw.stage_e.faithfulness import FaithfulnessFilter
+from liar_raw.stage_e.templater import TemplateExplainer
 
 
 def generate_template_records(pred_items: list[dict[str, Any]]) -> list[dict[str, Any]]:

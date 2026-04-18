@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from liar_raw_cde.utils.labels import label_to_id
-from liar_raw_cde.utils.text import clean_text, jaccard
+from liar_raw.utils.labels import label_to_id
+from liar_raw.utils.text import clean_text, jaccard
 
 
 REL_TYPES = [
