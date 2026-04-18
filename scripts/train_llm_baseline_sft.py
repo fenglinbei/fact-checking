@@ -27,39 +27,44 @@ def _flash_attn2_available() -> bool:
     return importlib.util.find_spec("flash_attn") is not None
 
 
+def _fla_fast_path_available() -> bool:
+    return importlib.util.find_spec("fla") is not None and importlib.util.find_spec("causal_conv1d") is not None
+
+
 @dataclass
 class SFTDatasetBuilder:
     tokenizer: AutoTokenizer
     max_length: int
 
     def build(self, instances: list[dict[str, str]]) -> Dataset:
-        texts = [f"{x['prompt']} {x['target']}" for x in instances]
+        return LazyTokenizedDataset(instances=instances, tokenizer=self.tokenizer, max_length=self.max_length)
+
+
+class LazyTokenizedDataset(Dataset):
+    def __init__(self, instances: list[dict[str, str]], tokenizer: AutoTokenizer, max_length: int) -> None:
+        self.instances = instances
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __len__(self) -> int:
+        return len(self.instances)
+
+    def __getitem__(self, idx: int) -> dict[str, list[int]]:
+        row = self.instances[idx]
+        text = f"{row['prompt']} {row['target']}"
         enc = self.tokenizer(
-            texts,
+            text,
             truncation=True,
             max_length=self.max_length,
             padding=False,
         )
-        items = [
-            {
-                "input_ids": ids,
-                "attention_mask": mask,
-                "labels": ids[:],
-            }
-            for ids, mask in zip(enc["input_ids"], enc["attention_mask"])
-        ]
-        return ListTokenizedDataset(items)
-
-
-class ListTokenizedDataset(Dataset):
-    def __init__(self, items: list[dict[str, list[int]]]) -> None:
-        self.items = items
-
-    def __len__(self) -> int:
-        return len(self.items)
-
-    def __getitem__(self, idx: int) -> dict[str, list[int]]:
-        return self.items[idx]
+        ids = enc["input_ids"]
+        mask = enc["attention_mask"]
+        return {
+            "input_ids": ids,
+            "attention_mask": mask,
+            "labels": ids[:],
+        }
 
 
 def build_dataloader(
@@ -177,7 +182,7 @@ def main() -> None:
 
     model_kwargs = {
         "trust_remote_code": True,
-        "torch_dtype": torch.bfloat16 if torch.cuda.is_available() and mixed_precision == "bf16" else torch.float32,
+        "dtype": torch.bfloat16 if torch.cuda.is_available() and mixed_precision == "bf16" else torch.float32,
     }
     if bool(train_cfg.get("use_flash_attention_2", True)):
         if _flash_attn2_available():
@@ -187,6 +192,11 @@ def main() -> None:
                 "[WARN] sft_train.use_flash_attention_2=true, but flash-attn is not installed. "
                 "Falling back to the default attention implementation."
             )
+    if accelerator.is_main_process and not _fla_fast_path_available():
+        print(
+            "[INFO] FLA fast path is unavailable (requires both `fla` and `causal_conv1d`). "
+            "This is separate from flash-attn and does not block training."
+        )
 
     model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **model_kwargs)
 
@@ -199,7 +209,7 @@ def main() -> None:
     val_ds = builder.build(val_instances)
 
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=8)
-    num_workers = int(train_cfg.get("dataloader_num_workers", 8))
+    num_workers = int(train_cfg.get("dataloader_num_workers", 0))
     train_dl = build_dataloader(
         train_ds,
         collator=data_collator,
