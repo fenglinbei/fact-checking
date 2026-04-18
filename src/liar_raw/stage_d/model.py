@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoConfig, AutoModel
 
-from liar_raw_cde.stage_d.graph_builder import NODE_TYPES, REL_TYPES
+from liar_raw.stage_d.graph_builder import NODE_TYPES, REL_TYPES
 
 
 class RelationGraphLayer(nn.Module):

@@ -4,7 +4,7 @@ from typing import Any
 
 import torch
 
-from liar_raw_cde.utils.labels import id_to_label
+from liar_raw.utils.labels import id_to_label
 
 
 def build_graph_prediction_records(
