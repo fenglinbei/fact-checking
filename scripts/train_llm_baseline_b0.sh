@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
-
 CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
   --num_processes=4 \
   --num_machines=1 \
