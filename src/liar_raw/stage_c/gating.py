@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from liar_raw_cde.utils.text import count_complexity_signals
+from liar_raw.utils.text import count_complexity_signals
 
 
 @dataclass

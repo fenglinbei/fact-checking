@@ -5,7 +5,7 @@ from typing import Any
 
 from torch.utils.data import Dataset
 
-from liar_raw_cde.utils.io import read_jsonl
+from liar_raw.utils.io import read_jsonl
 
 
 class GraphDataset(Dataset):
