@@ -1,0 +1,37 @@
+output_dir: outputs/liar-raw/llm_baseline
+
+data:
+  train_candidates: outputs/liar-raw/stage_a/stage_a_train.jsonl
+  val_candidates: outputs/liar-raw/stage_a/stage_a_val.jsonl
+  test_candidates: outputs/liar-raw/stage_a/stage_a_test.jsonl
+
+baseline:
+  model_name_or_path: /data/models/Qwen3.5-9B
+  top_k: 8
+  use_context: true
+  context_k: 1
+  prompt_mode: few_shot
+  few_shot_k: 10
+  few_shot_mmr_lambda: 0.7
+  retrieval_model: /home/fenglin/project/models/bge-base-en-v1.5/
+  retrieval_batch_size: 64
+  retrieval_max_length: 256
+  max_new_tokens: 24
+  temperature: 0.0
+  do_sample: false
+
+sft_train:
+  deepspeed_config: configs/deepspeed_zero3.json
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 1.0e-5
+  num_train_epochs: 2
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  bf16: true
+  max_length: 2048
+  logging_steps: 20
+  save_steps: 500
+  eval_steps: 500
+  dataloader_num_workers: 0
