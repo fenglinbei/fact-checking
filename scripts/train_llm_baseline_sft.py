@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import math
 import os
 from dataclasses import dataclass
@@ -20,6 +21,10 @@ from transformers import (
 
 from liar_raw.baselines.llm_baseline import build_sft_instances, load_jsonl
 from liar_raw.config import load_yaml
+
+
+def _flash_attn2_available() -> bool:
+    return importlib.util.find_spec("flash_attn") is not None
 
 
 @dataclass
@@ -175,7 +180,13 @@ def main() -> None:
         "torch_dtype": torch.bfloat16 if torch.cuda.is_available() and mixed_precision == "bf16" else torch.float32,
     }
     if bool(train_cfg.get("use_flash_attention_2", True)):
-        model_kwargs["attn_implementation"] = "flash_attention_2"
+        if _flash_attn2_available():
+            model_kwargs["attn_implementation"] = "flash_attention_2"
+        elif accelerator.is_main_process:
+            print(
+                "[WARN] sft_train.use_flash_attention_2=true, but flash-attn is not installed. "
+                "Falling back to the default attention implementation."
+            )
 
     model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **model_kwargs)
 
