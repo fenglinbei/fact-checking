@@ -1,13 +1,13 @@
-# Stage A / B
+# 阶段 A / B
 
-This project implements an **oracle-free** pipeline for LIAR-RAW using the JSON format you described.
+本项目基于你提供的 JSON 格式，实现了一个用于 LIAR-RAW 的**无 oracle（oracle-free）**流水线。
 
-- **Stage A**: frozen dense retrieval over report sentences, optionally fused with simple lexical overlap and a local BM25-like score, then diversified with MMR.
-- **Stage B**: cross-encoder with **latent evidence attention** and an **ordinal classification head**. It trains only from the **claim-level 6-way label** and does **not** use `is_evidence`.
+- **阶段 A**：对报道句子做冻结式稠密检索，可选融合简单词法重叠分数与本地 BM25-like 分数，再通过 MMR 做多样化。
+- **阶段 B**：使用带有**潜在证据注意力（latent evidence attention）**和**序数分类头（ordinal classification head）**的交叉编码器。训练仅依赖**claim 级 6 分类标签**，**不使用** `is_evidence`。
 
-The code is intentionally split into multiple modules instead of a single file.
+代码有意拆分为多个模块，而不是单文件实现。
 
-## Directory layout
+## 目录结构
 
 ```text
 stage_ab/
@@ -42,9 +42,9 @@ stage_ab/
 └── requirements.txt
 ```
 
-## Expected raw data format
+## 原始数据格式要求
 
-Each split is a JSON list. Each item looks like this:
+每个 split 都是一个 JSON 列表。每条样本格式如下：
 
 ```json
 {
@@ -67,29 +67,29 @@ Each split is a JSON list. Each item looks like this:
 }
 ```
 
-Notes:
+说明：
 
-1. If `reports[*].tokenized` exists, the loader uses `tokenized[*].sent` as the sentence inventory.
-2. If `tokenized` is missing, the loader falls back to a simple sentence splitter over `content`.
-3. `is_evidence` is ignored in this pipeline.
+1. 若存在 `reports[*].tokenized`，加载器会使用 `tokenized[*].sent` 作为句子集合。
+2. 若缺失 `tokenized`，加载器会退回到对 `content` 做简单分句。
+3. 本流水线会忽略 `is_evidence`。
 
-## How Stage A works
+## 阶段 A 的工作方式
 
-For each claim:
+对每条 claim：
 
-1. collect all report sentences
-2. embed the claim with a frozen query encoder
-3. embed each sentence with a frozen passage encoder
-4. score each sentence with a weighted hybrid score:
+1. 收集所有 report 句子
+2. 用冻结的 query encoder 对 claim 编码
+3. 用冻结的 passage encoder 对每个句子编码
+4. 用加权混合分数对句子打分：
 
 ```text
 hybrid = 0.70 * dense + 0.20 * lexical_overlap + 0.10 * bm25_like
 ```
 
-5. run MMR to avoid returning many near-duplicate sentences
-6. save top-k candidates as JSONL
+5. 运行 MMR，避免返回大量近重复句子
+6. 将 top-k 候选以 JSONL 保存
 
-Output file example (`stage_a_train.jsonl`):
+输出文件示例（`stage_a_train.jsonl`）：
 
 ```json
 {
@@ -113,32 +113,32 @@ Output file example (`stage_a_train.jsonl`):
 }
 ```
 
-## How Stage B works
+## 阶段 B 的工作方式
 
-Stage B reads Stage A candidates and trains a claim-level model.
+阶段 B 读取阶段 A 的候选结果，并训练 claim 级模型。
 
-For each claim, it takes the top-k candidate sentences and builds `claim + sentence` pairs.
+对每条 claim，取 top-k 候选句子并构建 `claim + sentence` 配对。
 
-The model predicts, **for each sentence**:
+模型会对**每个句子**预测：
 
-- a latent attention weight (how important it is)
-- a latent support probability
-- a latent refute probability
+- 潜在注意力权重（该句的重要程度）
+- 潜在支持概率
+- 潜在反驳概率
 
-Then it aggregates them into claim-level features:
+随后聚合为 claim 级特征：
 
-- support score
-- refute score
-- support-refute margin
-- total evidence strength
-- attention-weighted sentence representation
+- support score（支持分数）
+- refute score（反驳分数）
+- support-refute margin（支持-反驳间隔）
+- total evidence strength（总证据强度）
+- attention-weighted sentence representation（注意力加权句向量）
 
-These are passed to:
+这些特征会送入：
 
-- a 6-way classification head
-- a CORAL ordinal head
+- 6 分类头
+- CORAL 序数头
 
-The losses are:
+损失函数为：
 
 ```text
 L = cross_entropy
@@ -148,9 +148,9 @@ L = cross_entropy
   + λ4 * attention entropy penalty
 ```
 
-This is still **oracle-free** because the training signal is the claim-level label only.
+该方法仍然是**无 oracle**，因为训练信号仅来自 claim 级标签。
 
-## Setup
+## 环境准备
 
 ```bash
 cd liar_raw_oracle_free
@@ -160,9 +160,9 @@ pip install -r requirements.txt
 export PYTHONPATH=src
 ```
 
-## Step 1: edit configs
+## 第 1 步：修改配置
 
-Update these paths in `configs/stage_a.yaml`:
+更新 `configs/stage_a.yaml` 中的路径：
 
 ```yaml
 data:
@@ -171,45 +171,45 @@ data:
   test_path: /path/to/liar_raw/test.json
 ```
 
-After Stage A finishes, make sure `configs/stage_b.yaml` points to the generated JSONL files.
+阶段 A 完成后，确认 `configs/stage_b.yaml` 指向新生成的 JSONL 文件。
 
-## Step 2: run Stage A
+## 第 2 步：运行阶段 A
 
 ```bash
 bash scripts/run_stage_a.sh
 ```
 
-Or manually:
+或手动执行：
 
 ```bash
 PYTHONPATH=src python -m liar_raw.retrieval.build_stage_a --config configs/stage_a.yaml
 ```
 
-## Step 3: train Stage B
+## 第 3 步：训练阶段 B
 
 ```bash
 bash scripts/train_stage_b.sh
 ```
 
-Or manually:
+或手动执行：
 
 ```bash
 PYTHONPATH=src python -m liar_raw.training.train_stage_b --config configs/stage_b.yaml
 ```
 
-Best checkpoint is saved to:
+最佳 checkpoint 将保存到：
 
 ```text
 outputs/stage_b/best_model.pt
 ```
 
-## Step 4: predict and export evidence
+## 第 4 步：预测并导出证据
 
 ```bash
 bash scripts/predict_stage_b.sh
 ```
 
-Or manually:
+或手动执行：
 
 ```bash
 PYTHONPATH=src python -m liar_raw.training.predict_stage_b \
@@ -218,37 +218,37 @@ PYTHONPATH=src python -m liar_raw.training.predict_stage_b \
   --split test
 ```
 
-The exported JSONL contains:
+导出的 JSONL 包含：
 
-- predicted label
-- class probabilities
-- top support evidence sentences
-- top refute evidence sentences
+- 预测标签
+- 各类别概率
+- top 支持证据句
+- top 反驳证据句
 
-## Practical defaults
+## 实用默认参数
 
-Good first settings:
+推荐初始设置：
 
-- Stage A embedder: `BAAI/bge-base-en-v1.5`
-- Stage A top-k: `24`
-- Stage B backbone: `microsoft/deberta-v3-base`
-- Stage B batch size: `4`
-- max length: `256`
+- 阶段 A embedder：`BAAI/bge-base-en-v1.5`
+- 阶段 A top-k：`24`
+- 阶段 B backbone：`microsoft/deberta-v3-base`
+- 阶段 B batch size：`4`
+- max length：`256`
 
-If memory is tight:
+若显存/内存紧张：
 
-- reduce Stage A batch size from `64` to `16`
-- reduce Stage B top-k from `24` to `16`
-- reduce Stage B max length from `256` to `192`
-- keep only the last `1` encoder layer unfrozen
+- 将阶段 A 的 batch size 从 `64` 降到 `16`
+- 将阶段 B 的 top-k 从 `24` 降到 `16`
+- 将阶段 B 的 max length 从 `256` 降到 `192`
+- 仅保留最后 `1` 层 encoder 为可训练状态
 
-## Important caveats
+## 重要注意事项
 
-1. This code is intentionally **oracle-free**, so it does not use `is_evidence` anywhere.
-2. Stage A here is **frozen retrieval**, not a trained retriever.
-3. Because support/refute is latent, the extracted evidence is a model interpretation, not gold supervision.
-4. The default Stage B implementation optimizes claim-level macro-F1, not sentence-level evidence F1.
+1. 本代码刻意保持**无 oracle**，因此不会在任何地方使用 `is_evidence`。
+2. 此处阶段 A 是**冻结检索**，不是可训练检索器。
+3. 由于 support/refute 是潜在变量，抽取出的证据是模型解释，不是金标监督。
+4. 默认阶段 B 实现优化的是 claim 级 macro-F1，而不是句子级 evidence F1。
 
-## Recommended next upgrade
+## 推荐的下一步升级
 
-The strongest next step is to add a **small manually audited sentence-level dev set** and use it only for model selection and evidence evaluation. That lets you keep training oracle-free while still checking whether the latent support/refute sentences are actually reasonable.
+最值得优先做的升级，是新增一个**小规模、人工审校的句子级开发集**，并仅将其用于模型选择与证据评估。这样既能保持训练阶段无 oracle，又能检查潜在 support/refute 句子是否确实合理。
