@@ -1,4 +1,4 @@
-# LIAR-RAW Oracle-Free Stage A / B
+# Stage A / B
 
 This project implements an **oracle-free** pipeline for LIAR-RAW using the JSON format you described.
 
@@ -10,7 +10,7 @@ The code is intentionally split into multiple modules instead of a single file.
 ## Directory layout
 
 ```text
-liar_raw_oracle_free/
+stage_ab/
 ├── configs/
 │   ├── stage_a.yaml
 │   └── stage_b.yaml
