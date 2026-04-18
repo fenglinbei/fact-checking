@@ -67,9 +67,8 @@ stage_ab/
 
 说明：
 
-1. 若存在 `reports[*].tokenized`，加载器会使用 `tokenized[*].sent` 作为句子集合。
-2. 若缺失 `tokenized`，加载器会退回到对 `content` 做简单分句。
-3. 本流水线会忽略 `is_evidence`。
+1. Stage A 会直接从 `reports[*].content` 重新做句子切分，不使用 `reports[*].tokenized`。
+2. 本流水线会忽略 `is_evidence`。
 
 ## Stage A 的工作方式
 
@@ -111,7 +110,7 @@ hybrid = 0.70 * dense + 0.20 * lexical_overlap + 0.10 * bm25_like
 }
 ```
 
-### Stage A 的输入输出（待实现）
+### Stage A 的输入输出
 
 输入:
 
@@ -121,8 +120,8 @@ hybrid = 0.70 * dense + 0.20 * lexical_overlap + 0.10 * bm25_like
 
 输出:
 
-1. 经检索以及去重得到的top-k个句子
-2. 每个句子所在的原始report
+1. 经检索以及去重得到的 top-k 个句子
+2. 每个句子所在的原始 report（随候选一起输出 source_report）
 
 ## Stage B 的工作方式
 
