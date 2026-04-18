@@ -18,7 +18,7 @@ baseline:
   use_context: false
   context_k: 1
   prompt_mode: few_shot
-  few_shot_k: 10
+  few_shot_k: 16
   few_shot_mmr_lambda: 0.7
   retrieval_model: /data/models/bge-base-en-v1.5/
   retrieval_batch_size: 64
