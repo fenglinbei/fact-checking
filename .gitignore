@@ -214,3 +214,4 @@ stage_cde/outputs/graph_inputs/*.jsonl
 # models
 *.pt
 
+./outputs/
