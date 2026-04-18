@@ -95,6 +95,14 @@ sft_train:
   use_flash_attention_2: false
 ```
 
+### 2.4 （可选）flash-linear-attention
+
+安装flash-linear-attention用于训练加速
+
+```bash
+pip install flash-linear-attention
+```
+
 ---
 
 ## 3. Stage A 实现逻辑（从 README_ab 迁移并补充）
