@@ -11,12 +11,12 @@ from transformers import AutoTokenizer
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
 
-from liar_raw_cde.stage_d.collator import GraphBatchCollator
-from liar_raw_cde.stage_d.dataset import GraphDataset
-from liar_raw_cde.stage_d.losses import GraphVerifierCriterion, build_class_balanced_weights
-from liar_raw_cde.stage_d.model import GraphVerifier
-from liar_raw_cde.stage_d.trainer import evaluate
-from liar_raw_cde.utils.io import ensure_dir, load_yaml, save_json, write_jsonl
+from liar_raw.stage_d.collator import GraphBatchCollator
+from liar_raw.stage_d.dataset import GraphDataset
+from liar_raw.stage_d.losses import GraphVerifierCriterion, build_class_balanced_weights
+from liar_raw.stage_d.model import GraphVerifier
+from liar_raw.stage_d.trainer import evaluate
+from liar_raw.utils.io import ensure_dir, load_yaml, save_json, write_jsonl
 
 
 def parse_args():

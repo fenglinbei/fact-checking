@@ -7,9 +7,9 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
 
-from liar_raw_cde.stage_e.faithfulness import FaithfulnessFilter
-from liar_raw_cde.stage_e.inference import generate_seq2seq_records, generate_template_records
-from liar_raw_cde.utils.io import ensure_dir, load_yaml, read_jsonl, write_jsonl
+from liar_raw.stage_e.faithfulness import FaithfulnessFilter
+from liar_raw.stage_e.inference import generate_seq2seq_records, generate_template_records
+from liar_raw.utils.io import ensure_dir, load_yaml, read_jsonl, write_jsonl
 
 
 def parse_args():

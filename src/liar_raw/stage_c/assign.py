@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from liar_raw_cde.utils.text import cosine_from_numpy
+from liar_raw.utils.text import cosine_from_numpy
 
 
 def _extract_sentence(evidence_item: dict[str, Any]) -> str:

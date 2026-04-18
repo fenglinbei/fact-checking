@@ -8,8 +8,8 @@ from sklearn.metrics import precision_recall_fscore_support
 from tqdm.auto import tqdm
 from transformers import get_linear_schedule_with_warmup
 
-from liar_raw_cde.stage_d.inference import build_graph_prediction_records
-from liar_raw_cde.utils.io import ensure_dir, save_json
+from liar_raw.stage_d.inference import build_graph_prediction_records
+from liar_raw.utils.io import ensure_dir, save_json
 
 
 def move_batch_to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
