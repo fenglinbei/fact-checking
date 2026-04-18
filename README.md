@@ -74,6 +74,24 @@ accelerate config
 accelerate env
 ```
 
+### 2.3 （可选）FlashAttention2
+
+`configs/baseline_b0.yaml` / `configs/baseline_b1.yaml` 默认 `sft_train.use_flash_attention_2: true`。  
+若环境没有安装 `flash-attn`，训练脚本会自动回退到默认 attention 实现并打印 warning。
+
+如需启用 FlashAttention2，可在匹配 CUDA/PyTorch 版本的前提下安装：
+
+```bash
+pip install flash-attn --no-build-isolation
+```
+
+若不需要 FlashAttention2，也可直接在配置中关闭：
+
+```yaml
+sft_train:
+  use_flash_attention_2: false
+```
+
 ---
 
 ## 3. Stage A 实现逻辑（从 README_ab 迁移并补充）
