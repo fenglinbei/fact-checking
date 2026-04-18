@@ -1,11 +1,9 @@
-# 阶段 A / B
+# Stage A / B
 
-本项目基于你提供的 JSON 格式，实现了一个用于 LIAR-RAW 的**无 oracle（oracle-free）**流水线。
+本项目实现了一个用于 LIAR-RAW 的**无 oracle（oracle-free）**流水线。
 
-- **阶段 A**：对报道句子做冻结式稠密检索，可选融合简单词法重叠分数与本地 BM25-like 分数，再通过 MMR 做多样化。
-- **阶段 B**：使用带有**潜在证据注意力（latent evidence attention）**和**序数分类头（ordinal classification head）**的交叉编码器。训练仅依赖**claim 级 6 分类标签**，**不使用** `is_evidence`。
-
-代码有意拆分为多个模块，而不是单文件实现。
+- **Stage A**：对报道句子做冻结式稠密检索，可选融合简单词法重叠分数与本地 BM25-like 分数，再通过 MMR 做多样化。
+- **Stage B**：使用带有**潜在证据注意力（latent evidence attention）**和**序数分类头（ordinal classification head）**的交叉编码器。训练仅依赖**claim 级 6 分类标签**，**不使用** `is_evidence`。
 
 ## 目录结构
 
@@ -73,7 +71,7 @@ stage_ab/
 2. 若缺失 `tokenized`，加载器会退回到对 `content` 做简单分句。
 3. 本流水线会忽略 `is_evidence`。
 
-## 阶段 A 的工作方式
+## Stage A 的工作方式
 
 对每条 claim：
 
@@ -113,9 +111,22 @@ hybrid = 0.70 * dense + 0.20 * lexical_overlap + 0.10 * bm25_like
 }
 ```
 
-## 阶段 B 的工作方式
+### Stage A 的输入输出（待实现）
 
-阶段 B 读取阶段 A 的候选结果，并训练 claim 级模型。
+输入:
+
+1. 原始的claim
+2. 多条reports
+3. 每条report对应多个sentences
+
+输出:
+
+1. 经检索以及去重得到的top-k个句子
+2. 每个句子所在的原始report
+
+## Stage B 的工作方式
+
+Stage B 读取Stage A 的候选结果，并训练 claim 级模型。
 
 对每条 claim，取 top-k 候选句子并构建 `claim + sentence` 配对。
 
@@ -171,9 +182,9 @@ data:
   test_path: /path/to/liar_raw/test.json
 ```
 
-阶段 A 完成后，确认 `configs/stage_b.yaml` 指向新生成的 JSONL 文件。
+Stage A 完成后，确认 `configs/stage_b.yaml` 指向新生成的 JSONL 文件。
 
-## 第 2 步：运行阶段 A
+## 第 2 步：运行Stage A
 
 ```bash
 bash scripts/run_stage_a.sh
@@ -185,7 +196,7 @@ bash scripts/run_stage_a.sh
 PYTHONPATH=src python -m liar_raw.retrieval.build_stage_a --config configs/stage_a.yaml
 ```
 
-## 第 3 步：训练阶段 B
+## 第 3 步：训练Stage B
 
 ```bash
 bash scripts/train_stage_b.sh
@@ -229,25 +240,25 @@ PYTHONPATH=src python -m liar_raw.training.predict_stage_b \
 
 推荐初始设置：
 
-- 阶段 A embedder：`BAAI/bge-base-en-v1.5`
-- 阶段 A top-k：`24`
-- 阶段 B backbone：`microsoft/deberta-v3-base`
-- 阶段 B batch size：`4`
+- Stage A embedder：`BAAI/bge-base-en-v1.5`
+- Stage A top-k：`24`
+- Stage B backbone：`microsoft/deberta-v3-base`
+- Stage B batch size：`4`
 - max length：`256`
 
 若显存/内存紧张：
 
-- 将阶段 A 的 batch size 从 `64` 降到 `16`
-- 将阶段 B 的 top-k 从 `24` 降到 `16`
-- 将阶段 B 的 max length 从 `256` 降到 `192`
+- 将Stage A 的 batch size 从 `64` 降到 `16`
+- 将Stage B 的 top-k 从 `24` 降到 `16`
+- 将Stage B 的 max length 从 `256` 降到 `192`
 - 仅保留最后 `1` 层 encoder 为可训练状态
 
 ## 重要注意事项
 
 1. 本代码刻意保持**无 oracle**，因此不会在任何地方使用 `is_evidence`。
-2. 此处阶段 A 是**冻结检索**，不是可训练检索器。
+2. 此处Stage A 是**冻结检索**，不是可训练检索器。
 3. 由于 support/refute 是潜在变量，抽取出的证据是模型解释，不是金标监督。
-4. 默认阶段 B 实现优化的是 claim 级 macro-F1，而不是句子级 evidence F1。
+4. 默认Stage B 实现优化的是 claim 级 macro-F1，而不是句子级 evidence F1。
 
 ## 推荐的下一步升级
 
