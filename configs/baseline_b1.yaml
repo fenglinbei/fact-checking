@@ -43,6 +43,6 @@ sft_train:
   eval_steps: 500
   dataloader_num_workers: 8
   gradient_checkpointing: true
-  use_flash_attention_2: true
+  use_flash_attention_2: false
   lr_scheduler_type: cosine
   max_grad_norm: 1.0
