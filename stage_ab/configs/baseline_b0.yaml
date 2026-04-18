@@ -1,4 +1,11 @@
 output_dir: outputs/liar-raw/llm_baseline
+wandb:
+  enabled: true
+  project: fact-checking-stage-ab
+  run_name: llm_baseline_b0_sft
+  entity: null
+  log_model: false
+  watch: false
 
 data:
   train_candidates: outputs/liar-raw/stage_a/stage_a_train.jsonl
