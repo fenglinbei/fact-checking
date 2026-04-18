@@ -5,7 +5,7 @@ from typing import Iterable
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from liar_raw_cde.utils.text import clean_text, jaccard
+from liar_raw.utils.text import clean_text, jaccard
 
 
 def split_sentences(text: str) -> list[str]:
