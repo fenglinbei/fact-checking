@@ -10,7 +10,7 @@ retrieval:
   device: cuda
   max_length: 256
   batch_size: 64
-  top_k: 24
+  top_k: 32
   alpha_dense: 0.70
   alpha_lexical: 0.20
   alpha_bm25: 0.10
