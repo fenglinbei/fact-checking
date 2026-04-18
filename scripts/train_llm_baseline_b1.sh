@@ -2,6 +2,7 @@
 set -euo pipefail
 
 export PYTHONPATH=src
+export NCCL_CUMEM_HOST_ENABLE=0
 
 CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
   --num_processes=4 \
