@@ -95,12 +95,59 @@ sft_train:
   use_flash_attention_2: false
 ```
 
-### 2.4 （可选）flash-linear-attention
+### 2.4 （可选）FLA fast path（`fla` + `causal-conv1d`）
 
-安装flash-linear-attention用于训练加速
+有些模型（尤其是带自定义 `trust_remote_code` 的实现）会额外尝试加载  
+`flash-linear-attention`（Python 包名通常是 `fla`）和 `causal-conv1d`。  
+这和 FlashAttention2（`flash-attn`）是两条独立依赖链，二者不能互相替代。
+
+建议安装顺序（先装 `causal-conv1d`，再装 `fla`）：
 
 ```bash
-pip install flash-linear-attention
+# 建议先确认与当前 torch/cuda 对齐
+python - <<'PY'
+import torch
+print("torch:", torch.__version__, "cuda:", torch.version.cuda)
+PY
+
+# 1) 安装 causal-conv1d
+pip install -U causal-conv1d --no-build-isolation
+
+# 2) 安装 flash-linear-attention (fla)
+pip install -U fla --no-build-isolation
+```
+
+若编译失败，通常是编译工具链或 CUDA 环境不匹配，建议先检查：
+
+```bash
+nvcc --version
+python - <<'PY'
+import torch
+print(torch.__version__, torch.version.cuda, torch._C._GLIBCXX_USE_CXX11_ABI)
+PY
+```
+
+可用下面脚本做最小验证：
+
+```bash
+python - <<'PY'
+ok = True
+try:
+    import causal_conv1d  # noqa: F401
+    print("causal-conv1d import OK")
+except Exception as e:
+    ok = False
+    print("causal-conv1d import FAIL:", e)
+
+try:
+    import fla  # noqa: F401
+    print("fla import OK")
+except Exception as e:
+    ok = False
+    print("fla import FAIL:", e)
+
+print("ALL_OK =", ok)
+PY
 ```
 
 ---
