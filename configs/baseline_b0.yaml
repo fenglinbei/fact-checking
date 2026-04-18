@@ -21,7 +21,7 @@ baseline:
   few_shot_k: 16
   few_shot_mmr_lambda: 0.7
   retrieval_model: /data/models/bge-base-en-v1.5/
-  retrieval_batch_size: 64
+  retrieval_batch_size: 256
   retrieval_max_length: 256
   max_new_tokens: 24
   temperature: 0.0
