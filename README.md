@@ -9,6 +9,14 @@ pip install -U --force-reinstall "vllm==0.9.2" "transformers==4.52.4" "tokenizer
 pip install -r stage_cde/requirements.txt
 ```
 
+## 模型下载
+
+### BAAI/bge-base-en-v1.5
+
+```bash
+modelscope download --model BAAI/bge-base-en-v1.5 --local_dir /data/models/bge-base-en-v1.5
+```
+
 ## stage C
 
 ### 运行命令
