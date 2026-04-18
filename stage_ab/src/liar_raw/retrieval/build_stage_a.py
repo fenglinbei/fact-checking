@@ -14,6 +14,9 @@ from liar_raw.retrieval.mmr import maximal_marginal_relevance
 from liar_raw.retrieval.text_utils import bm25_like_score, lexical_overlap_f1
 
 
+def canonicalize_sentence(text: str) -> str:
+    return " ".join(text.lower().strip().split())
+
 
 def minmax_scale(values: np.ndarray) -> np.ndarray:
     if values.size == 0:
@@ -23,7 +26,6 @@ def minmax_scale(values: np.ndarray) -> np.ndarray:
     if abs(vmax - vmin) < 1e-8:
         return np.zeros_like(values)
     return (values - vmin) / (vmax - vmin)
-
 
 
 def build_candidates_for_sample(
@@ -68,23 +70,32 @@ def build_candidates_for_sample(
         lambda_weight=mmr_lambda,
     )
 
-    candidates = []
+    deduped_by_text: dict[str, dict] = {}
     for idx in keep_indices:
         sent = sentences[idx]
-        candidates.append(
-            {
+        candidate = {
+            "report_id": sent.report_id,
+            "sent_idx": sent.sent_idx,
+            "text": sent.text,
+            "dense_score": float(dense_scores[idx]),
+            "lexical_score": float(lexical_scores[idx]),
+            "bm25_score": float(bm25_scores[idx]),
+            "hybrid_score": float(hybrid_scores[idx]),
+            "source_report": {
                 "report_id": sent.report_id,
-                "sent_idx": sent.sent_idx,
-                "text": sent.text,
-                "dense_score": float(dense_scores[idx]),
-                "lexical_score": float(lexical_scores[idx]),
-                "bm25_score": float(bm25_scores[idx]),
-                "hybrid_score": float(hybrid_scores[idx]),
                 "link": sent.link,
                 "domain": sent.domain,
-            }
-        )
+                "content": sent.raw.get("content", "") if isinstance(sent.raw, dict) else "",
+            },
+        }
+        dedup_key = canonicalize_sentence(sent.text)
+        old_candidate = deduped_by_text.get(dedup_key)
+        if old_candidate is None or candidate["hybrid_score"] > old_candidate["hybrid_score"]:
+            deduped_by_text[dedup_key] = candidate
+
+    candidates = list(deduped_by_text.values())
     candidates.sort(key=lambda x: x["hybrid_score"], reverse=True)
+    candidates = candidates[:top_k]
     return {
         "event_id": sample.event_id,
         "claim": sample.claim,
@@ -92,7 +103,6 @@ def build_candidates_for_sample(
         "explain": sample.explain,
         "candidates": candidates,
     }
-
 
 
 def main() -> None:
