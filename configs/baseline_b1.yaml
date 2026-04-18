@@ -41,7 +41,7 @@ sft_train:
   logging_steps: 20
   save_steps: 500
   eval_steps: 500
-  dataloader_num_workers: 8
+  dataloader_num_workers: 0
   gradient_checkpointing: true
   use_flash_attention_2: true
   lr_scheduler_type: cosine
