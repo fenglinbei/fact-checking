@@ -18,6 +18,8 @@ dependencies = [
   "tqdm>=4.66.0",
   "numpy>=1.26.0",
   "sentencepiece>=0.1.99",
+  "accelerate>=1.1.0",
+  "deepspeed>=0.15.0",
 ]
 
 
