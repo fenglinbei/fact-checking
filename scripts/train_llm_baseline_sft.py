@@ -3,11 +3,15 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import hashlib
+import json
 import math
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 from accelerate import Accelerator
 from torch.optim import AdamW
@@ -21,6 +25,8 @@ from transformers import (
 )
 
 from liar_raw.baselines.llm_baseline import build_sft_instances, load_jsonl
+from liar_raw import LABELS, LABEL2ID
+from liar_raw.baselines.llm_baseline import build_evidence_block, build_zero_shot_prompt
 from liar_raw.config import load_yaml
 
 
@@ -102,6 +108,24 @@ class TokenizedDataset(Dataset):
         return self.tokenized[idx]
 
 
+class EvalPromptDataset(Dataset):
+    def __init__(self, rows: list[dict], top_k: int, use_context: bool, context_k: int) -> None:
+        self.samples: list[dict[str, str | int]] = []
+        for row in rows:
+            gold_label = str(row.get("label", "")).strip().lower()
+            if gold_label not in LABEL2ID:
+                continue
+            evidence_block = build_evidence_block(row, top_k=top_k, use_context=use_context, context_k=context_k)
+            prompt = build_zero_shot_prompt(claim=str(row.get("claim", "")), evidence_block=evidence_block)
+            self.samples.append({"prompt": prompt, "gold_id": LABEL2ID[gold_label]})
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> dict[str, str | int]:
+        return self.samples[idx]
+
+
 def build_dataloader(
     dataset: Dataset,
     collator: DataCollatorForLanguageModeling,
@@ -122,27 +146,195 @@ def build_dataloader(
     )
 
 
+def build_eval_dataloader(
+    dataset: EvalPromptDataset,
+    tokenizer: AutoTokenizer,
+    batch_size: int,
+    num_workers: int,
+) -> DataLoader:
+    def _collate_fn(items: list[dict[str, str | int]]) -> dict[str, torch.Tensor]:
+        prompts = [str(x["prompt"]) for x in items]
+        gold_ids = torch.tensor([int(x["gold_id"]) for x in items], dtype=torch.long)
+        enc = tokenizer(prompts, padding=True, truncation=True, return_tensors="pt")
+        return {
+            "input_ids": enc["input_ids"],
+            "attention_mask": enc["attention_mask"],
+            "gold_ids": gold_ids,
+        }
+
+    return DataLoader(
+        dataset,
+        shuffle=False,
+        batch_size=batch_size,
+        collate_fn=_collate_fn,
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
+        drop_last=False,
+    )
+
+
+def _parse_label_id(raw_text: str) -> int:
+    clean = raw_text.strip().lower()
+    clean = re.sub(r"[^a-z\- ]", " ", clean)
+    tokens = [t for t in clean.split() if t]
+    if not tokens:
+        return -1
+    joined = " ".join(tokens)
+    for label in LABELS:
+        if re.search(rf"\b{re.escape(label)}\b", joined):
+            return LABEL2ID[label]
+    return -1
+
+
+def _compute_classification_metrics(pred_ids: np.ndarray, gold_ids: np.ndarray) -> dict[str, float | dict[str, dict[str, float]]]:
+    eps = 1e-12
+    per_class: dict[str, dict[str, float]] = {}
+    p_list: list[float] = []
+    r_list: list[float] = []
+    f1_list: list[float] = []
+    for label_id, label in enumerate(LABELS):
+        tp = float(np.sum((pred_ids == label_id) & (gold_ids == label_id)))
+        fp = float(np.sum((pred_ids == label_id) & (gold_ids != label_id)))
+        fn = float(np.sum((pred_ids != label_id) & (gold_ids == label_id)))
+        precision = tp / (tp + fp + eps)
+        recall = tp / (tp + fn + eps)
+        f1 = (2 * precision * recall) / (precision + recall + eps)
+        per_class[label] = {"precision": precision, "recall": recall, "f1": f1}
+        p_list.append(precision)
+        r_list.append(recall)
+        f1_list.append(f1)
+    macro_p = float(np.mean(p_list))
+    macro_r = float(np.mean(r_list))
+    macro_f1 = float(np.mean(f1_list))
+    parse_error_rate = float(np.mean(pred_ids < 0))
+    accuracy = float(np.mean(pred_ids == gold_ids))
+    return {
+        "accuracy": accuracy,
+        "macro_precision": macro_p,
+        "macro_recall": macro_r,
+        "macro_f1": macro_f1,
+        "parse_error_rate": parse_error_rate,
+        "per_class": per_class,
+    }
+
+
+def _build_confusion_matrix(pred_ids: np.ndarray, gold_ids: np.ndarray) -> tuple[np.ndarray, list[str]]:
+    labels_with_parse = LABELS + ["parse_error"]
+    mat = np.zeros((len(LABELS), len(labels_with_parse)), dtype=np.int64)
+    for g, p in zip(gold_ids.tolist(), pred_ids.tolist()):
+        pred_idx = p if p >= 0 else len(LABELS)
+        mat[g, pred_idx] += 1
+    return mat, labels_with_parse
+
+
+def _save_eval_artifacts(
+    output_dir: Path,
+    global_step: int,
+    metrics: dict[str, float | dict[str, dict[str, float]]],
+    confusion_matrix: np.ndarray,
+    confusion_labels: list[str],
+) -> dict[str, str]:
+    step_dir = output_dir / "eval" / f"step-{global_step}"
+    step_dir.mkdir(parents=True, exist_ok=True)
+
+    metrics_path = step_dir / "metrics.json"
+    with metrics_path.open("w", encoding="utf-8") as f:
+        json.dump(metrics, f, ensure_ascii=False, indent=2)
+
+    confusion_data_path = step_dir / "confusion_matrix.json"
+    with confusion_data_path.open("w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "gold_labels": LABELS,
+                "pred_labels": confusion_labels,
+                "matrix": confusion_matrix.tolist(),
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    im = ax.imshow(confusion_matrix, cmap="Blues")
+    ax.set_xticks(np.arange(len(confusion_labels)))
+    ax.set_xticklabels(confusion_labels, rotation=45, ha="right")
+    ax.set_yticks(np.arange(len(LABELS)))
+    ax.set_yticklabels(LABELS)
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Gold")
+    ax.set_title(f"Confusion Matrix @ step {global_step}")
+    for i in range(confusion_matrix.shape[0]):
+        for j in range(confusion_matrix.shape[1]):
+            ax.text(j, i, str(confusion_matrix[i, j]), ha="center", va="center", color="black", fontsize=8)
+    fig.colorbar(im, ax=ax)
+    fig.tight_layout()
+    confusion_png_path = step_dir / "confusion_matrix.png"
+    fig.savefig(confusion_png_path, dpi=200)
+    plt.close(fig)
+
+    return {
+        "metrics_path": str(metrics_path),
+        "confusion_data_path": str(confusion_data_path),
+        "confusion_png_path": str(confusion_png_path),
+    }
+
+
 def evaluate(
     model: AutoModelForCausalLM,
     dataloader: DataLoader,
+    tokenizer: AutoTokenizer,
     accelerator: Accelerator,
-) -> float:
+) -> dict[str, float]:
     model.eval()
-    loss_list: list[torch.Tensor] = []
+    all_pred_ids: list[torch.Tensor] = []
+    all_gold_ids: list[torch.Tensor] = []
+
     with torch.no_grad():
         for batch in dataloader:
-            outputs = model(**batch)
-            loss = outputs.loss.detach().float()
-            gathered = accelerator.gather_for_metrics(loss.unsqueeze(0))
-            loss_list.append(gathered)
+            gold_ids = batch.pop("gold_ids")
+            generated = model.generate(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                max_new_tokens=24,
+                do_sample=False,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+            prompt_lengths = batch["attention_mask"].sum(dim=1)
+            pred_ids: list[int] = []
+            for i in range(generated.shape[0]):
+                gen_ids = generated[i, int(prompt_lengths[i]) :]
+                raw_pred = tokenizer.decode(gen_ids, skip_special_tokens=True)
+                pred_ids.append(_parse_label_id(raw_pred))
 
-    if not loss_list:
-        return 0.0
+            pred_tensor = torch.tensor(pred_ids, dtype=torch.long, device=gold_ids.device)
+            gathered_pred = accelerator.gather_for_metrics(pred_tensor)
+            gathered_gold = accelerator.gather_for_metrics(gold_ids)
+            all_pred_ids.append(gathered_pred.cpu())
+            all_gold_ids.append(gathered_gold.cpu())
 
-    all_losses = torch.cat(loss_list)
-    val_loss = all_losses.mean().item()
+    if not all_gold_ids:
+        model.train()
+        return {
+            "accuracy": 0.0,
+            "macro_precision": 0.0,
+            "macro_recall": 0.0,
+            "macro_f1": 0.0,
+            "parse_error_rate": 0.0,
+            "per_class": {},
+            "confusion_matrix": np.zeros((len(LABELS), len(LABELS) + 1), dtype=np.int64),
+            "confusion_labels": LABELS + ["parse_error"],
+        }
+
+    pred_np = torch.cat(all_pred_ids).numpy()
+    gold_np = torch.cat(all_gold_ids).numpy()
+    metrics = _compute_classification_metrics(pred_np, gold_np)
+    confusion_matrix, confusion_labels = _build_confusion_matrix(pred_np, gold_np)
+    metrics["confusion_matrix"] = confusion_matrix
+    metrics["confusion_labels"] = confusion_labels
     model.train()
-    return val_loss
+    return metrics
 
 
 def save_model(
@@ -228,6 +420,7 @@ def main() -> None:
 
     train_instances = build_sft_instances(train_rows, top_k=top_k, use_context=use_context, context_k=context_k)
     val_instances = build_sft_instances(val_rows, top_k=top_k, use_context=use_context, context_k=context_k)
+    val_eval_ds = EvalPromptDataset(val_rows, top_k=top_k, use_context=use_context, context_k=context_k)
 
     model_name_or_path = str(baseline_cfg.get("model_name_or_path", "/data/models/Qwen3.5-9B"))
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
@@ -280,6 +473,12 @@ def main() -> None:
         num_workers=num_workers,
         shuffle=False,
     )
+    val_eval_dl = build_eval_dataloader(
+        val_eval_ds,
+        tokenizer=tokenizer,
+        batch_size=int(train_cfg.get("per_device_eval_batch_size", 1)),
+        num_workers=num_workers,
+    )
 
     optimizer = AdamW(
         model.parameters(),
@@ -299,7 +498,9 @@ def main() -> None:
         num_training_steps=max_train_steps,
     )
 
-    model, optimizer, train_dl, val_dl, scheduler = accelerator.prepare(model, optimizer, train_dl, val_dl, scheduler)
+    model, optimizer, train_dl, val_dl, val_eval_dl, scheduler = accelerator.prepare(
+        model, optimizer, train_dl, val_dl, val_eval_dl, scheduler
+    )
 
     output_dir = Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline")) / ("b1" if use_context else "b0")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -311,7 +512,7 @@ def main() -> None:
 
     progress_bar = tqdm(range(max_train_steps), disable=not accelerator.is_local_main_process)
     global_step = 0
-    best_val_loss = float("inf")
+    best_val_loss = float("-inf")
 
     for epoch in range(num_epochs):
         model.train()
@@ -336,10 +537,59 @@ def main() -> None:
                     accelerator.log({"train/loss": train_loss, "train/lr": lr, "train/epoch": epoch}, step=global_step)
 
                 if global_step % eval_steps == 0:
-                    val_loss = evaluate(model, val_dl, accelerator)
-                    accelerator.log({"eval/loss": val_loss}, step=global_step)
-                    if val_loss < best_val_loss:
-                        best_val_loss = val_loss
+                    eval_metrics = evaluate(model, val_eval_dl, tokenizer, accelerator)
+                    macro_f1 = float(eval_metrics["macro_f1"])
+                    accelerator.log(
+                        {
+                            "eval/accuracy": float(eval_metrics["accuracy"]),
+                            "eval/macro_precision": float(eval_metrics["macro_precision"]),
+                            "eval/macro_recall": float(eval_metrics["macro_recall"]),
+                            "eval/macro_f1": macro_f1,
+                            "eval/parse_error_rate": float(eval_metrics["parse_error_rate"]),
+                        },
+                        step=global_step,
+                    )
+                    per_class = eval_metrics.get("per_class", {})
+                    if isinstance(per_class, dict):
+                        for label, label_metrics in per_class.items():
+                            if isinstance(label_metrics, dict):
+                                accelerator.log(
+                                    {
+                                        f"eval/{label}/precision": float(label_metrics.get("precision", 0.0)),
+                                        f"eval/{label}/recall": float(label_metrics.get("recall", 0.0)),
+                                        f"eval/{label}/f1": float(label_metrics.get("f1", 0.0)),
+                                    },
+                                    step=global_step,
+                                )
+
+                    accelerator.wait_for_everyone()
+                    if accelerator.is_main_process:
+                        artifacts = _save_eval_artifacts(
+                            output_dir=output_dir,
+                            global_step=global_step,
+                            metrics={
+                                "step": global_step,
+                                "accuracy": float(eval_metrics["accuracy"]),
+                                "macro_precision": float(eval_metrics["macro_precision"]),
+                                "macro_recall": float(eval_metrics["macro_recall"]),
+                                "macro_f1": macro_f1,
+                                "parse_error_rate": float(eval_metrics["parse_error_rate"]),
+                                "per_class": per_class,
+                            },
+                            confusion_matrix=eval_metrics["confusion_matrix"],
+                            confusion_labels=eval_metrics["confusion_labels"],
+                        )
+                        accelerator.log(
+                            {
+                                "eval/metrics_path": artifacts["metrics_path"],
+                                "eval/confusion_data_path": artifacts["confusion_data_path"],
+                                "eval/confusion_png_path": artifacts["confusion_png_path"],
+                            },
+                            step=global_step,
+                        )
+
+                    if macro_f1 > best_val_loss:
+                        best_val_loss = macro_f1
                         save_model(accelerator, model, tokenizer, output_dir / "best")
 
                 if global_step % save_steps == 0:
