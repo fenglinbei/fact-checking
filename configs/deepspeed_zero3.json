@@ -14,7 +14,8 @@
     "contiguous_gradients": true,
     "reduce_bucket_size": 20000000,
     "stage3_prefetch_bucket_size": 20000000,
-    "stage3_param_persistence_threshold": 100000
+    "stage3_param_persistence_threshold": 100000,
+    "stage3_gather_16bit_weights_on_model_save": true
   },
   "gradient_accumulation_steps": 8,
   "gradient_clipping": 1.0,
