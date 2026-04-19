@@ -28,7 +28,7 @@ baseline:
   do_sample: false
 
 sft_train:
-  deepspeed_config: configs/deepspeed_zero3.json
+  deepspeed_config: configs/deepspeed_zero2.json
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 8
@@ -41,7 +41,7 @@ sft_train:
   logging_steps: 10
   save_steps: 200
   eval_steps: 200
-  dataloader_num_workers: 0
+  dataloader_num_workers: 4
   gradient_checkpointing: true
   use_flash_attention_2: true
   lr_scheduler_type: cosine

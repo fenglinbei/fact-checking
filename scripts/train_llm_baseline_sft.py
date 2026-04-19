@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import hashlib
 import math
 import os
 from dataclasses import dataclass
@@ -35,36 +36,70 @@ def _fla_fast_path_available() -> bool:
 class SFTDatasetBuilder:
     tokenizer: AutoTokenizer
     max_length: int
+    cache_dir: Path | None = None
 
-    def build(self, instances: list[dict[str, str]]) -> Dataset:
-        return LazyTokenizedDataset(instances=instances, tokenizer=self.tokenizer, max_length=self.max_length)
+    def build(self, instances: list[dict[str, str]], split: str, accelerator: Accelerator) -> Dataset:
+        if self.cache_dir is None:
+            tokenized = _tokenize_instances(instances=instances, tokenizer=self.tokenizer, max_length=self.max_length)
+            return TokenizedDataset(tokenized=tokenized)
+
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = self.cache_dir / _build_cache_name(
+            split=split,
+            max_length=self.max_length,
+            tokenizer_name=self.tokenizer.name_or_path,
+            instances=instances,
+        )
+        with accelerator.main_process_first():
+            if not cache_path.exists():
+                tokenized = _tokenize_instances(instances=instances, tokenizer=self.tokenizer, max_length=self.max_length)
+                torch.save(tokenized, cache_path)
+
+        tokenized = torch.load(cache_path, map_location="cpu", weights_only=False)
+        return TokenizedDataset(tokenized=tokenized)
 
 
-class LazyTokenizedDataset(Dataset):
-    def __init__(self, instances: list[dict[str, str]], tokenizer: AutoTokenizer, max_length: int) -> None:
-        self.instances = instances
-        self.tokenizer = tokenizer
-        self.max_length = max_length
+def _build_cache_name(split: str, max_length: int, tokenizer_name: str, instances: list[dict[str, str]]) -> str:
+    tok_hash = hashlib.md5(tokenizer_name.encode("utf-8"), usedforsecurity=False).hexdigest()[:10]
+    data_hash = hashlib.md5(usedforsecurity=False)
+    data_hash.update(str(len(instances)).encode("utf-8"))
+    for row in instances:
+        data_hash.update(row["prompt"].encode("utf-8"))
+        data_hash.update(row["target"].encode("utf-8"))
+    return f"{split}_ml{max_length}_{tok_hash}_{data_hash.hexdigest()[:16]}.pt"
 
-    def __len__(self) -> int:
-        return len(self.instances)
 
-    def __getitem__(self, idx: int) -> dict[str, list[int]]:
-        row = self.instances[idx]
+def _tokenize_instances(instances: list[dict[str, str]], tokenizer: AutoTokenizer, max_length: int) -> list[dict[str, list[int]]]:
+    tokenized: list[dict[str, list[int]]] = []
+    for row in instances:
         text = f"{row['prompt']} {row['target']}"
-        enc = self.tokenizer(
+        enc = tokenizer(
             text,
             truncation=True,
-            max_length=self.max_length,
+            max_length=max_length,
             padding=False,
         )
         ids = enc["input_ids"]
         mask = enc["attention_mask"]
-        return {
-            "input_ids": ids,
-            "attention_mask": mask,
-            "labels": ids[:],
-        }
+        tokenized.append(
+            {
+                "input_ids": ids,
+                "attention_mask": mask,
+                "labels": ids[:],
+            }
+        )
+    return tokenized
+
+
+class TokenizedDataset(Dataset):
+    def __init__(self, tokenized: list[dict[str, list[int]]]) -> None:
+        self.tokenized = tokenized
+
+    def __len__(self) -> int:
+        return len(self.tokenized)
+
+    def __getitem__(self, idx: int) -> dict[str, list[int]]:
+        return self.tokenized[idx]
 
 
 def build_dataloader(
@@ -223,9 +258,11 @@ def main() -> None:
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
         model.config.use_cache = False
 
-    builder = SFTDatasetBuilder(tokenizer=tokenizer, max_length=int(train_cfg.get("max_length", 2048)))
-    train_ds = builder.build(train_instances)
-    val_ds = builder.build(val_instances)
+    cache_dir_cfg = train_cfg.get("tokenized_cache_dir")
+    cache_dir = Path(str(cache_dir_cfg)) if cache_dir_cfg else Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline")) / "tokenized_cache"
+    builder = SFTDatasetBuilder(tokenizer=tokenizer, max_length=int(train_cfg.get("max_length", 2048)), cache_dir=cache_dir)
+    train_ds = builder.build(train_instances, split="train", accelerator=accelerator)
+    val_ds = builder.build(val_instances, split="val", accelerator=accelerator)
 
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=8)
     num_workers = int(train_cfg.get("dataloader_num_workers", 0))

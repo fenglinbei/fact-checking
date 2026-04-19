@@ -11,5 +11,5 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
   --mixed_precision=bf16 \
   --dynamo_backend=inductor \
   --use_deepspeed \
-  --deepspeed_config_file configs/deepspeed_zero3.json \
+  --deepspeed_config_file configs/deepspeed_zero2.json \
   scripts/train_llm_baseline_sft.py --config configs/baseline_b1.yaml
