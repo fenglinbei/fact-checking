@@ -120,11 +120,30 @@ def save_model(
     unwrapped = accelerator.unwrap_model(model)
     if accelerator.is_main_process:
         output_path.mkdir(parents=True, exist_ok=True)
+
+        try:
+            state_dict = accelerator.get_state_dict(model)
+        except ValueError as exc:
+            if "stage3_gather_16bit_weights_on_model_save" not in str(exc):
+                raise
+            if not hasattr(model, "save_checkpoint"):
+                raise
+
+            ds_ckpt_dir = output_path / "ds_checkpoint"
+            model.save_checkpoint(str(ds_ckpt_dir))
+            tokenizer.save_pretrained(str(output_path))
+            print(
+                "[WARN] DeepSpeed ZeRO-3 16-bit gather is disabled; saved a DeepSpeed checkpoint to "
+                f"{ds_ckpt_dir}. Convert to fp32 using zero_to_fp32.py or enable "
+                "stage3_gather_16bit_weights_on_model_save."
+            )
+            return
+
         unwrapped.save_pretrained(
             str(output_path),
             is_main_process=True,
             save_function=accelerator.save,
-            state_dict=accelerator.get_state_dict(model),
+            state_dict=state_dict,
         )
         tokenizer.save_pretrained(str(output_path))
 
