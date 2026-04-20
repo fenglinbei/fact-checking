@@ -151,11 +151,21 @@ def build_eval_dataloader(
     tokenizer: AutoTokenizer,
     batch_size: int,
     num_workers: int,
+    max_length: int,
 ) -> DataLoader:
-    def _collate_fn(items: list[dict[str, str | int]]) -> dict[str, torch.Tensor]:
+    def _collate_fn(items):
         prompts = [str(x["prompt"]) for x in items]
         gold_ids = torch.tensor([int(x["gold_id"]) for x in items], dtype=torch.long)
-        enc = tokenizer(prompts, padding=True, truncation=True, return_tensors="pt")
+
+        enc = tokenizer(
+            prompts,
+            padding=True,
+            truncation=True,
+            max_length=max_length,
+            pad_to_multiple_of=8,
+            return_tensors="pt",
+        )
+
         return {
             "input_ids": enc["input_ids"],
             "attention_mask": enc["attention_mask"],
@@ -309,6 +319,12 @@ def evaluate(
     max_new_tokens: int = 24,
 ) -> dict[str, float]:
     model.eval()
+
+    unwrapped = accelerator.unwrap_model(model)
+    old_use_cache = getattr(unwrapped.config, "use_cache", None)
+    if old_use_cache is not None:
+        unwrapped.config.use_cache = True
+
     all_pred_ids: list[torch.Tensor] = []
     all_gold_ids: list[torch.Tensor] = []
     pad_id = -100
@@ -319,38 +335,45 @@ def evaluate(
         leave=False,
     )
 
-    with torch.no_grad():
-        for batch in dataloader:
-            gold_ids = batch["gold_ids"]
-            if gold_ids.numel() == 0:
+    try:
+
+        with torch.no_grad():
+            for batch in dataloader:
+                gold_ids = batch["gold_ids"]
+                if gold_ids.numel() == 0:
+                    eval_progress.update(1)
+                    continue
+
+                generated = model.generate(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                        max_new_tokens=max_new_tokens,
+                        do_sample=False,
+                        use_cache=True,
+                        pad_token_id=tokenizer.pad_token_id,
+                        synced_gpus=accelerator.num_processes > 1,
+                    )
+                prompt_lengths = batch["attention_mask"].sum(dim=1)
+                pred_ids: list[int] = []
+                for i in range(generated.shape[0]):
+                    gen_ids = generated[i, int(prompt_lengths[i]) :]
+                    raw_pred = tokenizer.decode(gen_ids, skip_special_tokens=True)
+                    pred_ids.append(_parse_label_id(raw_pred))
+
+                pred_tensor = torch.tensor(pred_ids, dtype=torch.long, device=gold_ids.device)
+                pred_tensor = accelerator.pad_across_processes(pred_tensor, dim=0, pad_index=pad_id)
+                gold_ids = accelerator.pad_across_processes(gold_ids, dim=0, pad_index=pad_id)
+                gathered_pred = accelerator.gather(pred_tensor)
+                gathered_gold = accelerator.gather(gold_ids)
+                valid_mask = gathered_gold != pad_id
+                if valid_mask.any():
+                    all_pred_ids.append(gathered_pred[valid_mask].cpu())
+                    all_gold_ids.append(gathered_gold[valid_mask].cpu())
                 eval_progress.update(1)
-                continue
 
-            generated = model.generate(
-                input_ids=batch["input_ids"],
-                attention_mask=batch["attention_mask"],
-                max_new_tokens=max_new_tokens,
-                do_sample=False,
-                pad_token_id=tokenizer.pad_token_id,
-                synced_gpus=accelerator.num_processes > 1,
-            )
-            prompt_lengths = batch["attention_mask"].sum(dim=1)
-            pred_ids: list[int] = []
-            for i in range(generated.shape[0]):
-                gen_ids = generated[i, int(prompt_lengths[i]) :]
-                raw_pred = tokenizer.decode(gen_ids, skip_special_tokens=True)
-                pred_ids.append(_parse_label_id(raw_pred))
-
-            pred_tensor = torch.tensor(pred_ids, dtype=torch.long, device=gold_ids.device)
-            pred_tensor = accelerator.pad_across_processes(pred_tensor, dim=0, pad_index=pad_id)
-            gold_ids = accelerator.pad_across_processes(gold_ids, dim=0, pad_index=pad_id)
-            gathered_pred = accelerator.gather(pred_tensor)
-            gathered_gold = accelerator.gather(gold_ids)
-            valid_mask = gathered_gold != pad_id
-            if valid_mask.any():
-                all_pred_ids.append(gathered_pred[valid_mask].cpu())
-                all_gold_ids.append(gathered_gold[valid_mask].cpu())
-            eval_progress.update(1)
+    finally:
+        if old_use_cache is not None:
+            unwrapped.config.use_cache = old_use_cache
 
     eval_progress.close()
 
@@ -384,35 +407,48 @@ def save_model(
     output_path: Path,
 ) -> None:
     accelerator.wait_for_everyone()
-    unwrapped = accelerator.unwrap_model(model)
+
     if accelerator.is_main_process:
         output_path.mkdir(parents=True, exist_ok=True)
 
-        try:
-            state_dict = accelerator.get_state_dict(model)
-        except ValueError as exc:
-            if "stage3_gather_16bit_weights_on_model_save" not in str(exc):
-                raise
-            if not hasattr(model, "save_checkpoint"):
-                raise
+    accelerator.wait_for_everyone()
+    unwrapped = accelerator.unwrap_model(model)
 
-            ds_ckpt_dir = output_path / "ds_checkpoint"
-            model.save_checkpoint(str(ds_ckpt_dir))
+    try:
+        # 关键：不要放在 if accelerator.is_main_process 里面
+        state_dict = accelerator.get_state_dict(model)
+
+        # 关键：所有 rank 都调用 save_pretrained，但只有 main process 真正写文件
+        unwrapped.save_pretrained(
+            str(output_path),
+            is_main_process=accelerator.is_main_process,
+            save_function=accelerator.save,
+            state_dict=state_dict,
+        )
+
+        if accelerator.is_main_process:
+            tokenizer.save_pretrained(str(output_path))
+
+    except ValueError as exc:
+        if "stage3_gather_16bit_weights_on_model_save" not in str(exc):
+            raise
+        if not hasattr(model, "save_checkpoint"):
+            raise
+
+        ds_ckpt_dir = output_path / "ds_checkpoint"
+
+        # 关键：DeepSpeed save_checkpoint 必须所有 rank 调用
+        model.save_checkpoint(str(ds_ckpt_dir))
+
+        if accelerator.is_main_process:
             tokenizer.save_pretrained(str(output_path))
             print(
                 "[WARN] DeepSpeed ZeRO-3 16-bit gather is disabled; saved a DeepSpeed checkpoint to "
                 f"{ds_ckpt_dir}. Convert to fp32 using zero_to_fp32.py or enable "
                 "stage3_gather_16bit_weights_on_model_save."
             )
-            return
 
-        unwrapped.save_pretrained(
-            str(output_path),
-            is_main_process=True,
-            save_function=accelerator.save,
-            state_dict=state_dict,
-        )
-        tokenizer.save_pretrained(str(output_path))
+    accelerator.wait_for_everyone()
 
 
 def main() -> None:
@@ -540,11 +576,14 @@ def main() -> None:
         num_workers=num_workers,
         shuffle=False,
     )
+
+    max_length = int(train_cfg.get("max_length", 2048))
     val_eval_dl = build_eval_dataloader(
         val_eval_ds,
         tokenizer=tokenizer,
         batch_size=int(train_cfg.get("per_device_eval_batch_size", 1)),
         num_workers=num_workers,
+        max_length=max_length,
     )
 
     optimizer = AdamW(

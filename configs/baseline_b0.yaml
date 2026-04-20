@@ -23,7 +23,7 @@ baseline:
   retrieval_model: /data/models/bge-base-en-v1.5/
   retrieval_batch_size: 256
   retrieval_max_length: 256
-  max_new_tokens: 24
+  max_new_tokens: 8
   temperature: 0.0
   do_sample: false
 
