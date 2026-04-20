@@ -286,20 +286,33 @@ def evaluate(
     dataloader: DataLoader,
     tokenizer: AutoTokenizer,
     accelerator: Accelerator,
+    max_new_tokens: int = 24,
 ) -> dict[str, float]:
     model.eval()
     all_pred_ids: list[torch.Tensor] = []
     all_gold_ids: list[torch.Tensor] = []
+    pad_id = -100
+    eval_progress = tqdm(
+        total=len(dataloader),
+        desc="eval",
+        disable=not accelerator.is_local_main_process,
+        leave=False,
+    )
 
     with torch.no_grad():
         for batch in dataloader:
-            gold_ids = batch.pop("gold_ids")
+            gold_ids = batch["gold_ids"]
+            if gold_ids.numel() == 0:
+                eval_progress.update(1)
+                continue
+
             generated = model.generate(
                 input_ids=batch["input_ids"],
                 attention_mask=batch["attention_mask"],
-                max_new_tokens=24,
+                max_new_tokens=max_new_tokens,
                 do_sample=False,
                 pad_token_id=tokenizer.pad_token_id,
+                synced_gpus=accelerator.num_processes > 1,
             )
             prompt_lengths = batch["attention_mask"].sum(dim=1)
             pred_ids: list[int] = []
@@ -309,10 +322,17 @@ def evaluate(
                 pred_ids.append(_parse_label_id(raw_pred))
 
             pred_tensor = torch.tensor(pred_ids, dtype=torch.long, device=gold_ids.device)
-            gathered_pred = accelerator.gather_for_metrics(pred_tensor)
-            gathered_gold = accelerator.gather_for_metrics(gold_ids)
-            all_pred_ids.append(gathered_pred.cpu())
-            all_gold_ids.append(gathered_gold.cpu())
+            pred_tensor = accelerator.pad_across_processes(pred_tensor, dim=0, pad_index=pad_id)
+            gold_ids = accelerator.pad_across_processes(gold_ids, dim=0, pad_index=pad_id)
+            gathered_pred = accelerator.gather(pred_tensor)
+            gathered_gold = accelerator.gather(gold_ids)
+            valid_mask = gathered_gold != pad_id
+            if valid_mask.any():
+                all_pred_ids.append(gathered_pred[valid_mask].cpu())
+                all_gold_ids.append(gathered_gold[valid_mask].cpu())
+            eval_progress.update(1)
+
+    eval_progress.close()
 
     if not all_gold_ids:
         model.train()
@@ -537,7 +557,13 @@ def main() -> None:
                     accelerator.log({"train/loss": train_loss, "train/lr": lr, "train/epoch": epoch}, step=global_step)
 
                 if global_step % eval_steps == 0:
-                    eval_metrics = evaluate(model, val_eval_dl, tokenizer, accelerator)
+                    eval_metrics = evaluate(
+                        model,
+                        val_eval_dl,
+                        tokenizer,
+                        accelerator,
+                        max_new_tokens=int(baseline_cfg.get("max_new_tokens", 24)),
+                    )
                     macro_f1 = float(eval_metrics["macro_f1"])
                     accelerator.log(
                         {
