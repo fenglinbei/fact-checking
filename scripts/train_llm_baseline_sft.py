@@ -281,6 +281,26 @@ def _save_eval_artifacts(
     }
 
 
+def _select_mini_val_rows(
+    rows: list[dict],
+    mini_val_size: int,
+    mini_val_seed: int,
+    accelerator: Accelerator,
+) -> list[dict]:
+    if mini_val_size <= 0 or mini_val_size >= len(rows):
+        return rows
+
+    rng = np.random.default_rng(mini_val_seed)
+    indices = rng.choice(len(rows), size=mini_val_size, replace=False)
+    mini_rows = [rows[int(i)] for i in indices.tolist()]
+    if accelerator.is_main_process:
+        print(
+            f"[INFO] mini-val enabled: sampled {len(mini_rows)} / {len(rows)} "
+            f"validation rows (seed={mini_val_seed})."
+        )
+    return mini_rows
+
+
 def evaluate(
     model: AutoModelForCausalLM,
     dataloader: DataLoader,
@@ -398,6 +418,18 @@ def save_model(
 def main() -> None:
     parser = argparse.ArgumentParser(description="SFT train for LLM baselines (Accelerate).")
     parser.add_argument("--config", type=str, required=True)
+    parser.add_argument(
+        "--mini-val-size",
+        type=int,
+        default=None,
+        help="If > 0, randomly sample this many examples from val set for faster eval (e.g., 32/64/128).",
+    )
+    parser.add_argument(
+        "--mini-val-seed",
+        type=int,
+        default=None,
+        help="Random seed for mini val sampling. Falls back to sft_train.seed or 42.",
+    )
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
@@ -433,6 +465,21 @@ def main() -> None:
 
     train_rows = load_jsonl(data_cfg["train_candidates"])
     val_rows = load_jsonl(data_cfg["val_candidates"])
+
+    mini_val_size = int(
+        args.mini_val_size if args.mini_val_size is not None else int(train_cfg.get("mini_val_size", 0))
+    )
+    mini_val_seed = int(
+        args.mini_val_seed
+        if args.mini_val_seed is not None
+        else int(train_cfg.get("mini_val_seed", train_cfg.get("seed", 42)))
+    )
+    val_rows = _select_mini_val_rows(
+        rows=val_rows,
+        mini_val_size=mini_val_size,
+        mini_val_seed=mini_val_seed,
+        accelerator=accelerator,
+    )
 
     use_context = bool(baseline_cfg.get("use_context", False))
     top_k = int(baseline_cfg.get("top_k", 8))
