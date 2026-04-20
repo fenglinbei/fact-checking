@@ -14,7 +14,7 @@ data:
 
 baseline:
   model_name_or_path: /data/models/Qwen2.5-7B-Instruct
-  top_k: 8
+  top_k: 5
   use_context: true
   context_k: 1
   prompt_mode: zero_shot
@@ -37,7 +37,7 @@ sft_train:
   weight_decay: 0.0
   warmup_ratio: 0.03
   bf16: true
-  max_length: 2048
+  max_length: 1024
   logging_steps: 10
   save_steps: 200
   eval_steps: 10
