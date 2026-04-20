@@ -26,5 +26,5 @@ CUDA_VISIBLE_DEVICES=2,3 accelerate launch \
   --num_machines=1 \
   --mixed_precision=bf16 \
   --use_deepspeed \
-  --deepspeed_config_file configs/deepspeed_zero2.json \
+  --deepspeed_config_file configs/deepspeed_zero3.json \
   scripts/train_llm_baseline_sft.py --config configs/baseline_b0.yaml
