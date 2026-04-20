@@ -1,0 +1,17 @@
+{
+  "bf16": {
+    "enabled": true
+  },
+  "zero_optimization": {
+    "stage": 3,
+    "contiguous_gradients": true,
+    "overlap_comm": true,
+    "reduce_bucket_size": 500000000,
+    "allgather_bucket_size": 500000000,
+    "stage3_prefetch_bucket_size": 100000000,
+    "stage3_param_persistence_threshold": 100000
+  },
+  "gradient_clipping": 1.0,
+  "gradient_accumulation_steps": 8,
+  "train_micro_batch_size_per_gpu": 1
+}
