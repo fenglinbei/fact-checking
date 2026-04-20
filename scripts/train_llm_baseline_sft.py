@@ -340,9 +340,6 @@ def evaluate(
         with torch.no_grad():
             for batch in dataloader:
                 gold_ids = batch["gold_ids"]
-                if gold_ids.numel() == 0:
-                    eval_progress.update(1)
-                    continue
 
                 generated = model.generate(
                         input_ids=batch["input_ids"],
@@ -643,6 +640,7 @@ def main() -> None:
                     accelerator.log({"train/loss": train_loss, "train/lr": lr, "train/epoch": epoch}, step=global_step)
 
                 if global_step % eval_steps == 0:
+                    print(f"[rank {accelerator.process_index}] before evaluate step={global_step}", flush=True)
                     eval_metrics = evaluate(
                         model,
                         val_eval_dl,
@@ -650,6 +648,7 @@ def main() -> None:
                         accelerator,
                         max_new_tokens=int(baseline_cfg.get("max_new_tokens", 24)),
                     )
+                    print(f"[rank {accelerator.process_index}] after evaluate step={global_step}", flush=True)
                     macro_f1 = float(eval_metrics["macro_f1"])
                     accelerator.log(
                         {
@@ -702,10 +701,14 @@ def main() -> None:
 
                     if macro_f1 > best_val_loss:
                         best_val_loss = macro_f1
+                        print(f"[rank {accelerator.process_index}] before save best step={global_step}", flush=True)
                         save_model(accelerator, model, tokenizer, output_dir / "best")
+                        print(f"[rank {accelerator.process_index}] after save best step={global_step}", flush=True)
 
                 if global_step % save_steps == 0:
+                    print(f"[rank {accelerator.process_index}] before save best step={global_step}", flush=True)
                     save_model(accelerator, model, tokenizer, output_dir / f"checkpoint-{global_step}")
+                    print(f"[rank {accelerator.process_index}] after save best step={global_step}", flush=True)
 
                 if global_step >= max_train_steps:
                     break
