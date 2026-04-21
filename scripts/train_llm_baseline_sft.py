@@ -805,9 +805,29 @@ def main() -> None:
     )
 
     num_epochs = int(math.ceil(float(train_cfg.get("num_train_epochs", 2.0))))
-    
-    update_steps_per_epoch = max(1, math.ceil(len(train_dl) / accelerator.gradient_accumulation_steps))
+    effective_grad_accum_steps = int(accelerator.gradient_accumulation_steps)
+    ds_plugin = getattr(accelerator.state, "deepspeed_plugin", None)
+    if ds_plugin is not None:
+        ds_cfg = getattr(ds_plugin, "deepspeed_config", {}) or {}
+        ds_grad_accum_steps = ds_cfg.get("gradient_accumulation_steps")
+        if ds_grad_accum_steps is not None:
+            effective_grad_accum_steps = int(ds_grad_accum_steps)
+    cfg_grad_accum_steps = int(train_cfg.get("gradient_accumulation_steps", effective_grad_accum_steps))
+    if accelerator.is_main_process and effective_grad_accum_steps != cfg_grad_accum_steps:
+        print(
+            "[WARN] gradient_accumulation_steps mismatch detected: "
+            f"sft_train={cfg_grad_accum_steps}, effective={effective_grad_accum_steps}. "
+            "Using effective value for max_train_steps/progress bar."
+        )
+    update_steps_per_epoch = max(1, math.ceil(len(train_dl) / effective_grad_accum_steps))
     max_train_steps = num_epochs * update_steps_per_epoch
+    if accelerator.is_main_process:
+        print(
+            "[INFO] train progress setup: "
+            f"len(train_dl)={len(train_dl)}, num_epochs={num_epochs}, "
+            f"effective_grad_accum_steps={effective_grad_accum_steps}, "
+            f"max_train_steps={max_train_steps}"
+        )
     warmup_steps = int(max_train_steps * float(train_cfg.get("warmup_ratio", 0.03)))
     print(
             f"[INFO] len(train_dl)={len(train_dl)}"
@@ -835,7 +855,7 @@ def main() -> None:
     empty_cache_on_eval = bool(train_cfg.get("empty_cache_on_eval", False))
     empty_cache_on_save = bool(train_cfg.get("empty_cache_on_save", False))
 
-    progress_bar = tqdm(range(max_train_steps), disable=not accelerator.is_local_main_process)
+    progress_bar = tqdm(total=max_train_steps, disable=not accelerator.is_local_main_process)
     global_step = 0
     best_val_loss = float("-inf")
 
