@@ -40,9 +40,11 @@ sft_train:
   max_length: 1024
   logging_steps: 10
   save_steps: 200
-  eval_steps: 10
+  eval_steps: 200
   dataloader_num_workers: 4
   gradient_checkpointing: true
   use_flash_attention_2: true
   lr_scheduler_type: cosine
   max_grad_norm: 1.0
+  padding: longest
+  use_length_bucket: true
