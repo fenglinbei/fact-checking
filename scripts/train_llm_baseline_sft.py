@@ -23,7 +23,7 @@ from transformers import (
     DataCollatorForLanguageModeling,
     get_scheduler,
 )
-from transformers.trainer_pt_utils import DistributedLengthGroupedSampler, LengthGroupedSampler
+from transformers.trainer_pt_utils import LengthGroupedSampler
 
 from liar_raw.baselines.llm_baseline import build_sft_instances, load_jsonl
 from liar_raw import LABELS, LABEL2ID
@@ -213,27 +213,16 @@ def build_dataloader(
     num_workers: int,
     shuffle: bool,
     use_length_bucket: bool,
-    num_replicas: int,
-    rank: int,
 ) -> DataLoader:
     sampler: Sampler | None = None
     if use_length_bucket:
         lengths = getattr(dataset, "lengths", None)
         if lengths is not None:
-            if num_replicas > 1:
-                sampler = DistributedLengthGroupedSampler(
-                    batch_size=batch_size,
-                    dataset=dataset,
-                    num_replicas=num_replicas,
-                    rank=rank,
-                    lengths=lengths,
-                )
-            else:
-                sampler = LengthGroupedSampler(
-                    batch_size=batch_size,
-                    dataset=dataset,
-                    lengths=lengths,
-                )
+            sampler = LengthGroupedSampler(
+                batch_size=batch_size,
+                dataset=dataset,
+                lengths=lengths,
+            )
     return DataLoader(
         dataset,
         shuffle=shuffle if sampler is None else False,
@@ -773,8 +762,6 @@ def main() -> None:
         num_workers=num_workers,
         shuffle=True,
         use_length_bucket=use_length_bucket,
-        num_replicas=accelerator.num_processes,
-        rank=accelerator.process_index,
     )
     val_dl = build_dataloader(
         val_ds,
@@ -783,8 +770,6 @@ def main() -> None:
         num_workers=num_workers,
         shuffle=False,
         use_length_bucket=False,
-        num_replicas=accelerator.num_processes,
-        rank=accelerator.process_index,
     )
 
     max_length = int(train_cfg.get("max_length", 2048))
@@ -820,31 +805,15 @@ def main() -> None:
             "Using effective value for max_train_steps/progress bar."
         )
     pre_prepare_train_dl_len = len(train_dl)
-    update_steps_per_epoch = max(1, math.ceil(pre_prepare_train_dl_len / effective_grad_accum_steps))
-    max_train_steps = num_epochs * update_steps_per_epoch
-    if accelerator.is_main_process:
-        print(
-            "[INFO] train progress setup: "
-            f"len(train_dl)={pre_prepare_train_dl_len}, num_epochs={num_epochs}, "
-            f"effective_grad_accum_steps={effective_grad_accum_steps}, "
-            f"max_train_steps={max_train_steps}"
-        )
-    warmup_steps = int(max_train_steps * float(train_cfg.get("warmup_ratio", 0.03)))
-    print(
-            f"[INFO] len(train_dl)={pre_prepare_train_dl_len}"
-            f"max_train_steps={max_train_steps}"
-        )
-    scheduler = get_scheduler(
-        name=str(train_cfg.get("lr_scheduler_type", "cosine")),
-        optimizer=optimizer,
-        num_warmup_steps=warmup_steps,
-        num_training_steps=max_train_steps,
-    )
-
-    model, optimizer, train_dl, val_dl, val_eval_dl, scheduler = accelerator.prepare(
-        model, optimizer, train_dl, val_dl, val_eval_dl, scheduler
+    model, optimizer, train_dl, val_dl, val_eval_dl = accelerator.prepare(
+        model, optimizer, train_dl, val_dl, val_eval_dl
     )
     post_prepare_train_dl_len = len(train_dl)
+    if accelerator.is_main_process:
+        print(
+            "[INFO] dataloader length around accelerator.prepare: "
+            f"before={pre_prepare_train_dl_len}, after={post_prepare_train_dl_len}"
+        )
     if accelerator.is_main_process and post_prepare_train_dl_len != pre_prepare_train_dl_len:
         print(
             "[WARN] len(train_dl) changed after accelerator.prepare: "
@@ -853,9 +822,18 @@ def main() -> None:
         )
     update_steps_per_epoch = max(1, math.ceil(post_prepare_train_dl_len / effective_grad_accum_steps))
     max_train_steps = num_epochs * update_steps_per_epoch
+    warmup_steps = int(max_train_steps * float(train_cfg.get("warmup_ratio", 0.03)))
+    scheduler = get_scheduler(
+        name=str(train_cfg.get("lr_scheduler_type", "cosine")),
+        optimizer=optimizer,
+        num_warmup_steps=warmup_steps,
+        num_training_steps=max_train_steps,
+    )
+    scheduler = accelerator.prepare(scheduler)
     if accelerator.is_main_process:
         print(
             "[INFO] train progress setup (post-prepare): "
+            f"num_epochs={num_epochs}, "
             f"len(train_dl)={post_prepare_train_dl_len}, "
             f"effective_grad_accum_steps={effective_grad_accum_steps}, "
             f"update_steps_per_epoch={update_steps_per_epoch}, "
