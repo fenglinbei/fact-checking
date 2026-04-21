@@ -15,7 +15,7 @@ import numpy as np
 import torch
 from accelerate import Accelerator
 from torch.optim import AdamW
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Sampler
 from tqdm.auto import tqdm
 from transformers import (
     AutoModelForCausalLM,
@@ -23,6 +23,7 @@ from transformers import (
     DataCollatorForLanguageModeling,
     get_scheduler,
 )
+from transformers.trainer_pt_utils import DistributedLengthGroupedSampler, LengthGroupedSampler
 
 from liar_raw.baselines.llm_baseline import build_sft_instances, load_jsonl
 from liar_raw import LABELS, LABEL2ID
@@ -42,11 +43,17 @@ def _fla_fast_path_available() -> bool:
 class SFTDatasetBuilder:
     tokenizer: AutoTokenizer
     max_length: int
+    padding: str = "max_length"
     cache_dir: Path | None = None
 
     def build(self, instances: list[dict[str, str]], split: str, accelerator: Accelerator) -> Dataset:
         if self.cache_dir is None:
-            tokenized = _tokenize_instances(instances=instances, tokenizer=self.tokenizer, max_length=self.max_length)
+            tokenized = _tokenize_instances(
+                instances=instances,
+                tokenizer=self.tokenizer,
+                max_length=self.max_length,
+                padding=self.padding,
+            )
             return TokenizedDataset(tokenized=tokenized)
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -58,7 +65,12 @@ class SFTDatasetBuilder:
         )
         with accelerator.main_process_first():
             if not cache_path.exists():
-                tokenized = _tokenize_instances(instances=instances, tokenizer=self.tokenizer, max_length=self.max_length)
+                tokenized = _tokenize_instances(
+                    instances=instances,
+                    tokenizer=self.tokenizer,
+                    max_length=self.max_length,
+                    padding=self.padding,
+                )
                 torch.save(tokenized, cache_path)
 
         tokenized = torch.load(cache_path, map_location="cpu", weights_only=False)
@@ -75,7 +87,12 @@ def _build_cache_name(split: str, max_length: int, tokenizer_name: str, instance
     return f"{split}_ml{max_length}_{tok_hash}_{data_hash.hexdigest()[:16]}.pt"
 
 
-def _tokenize_instances(instances: list[dict[str, str]], tokenizer: AutoTokenizer, max_length: int) -> list[dict[str, list[int]]]:
+def _tokenize_instances(
+    instances: list[dict[str, str]],
+    tokenizer: AutoTokenizer,
+    max_length: int,
+    padding: str,
+) -> list[dict[str, list[int]]]:
     tokenized: list[dict[str, list[int]]] = []
     for row in instances:
         text = f"{row['prompt']} {row['target']}"
@@ -83,7 +100,7 @@ def _tokenize_instances(instances: list[dict[str, str]], tokenizer: AutoTokenize
             text,
             truncation=True,
             max_length=max_length,
-            padding=False,
+            padding=padding if padding == "max_length" else False,
         )
         ids = enc["input_ids"]
         mask = enc["attention_mask"]
@@ -100,6 +117,7 @@ def _tokenize_instances(instances: list[dict[str, str]], tokenizer: AutoTokenize
 class TokenizedDataset(Dataset):
     def __init__(self, tokenized: list[dict[str, list[int]]]) -> None:
         self.tokenized = tokenized
+        self.lengths = [int(sum(x["attention_mask"])) for x in tokenized]
 
     def __len__(self) -> int:
         return len(self.tokenized)
@@ -132,10 +150,32 @@ def build_dataloader(
     batch_size: int,
     num_workers: int,
     shuffle: bool,
+    use_length_bucket: bool,
+    num_replicas: int,
+    rank: int,
 ) -> DataLoader:
+    sampler: Sampler | None = None
+    if use_length_bucket:
+        lengths = getattr(dataset, "lengths", None)
+        if lengths is not None:
+            if num_replicas > 1:
+                sampler = DistributedLengthGroupedSampler(
+                    batch_size=batch_size,
+                    dataset=dataset,
+                    num_replicas=num_replicas,
+                    rank=rank,
+                    lengths=lengths,
+                )
+            else:
+                sampler = LengthGroupedSampler(
+                    batch_size=batch_size,
+                    dataset=dataset,
+                    lengths=lengths,
+                )
     return DataLoader(
         dataset,
-        shuffle=shuffle,
+        shuffle=shuffle if sampler is None else False,
+        sampler=sampler,
         batch_size=batch_size,
         collate_fn=collator,
         num_workers=num_workers,
@@ -152,6 +192,7 @@ def build_eval_dataloader(
     batch_size: int,
     num_workers: int,
     max_length: int,
+    padding: str,
 ) -> DataLoader:
     def _collate_fn(items):
         prompts = [str(x["prompt"]) for x in items]
@@ -159,7 +200,7 @@ def build_eval_dataloader(
 
         enc = tokenizer(
             prompts,
-            padding=True,
+            padding=padding if padding == "max_length" else True,
             truncation=True,
             max_length=max_length,
             pad_to_multiple_of=8,
@@ -363,6 +404,7 @@ def evaluate(
     dataloader: DataLoader,
     tokenizer: AutoTokenizer,
     accelerator: Accelerator,
+    max_length: int,
     max_new_tokens: int = 24,
 ) -> dict[str, float]:
     model.eval()
@@ -391,16 +433,17 @@ def evaluate(
                 generated = model.generate(
                         input_ids=batch["input_ids"],
                         attention_mask=batch["attention_mask"],
+                        max_length=max_length,
                         max_new_tokens=max_new_tokens,
                         do_sample=False,
                         use_cache=True,
                         pad_token_id=tokenizer.pad_token_id,
                         synced_gpus=accelerator.num_processes > 1,
                     )
-                prompt_lengths = batch["attention_mask"].sum(dim=1)
+                prompt_length = batch["input_ids"].shape[1]
                 pred_ids: list[int] = []
                 for i in range(generated.shape[0]):
-                    gen_ids = generated[i, int(prompt_lengths[i]) :]
+                    gen_ids = generated[i, prompt_length:]
                     raw_pred = tokenizer.decode(gen_ids, skip_special_tokens=True)
                     pred_ids.append(_parse_label_id(raw_pred))
 
@@ -613,7 +656,17 @@ def main() -> None:
 
     cache_dir_cfg = train_cfg.get("tokenized_cache_dir")
     cache_dir = Path(str(cache_dir_cfg)) if cache_dir_cfg else Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline")) / "tokenized_cache"
-    builder = SFTDatasetBuilder(tokenizer=tokenizer, max_length=max_length, cache_dir=cache_dir)
+    padding_strategy = str(train_cfg.get("padding", "max_length"))
+    if padding_strategy not in {"max_length", "longest"}:
+        raise ValueError(f"Unsupported sft_train.padding={padding_strategy}. Use 'max_length' or 'longest'.")
+    use_length_bucket = bool(train_cfg.get("use_length_bucket", True))
+
+    builder = SFTDatasetBuilder(
+        tokenizer=tokenizer,
+        max_length=max_length,
+        padding=padding_strategy,
+        cache_dir=cache_dir,
+    )
     train_ds = builder.build(train_instances, split="train", accelerator=accelerator)
     val_ds = builder.build(val_instances, split="val", accelerator=accelerator)
 
@@ -625,6 +678,9 @@ def main() -> None:
         batch_size=int(train_cfg.get("per_device_train_batch_size", 1)),
         num_workers=num_workers,
         shuffle=True,
+        use_length_bucket=use_length_bucket,
+        num_replicas=accelerator.num_processes,
+        rank=accelerator.process_index,
     )
     val_dl = build_dataloader(
         val_ds,
@@ -632,6 +688,9 @@ def main() -> None:
         batch_size=int(train_cfg.get("per_device_eval_batch_size", 1)),
         num_workers=num_workers,
         shuffle=False,
+        use_length_bucket=False,
+        num_replicas=accelerator.num_processes,
+        rank=accelerator.process_index,
     )
 
     max_length = int(train_cfg.get("max_length", 2048))
@@ -641,6 +700,7 @@ def main() -> None:
         batch_size=int(train_cfg.get("per_device_eval_batch_size", 1)),
         num_workers=num_workers,
         max_length=max_length,
+        padding=padding_strategy,
     )
 
     optimizer = AdamW(
@@ -706,6 +766,7 @@ def main() -> None:
                         val_eval_dl,
                         tokenizer,
                         accelerator,
+                        max_length=max_length,
                         max_new_tokens=int(baseline_cfg.get("max_new_tokens", 24)),
                     )
                     print(f"[rank {accelerator.process_index}] after evaluate step={global_step}", flush=True)
