@@ -295,10 +295,10 @@ print("saved config.json to", out_dir)
 PY
 
 # 3) 临时覆盖配置里的 baseline.model_name_or_path 指向 best 目录
-cp configs/baseline_b0.yaml /tmp/baseline_b0_eval_best.yaml
+cp configs/baseline_b0.yaml configs/eval/baseline_b0_eval_best.yaml
 python - <<'PY'
 import yaml
-p = "/tmp/baseline_b0_eval_best.yaml"
+p = "configs/eval/baseline_b0_eval_best.yaml"
 cfg = yaml.safe_load(open(p, "r", encoding="utf-8"))
 cfg["baseline"]["model_name_or_path"] = "outputs/liar-raw/llm_baseline/b0/best"
 yaml.safe_dump(cfg, open(p, "w", encoding="utf-8"), allow_unicode=True, sort_keys=False)
