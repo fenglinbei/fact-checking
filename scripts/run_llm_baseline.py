@@ -1,10 +1,143 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
+import numpy as np
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    precision_recall_fscore_support,
+)
+
+from liar_raw import LABEL2ID, LABELS
 from liar_raw.baselines.llm_baseline import BaselineConfig, run_inference
 from liar_raw.config import load_yaml
+
+
+def _load_predictions(path: Path) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def _safe_label_to_id(label: str) -> int:
+    return LABEL2ID.get(str(label).strip().lower(), LABEL2ID["half-true"])
+
+
+def _save_confusion_matrix_figure(cm: np.ndarray, labels: list[str], out_path: Path) -> bool:
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return False
+
+    fig, ax = plt.subplots(figsize=(9, 7))
+    im = ax.imshow(cm, interpolation="nearest", cmap="Blues")
+    ax.figure.colorbar(im, ax=ax)
+    ax.set(
+        xticks=np.arange(len(labels)),
+        yticks=np.arange(len(labels)),
+        xticklabels=labels,
+        yticklabels=labels,
+        ylabel="Gold Label",
+        xlabel="Predicted Label",
+        title="Confusion Matrix",
+    )
+    plt.setp(ax.get_xticklabels(), rotation=30, ha="right", rotation_mode="anchor")
+
+    max_value = int(cm.max()) if cm.size else 0
+    threshold = max_value / 2.0 if max_value else 0.0
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            v = int(cm[i, j])
+            ax.text(
+                j,
+                i,
+                str(v),
+                ha="center",
+                va="center",
+                color="white" if v > threshold else "black",
+            )
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=180)
+    plt.close(fig)
+    return True
+
+
+def _report_metrics(out_path: Path) -> None:
+    rows = _load_predictions(out_path)
+    if not rows:
+        print("No predictions found, skip metrics.")
+        return
+
+    y_true = np.array([_safe_label_to_id(str(row.get("gold_label", ""))) for row in rows], dtype=np.int64)
+    y_pred = np.array([_safe_label_to_id(str(row.get("pred_label", ""))) for row in rows], dtype=np.int64)
+
+    acc = float(accuracy_score(y_true, y_pred))
+    per_p, per_r, per_f1, support = precision_recall_fscore_support(
+        y_true,
+        y_pred,
+        labels=list(range(len(LABELS))),
+        average=None,
+        zero_division=0,
+    )
+    macro_p, macro_r, macro_f1, _ = precision_recall_fscore_support(
+        y_true,
+        y_pred,
+        average="macro",
+        zero_division=0,
+    )
+    cm = confusion_matrix(y_true, y_pred, labels=list(range(len(LABELS))))
+
+    metrics = {
+        "num_samples": int(len(rows)),
+        "accuracy": acc,
+        "macro_precision": float(macro_p),
+        "macro_recall": float(macro_r),
+        "macro_f1": float(macro_f1),
+        "per_class": {
+            label: {
+                "precision": float(per_p[idx]),
+                "recall": float(per_r[idx]),
+                "f1": float(per_f1[idx]),
+                "support": int(support[idx]),
+            }
+            for idx, label in enumerate(LABELS)
+        },
+    }
+    cm_payload = {
+        "labels": LABELS,
+        "matrix": cm.tolist(),
+    }
+
+    metrics_path = out_path.with_suffix(".metrics.json")
+    cm_json_path = out_path.with_suffix(".confusion_matrix.json")
+    cm_png_path = out_path.with_suffix(".confusion_matrix.png")
+
+    metrics_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    cm_json_path.write_text(json.dumps(cm_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    has_png = _save_confusion_matrix_figure(cm, LABELS, cm_png_path)
+
+    print("\n=== Evaluation Metrics ===")
+    print(f"Accuracy: {acc:.4f}")
+    print(f"Macro P/R/F1: {float(macro_p):.4f} / {float(macro_r):.4f} / {float(macro_f1):.4f}")
+    print("Per-class P/R/F1:")
+    for idx, label in enumerate(LABELS):
+        print(
+            f"  - {label:12s}  P={float(per_p[idx]):.4f}  R={float(per_r[idx]):.4f}  "
+            f"F1={float(per_f1[idx]):.4f}  N={int(support[idx])}"
+        )
+    print(f"Saved metrics JSON: {metrics_path}")
+    print(f"Saved confusion matrix JSON: {cm_json_path}")
+    if has_png:
+        print(f"Saved confusion matrix PNG: {cm_png_path}")
+    else:
+        print("matplotlib is not installed, skipped confusion matrix PNG output.")
 
 
 def main() -> None:
@@ -52,6 +185,7 @@ def main() -> None:
         train_path_for_few_shot=split_map["train"],
     )
     print(f"Wrote {out_path}")
+    _report_metrics(out_path)
 
 
 if __name__ == "__main__":
