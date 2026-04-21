@@ -829,6 +829,10 @@ def main() -> None:
             f"max_train_steps={max_train_steps}"
         )
     warmup_steps = int(max_train_steps * float(train_cfg.get("warmup_ratio", 0.03)))
+    print(
+            f"[INFO] len(train_dl)={len(train_dl)}"
+            f"max_train_steps={max_train_steps}"
+        )
     scheduler = get_scheduler(
         name=str(train_cfg.get("lr_scheduler_type", "cosine")),
         optimizer=optimizer,
