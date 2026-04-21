@@ -15,7 +15,7 @@ data:
 baseline:
   model_name_or_path: /data/models/Qwen2.5-7B-Instruct
   top_k: 5
-  use_context: true
+  use_context: false
   context_k: 1
   prompt_mode: zero_shot
   few_shot_k: 16
@@ -40,7 +40,7 @@ sft_train:
   max_length: 1024
   logging_steps: 10
   save_steps: 200
-  eval_steps: 200
+  eval_steps: 20
   dataloader_num_workers: 4
   gradient_checkpointing: true
   use_flash_attention_2: true
