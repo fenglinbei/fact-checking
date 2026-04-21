@@ -40,6 +40,35 @@ def _fla_fast_path_available() -> bool:
 
 
 @dataclass
+class CausalLMSFTCollator:
+    tokenizer: AutoTokenizer
+    pad_to_multiple_of: int | None = 8
+
+    def __call__(self, features):
+        max_len = max(len(x["input_ids"]) for x in features)
+        if self.pad_to_multiple_of is not None:
+            m = self.pad_to_multiple_of
+            max_len = ((max_len + m - 1) // m) * m
+
+        pad_id = self.tokenizer.pad_token_id
+
+        input_ids, attention_mask, labels = [], [], []
+        for x in features:
+            pad_len = max_len - len(x["input_ids"])
+
+            input_ids.append(x["input_ids"] + [pad_id] * pad_len)
+            attention_mask.append(x["attention_mask"] + [0] * pad_len)
+            labels.append(x["labels"] + [-100] * pad_len)
+
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+            "labels": torch.tensor(labels, dtype=torch.long),
+        }
+
+
+
+@dataclass
 class SFTDatasetBuilder:
     tokenizer: AutoTokenizer
     max_length: int
@@ -94,23 +123,56 @@ def _tokenize_instances(
     padding: str,
 ) -> list[dict[str, list[int]]]:
     tokenized: list[dict[str, list[int]]] = []
+    eos_id = tokenizer.eos_token_id
+
     for row in instances:
-        text = f"{row['prompt']} {row['target']}"
-        enc = tokenizer(
-            text,
-            truncation=True,
-            max_length=max_length,
-            padding=padding if padding == "max_length" else False,
-        )
-        ids = enc["input_ids"]
-        mask = enc["attention_mask"]
+        prompt_text = row["prompt"].rstrip() + " "
+        target_text = row["target"].strip().lower()
+
+        prompt_ids = tokenizer(
+            prompt_text,
+            add_special_tokens=True,
+            truncation=False,
+        )["input_ids"]
+
+        target_ids = tokenizer(
+            target_text,
+            add_special_tokens=False,
+            truncation=False,
+        )["input_ids"]
+
+        if eos_id is not None:
+            target_ids = target_ids + [eos_id]
+
+        # 关键：为 target 预留空间，不能让 truncation 把 label 截掉
+        max_prompt_len = max_length - len(target_ids)
+        if max_prompt_len <= 0:
+            input_ids = target_ids[:max_length]
+            labels = input_ids[:]
+        else:
+            if len(prompt_ids) > max_prompt_len:
+                # 保留 prompt 尾部，至少保住 "Label:"
+                prompt_ids = prompt_ids[-max_prompt_len:]
+
+            input_ids = prompt_ids + target_ids
+            labels = [-100] * len(prompt_ids) + target_ids
+
+        attention_mask = [1] * len(input_ids)
+
+        if padding == "max_length":
+            pad_len = max_length - len(input_ids)
+            input_ids = input_ids + [tokenizer.pad_token_id] * pad_len
+            attention_mask = attention_mask + [0] * pad_len
+            labels = labels + [-100] * pad_len
+
         tokenized.append(
             {
-                "input_ids": ids,
-                "attention_mask": mask,
-                "labels": ids[:],
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "labels": labels,
             }
         )
+
     return tokenized
 
 
@@ -146,7 +208,7 @@ class EvalPromptDataset(Dataset):
 
 def build_dataloader(
     dataset: Dataset,
-    collator: DataCollatorForLanguageModeling,
+    collator: DataCollatorForLanguageModeling | CausalLMSFTCollator,
     batch_size: int,
     num_workers: int,
     shuffle: bool,
@@ -198,14 +260,29 @@ def build_eval_dataloader(
         prompts = [str(x["prompt"]) for x in items]
         gold_ids = torch.tensor([int(x["gold_id"]) for x in items], dtype=torch.long)
 
-        enc = tokenizer(
-            prompts,
-            padding=padding if padding == "max_length" else True,
-            truncation=True,
-            max_length=max_length,
-            pad_to_multiple_of=8,
-            return_tensors="pt",
-        )
+        old_padding_side = tokenizer.padding_side
+        old_truncation_side = getattr(tokenizer, "truncation_side", "right")
+
+        # decoder-only generation 必须 left padding
+        tokenizer.padding_side = "left"
+
+        # 如果 prompt 过长，至少保住末尾的 "Label:"
+        tokenizer.truncation_side = "left"
+
+        try:
+            enc = tokenizer(
+                prompts,
+                padding="max_length" if padding == "max_length" else True,
+                truncation=True,
+                max_length=max_length,
+                # 关键：batch_size=1 时建议先去掉这个；
+                # 如果你坚持保留，也必须配合 left padding。
+                # pad_to_multiple_of=8,
+                return_tensors="pt",
+            )
+        finally:
+            tokenizer.padding_side = old_padding_side
+            tokenizer.truncation_side = old_truncation_side
 
         return {
             "input_ids": enc["input_ids"],
@@ -226,16 +303,25 @@ def build_eval_dataloader(
     )
 
 
+_LABEL_PATTERNS = [
+    ("pants-fire", r"\bpants\s*-?\s*fire\b"),
+    ("barely-true", r"\bbarely\s*-?\s*true\b"),
+    ("half-true", r"\bhalf\s*-?\s*true\b"),
+    ("mostly-true", r"\bmostly\s*-?\s*true\b"),
+    ("false", r"\bfalse\b"),
+    ("true", r"\btrue\b"),
+]
+
 def _parse_label_id(raw_text: str) -> int:
     clean = raw_text.strip().lower()
-    clean = re.sub(r"[^a-z\- ]", " ", clean)
-    tokens = [t for t in clean.split() if t]
-    if not tokens:
-        return -1
-    joined = " ".join(tokens)
-    for label in LABELS:
-        if re.search(rf"\b{re.escape(label)}\b", joined):
+    clean = re.sub(r"[_/]+", " ", clean)
+    clean = re.sub(r"[^a-z\-\s]", " ", clean)
+    clean = re.sub(r"\s+", " ", clean)
+
+    for label, pattern in _LABEL_PATTERNS:
+        if re.search(pattern, clean):
             return LABEL2ID[label]
+
     return -1
 
 
@@ -431,15 +517,15 @@ def evaluate(
                 gold_ids = batch["gold_ids"]
 
                 generated = model.generate(
-                        input_ids=batch["input_ids"],
-                        attention_mask=batch["attention_mask"],
-                        max_length=max_length,
-                        max_new_tokens=max_new_tokens,
-                        do_sample=False,
-                        use_cache=True,
-                        pad_token_id=tokenizer.pad_token_id,
-                        synced_gpus=accelerator.num_processes > 1,
-                    )
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    max_new_tokens=max_new_tokens,
+                    do_sample=False,
+                    use_cache=True,
+                    pad_token_id=tokenizer.pad_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
+                    synced_gpus=accelerator.num_processes > 1,
+                )
                 prompt_length = batch["input_ids"].shape[1]
                 pred_ids: list[int] = []
                 for i in range(generated.shape[0]):
@@ -670,7 +756,8 @@ def main() -> None:
     train_ds = builder.build(train_instances, split="train", accelerator=accelerator)
     val_ds = builder.build(val_instances, split="val", accelerator=accelerator)
 
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=8)
+    # data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=8)
+    data_collator = CausalLMSFTCollator(tokenizer=tokenizer, pad_to_multiple_of=8)
     num_workers = int(train_cfg.get("dataloader_num_workers", 0))
     train_dl = build_dataloader(
         train_ds,
