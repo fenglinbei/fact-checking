@@ -48,3 +48,6 @@ sft_train:
   max_grad_norm: 1.0
   padding: longest
   use_length_bucket: true
+  empty_cache_steps: 1
+  empty_cache_on_eval: true
+  empty_cache_on_save: true
