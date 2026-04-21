@@ -46,3 +46,6 @@ sft_train:
   use_flash_attention_2: true
   lr_scheduler_type: cosine
   max_grad_norm: 1.0
+  empty_cache_steps: 1
+  empty_cache_on_eval: true
+  empty_cache_on_save: true
