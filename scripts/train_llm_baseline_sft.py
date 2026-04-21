@@ -805,9 +805,14 @@ def main() -> None:
     )
 
     num_epochs = int(math.ceil(float(train_cfg.get("num_train_epochs", 2.0))))
+    
     update_steps_per_epoch = max(1, math.ceil(len(train_dl) / accelerator.gradient_accumulation_steps))
     max_train_steps = num_epochs * update_steps_per_epoch
     warmup_steps = int(max_train_steps * float(train_cfg.get("warmup_ratio", 0.03)))
+    print(
+            f"[INFO] len(train_dl)={len(train_dl)}"
+            f"max_train_steps={max_train_steps}"
+        )
     scheduler = get_scheduler(
         name=str(train_cfg.get("lr_scheduler_type", "cosine")),
         optimizer=optimizer,
