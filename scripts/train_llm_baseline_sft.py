@@ -624,6 +624,13 @@ def save_model(
     accelerator.wait_for_everyone()
 
 
+def maybe_empty_cache(accelerator: Accelerator) -> None:
+    if torch.cuda.is_available():
+        accelerator.wait_for_everyone()
+        torch.cuda.empty_cache()
+        accelerator.wait_for_everyone()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="SFT train for LLM baselines (Accelerate).")
     parser.add_argument("--config", type=str, required=True)
@@ -819,6 +826,9 @@ def main() -> None:
     eval_steps = int(train_cfg.get("eval_steps", 500))
     save_steps = int(train_cfg.get("save_steps", 500))
     max_grad_norm = float(train_cfg.get("max_grad_norm", 1.0))
+    empty_cache_steps = int(train_cfg.get("empty_cache_steps", 0))
+    empty_cache_on_eval = bool(train_cfg.get("empty_cache_on_eval", False))
+    empty_cache_on_save = bool(train_cfg.get("empty_cache_on_save", False))
 
     progress_bar = tqdm(range(max_train_steps), disable=not accelerator.is_local_main_process)
     global_step = 0
@@ -913,10 +923,19 @@ def main() -> None:
                         save_model(accelerator, model, tokenizer, output_dir / "best")
                         print(f"[rank {accelerator.process_index}] after save best step={global_step}", flush=True)
 
+                    if empty_cache_on_eval:
+                        maybe_empty_cache(accelerator)
+
                 if global_step % save_steps == 0:
                     print(f"[rank {accelerator.process_index}] before save best step={global_step}", flush=True)
                     save_model(accelerator, model, tokenizer, output_dir / f"checkpoint-{global_step}")
                     print(f"[rank {accelerator.process_index}] after save best step={global_step}", flush=True)
+
+                    if empty_cache_on_save:
+                        maybe_empty_cache(accelerator)
+
+                if empty_cache_steps > 0 and global_step % empty_cache_steps == 0:
+                    maybe_empty_cache(accelerator)
 
                 if global_step >= max_train_steps:
                     break
