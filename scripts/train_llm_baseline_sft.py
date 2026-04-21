@@ -819,18 +819,19 @@ def main() -> None:
             f"sft_train={cfg_grad_accum_steps}, effective={effective_grad_accum_steps}. "
             "Using effective value for max_train_steps/progress bar."
         )
-    update_steps_per_epoch = max(1, math.ceil(len(train_dl) / effective_grad_accum_steps))
+    pre_prepare_train_dl_len = len(train_dl)
+    update_steps_per_epoch = max(1, math.ceil(pre_prepare_train_dl_len / effective_grad_accum_steps))
     max_train_steps = num_epochs * update_steps_per_epoch
     if accelerator.is_main_process:
         print(
             "[INFO] train progress setup: "
-            f"len(train_dl)={len(train_dl)}, num_epochs={num_epochs}, "
+            f"len(train_dl)={pre_prepare_train_dl_len}, num_epochs={num_epochs}, "
             f"effective_grad_accum_steps={effective_grad_accum_steps}, "
             f"max_train_steps={max_train_steps}"
         )
     warmup_steps = int(max_train_steps * float(train_cfg.get("warmup_ratio", 0.03)))
     print(
-            f"[INFO] len(train_dl)={len(train_dl)}"
+            f"[INFO] len(train_dl)={pre_prepare_train_dl_len}"
             f"max_train_steps={max_train_steps}"
         )
     scheduler = get_scheduler(
@@ -843,6 +844,23 @@ def main() -> None:
     model, optimizer, train_dl, val_dl, val_eval_dl, scheduler = accelerator.prepare(
         model, optimizer, train_dl, val_dl, val_eval_dl, scheduler
     )
+    post_prepare_train_dl_len = len(train_dl)
+    if accelerator.is_main_process and post_prepare_train_dl_len != pre_prepare_train_dl_len:
+        print(
+            "[WARN] len(train_dl) changed after accelerator.prepare: "
+            f"before={pre_prepare_train_dl_len}, after={post_prepare_train_dl_len}. "
+            "This may indicate duplicated sharding/re-partitioning across distributed samplers."
+        )
+    update_steps_per_epoch = max(1, math.ceil(post_prepare_train_dl_len / effective_grad_accum_steps))
+    max_train_steps = num_epochs * update_steps_per_epoch
+    if accelerator.is_main_process:
+        print(
+            "[INFO] train progress setup (post-prepare): "
+            f"len(train_dl)={post_prepare_train_dl_len}, "
+            f"effective_grad_accum_steps={effective_grad_accum_steps}, "
+            f"update_steps_per_epoch={update_steps_per_epoch}, "
+            f"max_train_steps={max_train_steps}"
+        )
 
     output_dir = Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline")) / ("b1" if use_context else "b0")
     output_dir.mkdir(parents=True, exist_ok=True)
