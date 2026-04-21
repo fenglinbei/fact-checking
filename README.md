@@ -266,6 +266,57 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 scripts/train_llm_basel
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 scripts/train_llm_baseline_sft.py --config configs/baseline_b1.yaml
 ```
 
+### 4.4 用 ZeRO-3 `ds_checkpoint` 导出的 best 模型跑 test eval（B0）
+
+当 `deepspeed_zero3` 且未开启 `stage3_gather_16bit_weights_on_model_save` 时，`best/` 下通常只有 tokenizer 与 `ds_checkpoint/`，不能直接被 `AutoModelForCausalLM.from_pretrained()` 读取。需要先把 ZeRO 分片权重聚合为 fp32 权重，再放入一个可被 HuggingFace 读取的目录。
+
+假设你的 best 目录是：
+
+```text
+outputs/liar-raw/llm_baseline/b0/best
+```
+
+可按如下步骤：
+
+```bash
+# 1) 从 DeepSpeed 分片聚合出 fp32 权重（会生成 pytorch_model.bin）
+python outputs/liar-raw/llm_baseline/b0/best/ds_checkpoint/zero_to_fp32.py \
+  outputs/liar-raw/llm_baseline/b0/best/ds_checkpoint \
+  outputs/liar-raw/llm_baseline/b0/best/pytorch_model.bin
+
+# 2) 补齐 config（从训练基座模型拷贝）
+python - <<'PY'
+from transformers import AutoConfig
+base_model = "/data/models/Qwen2.5-7B-Instruct"  # 改成你训练时 baseline.model_name_or_path
+out_dir = "outputs/liar-raw/llm_baseline/b0/best"
+cfg = AutoConfig.from_pretrained(base_model, trust_remote_code=True)
+cfg.save_pretrained(out_dir)
+print("saved config.json to", out_dir)
+PY
+
+# 3) 临时覆盖配置里的 baseline.model_name_or_path 指向 best 目录
+cp configs/baseline_b0.yaml /tmp/baseline_b0_eval_best.yaml
+python - <<'PY'
+import yaml
+p = "/tmp/baseline_b0_eval_best.yaml"
+cfg = yaml.safe_load(open(p, "r", encoding="utf-8"))
+cfg["baseline"]["model_name_or_path"] = "outputs/liar-raw/llm_baseline/b0/best"
+yaml.safe_dump(cfg, open(p, "w", encoding="utf-8"), allow_unicode=True, sort_keys=False)
+print("patched", p)
+PY
+
+# 4) 跑 test 推理
+PYTHONPATH=src python scripts/run_llm_baseline.py --config /tmp/baseline_b0_eval_best.yaml --split test
+```
+
+输出文件默认在：
+
+```text
+outputs/liar-raw/llm_baseline/b0_test.predictions.jsonl
+```
+
+可再用你自己的评测脚本统计 accuracy / macro-F1。
+
 ---
 
 ## 5. 全流程快速命令
