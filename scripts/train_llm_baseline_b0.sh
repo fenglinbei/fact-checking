@@ -28,4 +28,4 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
   --use_deepspeed \
   --deepspeed_config_file configs/deepspeed_zero3_v2.json \
   scripts/train_llm_baseline_sft.py --config configs/baseline_b0.yaml \
-  --mini_val_size 256
+  --mini-val-size 256
