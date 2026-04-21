@@ -23,7 +23,7 @@ baseline:
   retrieval_model: /data/models/bge-base-en-v1.5/
   retrieval_batch_size: 256
   retrieval_max_length: 256
-  max_new_tokens: 24
+  max_new_tokens: 8
   temperature: 0.0
   do_sample: false
 
@@ -33,19 +33,21 @@ sft_train:
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 8
   learning_rate: 1.0e-5
-  num_train_epochs: 2
+  num_train_epochs: 5
   weight_decay: 0.0
   warmup_ratio: 0.03
   bf16: true
   max_length: 2048
-  logging_steps: 20
-  save_steps: 500
-  eval_steps: 500
+  logging_steps: 2
+  save_steps: 50
+  eval_steps: 50
   dataloader_num_workers: 4
   gradient_checkpointing: true
   use_flash_attention_2: true
   lr_scheduler_type: cosine
   max_grad_norm: 1.0
+  padding: longest
+  use_length_bucket: true
   empty_cache_steps: 1
   empty_cache_on_eval: true
   empty_cache_on_save: true

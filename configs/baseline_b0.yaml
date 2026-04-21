@@ -38,7 +38,7 @@ sft_train:
   warmup_ratio: 0.03
   bf16: true
   max_length: 1024
-  logging_steps: 10
+  logging_steps: 2
   save_steps: 50
   eval_steps: 50
   dataloader_num_workers: 4
