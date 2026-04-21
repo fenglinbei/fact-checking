@@ -239,6 +239,53 @@ def _build_confusion_matrix(pred_ids: np.ndarray, gold_ids: np.ndarray) -> tuple
     return mat, labels_with_parse
 
 
+def _summarize_prompt_lengths(
+    instances: list[dict[str, str]],
+    tokenizer: AutoTokenizer,
+    split: str,
+    max_length: int,
+) -> dict[str, float]:
+    if not instances:
+        return {
+            "count": 0.0,
+            "min": 0.0,
+            "p50": 0.0,
+            "p90": 0.0,
+            "p95": 0.0,
+            "p99": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "overflow_count": 0.0,
+            "overflow_rate": 0.0,
+        }
+
+    lengths = np.array(
+        [len(tokenizer(row["prompt"], truncation=False, add_special_tokens=True)["input_ids"]) for row in instances],
+        dtype=np.int64,
+    )
+    overflow = lengths > int(max_length)
+    summary = {
+        "count": float(lengths.size),
+        "min": float(lengths.min()),
+        "p50": float(np.percentile(lengths, 50)),
+        "p90": float(np.percentile(lengths, 90)),
+        "p95": float(np.percentile(lengths, 95)),
+        "p99": float(np.percentile(lengths, 99)),
+        "max": float(lengths.max()),
+        "mean": float(lengths.mean()),
+        "overflow_count": float(np.sum(overflow)),
+        "overflow_rate": float(np.mean(overflow)),
+    }
+    print(
+        f"[PROMPT_STATS] split={split} count={int(summary['count'])} "
+        f"min={summary['min']:.0f} p50={summary['p50']:.0f} p90={summary['p90']:.0f} "
+        f"p95={summary['p95']:.0f} p99={summary['p99']:.0f} max={summary['max']:.0f} "
+        f"mean={summary['mean']:.2f} overflow(>{max_length})={int(summary['overflow_count'])} "
+        f"rate={summary['overflow_rate']:.4f}"
+    )
+    return summary
+
+
 def _save_eval_artifacts(
     output_dir: Path,
     global_step: int,
@@ -463,6 +510,11 @@ def main() -> None:
         default=None,
         help="Random seed for mini val sampling. Falls back to sft_train.seed or 42.",
     )
+    parser.add_argument(
+        "--prompt-length-stats-only",
+        action="store_true",
+        help="Only build prompts and report prompt token length statistics, then exit.",
+    )
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
@@ -527,6 +579,14 @@ def main() -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    max_length = int(train_cfg.get("max_length", 2048))
+    if args.prompt_length_stats_only:
+        _summarize_prompt_lengths(train_instances, tokenizer=tokenizer, split="train", max_length=max_length)
+        _summarize_prompt_lengths(val_instances, tokenizer=tokenizer, split="val", max_length=max_length)
+        if accelerator.is_main_process:
+            print("[INFO] prompt length stats finished. Exiting due to --prompt-length-stats-only.")
+        return
+
     model_kwargs = {
         "trust_remote_code": True,
         "dtype": torch.bfloat16 if torch.cuda.is_available() and mixed_precision == "bf16" else torch.float32,
@@ -553,7 +613,7 @@ def main() -> None:
 
     cache_dir_cfg = train_cfg.get("tokenized_cache_dir")
     cache_dir = Path(str(cache_dir_cfg)) if cache_dir_cfg else Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline")) / "tokenized_cache"
-    builder = SFTDatasetBuilder(tokenizer=tokenizer, max_length=int(train_cfg.get("max_length", 2048)), cache_dir=cache_dir)
+    builder = SFTDatasetBuilder(tokenizer=tokenizer, max_length=max_length, cache_dir=cache_dir)
     train_ds = builder.build(train_instances, split="train", accelerator=accelerator)
     val_ds = builder.build(val_instances, split="val", accelerator=accelerator)
 
