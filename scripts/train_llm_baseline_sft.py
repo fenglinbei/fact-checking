@@ -23,7 +23,7 @@ from transformers import (
     DataCollatorForLanguageModeling,
     get_scheduler,
 )
-from transformers.trainer_pt_utils import DistributedLengthGroupedSampler, LengthGroupedSampler
+from transformers.trainer_pt_utils import LengthGroupedSampler
 
 from liar_raw.baselines.llm_baseline import build_sft_instances, load_jsonl
 from liar_raw import LABELS, LABEL2ID
@@ -213,27 +213,16 @@ def build_dataloader(
     num_workers: int,
     shuffle: bool,
     use_length_bucket: bool,
-    num_replicas: int,
-    rank: int,
 ) -> DataLoader:
     sampler: Sampler | None = None
     if use_length_bucket:
         lengths = getattr(dataset, "lengths", None)
         if lengths is not None:
-            if num_replicas > 1:
-                sampler = DistributedLengthGroupedSampler(
-                    batch_size=batch_size,
-                    dataset=dataset,
-                    num_replicas=num_replicas,
-                    rank=rank,
-                    lengths=lengths,
-                )
-            else:
-                sampler = LengthGroupedSampler(
-                    batch_size=batch_size,
-                    dataset=dataset,
-                    lengths=lengths,
-                )
+            sampler = LengthGroupedSampler(
+                batch_size=batch_size,
+                dataset=dataset,
+                lengths=lengths,
+            )
     return DataLoader(
         dataset,
         shuffle=shuffle if sampler is None else False,
@@ -773,8 +762,6 @@ def main() -> None:
         num_workers=num_workers,
         shuffle=True,
         use_length_bucket=use_length_bucket,
-        num_replicas=accelerator.num_processes,
-        rank=accelerator.process_index,
     )
     val_dl = build_dataloader(
         val_ds,
@@ -783,8 +770,6 @@ def main() -> None:
         num_workers=num_workers,
         shuffle=False,
         use_length_bucket=False,
-        num_replicas=accelerator.num_processes,
-        rank=accelerator.process_index,
     )
 
     max_length = int(train_cfg.get("max_length", 2048))
@@ -805,6 +790,17 @@ def main() -> None:
     )
 
     num_epochs = int(math.ceil(float(train_cfg.get("num_train_epochs", 2.0))))
+    train_dl_len_before_prepare = len(train_dl)
+    model, optimizer, train_dl, val_dl, val_eval_dl = accelerator.prepare(
+        model, optimizer, train_dl, val_dl, val_eval_dl
+    )
+    train_dl_len_after_prepare = len(train_dl)
+    if accelerator.is_main_process:
+        print(
+            "[INFO] dataloader length before/after accelerator.prepare: "
+            f"before={train_dl_len_before_prepare}, after={train_dl_len_after_prepare}"
+        )
+
     effective_grad_accum_steps = int(accelerator.gradient_accumulation_steps)
     ds_plugin = getattr(accelerator.state, "deepspeed_plugin", None)
     if ds_plugin is not None:
@@ -819,29 +815,23 @@ def main() -> None:
             f"sft_train={cfg_grad_accum_steps}, effective={effective_grad_accum_steps}. "
             "Using effective value for max_train_steps/progress bar."
         )
-    update_steps_per_epoch = max(1, math.ceil(len(train_dl) / effective_grad_accum_steps))
+    update_steps_per_epoch = max(1, math.ceil(train_dl_len_after_prepare / effective_grad_accum_steps))
     max_train_steps = num_epochs * update_steps_per_epoch
+    warmup_steps = int(max_train_steps * float(train_cfg.get("warmup_ratio", 0.03)))
     if accelerator.is_main_process:
         print(
             "[INFO] train progress setup: "
-            f"len(train_dl)={len(train_dl)}, num_epochs={num_epochs}, "
+            f"len(train_dl)={train_dl_len_after_prepare}, num_epochs={num_epochs}, "
             f"effective_grad_accum_steps={effective_grad_accum_steps}, "
-            f"max_train_steps={max_train_steps}"
+            f"update_steps_per_epoch={update_steps_per_epoch}, max_train_steps={max_train_steps}, "
+            f"warmup_steps={warmup_steps}"
         )
-    warmup_steps = int(max_train_steps * float(train_cfg.get("warmup_ratio", 0.03)))
-    print(
-            f"[INFO] len(train_dl)={len(train_dl)}"
-            f"max_train_steps={max_train_steps}"
-        )
+
     scheduler = get_scheduler(
         name=str(train_cfg.get("lr_scheduler_type", "cosine")),
         optimizer=optimizer,
         num_warmup_steps=warmup_steps,
         num_training_steps=max_train_steps,
-    )
-
-    model, optimizer, train_dl, val_dl, val_eval_dl, scheduler = accelerator.prepare(
-        model, optimizer, train_dl, val_dl, val_eval_dl, scheduler
     )
 
     output_dir = Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline")) / ("b1" if use_context else "b0")
