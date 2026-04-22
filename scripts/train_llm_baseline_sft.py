@@ -31,6 +31,9 @@ def main() -> None:
     cfg = _normalize_prompt_truncation_config(cfg)
     cfg = _apply_runtime_output_layout(cfg)
 
+    log_dir = Path(cfg["output_dir"]) / "logs"
+    logger = init_logger(__name__, log_dir=log_dir, log_filename="train_llm_baseline_sft.log")
+
     baseline_cfg = cfg.get("baseline", {})
     train_cfg = cfg.get("sft_train", {})
     run_summary = {
