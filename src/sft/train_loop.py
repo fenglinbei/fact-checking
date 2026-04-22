@@ -8,6 +8,7 @@ import math
 import os
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -44,6 +45,32 @@ def _flash_attn2_available() -> bool:
 
 def _fla_fast_path_available() -> bool:
     return importlib.util.find_spec("fla") is not None and importlib.util.find_spec("causal_conv1d") is not None
+
+
+def _normalize_prompt_truncation_config(cfg: dict) -> dict:
+    baseline_cfg = cfg.setdefault("baseline", {})
+    trunc_cfg = baseline_cfg.setdefault("prompt_truncation", {})
+    if "enabled" not in trunc_cfg:
+        trunc_cfg["enabled"] = False
+    if "strategy" not in trunc_cfg:
+        trunc_cfg["strategy"] = "tail_evidence"
+    if "min_evidence_to_keep" not in trunc_cfg:
+        trunc_cfg["min_evidence_to_keep"] = 1
+    return cfg
+
+
+def _apply_runtime_output_layout(cfg: dict) -> dict:
+    baseline_cfg = cfg.setdefault("baseline", {})
+    train_cfg = cfg.setdefault("sft_train", {})
+
+    timestamp = os.environ.get("FC_RUN_TIMESTAMP") or datetime.now().strftime("%Y%m%d-%H%M%S")
+    variant = str(baseline_cfg.get("variant", "")).strip() or timestamp
+    run_output_dir = Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline")) / f"{variant}_{timestamp}"
+
+    cfg["output_dir"] = str(run_output_dir)
+    if not train_cfg.get("tokenized_cache_dir"):
+        train_cfg["tokenized_cache_dir"] = str(run_output_dir / "tokenized_cache")
+    return cfg
 
 
 @dataclass
@@ -787,6 +814,8 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
+    cfg = _normalize_prompt_truncation_config(cfg)
+    cfg = _apply_runtime_output_layout(cfg)
     data_cfg = cfg["data"]
     baseline_cfg = cfg["baseline"]
     train_cfg = cfg["sft_train"]
@@ -854,7 +883,10 @@ def main() -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
     accelerator.wait_for_everyone()
 
-    logger = init_logger(__name__, log_dir=output_dir / "logs", log_filename="train_loop.log")
+    if accelerator.is_main_process:
+        logger = init_logger(__name__, log_dir=output_dir / "logs", log_filename="train_loop.log")
+    else:
+        logger = init_logger(__name__)
 
     # 2.3 构建训练/评估样本
     model_name_or_path = str(baseline_cfg.get("model_name_or_path", "/data/models/Qwen3.5-9B"))
