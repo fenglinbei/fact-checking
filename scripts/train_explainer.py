@@ -10,10 +10,10 @@ from torch.utils.data import DataLoader
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
 
-from liar_raw.stage_e.dataset import ExplainerTrainDataset
-from liar_raw.stage_e.trainer import Seq2SeqCollator, build_model_and_tokenizer, save_model_bundle, train_seq2seq
-from liar_raw.utils.io import ensure_dir, load_yaml
-from liar_raw.utils.seed import set_seed
+from stage_e.dataset import ExplainerTrainDataset
+from stage_e.trainer import Seq2SeqCollator, build_model_and_tokenizer, save_model_bundle, train_seq2seq
+from utils.io import ensure_dir, load_yaml
+from utils.seed import set_seed
 
 
 def parse_args():

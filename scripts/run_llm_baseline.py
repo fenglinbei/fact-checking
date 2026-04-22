@@ -11,9 +11,9 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
 )
 
-from liar_raw import LABEL2ID, LABELS
-from liar_raw.baselines.llm_baseline import BaselineConfig, run_inference
-from liar_raw.config import load_yaml
+from src import LABEL2ID, LABELS
+from baselines.llm_baseline import BaselineConfig, run_inference
+from config import load_yaml
 
 
 def _load_predictions(path: Path) -> list[dict[str, str]]:

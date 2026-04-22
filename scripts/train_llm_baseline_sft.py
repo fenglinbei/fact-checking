@@ -25,10 +25,10 @@ from transformers import (
 )
 from transformers.trainer_pt_utils import LengthGroupedSampler
 
-from liar_raw.baselines.llm_baseline import build_sft_instances, load_jsonl
-from liar_raw import LABELS, LABEL2ID
-from liar_raw.baselines.llm_baseline import build_evidence_block, build_zero_shot_prompt
-from liar_raw.config import load_yaml
+from baselines.llm_baseline import build_sft_instances, load_jsonl
+from src import LABELS, LABEL2ID
+from baselines.llm_baseline import build_evidence_block, build_zero_shot_prompt
+from config import load_yaml
 
 
 def _flash_attn2_available() -> bool:
