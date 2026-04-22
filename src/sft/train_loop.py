@@ -35,6 +35,7 @@ from prompting.truncation import (
     PromptTruncationStrategy,
     TailEvidenceTruncationStrategy,
 )
+from fact_checking.utils.logging import init_logger
 
 
 def _flash_attn2_available() -> bool:
@@ -173,16 +174,27 @@ def build_prepared_samples(
     return samples, records
 
 
+logger = init_logger(__name__)
+
+
 def _print_prompt_summary(summary: dict[str, object]) -> None:
     before = summary["prompt_length_before_truncation"]
     after = summary["prompt_length_after_truncation"]
     trunc = summary["evidence_truncation"]
-    print(
-        f"[PROMPT_STATS] split={summary['split']} mode={summary['output_mode']} "
-        f"strategy={summary['prompt_truncation_strategy']} "
-        f"pre_mean={before['mean']:.2f} pre_p95={before['p95']:.0f} pre_overflow={int(before['overflow_count'])} "
-        f"post_mean={after['mean']:.2f} post_p95={after['p95']:.0f} post_overflow={int(after['overflow_count'])} "
-        f"truncated={trunc['truncated_count']} trunc_rate={trunc['truncation_rate']:.4f}"
+    logger.info(
+        "[PROMPT_STATS] split=%s mode=%s strategy=%s pre_mean=%.2f pre_p95=%.0f pre_overflow=%d "
+        "post_mean=%.2f post_p95=%.0f post_overflow=%d truncated=%s trunc_rate=%.4f",
+        summary["split"],
+        summary["output_mode"],
+        summary["prompt_truncation_strategy"],
+        before["mean"],
+        before["p95"],
+        int(before["overflow_count"]),
+        after["mean"],
+        after["p95"],
+        int(after["overflow_count"]),
+        trunc["truncated_count"],
+        trunc["truncation_rate"],
     )
 @dataclass
 class SFTDatasetBuilder:
@@ -511,12 +523,21 @@ def _summarize_prompt_lengths(
         "overflow_count": float(np.sum(overflow)),
         "overflow_rate": float(np.mean(overflow)),
     }
-    print(
-        f"[PROMPT_STATS] split={split} count={int(summary['count'])} "
-        f"min={summary['min']:.0f} p50={summary['p50']:.0f} p90={summary['p90']:.0f} "
-        f"p95={summary['p95']:.0f} p99={summary['p99']:.0f} max={summary['max']:.0f} "
-        f"mean={summary['mean']:.2f} overflow(>{max_length})={int(summary['overflow_count'])} "
-        f"rate={summary['overflow_rate']:.4f}"
+    logger.info(
+        "[PROMPT_STATS] split=%s count=%d min=%.0f p50=%.0f p90=%.0f p95=%.0f p99=%.0f max=%.0f "
+        "mean=%.2f overflow(>%d)=%d rate=%.4f",
+        split,
+        int(summary["count"]),
+        summary["min"],
+        summary["p50"],
+        summary["p90"],
+        summary["p95"],
+        summary["p99"],
+        summary["max"],
+        summary["mean"],
+        max_length,
+        int(summary["overflow_count"]),
+        summary["overflow_rate"],
     )
     return summary
 
@@ -586,9 +607,11 @@ def _select_mini_val_rows(
     indices = rng.choice(len(rows), size=mini_val_size, replace=False)
     mini_rows = [rows[int(i)] for i in indices.tolist()]
     if accelerator.is_main_process:
-        print(
-            f"[INFO] mini-val enabled: sampled {len(mini_rows)} / {len(rows)} "
-            f"validation rows (seed={mini_val_seed})."
+        logger.info(
+            "[INFO] mini-val enabled: sampled %d / %d validation rows (seed=%d).",
+            len(mini_rows),
+            len(rows),
+            mini_val_seed,
         )
     return mini_rows
 
@@ -723,10 +746,10 @@ def save_model(
 
         if accelerator.is_main_process:
             tokenizer.save_pretrained(str(output_path))
-            print(
-                "[WARN] DeepSpeed ZeRO-3 16-bit gather is disabled; saved a DeepSpeed checkpoint to "
-                f"{ds_ckpt_dir}. Convert to fp32 using zero_to_fp32.py or enable "
-                "stage3_gather_16bit_weights_on_model_save."
+            logger.warning(
+                "[WARN] DeepSpeed ZeRO-3 16-bit gather is disabled; saved a DeepSpeed checkpoint to %s. "
+                "Convert to fp32 using zero_to_fp32.py or enable stage3_gather_16bit_weights_on_model_save.",
+                ds_ckpt_dir,
             )
 
     accelerator.wait_for_everyone()
@@ -831,6 +854,8 @@ def main() -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
     accelerator.wait_for_everyone()
 
+    logger = init_logger(__name__, log_dir=output_dir / "logs", log_filename="train_loop.log")
+
     # 2.3 构建训练/评估样本
     model_name_or_path = str(baseline_cfg.get("model_name_or_path", "/data/models/Qwen3.5-9B"))
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
@@ -886,13 +911,13 @@ def main() -> None:
             train_summary=train_prompt_summary,
             val_summary=val_prompt_summary,
         )
-        print(f"[INFO] prompt statistics saved to {prompt_stats_path}")
+        logger.info("[INFO] prompt statistics saved to %s", prompt_stats_path)
 
     accelerator.wait_for_everyone()
 
     if args.prompt_length_stats_only:
         if accelerator.is_main_process:
-            print("[INFO] prompt length stats finished. Exiting due to --prompt-length-stats-only.")
+            logger.info("[INFO] prompt length stats finished. Exiting due to --prompt-length-stats-only.")
         return
 
     # 3. 构建模型、优化器和数据加载器
@@ -906,15 +931,9 @@ def main() -> None:
         if _flash_attn2_available():
             model_kwargs["attn_implementation"] = "flash_attention_2"
         elif accelerator.is_main_process:
-            print(
-                "[WARN] sft_train.use_flash_attention_2=true, but flash-attn is not installed. "
-                "Falling back to the default attention implementation."
-            )
+            logger.warning("[WARN] sft_train.use_flash_attention_2=true, but flash-attn is not installed. Falling back to the default attention implementation.")
     if accelerator.is_main_process and not _fla_fast_path_available():
-        print(
-            "[INFO] FLA fast path is unavailable (requires both `fla` and `causal_conv1d`). "
-            "This is separate from flash-attn and does not block training."
-        )
+        logger.info("[INFO] FLA fast path is unavailable (requires both `fla` and `causal_conv1d`). This is separate from flash-attn and does not block training.")
 
     # 3.2 加载模型
     model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **model_kwargs)
@@ -988,27 +1007,16 @@ def main() -> None:
             effective_grad_accum_steps = int(ds_grad_accum_steps)
     cfg_grad_accum_steps = int(train_cfg.get("gradient_accumulation_steps", effective_grad_accum_steps))
     if accelerator.is_main_process and effective_grad_accum_steps != cfg_grad_accum_steps:
-        print(
-            "[WARN] gradient_accumulation_steps mismatch detected: "
-            f"sft_train={cfg_grad_accum_steps}, effective={effective_grad_accum_steps}. "
-            "Using effective value for max_train_steps/progress bar."
-        )
+        logger.warning("[WARN] gradient_accumulation_steps mismatch detected: sft_train=%d, effective=%d. Using effective value for max_train_steps/progress bar.", cfg_grad_accum_steps, effective_grad_accum_steps)
     pre_prepare_train_dl_len = len(train_dl)
     model, optimizer, train_dl, val_dl, val_eval_dl = accelerator.prepare(
         model, optimizer, train_dl, val_dl, val_eval_dl
     )
     post_prepare_train_dl_len = len(train_dl)
     if accelerator.is_main_process:
-        print(
-            "[INFO] dataloader length around accelerator.prepare: "
-            f"before={pre_prepare_train_dl_len}, after={post_prepare_train_dl_len}"
-        )
+        logger.info("[INFO] dataloader length around accelerator.prepare: before=%d, after=%d", pre_prepare_train_dl_len, post_prepare_train_dl_len)
     if accelerator.is_main_process and post_prepare_train_dl_len != pre_prepare_train_dl_len:
-        print(
-            "[WARN] len(train_dl) changed after accelerator.prepare: "
-            f"before={pre_prepare_train_dl_len}, after={post_prepare_train_dl_len}. "
-            "This may indicate duplicated sharding/re-partitioning across distributed samplers."
-        )
+        logger.warning("[WARN] len(train_dl) changed after accelerator.prepare: before=%d, after=%d. This may indicate duplicated sharding/re-partitioning across distributed samplers.", pre_prepare_train_dl_len, post_prepare_train_dl_len)
     update_steps_per_epoch = max(1, math.ceil(post_prepare_train_dl_len / effective_grad_accum_steps))
     max_train_steps = num_epochs * update_steps_per_epoch
     warmup_steps = int(max_train_steps * float(train_cfg.get("warmup_ratio", 0.03)))
@@ -1020,14 +1028,7 @@ def main() -> None:
     )
     scheduler = accelerator.prepare(scheduler)
     if accelerator.is_main_process:
-        print(
-            "[INFO] train progress setup (post-prepare): "
-            f"num_epochs={num_epochs}, "
-            f"len(train_dl)={post_prepare_train_dl_len}, "
-            f"effective_grad_accum_steps={effective_grad_accum_steps}, "
-            f"update_steps_per_epoch={update_steps_per_epoch}, "
-            f"max_train_steps={max_train_steps}"
-        )
+        logger.info("[INFO] train progress setup (post-prepare): num_epochs=%d, len(train_dl)=%d, effective_grad_accum_steps=%d, update_steps_per_epoch=%d, max_train_steps=%d", num_epochs, post_prepare_train_dl_len, effective_grad_accum_steps, update_steps_per_epoch, max_train_steps)
 
     logging_steps = int(train_cfg.get("logging_steps", 20))
     eval_steps = int(train_cfg.get("eval_steps", 500))
@@ -1065,7 +1066,7 @@ def main() -> None:
                     accelerator.log({"train/loss": train_loss, "train/lr": lr, "train/epoch": epoch}, step=global_step)
 
                 if global_step % eval_steps == 0:
-                    print(f"[rank {accelerator.process_index}] before evaluate step={global_step}", flush=True)
+                    logger.info("[rank %d] before evaluate step=%d", accelerator.process_index, global_step)
                     eval_metrics = evaluate(
                         model,
                         val_eval_dl,
@@ -1074,7 +1075,7 @@ def main() -> None:
                         max_length=max_length,
                         max_new_tokens=int(baseline_cfg.get("max_new_tokens", 24)),
                     )
-                    print(f"[rank {accelerator.process_index}] after evaluate step={global_step}", flush=True)
+                    logger.info("[rank %d] after evaluate step=%d", accelerator.process_index, global_step)
                     macro_f1 = float(eval_metrics["macro_f1"])
                     accelerator.log(
                         {
@@ -1127,17 +1128,17 @@ def main() -> None:
 
                     if macro_f1 > best_val_loss:
                         best_val_loss = macro_f1
-                        print(f"[rank {accelerator.process_index}] before save best step={global_step}", flush=True)
+                        logger.info("[rank %d] before save best step=%d", accelerator.process_index, global_step)
                         save_model(accelerator, model, tokenizer, output_dir / "best")
-                        print(f"[rank {accelerator.process_index}] after save best step={global_step}", flush=True)
+                        logger.info("[rank %d] after save best step=%d", accelerator.process_index, global_step)
 
                     if empty_cache_on_eval:
                         maybe_empty_cache(accelerator)
 
                 if global_step % save_steps == 0:
-                    print(f"[rank {accelerator.process_index}] before save best step={global_step}", flush=True)
+                    logger.info("[rank %d] before save checkpoint step=%d", accelerator.process_index, global_step)
                     save_model(accelerator, model, tokenizer, output_dir / f"checkpoint-{global_step}")
-                    print(f"[rank {accelerator.process_index}] after save best step={global_step}", flush=True)
+                    logger.info("[rank %d] after save checkpoint step=%d", accelerator.process_index, global_step)
 
                     if empty_cache_on_save:
                         maybe_empty_cache(accelerator)
