@@ -1,6 +1,6 @@
-# LIAR-RAW Fact-checking Pipeline (Stage A → E)
+# LIAR-RAW Fact-checking Pipeline (Stage A + Baseline)
 
-本仓库现已统一为**单一项目结构**（`configs/`、`scripts/`、`src/` 在仓库根目录），不再拆分为 `stage_ab` 与 `stage_cde` 两套代码。
+本仓库现已统一为**单一项目结构**（`configs/`、`scripts/`、`src/` 在仓库根目录）。
 
 ---
 
@@ -10,32 +10,18 @@
 .
 ├── configs/
 │   ├── stage_a.yaml
-│   ├── stage_b.yaml
 │   ├── baseline_b0.yaml
 │   ├── baseline_b1.yaml
-│   ├── deepspeed_zero3.json
-│   ├── build_graph_inputs.yaml
-│   ├── graph_verifier.yaml
-│   └── explainer.yaml
+│   └── deepspeed_zero3.json
 ├── scripts/
 │   ├── run_stage_a.sh
-│   ├── train_stage_b.sh
-│   ├── predict_stage_b.sh
 │   ├── run_llm_baseline.py
 │   ├── train_llm_baseline_sft.py
-│   ├── build_graph_inputs.py
-│   ├── train_graph_verifier.py
-│   ├── predict_graph_verifier.py
-│   ├── train_explainer.py
-│   ├── generate_explanations.py
-│   └── visualize_bad_cases.py
+│   ├── train_llm_baseline_b0.sh
+│   └── train_llm_baseline_b1.sh
 ├── src/fact_checking/
 │   ├── retrieval/      # Stage A
-│   ├── training/       # Stage B
 │   ├── baselines/      # Baseline B0/B1
-│   ├── stage_c/
-│   ├── stage_d/
-│   ├── stage_e/
 │   └── utils/
 ├── requirements.txt
 └── README.md
@@ -229,9 +215,10 @@ PYTHONPATH=src python -m fact_checking.retrieval.build_stage_a --config configs/
 
 `baseline_b0` 为 sentence-only 提示构造：`claim + top-k sentences -> label`。
 
-- `output_dir`: baseline 训练/推理输出目录。
+- `output_dir`: SFT 运行根目录。每次训练会自动落到 `output_dir/<experiment_name>_<timestamp>/`。
 - `wandb.*`: W&B 开关与项目配置。
 - `data.train_candidates|val_candidates|test_candidates`: Stage A 产出的 JSONL。
+- `baseline.variant`: 实验名。SFT 优先使用该值；若缺省，则使用当前时间戳作为实验名。
 - `baseline.model_name_or_path`: LLM 路径。
 - `baseline.top_k`: 每条 claim 使用前 k 条候选句。
 - `baseline.use_context`: B0 固定为 `false`（不拼接句子上下文）。
@@ -242,6 +229,7 @@ PYTHONPATH=src python -m fact_checking.retrieval.build_stage_a --config configs/
 - `baseline.retrieval_model`: few-shot 检索 embedding 模型。
 - `baseline.retrieval_batch_size|max_length`: few-shot 检索编码参数。
 - `baseline.max_new_tokens|temperature|do_sample`: 生成控制参数。
+- `sft_train.tokenized_cache_dir`: 预分词缓存目录（可选）。未配置时自动写入当前 run 目录下的 `tokenized_cache/`，避免不同实验互相污染。
 - `sft_train.*`: SFT 阶段训练参数（batch、梯度累积、学习率、epoch、warmup、bf16、gradient checkpointing、scheduler、clip 等）。
 
 ### 4.3 `configs/baseline_b1.yaml`
@@ -270,25 +258,25 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 scripts/train_llm_basel
 
 当 `deepspeed_zero3` 且未开启 `stage3_gather_16bit_weights_on_model_save` 时，`best/` 下通常只有 tokenizer 与 `ds_checkpoint/`，不能直接被 `AutoModelForCausalLM.from_pretrained()` 读取。需要先把 ZeRO 分片权重聚合为 fp32 权重，再放入一个可被 HuggingFace 读取的目录。
 
-假设你的 best 目录是：
+假设你的 best 目录是（示例）：
 
 ```text
-outputs/liar-raw/llm_baseline/b0/best
+outputs/liar-raw/llm_baseline/b0_20260422-101500/best
 ```
 
 可按如下步骤：
 
 ```bash
 # 1) 从 DeepSpeed 分片聚合出 fp32 权重（会生成 pytorch_model.bin）
-python outputs/liar-raw/llm_baseline/b0/best/ds_checkpoint/zero_to_fp32.py \
-  outputs/liar-raw/llm_baseline/b0/best/ds_checkpoint \
-  outputs/liar-raw/llm_baseline/b0/best/pytorch_model.bin
+python outputs/liar-raw/llm_baseline/b0_20260422-101500/best/ds_checkpoint/zero_to_fp32.py \
+  outputs/liar-raw/llm_baseline/b0_20260422-101500/best/ds_checkpoint \
+  outputs/liar-raw/llm_baseline/b0_20260422-101500/best/pytorch_model.bin
 
 # 2) 补齐 config（从训练基座模型拷贝）
 python - <<'PY'
 from transformers import AutoConfig
 base_model = "/data/models/Qwen2.5-7B-Instruct"  # 改成你训练时 baseline.model_name_or_path
-out_dir = "outputs/liar-raw/llm_baseline/b0/best"
+out_dir = "outputs/liar-raw/llm_baseline/b0_20260422-101500/best"
 cfg = AutoConfig.from_pretrained(base_model, trust_remote_code=True)
 cfg.save_pretrained(out_dir)
 print("saved config.json to", out_dir)
@@ -300,13 +288,13 @@ python - <<'PY'
 import yaml
 p = "configs/eval/baseline_b0_eval_best.yaml"
 cfg = yaml.safe_load(open(p, "r", encoding="utf-8"))
-cfg["baseline"]["model_name_or_path"] = "outputs/liar-raw/llm_baseline/b0/best"
+cfg["baseline"]["model_name_or_path"] = "outputs/liar-raw/llm_baseline/b0_20260422-101500/best"
 yaml.safe_dump(cfg, open(p, "w", encoding="utf-8"), allow_unicode=True, sort_keys=False)
 print("patched", p)
 PY
 
 # 4) 跑 test 推理
-PYTHONPATH=src python scripts/run_llm_baseline.py --config /tmp/baseline_b0_eval_best.yaml --split test
+PYTHONPATH=src python scripts/run_llm_baseline.py --config configs/eval/baseline_b0_eval_best.yaml --split test
 ```
 
 输出文件默认在：
@@ -319,7 +307,7 @@ outputs/liar-raw/llm_baseline/b0_test.predictions.jsonl
 
 ---
 
-## 5. 全流程快速命令
+## 5. Stage A / Baseline 快速命令
 
 ### Stage A
 
@@ -327,27 +315,8 @@ outputs/liar-raw/llm_baseline/b0_test.predictions.jsonl
 bash scripts/run_stage_a.sh
 ```
 
-### Stage B
-
-```bash
-bash scripts/train_stage_b.sh
-bash scripts/predict_stage_b.sh
-```
-
-### Stage C/D/E
-
-```bash
-python scripts/build_graph_inputs.py --config configs/build_graph_inputs.yaml
-python scripts/train_graph_verifier.py --config configs/graph_verifier.yaml
-python scripts/predict_graph_verifier.py --config configs/graph_verifier.yaml --split test
-python scripts/train_explainer.py --config configs/explainer.yaml
-python scripts/generate_explanations.py --config configs/explainer.yaml --split test
-```
-
----
-
 ## 6. 注意事项
 
 1. 该流水线是 oracle-free 训练思路，训练信号以 claim 级标签为主。
 2. Stage A 是冻结检索，不是可训练 dense retriever。
-3. baseline 与 stage_b/stage_d 的目标不同，比较时需统一数据切分与指标。
+3. SFT 训练 run 目录按 `<baseline.variant 或时间戳>_<timestamp>` 自动创建。

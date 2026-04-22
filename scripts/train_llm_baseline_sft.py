@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -24,6 +25,7 @@ def main() -> None:
     args = parse_args()
     cfg = load_yaml(args.config)
     cfg = _normalize_prompt_truncation_config(cfg)
+    cfg = _apply_runtime_output_layout(cfg)
     forwarded_config = _materialize_runtime_config(cfg)
 
     forwarded = ["--config", forwarded_config]
@@ -47,6 +49,20 @@ def _normalize_prompt_truncation_config(cfg: dict) -> dict:
         trunc_cfg["strategy"] = "tail_evidence"
     if "min_evidence_to_keep" not in trunc_cfg:
         trunc_cfg["min_evidence_to_keep"] = 1
+    return cfg
+
+
+def _apply_runtime_output_layout(cfg: dict) -> dict:
+    baseline_cfg = cfg.setdefault("baseline", {})
+    train_cfg = cfg.setdefault("sft_train", {})
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    variant = str(baseline_cfg.get("variant", "")).strip() or timestamp
+    run_output_dir = Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline")) / f"{variant}_{timestamp}"
+
+    cfg["output_dir"] = str(run_output_dir)
+    if not train_cfg.get("tokenized_cache_dir"):
+        train_cfg["tokenized_cache_dir"] = str(run_output_dir / "tokenized_cache")
     return cfg
 
 
