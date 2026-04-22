@@ -21,6 +21,8 @@ export TORCH_CUDA_ARCH_LIST="8.9"
 # 防止多个 rank 编译扩展时并发过高
 export MAX_JOBS=4
 
+# 训练输出将自动写入：
+# outputs/liar-raw/llm_baseline/<baseline.variant 或时间戳>_<timestamp>/
 CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
   --num_processes=4 \
   --num_machines=1 \
