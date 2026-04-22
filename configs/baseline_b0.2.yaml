@@ -39,11 +39,11 @@ sft_train:
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 8
   learning_rate: 1.0e-5
-  num_train_epochs: 5
+  num_train_epochs: 2
   weight_decay: 0.0
   warmup_ratio: 0.03
   bf16: true
-  max_length: 2048
+  max_length: 1024
   logging_steps: 2
   save_steps: 50
   eval_steps: 50
