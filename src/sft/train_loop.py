@@ -8,7 +8,6 @@ import math
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -818,13 +817,8 @@ def main() -> None:
     output_strategy = build_output_strategy(baseline_cfg)
     truncation_strategy = build_prompt_truncation_strategy(baseline_cfg)
 
-    experiment_variant = str(baseline_cfg.get("variant", "")).strip()
-    if not experiment_variant:
-        experiment_variant = "b2" if output_mode == "explanation_label" else "baseline"
-
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     output_base_dir = Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline"))
-    output_dir = output_base_dir / f"{experiment_variant}_{timestamp}"
+    output_dir = output_base_dir
     if accelerator.is_main_process:
         output_dir.mkdir(parents=True, exist_ok=True)
     accelerator.wait_for_everyone()
