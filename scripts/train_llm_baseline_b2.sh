@@ -17,6 +17,7 @@ export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 # print(torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0))
 # PY
 export TORCH_CUDA_ARCH_LIST="8.9"
+export FC_RUN_TIMESTAMP="${FC_RUN_TIMESTAMP:-$(date +%Y%m%d-%H%M%S)}"
 
 # 防止多个 rank 编译扩展时并发过高
 # export MAX_JOBS=4
