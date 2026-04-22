@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -27,8 +28,9 @@ from transformers.trainer_pt_utils import LengthGroupedSampler
 
 from fact_checking.baselines.llm_baseline import load_jsonl
 from fact_checking import LABELS, LABEL2ID
-from fact_checking.baselines.llm_baseline import build_evidence_block, build_zero_shot_prompt
+from fact_checking.baselines.llm_baseline import build_evidence_block
 from fact_checking.config import load_yaml
+from prompting.output_strategy import OutputStrategy, build_output_strategy, _infer_output_mode
 from prompting.stats import PromptPreparationRecord, save_prompt_statistics, summarize_prompt_preparation
 from prompting.truncation import (
     PromptTruncationStrategy,
@@ -84,75 +86,6 @@ class PreparedSample:
     was_truncated: bool
     overflow_before_trunc: bool
     overflow_after_trunc: bool
-
-
-class OutputStrategy:
-    name = "label_only"
-
-    def build_prompt(self, claim: str, evidence_block: str) -> str:
-        raise NotImplementedError
-
-    def build_target(self, row: dict, gold_label: str) -> str:
-        raise NotImplementedError
-
-
-class LabelOnlyOutputStrategy(OutputStrategy):
-    name = "label_only"
-
-    def build_prompt(self, claim: str, evidence_block: str) -> str:
-        return build_zero_shot_prompt(claim=claim, evidence_block=evidence_block)
-
-    def build_target(self, row: dict, gold_label: str) -> str:
-        return gold_label
-
-
-class ExplanationLabelOutputStrategy(OutputStrategy):
-    name = "explanation_label"
-
-    def build_prompt(self, claim: str, evidence_block: str) -> str:
-        evidence_text = evidence_block.strip() if evidence_block.strip() else "(no evidence available)"
-        label_list = ", ".join(LABELS)
-        return (
-            "You are a fact-checking assistant. Read the claim and retrieved evidence, "
-            "then provide a concise evidence-grounded explanation followed by the final label.\n\n"
-            f"Valid labels: {label_list}\n\n"
-            f"Claim:\n{claim.strip()}\n\n"
-            f"Evidence:\n{evidence_text}\n\n"
-            "Respond with exactly the following format:\n"
-            "Explanation: <brief evidence-grounded explanation>\n"
-            "Label: <one valid label>\n\n"
-            "Explanation:"
-        )
-
-    def build_target(self, row: dict, gold_label: str) -> str:
-        explanation = str(row.get("explanation", "")).strip()
-        if not explanation:
-            explanation = "The available evidence supports this label."
-        return f"{explanation}\nLabel: {gold_label}"
-
-
-def _infer_output_mode(baseline_cfg: dict) -> str:
-    explicit_mode = str(baseline_cfg.get("output_mode", "")).strip().lower()
-    if explicit_mode:
-        return explicit_mode
-
-    variant = str(baseline_cfg.get("variant", "")).strip().lower()
-    if variant == "b2":
-        return "explanation_label"
-
-    return "label_only"
-
-
-def build_output_strategy(baseline_cfg: dict) -> OutputStrategy:
-    output_mode = _infer_output_mode(baseline_cfg)
-    if output_mode == "label_only":
-        return LabelOnlyOutputStrategy()
-    if output_mode == "explanation_label":
-        return ExplanationLabelOutputStrategy()
-    raise ValueError(
-        f"Unsupported baseline.output_mode={output_mode}. "
-        "Use 'label_only' or 'explanation_label'."
-    )
 
 
 def build_prompt_truncation_strategy(baseline_cfg: dict) -> PromptTruncationStrategy:
@@ -311,7 +244,7 @@ def _tokenize_instances(
 
     for row in instances:
         prompt_text = row["prompt"].rstrip() + " "
-        target_text = row["target"].strip().lower()
+        target_text = row["target"].strip()
 
         prompt_ids = tokenizer(
             prompt_text,
@@ -482,6 +415,13 @@ _LABEL_PATTERNS = [
 ]
 
 def _parse_label_id(raw_text: str) -> int:
+    label_line_match = re.search(r"(?mi)^\s*label\s*:\s*([^\n\r]+)", raw_text)
+    if label_line_match:
+        label_candidate = label_line_match.group(1)
+        label_from_line = _parse_label_id(label_candidate)
+        if label_from_line >= 0:
+            return label_from_line
+
     clean = raw_text.strip().lower()
     clean = re.sub(r"[_/]+", " ", clean)
     clean = re.sub(r"[^a-z\-\s]", " ", clean)
