@@ -740,6 +740,8 @@ def maybe_empty_cache(accelerator: Accelerator) -> None:
 
 
 def main() -> None:
+
+    # 1. 参数解析
     parser = argparse.ArgumentParser(description="SFT train for LLM baselines (Accelerate).")
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument(
@@ -767,10 +769,12 @@ def main() -> None:
     train_cfg = cfg["sft_train"]
     wandb_cfg = cfg.get("wandb", {})
 
+    # 1.1 确认CUDA可用性
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
+    # 1.2 设置 Weights & Biases 环境变量
     wandb_enabled = bool(wandb_cfg.get("enabled", False))
     if wandb_enabled:
         os.environ.setdefault("WANDB_PROJECT", str(wandb_cfg.get("project", "fact-checking-stage-ab")))
@@ -792,6 +796,8 @@ def main() -> None:
     if wandb_enabled:
         accelerator.init_trackers(project_name=os.environ["WANDB_PROJECT"], config=cfg, init_kwargs={"wandb": {"name": run_name}})
 
+
+    # 2. 加载数据并构建训练/评估样本
     train_rows = load_jsonl(data_cfg["train_candidates"])
     val_rows = load_jsonl(data_cfg["val_candidates"])
 
@@ -810,6 +816,7 @@ def main() -> None:
         accelerator=accelerator,
     )
 
+    # 2.1 构建 prompt 输出策略和截断策略
     use_context = bool(baseline_cfg.get("use_context", False))
     top_k = int(baseline_cfg.get("top_k", 8))
     context_k = int(baseline_cfg.get("context_k", 1))
@@ -817,12 +824,14 @@ def main() -> None:
     output_strategy = build_output_strategy(baseline_cfg)
     truncation_strategy = build_prompt_truncation_strategy(baseline_cfg)
 
+    # 2.2 初始化输出目录
     output_base_dir = Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline"))
     output_dir = output_base_dir
     if accelerator.is_main_process:
         output_dir.mkdir(parents=True, exist_ok=True)
     accelerator.wait_for_everyone()
 
+    # 2.3 构建训练/评估样本
     model_name_or_path = str(baseline_cfg.get("model_name_or_path", "/data/models/Qwen3.5-9B"))
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -854,6 +863,7 @@ def main() -> None:
     val_instances = [{"prompt": sample.prompt, "target": sample.target} for sample in val_samples]
     val_eval_ds = EvalPromptDataset(val_samples)
 
+    # 2.4 统计 prompt token 长度分布等信息
     train_prompt_summary = summarize_prompt_preparation(
         train_prompt_records,
         max_length=max_length,
@@ -885,10 +895,13 @@ def main() -> None:
             print("[INFO] prompt length stats finished. Exiting due to --prompt-length-stats-only.")
         return
 
+    # 3. 构建模型、优化器和数据加载器
     model_kwargs = {
         "trust_remote_code": True,
         "dtype": torch.bfloat16 if torch.cuda.is_available() and mixed_precision == "bf16" else torch.float32,
     }
+
+    # 3.1 确定依赖可用性
     if bool(train_cfg.get("use_flash_attention_2", True)):
         if _flash_attn2_available():
             model_kwargs["attn_implementation"] = "flash_attention_2"
@@ -903,12 +916,14 @@ def main() -> None:
             "This is separate from flash-attn and does not block training."
         )
 
+    # 3.2 加载模型
     model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **model_kwargs)
 
     if bool(train_cfg.get("gradient_checkpointing", True)):
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
         model.config.use_cache = False
 
+    # 3.3 构建数据加载器和优化器
     cache_dir_cfg = train_cfg.get("tokenized_cache_dir")
     cache_dir = Path(str(cache_dir_cfg)) if cache_dir_cfg else output_dir / "tokenized_cache"
     padding_strategy = str(train_cfg.get("padding", "max_length"))
@@ -925,7 +940,6 @@ def main() -> None:
     train_ds = builder.build(train_instances, split="train", accelerator=accelerator)
     val_ds = builder.build(val_instances, split="val", accelerator=accelerator)
 
-    # data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=8)
     data_collator = CausalLMSFTCollator(tokenizer=tokenizer, pad_to_multiple_of=8)
     num_workers = int(train_cfg.get("dataloader_num_workers", 0))
     train_dl = build_dataloader(
@@ -955,6 +969,7 @@ def main() -> None:
         padding=padding_strategy,
     )
 
+    # 3.4 构建优化器和学习率调度器
     optimizer = AdamW(
         model.parameters(),
         lr=float(train_cfg.get("learning_rate", 1e-5)),
@@ -962,6 +977,7 @@ def main() -> None:
         fused=torch.cuda.is_available(),
     )
 
+    # 3.4.1 计算训练总步数和 warmup 步数
     num_epochs = int(math.ceil(float(train_cfg.get("num_train_epochs", 2.0))))
     effective_grad_accum_steps = int(accelerator.gradient_accumulation_steps)
     ds_plugin = getattr(accelerator.state, "deepspeed_plugin", None)
@@ -1025,6 +1041,7 @@ def main() -> None:
     global_step = 0
     best_val_loss = float("-inf")
 
+    # 4. 训练主循环
     for epoch in range(num_epochs):
         model.train()
         for step, batch in enumerate(train_dl):
