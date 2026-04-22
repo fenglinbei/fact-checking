@@ -6,11 +6,9 @@ import hashlib
 import json
 import math
 import os
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,6 +29,10 @@ from fact_checking.baselines.llm_baseline import load_jsonl
 from fact_checking import LABELS, LABEL2ID
 from fact_checking.baselines.llm_baseline import build_evidence_block, build_zero_shot_prompt
 from fact_checking.config import load_yaml
+from prompting.truncation import (
+    PromptTruncationStrategy,
+    TailEvidenceTruncationStrategy,
+)
 
 
 def _flash_attn2_available() -> bool:
@@ -137,149 +139,6 @@ class ExplanationLabelOutputStrategy(OutputStrategy):
         if not explanation:
             explanation = "The available evidence supports this label."
         return f"{explanation}\nLabel: {gold_label}"
-
-
-@dataclass
-class PromptTruncationResult:
-    prompt: str
-    prompt_length_before_trunc: int
-    prompt_length_after_trunc: int
-    evidence_count_before_trunc: int
-    evidence_count_after_trunc: int
-    was_truncated: bool
-    overflow_before_trunc: bool
-    overflow_after_trunc: bool
-
-
-class PromptTruncationStrategy:
-    name = "none"
-
-    def apply(
-        self,
-        claim: str,
-        evidence_block: str,
-        tokenizer: AutoTokenizer,
-        max_length: int,
-        prompt_builder: Callable[[str, str], str],
-    ) -> PromptTruncationResult:
-        prompt = prompt_builder(claim, evidence_block)
-        prompt_length = _count_text_tokens(prompt, tokenizer)
-        evidence_count = len(_split_evidence_block(evidence_block))
-        overflow = prompt_length > int(max_length)
-        return PromptTruncationResult(
-            prompt=prompt,
-            prompt_length_before_trunc=prompt_length,
-            prompt_length_after_trunc=prompt_length,
-            evidence_count_before_trunc=evidence_count,
-            evidence_count_after_trunc=evidence_count,
-            was_truncated=False,
-            overflow_before_trunc=overflow,
-            overflow_after_trunc=overflow,
-        )
-
-
-class TailEvidenceTruncationStrategy(PromptTruncationStrategy):
-    name = "tail_evidence"
-
-    def __init__(self, min_evidence_to_keep: int = 1) -> None:
-        self.min_evidence_to_keep = max(0, int(min_evidence_to_keep))
-
-    def apply(
-        self,
-        claim: str,
-        evidence_block: str,
-        tokenizer: AutoTokenizer,
-        max_length: int,
-        prompt_builder: Callable[[str, str], str],
-    ) -> PromptTruncationResult:
-        evidences = _split_evidence_block(evidence_block)
-        original_count = len(evidences)
-
-        prompt_before = prompt_builder(claim, evidence_block)
-        prompt_length_before = _count_text_tokens(prompt_before, tokenizer)
-        overflow_before = prompt_length_before > int(max_length)
-
-        if not overflow_before or not evidences:
-            return PromptTruncationResult(
-                prompt=prompt_before,
-                prompt_length_before_trunc=prompt_length_before,
-                prompt_length_after_trunc=prompt_length_before,
-                evidence_count_before_trunc=original_count,
-                evidence_count_after_trunc=original_count,
-                was_truncated=False,
-                overflow_before_trunc=overflow_before,
-                overflow_after_trunc=overflow_before,
-            )
-
-        kept = list(evidences)
-        min_keep = min(self.min_evidence_to_keep, len(kept))
-        while len(kept) > min_keep:
-            kept.pop()
-            candidate_block = _join_evidence_block(kept, evidence_block)
-            candidate_prompt = prompt_builder(claim, candidate_block)
-            candidate_length = _count_text_tokens(candidate_prompt, tokenizer)
-            if candidate_length <= int(max_length):
-                return PromptTruncationResult(
-                    prompt=candidate_prompt,
-                    prompt_length_before_trunc=prompt_length_before,
-                    prompt_length_after_trunc=candidate_length,
-                    evidence_count_before_trunc=original_count,
-                    evidence_count_after_trunc=len(kept),
-                    was_truncated=True,
-                    overflow_before_trunc=overflow_before,
-                    overflow_after_trunc=False,
-                )
-
-        final_block = _join_evidence_block(kept, evidence_block)
-        final_prompt = prompt_builder(claim, final_block)
-        final_length = _count_text_tokens(final_prompt, tokenizer)
-        return PromptTruncationResult(
-            prompt=final_prompt,
-            prompt_length_before_trunc=prompt_length_before,
-            prompt_length_after_trunc=final_length,
-            evidence_count_before_trunc=original_count,
-            evidence_count_after_trunc=len(kept),
-            was_truncated=(len(kept) != original_count),
-            overflow_before_trunc=overflow_before,
-            overflow_after_trunc=final_length > int(max_length),
-        )
-
-
-def _count_text_tokens(text: str, tokenizer: AutoTokenizer) -> int:
-    return len(tokenizer(text, truncation=False, add_special_tokens=True)["input_ids"])
-
-
-def _split_evidence_block(evidence_block: str) -> list[str]:
-    normalized = evidence_block.strip()
-    if not normalized:
-        return []
-
-    numbered_pattern = re.compile(
-        r"(?m)(?=^\s*(?:\[\d+\]|\(\d+\)|\d+[.)]|evidence\s+\d+\s*:|doc\s+\d+\s*:|report\s+\d+\s*:))",
-        flags=re.IGNORECASE,
-    )
-    pieces = [piece.strip() for piece in numbered_pattern.split(normalized) if piece.strip()]
-    if len(pieces) >= 2:
-        return pieces
-
-    blank_line_pieces = [piece.strip() for piece in re.split(r"\n\s*\n+", normalized) if piece.strip()]
-    if len(blank_line_pieces) >= 2:
-        return blank_line_pieces
-
-    bullet_pattern = re.compile(r"(?m)(?=^\s*-\s+)")
-    bullet_pieces = [piece.strip() for piece in bullet_pattern.split(normalized) if piece.strip()]
-    if len(bullet_pieces) >= 2:
-        return bullet_pieces
-
-    return [normalized]
-
-
-def _join_evidence_block(evidences: list[str], reference_block: str) -> str:
-    if not evidences:
-        return ""
-
-    separator = "\n\n" if "\n\n" in reference_block else "\n"
-    return separator.join(evidences)
 
 
 def _infer_output_mode(baseline_cfg: dict) -> str:
