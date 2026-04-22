@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from fact_checking import LABELS
 from fact_checking.baselines.llm_baseline import build_zero_shot_prompt
 
@@ -46,11 +44,24 @@ class ExplanationLabelOutputStrategy(OutputStrategy):
 
     def build_target(self, row: dict, gold_label: str) -> str:
         explanation = str(row.get("explanation", "")).strip() or "The available evidence supports this label."
-        return f"{explanation}\nLabel: {gold_label}"
+        return f"Explanation: {explanation}\nLabel: {gold_label}"
+
+
+def _infer_output_mode(baseline_cfg: dict) -> str:
+    explicit_mode = str(baseline_cfg.get("output_mode", "")).strip().lower()
+    if explicit_mode:
+        return explicit_mode
+
+    return "label_only"
 
 
 def build_output_strategy(baseline_cfg: dict) -> OutputStrategy:
-    mode = str(baseline_cfg.get("output_mode", "label_only")).strip().lower()
-    if mode == "explanation_label":
+    output_mode = _infer_output_mode(baseline_cfg)
+    if output_mode == "label_only":
+        return LabelOnlyOutputStrategy()
+    if output_mode == "explanation_label":
         return ExplanationLabelOutputStrategy()
-    return LabelOnlyOutputStrategy()
+    raise ValueError(
+        f"Unsupported baseline.output_mode={output_mode}. "
+        "Use 'label_only' or 'explanation_label'."
+    )
