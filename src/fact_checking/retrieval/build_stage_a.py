@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
 from tqdm import tqdm
 
 from fact_checking.config import load_yaml
@@ -12,6 +13,7 @@ from fact_checking.data.io import iter_sentences, load_split
 from fact_checking.retrieval.embedder import EmbedderConfig, TextEmbedder
 from fact_checking.retrieval.mmr import maximal_marginal_relevance
 from fact_checking.retrieval.text_utils import bm25_like_score, lexical_overlap_f1
+from fact_checking.utils.logging import init_logger
 
 
 def canonicalize_sentence(text: str) -> str:
@@ -111,18 +113,35 @@ def main() -> None:
     parser.add_argument("--split", type=str, default=None, choices=["train", "val", "test", None])
     args = parser.parse_args()
 
+    logger = init_logger(__name__)
     cfg = load_yaml(args.config)
     data_cfg = cfg["data"]
     retrieval_cfg = cfg["retrieval"]
     output_dir = Path(cfg["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    run_summary = {
+        "config_path": args.config,
+        "output_dir": str(output_dir),
+        "embedder_model": retrieval_cfg["embedder_model"],
+        "device": retrieval_cfg.get("device", "cuda"),
+        "cuda_available": torch.cuda.is_available(),
+        "top_k": int(retrieval_cfg.get("top_k", 24)),
+        "batch_size": int(retrieval_cfg.get("batch_size", 64)),
+        "max_length": int(retrieval_cfg.get("max_length", 256)),
+        "alpha_dense": float(retrieval_cfg.get("alpha_dense", 0.70)),
+        "alpha_lexical": float(retrieval_cfg.get("alpha_lexical", 0.20)),
+        "alpha_bm25": float(retrieval_cfg.get("alpha_bm25", 0.10)),
+        "mmr_lambda": float(retrieval_cfg.get("mmr_lambda", 0.70)),
+    }
+    logger.info("Stage A run summary: %s", run_summary)
+
     embedder = TextEmbedder(
         EmbedderConfig(
-            model_name=retrieval_cfg["embedder_model"],
-            device=retrieval_cfg.get("device", "cuda"),
-            max_length=int(retrieval_cfg.get("max_length", 256)),
-            batch_size=int(retrieval_cfg.get("batch_size", 64)),
+            model_name=run_summary["embedder_model"],
+            device=run_summary["device"],
+            max_length=run_summary["max_length"],
+            batch_size=run_summary["batch_size"],
         )
     )
 
@@ -136,14 +155,14 @@ def main() -> None:
                 row = build_candidates_for_sample(
                     sample=sample,
                     embedder=embedder,
-                    top_k=int(retrieval_cfg.get("top_k", 24)),
-                    alpha_dense=float(retrieval_cfg.get("alpha_dense", 0.70)),
-                    alpha_lexical=float(retrieval_cfg.get("alpha_lexical", 0.20)),
-                    alpha_bm25=float(retrieval_cfg.get("alpha_bm25", 0.10)),
-                    mmr_lambda=float(retrieval_cfg.get("mmr_lambda", 0.70)),
+                    top_k=run_summary["top_k"],
+                    alpha_dense=run_summary["alpha_dense"],
+                    alpha_lexical=run_summary["alpha_lexical"],
+                    alpha_bm25=run_summary["alpha_bm25"],
+                    mmr_lambda=run_summary["mmr_lambda"],
                 )
                 writer.write(json.dumps(row, ensure_ascii=False) + "\n")
-        print(f"Wrote {output_path}")
+        logger.info("Wrote output file: %s", output_path)
 
 
 if __name__ == "__main__":
