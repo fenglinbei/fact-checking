@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
-import tempfile
 from datetime import datetime
 from pathlib import Path
 
 import torch
-import yaml
 
 from fact_checking.config import load_yaml
 from fact_checking.utils.logging import init_logger
@@ -26,13 +25,15 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     logger = init_logger(__name__)
+    is_main_process = _is_main_process()
 
     cfg = load_yaml(args.config)
     cfg = _normalize_prompt_truncation_config(cfg)
     cfg = _apply_runtime_output_layout(cfg)
 
-    log_dir = Path(cfg["output_dir"]) / "logs"
-    logger = init_logger(__name__, log_dir=log_dir, log_filename="train_llm_baseline_sft.log")
+    if is_main_process:
+        log_dir = Path(cfg["output_dir"]) / "logs"
+        logger = init_logger(__name__, log_dir=log_dir, log_filename="train_llm_baseline_sft.log")
 
     baseline_cfg = cfg.get("baseline", {})
     train_cfg = cfg.get("sft_train", {})
@@ -49,11 +50,10 @@ def main() -> None:
         "epochs": train_cfg.get("num_train_epochs"),
         "gradient_accumulation_steps": train_cfg.get("gradient_accumulation_steps"),
     }
-    logger.info("SFT run summary: %s", run_summary)
+    if is_main_process:
+        logger.info("SFT run summary: %s", run_summary)
 
-    forwarded_config = _materialize_runtime_config(cfg)
-
-    forwarded = ["--config", forwarded_config]
+    forwarded = ["--config", args.config]
     if args.mini_val_size is not None:
         forwarded += ["--mini-val-size", str(args.mini_val_size)]
     if args.mini_val_seed is not None:
@@ -62,7 +62,8 @@ def main() -> None:
         forwarded.append("--prompt-length-stats-only")
 
     sys.argv = ["train_loop", *forwarded]
-    logger.info("Forwarding args to training loop: %s", forwarded)
+    if is_main_process:
+        logger.info("Forwarding args to training loop: %s", forwarded)
     train_loop.main()
 
 
@@ -82,7 +83,7 @@ def _apply_runtime_output_layout(cfg: dict) -> dict:
     baseline_cfg = cfg.setdefault("baseline", {})
     train_cfg = cfg.setdefault("sft_train", {})
 
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    timestamp = os.environ.get("FC_RUN_TIMESTAMP") or datetime.now().strftime("%Y%m%d-%H%M%S")
     variant = str(baseline_cfg.get("variant", "")).strip() or timestamp
     run_output_dir = Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline")) / f"{variant}_{timestamp}"
 
@@ -92,18 +93,8 @@ def _apply_runtime_output_layout(cfg: dict) -> dict:
     return cfg
 
 
-def _materialize_runtime_config(cfg: dict) -> str:
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".yaml",
-        prefix="sft_runtime_",
-        delete=False,
-        dir=str(Path.cwd()),
-        encoding="utf-8",
-    )
-    with tmp:
-        yaml.safe_dump(cfg, tmp, allow_unicode=True, sort_keys=False)
-    return tmp.name
+def _is_main_process() -> bool:
+    return int(os.environ.get("RANK", "0")) == 0
 
 
 if __name__ == "__main__":
