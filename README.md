@@ -1,8 +1,5 @@
 # LIAR-RAW Fact-checking Pipeline (Stage A + Baseline)
 
-本仓库现已统一为**单一项目结构**（`configs/`、`scripts/`、`src/` 在仓库根目录）。
-
----
 
 ## 1. 项目结构（统一后）
 
@@ -138,7 +135,7 @@ PY
 
 ---
 
-## 3. Stage A 实现逻辑（从 README_ab 迁移并补充）
+## 3. Stage A 实现逻辑
 
 Stage A 是**冻结式检索**，不训练检索器；输入 claim + reports，输出每条 claim 的 top-k 候选证据句。
 
