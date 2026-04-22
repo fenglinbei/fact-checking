@@ -13,6 +13,7 @@ data:
   test_candidates: outputs/liar-raw/stage_a/stage_a_test.jsonl
 
 baseline:
+  variant: b1
   model_name_or_path: /data/models/Qwen2.5-7B-Instruct
   top_k: 5
   use_context: true
@@ -39,8 +40,8 @@ sft_train:
   bf16: true
   max_length: 2048
   logging_steps: 2
-  save_steps: 50
-  eval_steps: 50
+  save_steps: 200
+  eval_steps: 100
   dataloader_num_workers: 4
   gradient_checkpointing: true
   use_flash_attention_2: true
