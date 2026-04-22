@@ -13,9 +13,9 @@ data:
   test_candidates: outputs/liar-raw/stage_a/stage_a_test.jsonl
 
 baseline:
-  variant: b0
+  variant: b0.1
   model_name_or_path: /data/models/Qwen2.5-7B-Instruct
-  top_k: 5
+  top_k: 10
   use_context: false
   context_k: 1
   prompt_mode: zero_shot

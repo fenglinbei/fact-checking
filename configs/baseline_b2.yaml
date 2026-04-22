@@ -1,8 +1,8 @@
 output_dir: outputs/liar-raw/llm_baseline
 wandb:
   enabled: true
-  project: fact-checking-stage-ab
-  run_name: llm_baseline_b0_sft
+  project: fact-checking
+  run_name: llm_baseline_b2
   entity: null
   log_model: false
   watch: false
@@ -13,7 +13,7 @@ data:
   test_candidates: outputs/liar-raw/stage_a/stage_a_test.jsonl
 
 baseline:
-  variant: b0
+  variant: b2
   model_name_or_path: /data/models/Qwen2.5-7B-Instruct
   top_k: 5
   use_context: false
@@ -27,6 +27,11 @@ baseline:
   max_new_tokens: 8
   temperature: 0.0
   do_sample: false
+  output_mode: explanation_label
+  prompt_truncation:
+    enabled: true
+    strategy: tail_evidence
+    min_evidence_to_keep: 1
 
 sft_train:
   deepspeed_config: configs/deepspeed_zero2.json

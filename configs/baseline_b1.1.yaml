@@ -2,7 +2,7 @@ output_dir: outputs/liar-raw/llm_baseline
 wandb:
   enabled: true
   project: fact-checking-stage-ab
-  run_name: llm_baseline_b0_sft
+  run_name: llm_baseline_b1_sft
   entity: null
   log_model: false
   watch: false
@@ -13,10 +13,10 @@ data:
   test_candidates: outputs/liar-raw/stage_a/stage_a_test.jsonl
 
 baseline:
-  variant: b0
+  variant: b1.1
   model_name_or_path: /data/models/Qwen2.5-7B-Instruct
   top_k: 5
-  use_context: false
+  use_context: true
   context_k: 1
   prompt_mode: zero_shot
   few_shot_k: 16
@@ -27,6 +27,11 @@ baseline:
   max_new_tokens: 8
   temperature: 0.0
   do_sample: false
+  output_mode: label_only
+  prompt_truncation:
+    enabled: true
+    strategy: tail_evidence
+    min_evidence_to_keep: 1
 
 sft_train:
   deepspeed_config: configs/deepspeed_zero2.json
@@ -34,14 +39,14 @@ sft_train:
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 8
   learning_rate: 1.0e-5
-  num_train_epochs: 2
+  num_train_epochs: 5
   weight_decay: 0.0
   warmup_ratio: 0.03
   bf16: true
   max_length: 2048
   logging_steps: 2
-  save_steps: 50
-  eval_steps: 50
+  save_steps: 200
+  eval_steps: 100
   dataloader_num_workers: 4
   gradient_checkpointing: true
   use_flash_attention_2: true
