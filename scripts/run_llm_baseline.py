@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -173,10 +174,11 @@ def main() -> None:
     }
     input_path = split_map[args.split]
 
-    output_dir = Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline"))
-    output_dir.mkdir(parents=True, exist_ok=True)
-    tag = "b1" if baseline.use_context else "b0"
-    out_path = output_dir / f"{tag}_{args.split}.predictions.jsonl"
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    variant = str(baseline_cfg.get("variant", "")).strip() or timestamp
+    run_output_dir = Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline")) / f"{variant}_{timestamp}" / "test"
+    run_output_dir.mkdir(parents=True, exist_ok=True)
+    out_path = run_output_dir / f"{variant}_{timestamp}.jsonl"
 
     run_inference(
         cfg=baseline,
