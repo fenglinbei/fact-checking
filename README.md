@@ -29,7 +29,7 @@
 │   ├── train_explainer.py
 │   ├── generate_explanations.py
 │   └── visualize_bad_cases.py
-├── src/liar_raw/
+├── src/fact_checking/
 │   ├── retrieval/      # Stage A
 │   ├── training/       # Stage B
 │   ├── baselines/      # Baseline B0/B1
@@ -206,7 +206,7 @@ hybrid = 0.70 * dense + 0.20 * lexical + 0.10 * bm25
 ```bash
 bash scripts/run_stage_a.sh
 # 或
-PYTHONPATH=src python -m liar_raw.retrieval.build_stage_a --config configs/stage_a.yaml
+PYTHONPATH=src python -m fact_checking.retrieval.build_stage_a --config configs/stage_a.yaml
 ```
 
 ---
