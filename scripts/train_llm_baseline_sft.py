@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
+from pathlib import Path
+
+import yaml
 
 from fact_checking.config import load_yaml
 from sft import train_loop
@@ -18,9 +22,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    _ = load_yaml(args.config)
+    cfg = load_yaml(args.config)
+    cfg = _normalize_prompt_truncation_config(cfg)
+    forwarded_config = _materialize_runtime_config(cfg)
 
-    forwarded = ["--config", args.config]
+    forwarded = ["--config", forwarded_config]
     if args.mini_val_size is not None:
         forwarded += ["--mini-val-size", str(args.mini_val_size)]
     if args.mini_val_seed is not None:
@@ -30,6 +36,32 @@ def main() -> None:
 
     sys.argv = ["train_loop", *forwarded]
     train_loop.main()
+
+
+def _normalize_prompt_truncation_config(cfg: dict) -> dict:
+    baseline_cfg = cfg.setdefault("baseline", {})
+    trunc_cfg = baseline_cfg.setdefault("prompt_truncation", {})
+    if "enabled" not in trunc_cfg:
+        trunc_cfg["enabled"] = False
+    if "strategy" not in trunc_cfg:
+        trunc_cfg["strategy"] = "tail_evidence"
+    if "min_evidence_to_keep" not in trunc_cfg:
+        trunc_cfg["min_evidence_to_keep"] = 1
+    return cfg
+
+
+def _materialize_runtime_config(cfg: dict) -> str:
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".yaml",
+        prefix="sft_runtime_",
+        delete=False,
+        dir=str(Path.cwd()),
+        encoding="utf-8",
+    )
+    with tmp:
+        yaml.safe_dump(cfg, tmp, allow_unicode=True, sort_keys=False)
+    return tmp.name
 
 
 if __name__ == "__main__":
