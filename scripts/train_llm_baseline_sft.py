@@ -6,9 +6,11 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+import torch
 import yaml
 
 from fact_checking.config import load_yaml
+from fact_checking.utils.logging import init_logger
 from sft import train_loop
 
 
@@ -23,9 +25,29 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    logger = init_logger(__name__)
+
     cfg = load_yaml(args.config)
     cfg = _normalize_prompt_truncation_config(cfg)
     cfg = _apply_runtime_output_layout(cfg)
+
+    baseline_cfg = cfg.get("baseline", {})
+    train_cfg = cfg.get("sft_train", {})
+    run_summary = {
+        "config_path": args.config,
+        "output_dir": cfg.get("output_dir"),
+        "backbone_model": baseline_cfg.get("model_name_or_path"),
+        "embedder_model": baseline_cfg.get("retrieval_model"),
+        "device": train_cfg.get("device", "auto"),
+        "cuda_available": torch.cuda.is_available(),
+        "top_k": baseline_cfg.get("top_k"),
+        "batch_size": train_cfg.get("per_device_train_batch_size"),
+        "max_length": train_cfg.get("max_length"),
+        "epochs": train_cfg.get("num_train_epochs"),
+        "gradient_accumulation_steps": train_cfg.get("gradient_accumulation_steps"),
+    }
+    logger.info("SFT run summary: %s", run_summary)
+
     forwarded_config = _materialize_runtime_config(cfg)
 
     forwarded = ["--config", forwarded_config]
@@ -37,6 +59,7 @@ def main() -> None:
         forwarded.append("--prompt-length-stats-only")
 
     sys.argv = ["train_loop", *forwarded]
+    logger.info("Forwarding args to training loop: %s", forwarded)
     train_loop.main()
 
 
