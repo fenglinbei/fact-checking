@@ -1,4 +1,4 @@
-output_dir: outputs/liar-raw/llm_baseline/b0.2_20260422-215117
+output_dir: outputs/liar-raw/llm_baseline/b0.2_20260422-215903
 wandb:
   enabled: true
   project: fact-checking
@@ -36,11 +36,11 @@ sft_train:
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 8
   learning_rate: 1.0e-05
-  num_train_epochs: 5
+  num_train_epochs: 2
   weight_decay: 0.0
   warmup_ratio: 0.03
   bf16: true
-  max_length: 2048
+  max_length: 1024
   logging_steps: 2
   save_steps: 50
   eval_steps: 50
@@ -54,4 +54,4 @@ sft_train:
   empty_cache_steps: 1
   empty_cache_on_eval: true
   empty_cache_on_save: true
-  tokenized_cache_dir: outputs/liar-raw/llm_baseline/b0.2_20260422-215117/tokenized_cache
+  tokenized_cache_dir: outputs/liar-raw/llm_baseline/b0.2_20260422-215903/tokenized_cache
