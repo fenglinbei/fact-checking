@@ -39,12 +39,12 @@ class ExplanationLabelOutputStrategy(OutputStrategy):
             "Respond with exactly the following format:\n"
             "Explanation: <brief evidence-grounded explanation>\n"
             "Label: <one valid label>\n\n"
-            "Explanation:"
+            "Explanation: "
         )
 
     def build_target(self, row: dict, gold_label: str) -> str:
-        explanation = str(row.get("explanation", "")).strip() or "The available evidence supports this label."
-        return f"Explanation: {explanation}\nLabel: {gold_label}"
+        explanation = str(row.get("explain", "")).strip() or "The available evidence supports this label."
+        return f"{explanation}\nLabel: {gold_label}"
 
 
 def _infer_output_mode(baseline_cfg: dict) -> str:
