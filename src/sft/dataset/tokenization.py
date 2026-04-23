@@ -4,7 +4,7 @@ from transformers import AutoTokenizer
 
 
 def tokenize_instances(
-    instances: list[dict[str, str]],
+    instances: list[dict[str, object]],
     tokenizer: AutoTokenizer,
     max_length: int,
     padding: str,
@@ -13,12 +13,16 @@ def tokenize_instances(
     eos_id = tokenizer.eos_token_id
 
     for row in instances:
-        prompt_text = row["prompt"].rstrip() + " "
-        target_text = row["target"].strip()
+        prompt_add_special_tokens = bool(row.get("prompt_add_special_tokens", True))
+        preserve_prompt_prefix = bool(row.get("preserve_prompt_prefix", False))
+        prompt_text = str(row["prompt"]).rstrip()
+        if prompt_add_special_tokens:
+            prompt_text += " "
+        target_text = str(row["target"]).strip()
 
         prompt_ids = tokenizer(
             prompt_text,
-            add_special_tokens=True,
+            add_special_tokens=prompt_add_special_tokens,
             truncation=False,
         )["input_ids"]
 
@@ -37,6 +41,11 @@ def tokenize_instances(
             labels = input_ids[:]
         else:
             if len(prompt_ids) > max_prompt_len:
+                if preserve_prompt_prefix:
+                    raise ValueError(
+                        "Protected prompt is longer than the target-aware prompt budget after evidence truncation. "
+                        "Increase sft_train.max_length or reduce evidence/context length."
+                    )
                 prompt_ids = prompt_ids[-max_prompt_len:]
 
             input_ids = prompt_ids + target_ids

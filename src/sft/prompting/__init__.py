@@ -1,3 +1,3 @@
-from .output_strategy import *
+from .output import *
 from .truncation import *
 from .stats import *
