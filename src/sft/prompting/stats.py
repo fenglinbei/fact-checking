@@ -1,25 +1,15 @@
 from __future__ import annotations
 
 import json
+from logging import Logger
+from pathlib import Path
+
 import numpy as np
 
-from dataclasses import dataclass
-from pathlib import Path
-from transformers import AutoTokenizer
-
 from fact_checking.utils.logging import init_logger
+from sft.data.types import PromptPreparationRecord
 
-logger = init_logger(__name__)
-
-@dataclass
-class PromptPreparationRecord:
-    prompt_length_before_trunc: int
-    prompt_length_after_trunc: int
-    evidence_count_before_trunc: int
-    evidence_count_after_trunc: int
-    was_truncated: bool
-    overflow_before_trunc: bool
-    overflow_after_trunc: bool
+module_logger = init_logger(__name__)
 
 
 def _summarize_lengths(lengths: list[int], max_length: int) -> dict[str, float]:
@@ -51,6 +41,28 @@ def _summarize_lengths(lengths: list[int], max_length: int) -> dict[str, float]:
         "overflow_count": float(np.sum(overflow)),
         "overflow_rate": float(np.mean(overflow)),
     }
+
+
+def log_prompt_summary(summary: dict[str, object], logger: Logger | None = None) -> None:
+    before = summary["prompt_length_before_truncation"]
+    after = summary["prompt_length_after_truncation"]
+    trunc = summary["evidence_truncation"]
+    target_logger = logger or module_logger
+    target_logger.info(
+        "[PROMPT_STATS] split=%s mode=%s strategy=%s pre_mean=%.2f pre_p95=%.0f pre_overflow=%d "
+        "post_mean=%.2f post_p95=%.0f post_overflow=%d truncated=%s trunc_rate=%.4f",
+        summary["split"],
+        summary["output_mode"],
+        summary["prompt_truncation_strategy"],
+        before["mean"],
+        before["p95"],
+        int(before["overflow_count"]),
+        after["mean"],
+        after["p95"],
+        int(after["overflow_count"]),
+        trunc["truncated_count"],
+        trunc["truncation_rate"],
+    )
 
 
 def summarize_prompt_preparation(
@@ -102,58 +114,3 @@ def save_prompt_statistics(
     with stats_path.open("w", encoding="utf-8") as f:
         json.dump({"train": train_summary, "val": val_summary}, f, ensure_ascii=False, indent=2)
     return stats_path
-
-def _summarize_prompt_lengths(
-    instances: list[dict[str, str]],
-    tokenizer: AutoTokenizer,
-    split: str,
-    max_length: int,
-) -> dict[str, float]:
-    if not instances:
-        return {
-            "count": 0.0,
-            "min": 0.0,
-            "p50": 0.0,
-            "p90": 0.0,
-            "p95": 0.0,
-            "p99": 0.0,
-            "max": 0.0,
-            "mean": 0.0,
-            "overflow_count": 0.0,
-            "overflow_rate": 0.0,
-        }
-
-    lengths = np.array(
-        [len(tokenizer(row["prompt"], truncation=False, add_special_tokens=True)["input_ids"]) for row in instances],
-        dtype=np.int64,
-    )
-    overflow = lengths > int(max_length)
-    summary = {
-        "count": float(lengths.size),
-        "min": float(lengths.min()),
-        "p50": float(np.percentile(lengths, 50)),
-        "p90": float(np.percentile(lengths, 90)),
-        "p95": float(np.percentile(lengths, 95)),
-        "p99": float(np.percentile(lengths, 99)),
-        "max": float(lengths.max()),
-        "mean": float(lengths.mean()),
-        "overflow_count": float(np.sum(overflow)),
-        "overflow_rate": float(np.mean(overflow)),
-    }
-    logger.info(
-        "[PROMPT_STATS] split=%s count=%d min=%.0f p50=%.0f p90=%.0f p95=%.0f p99=%.0f max=%.0f "
-        "mean=%.2f overflow(>%d)=%d rate=%.4f",
-        split,
-        int(summary["count"]),
-        summary["min"],
-        summary["p50"],
-        summary["p90"],
-        summary["p95"],
-        summary["p99"],
-        summary["max"],
-        summary["mean"],
-        max_length,
-        int(summary["overflow_count"]),
-        summary["overflow_rate"],
-    )
-    return summary

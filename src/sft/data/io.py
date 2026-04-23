@@ -1,23 +1,65 @@
-import hashlib
-import os
+from __future__ import annotations
+
 import json
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import Iterable
 
-from datetime import datetime
-from pathlib import Path
-from typing import Iterable
+import matplotlib.pyplot as plt
+import numpy as np
 from accelerate import Accelerator
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from fact_checking.data.types import SampleRecord, SentenceRecord
-from sft.prompting.utils import clean_text, robust_sentence_split
-from fact_checking.utils.logging import init_logger
 from fact_checking.data.constants import LABEL2ID, LABELS
+from fact_checking.data.types import SampleRecord, SentenceRecord
+from fact_checking.utils.logging import init_logger
+from sft.prompting.utils import clean_text, robust_sentence_split
 
 logger = init_logger(__name__)
+
+
+def checkpoint_has_hf_artifacts(output_path: Path) -> bool:
+    if not (output_path / "config.json").exists():
+        return False
+
+    weight_patterns = [
+        "model.safetensors",
+        "model-*.safetensors",
+        "pytorch_model.bin",
+        "pytorch_model-*.bin",
+    ]
+    return any(any(output_path.glob(pattern)) for pattern in weight_patterns)
+
+
+def _export_zero3_checkpoint_to_hf(
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    ds_ckpt_dir: Path,
+    output_path: Path,
+) -> bool:
+    try:
+        from deepspeed.utils.zero_to_fp32 import get_fp32_state_dict_from_zero_checkpoint
+    except ImportError:
+        logger.warning(
+            "[WARN] DeepSpeed is unavailable when exporting %s; skipped automatic HF export.",
+            ds_ckpt_dir,
+        )
+        return False
+
+    try:
+        state_dict = get_fp32_state_dict_from_zero_checkpoint(str(ds_ckpt_dir))
+        model.save_pretrained(str(output_path), state_dict=state_dict)
+        tokenizer.save_pretrained(str(output_path))
+    except Exception as exc:
+        logger.warning(
+            "[WARN] Failed to export DeepSpeed checkpoint %s to Hugging Face weights: %s",
+            ds_ckpt_dir,
+            exc,
+        )
+        return False
+
+    logger.info("[INFO] Exported Hugging Face weights to %s from %s", output_path, ds_ckpt_dir)
+    return True
+
 
 def save_model(
     accelerator: Accelerator,
@@ -34,10 +76,7 @@ def save_model(
     unwrapped = accelerator.unwrap_model(model)
 
     try:
-        # 关键：不要放在 if accelerator.is_main_process 里面
         state_dict = accelerator.get_state_dict(model)
-
-        # 关键：所有 rank 都调用 save_pretrained，但只有 main process 真正写文件
         unwrapped.save_pretrained(
             str(output_path),
             is_main_process=accelerator.is_main_process,
@@ -55,8 +94,6 @@ def save_model(
             raise
 
         ds_ckpt_dir = output_path / "ds_checkpoint"
-
-        # 关键：DeepSpeed save_checkpoint 必须所有 rank 调用
         model.save_checkpoint(str(ds_ckpt_dir))
 
         if accelerator.is_main_process:
@@ -66,6 +103,7 @@ def save_model(
                 "Convert to fp32 using zero_to_fp32.py or enable stage3_gather_16bit_weights_on_model_save.",
                 ds_ckpt_dir,
             )
+            _export_zero3_checkpoint_to_hf(unwrapped, tokenizer, ds_ckpt_dir, output_path)
 
     accelerator.wait_for_everyone()
 
@@ -90,7 +128,6 @@ def load_split(path: str | Path) -> list[SampleRecord]:
     return records
 
 
-
 def iter_sentences(sample: SampleRecord, min_char_len: int = 10) -> Iterable[SentenceRecord]:
     for report in sample.reports:
         report_id = report.get("report_id", "unknown")
@@ -110,31 +147,23 @@ def iter_sentences(sample: SampleRecord, min_char_len: int = 10) -> Iterable[Sen
                 raw=report,
             )
 
-def _build_cache_name(split: str, max_length: int, tokenizer_name: str, instances: list[dict[str, str]]) -> str:
-    tok_hash = hashlib.md5(tokenizer_name.encode("utf-8"), usedforsecurity=False).hexdigest()[:10]
-    data_hash = hashlib.md5(usedforsecurity=False)
-    data_hash.update(str(len(instances)).encode("utf-8"))
-    for row in instances:
-        data_hash.update(row["prompt"].encode("utf-8"))
-        data_hash.update(row["target"].encode("utf-8"))
-    return f"{split}_ml{max_length}_{tok_hash}_{data_hash.hexdigest()[:16]}.pt"
 
-
-def _save_eval_artifacts(
-    output_dir: Path,
-    global_step: int,
+def save_eval_artifacts(
+    eval_dir: Path,
     metrics: dict[str, float | dict[str, dict[str, float]]],
     confusion_matrix: np.ndarray,
     confusion_labels: list[str],
+    prediction_records: list[dict[str, object]] | None = None,
+    predictions_filename: str = "predictions.jsonl",
+    title: str = "Confusion Matrix",
 ) -> dict[str, str]:
-    step_dir = output_dir / "eval" / f"step-{global_step}"
-    step_dir.mkdir(parents=True, exist_ok=True)
+    eval_dir.mkdir(parents=True, exist_ok=True)
 
-    metrics_path = step_dir / "metrics.json"
+    metrics_path = eval_dir / "metrics.json"
     with metrics_path.open("w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
 
-    confusion_data_path = step_dir / "confusion_matrix.json"
+    confusion_data_path = eval_dir / "confusion_matrix.json"
     with confusion_data_path.open("w", encoding="utf-8") as f:
         json.dump(
             {
@@ -155,18 +184,44 @@ def _save_eval_artifacts(
     ax.set_yticklabels(LABELS)
     ax.set_xlabel("Predicted")
     ax.set_ylabel("Gold")
-    ax.set_title(f"Confusion Matrix @ step {global_step}")
+    ax.set_title(title)
     for i in range(confusion_matrix.shape[0]):
         for j in range(confusion_matrix.shape[1]):
             ax.text(j, i, str(confusion_matrix[i, j]), ha="center", va="center", color="black", fontsize=8)
     fig.colorbar(im, ax=ax)
     fig.tight_layout()
-    confusion_png_path = step_dir / "confusion_matrix.png"
+    confusion_png_path = eval_dir / "confusion_matrix.png"
     fig.savefig(confusion_png_path, dpi=200)
     plt.close(fig)
+
+    predictions_path = eval_dir / predictions_filename
+    with predictions_path.open("w", encoding="utf-8") as f:
+        for record in prediction_records or []:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     return {
         "metrics_path": str(metrics_path),
         "confusion_data_path": str(confusion_data_path),
         "confusion_png_path": str(confusion_png_path),
+        "predictions_path": str(predictions_path),
     }
+
+
+def _save_eval_artifacts(
+    output_dir: Path,
+    global_step: int,
+    metrics: dict[str, float | dict[str, dict[str, float]]],
+    confusion_matrix: np.ndarray,
+    confusion_labels: list[str],
+    prediction_records: list[dict[str, object]] | None = None,
+) -> dict[str, str]:
+    step_dir = output_dir / "eval" / f"step-{global_step}"
+    return save_eval_artifacts(
+        eval_dir=step_dir,
+        metrics=metrics,
+        confusion_matrix=confusion_matrix,
+        confusion_labels=confusion_labels,
+        prediction_records=prediction_records,
+        predictions_filename="val_predictions.jsonl",
+        title=f"Confusion Matrix @ step {global_step}",
+    )
