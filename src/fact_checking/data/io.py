@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Iterable
 
-from fact_checking import LABEL2ID
+from fact_checking.data.constants import LABEL2ID
 from fact_checking.data.types import SampleRecord, SentenceRecord
 from fact_checking.utils.text import clean_text, robust_sentence_split
 
@@ -30,7 +30,14 @@ def load_split(path: str | Path) -> list[SampleRecord]:
         )
     return records
 
-
+def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with Path(path).open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
 
 def iter_sentences(sample: SampleRecord, min_char_len: int = 10) -> Iterable[SentenceRecord]:
     for report in sample.reports:

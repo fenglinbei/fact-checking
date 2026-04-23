@@ -12,7 +12,7 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
 )
 
-from fact_checking import LABEL2ID, LABELS
+from fact_checking.data.constants import LABEL2ID, LABELS
 from fact_checking.baselines.llm_baseline import BaselineConfig, run_inference
 from fact_checking.config import load_yaml
 
