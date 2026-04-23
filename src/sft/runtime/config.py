@@ -7,6 +7,8 @@ from pathlib import Path
 
 def normalize_prompt_truncation_config(cfg: dict) -> dict:
     baseline_cfg = cfg.setdefault("baseline", {})
+    if "prompt_version" not in baseline_cfg:
+        baseline_cfg["prompt_version"] = "v1"
     trunc_cfg = baseline_cfg.setdefault("prompt_truncation", {})
     if "enabled" not in trunc_cfg:
         trunc_cfg["enabled"] = False
