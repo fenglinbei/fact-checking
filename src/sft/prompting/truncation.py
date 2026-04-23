@@ -132,3 +132,20 @@ def _join_evidence_block(evidences: list[str], reference_block: str) -> str:
 
     separator = "\n\n" if "\n\n" in reference_block else "\n"
     return separator.join(evidences)
+
+
+def build_prompt_truncation_strategy(baseline_cfg: dict) -> PromptTruncationStrategy:
+    trunc_cfg = baseline_cfg.get("prompt_truncation", {}) or {}
+    if not bool(trunc_cfg.get("enabled", False)):
+        return PromptTruncationStrategy()
+
+    strategy_name = str(trunc_cfg.get("strategy", "tail_evidence")).strip().lower()
+    if strategy_name == "tail_evidence":
+        return TailEvidenceTruncationStrategy(
+            min_evidence_to_keep=int(trunc_cfg.get("min_evidence_to_keep", 1))
+        )
+
+    raise ValueError(
+        f"Unsupported baseline.prompt_truncation.strategy={strategy_name}. "
+        "Use 'tail_evidence'."
+    )
