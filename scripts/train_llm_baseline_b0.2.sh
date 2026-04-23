@@ -27,7 +27,7 @@ export FC_RUN_TIMESTAMP="${FC_RUN_TIMESTAMP:-$(date +%Y%m%d-%H%M%S)}"
 #
 # Online vLLM eval layout:
 # - CUDA 0/1/2: ZeRO-2 full fine-tuning ranks.
-# - CUDA 3: rank0 embeds a vLLM engine and updates it through NCCL weight sync.
+# - CUDA 3: rank0 embeds a vLLM engine and reloads in-memory weights via load_weights().
 CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
   --num_processes=3 \
   --num_machines=1 \
