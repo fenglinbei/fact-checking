@@ -29,6 +29,7 @@ from sft.prompting.stats import (
     summarize_prompt_preparation,
 )
 from sft.prompting.truncation import build_prompt_truncation_strategy
+from sft.runtime.adapters import apply_lora_if_enabled, lora_enabled
 from sft.runtime.config import apply_runtime_output_layout, normalize_prompt_truncation_config
 from sft.runtime.deps import flash_attn2_available, fla_fast_path_available
 from sft.runtime.device import enable_tf32_if_available, maybe_empty_cache
@@ -242,9 +243,17 @@ def main() -> None:
 
     model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **model_kwargs)
 
-    if bool(train_cfg.get("gradient_checkpointing", True)):
+    gradient_checkpointing = bool(train_cfg.get("gradient_checkpointing", True))
+    if gradient_checkpointing:
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
         model.config.use_cache = False
+
+    model = apply_lora_if_enabled(
+        model,
+        train_cfg,
+        gradient_checkpointing=gradient_checkpointing,
+        logger=logger if accelerator.is_main_process else None,
+    )
 
     cache_dir_cfg = train_cfg.get("tokenized_cache_dir")
     cache_dir = Path(str(cache_dir_cfg)) if cache_dir_cfg else output_dir / "tokenized_cache"
@@ -290,8 +299,14 @@ def main() -> None:
         padding=padding_strategy,
     )
 
+    trainable_parameters = [param for param in model.parameters() if param.requires_grad]
+    if not trainable_parameters:
+        raise RuntimeError("No trainable parameters found. Check full fine-tuning or LoRA configuration.")
+    if accelerator.is_main_process and lora_enabled(train_cfg):
+        logger.info("[INFO] Optimizer will update LoRA/trainable parameters only.")
+
     optimizer = AdamW(
-        model.parameters(),
+        trainable_parameters,
         lr=float(train_cfg.get("learning_rate", 1e-5)),
         weight_decay=float(train_cfg.get("weight_decay", 0.0)),
         fused=torch.cuda.is_available(),

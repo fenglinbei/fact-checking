@@ -13,6 +13,7 @@ from sft.data.types import PreparedSample
 from sft.prompting.output import build_output_strategy
 from sft.prompting.preparation import build_prepared_samples
 from sft.prompting.truncation import build_prompt_truncation_strategy
+from sft.runtime.adapters import checkpoint_has_peft_adapter
 from sft.runtime.config import normalize_prompt_truncation_config
 
 
@@ -21,6 +22,7 @@ class InferenceContext:
     run_dir: Path
     checkpoint_name: str
     checkpoint_dir: Path
+    is_peft_adapter: bool
     split: str
     cfg: dict[str, Any]
     baseline_cfg: dict[str, Any]
@@ -83,6 +85,7 @@ def build_inference_context(
     data_cfg = cfg["data"]
     baseline_cfg = cfg["baseline"]
     train_cfg = cfg["sft_train"]
+    is_peft_adapter = checkpoint_has_peft_adapter(checkpoint_dir)
 
     split_map = {
         "train": str(data_cfg["train_candidates"]),
@@ -92,7 +95,10 @@ def build_inference_context(
     if split not in split_map:
         raise ValueError(f"Unsupported split={split}. Use one of {sorted(split_map)}.")
 
-    tokenizer = AutoTokenizer.from_pretrained(str(checkpoint_dir), trust_remote_code=True)
+    tokenizer_dir = checkpoint_dir
+    if is_peft_adapter and not (checkpoint_dir / "tokenizer_config.json").exists():
+        tokenizer_dir = Path(str(baseline_cfg.get("model_name_or_path")))
+    tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_dir), trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -115,6 +121,7 @@ def build_inference_context(
         run_dir=resolved_run_dir,
         checkpoint_name=checkpoint_name,
         checkpoint_dir=checkpoint_dir,
+        is_peft_adapter=is_peft_adapter,
         split=split,
         cfg=cfg,
         baseline_cfg=baseline_cfg,

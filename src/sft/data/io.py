@@ -12,12 +12,16 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from fact_checking.data.constants import LABEL2ID, LABELS
 from fact_checking.data.types import SampleRecord, SentenceRecord
 from fact_checking.utils.logging import init_logger
+from sft.runtime.adapters import checkpoint_has_peft_adapter, is_peft_model
 from sft.prompting.utils import clean_text, robust_sentence_split
 
 logger = init_logger(__name__)
 
 
 def checkpoint_has_hf_artifacts(output_path: Path) -> bool:
+    if checkpoint_has_peft_adapter(output_path):
+        return True
+
     if not (output_path / "config.json").exists():
         return False
 
@@ -76,6 +80,27 @@ def save_model(
     unwrapped = accelerator.unwrap_model(model)
 
     try:
+        if is_peft_model(unwrapped):
+            try:
+                from peft import get_peft_model_state_dict
+            except ImportError as exc:
+                raise RuntimeError("Saving a LoRA checkpoint requires the `peft` package.") from exc
+
+            state_dict = get_peft_model_state_dict(
+                unwrapped,
+                state_dict=accelerator.get_state_dict(model),
+            )
+            unwrapped.save_pretrained(
+                str(output_path),
+                is_main_process=accelerator.is_main_process,
+                save_function=accelerator.save,
+                state_dict=state_dict,
+            )
+            if accelerator.is_main_process:
+                tokenizer.save_pretrained(str(output_path))
+            accelerator.wait_for_everyone()
+            return
+
         state_dict = accelerator.get_state_dict(model)
         unwrapped.save_pretrained(
             str(output_path),
