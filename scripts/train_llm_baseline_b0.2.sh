@@ -4,6 +4,7 @@ set -euo pipefail
 export PYTHONPATH=src
 export PYTHONNOUSERSITE=1
 export TOKENIZERS_PARALLELISM=false
+export VLLM_USE_V1=0
 
 export NCCL_CUMEM_HOST_ENABLE=0
 export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
