@@ -317,3 +317,29 @@ bash scripts/run_stage_a.sh
 1. 该流水线是 oracle-free 训练思路，训练信号以 claim 级标签为主。
 2. Stage A 是冻结检索，不是可训练 dense retriever。
 3. SFT 训练 run 目录按 `<baseline.variant 或时间戳>_<timestamp>` 自动创建。
+
+
+## 7. Tracking backend
+
+SFT training keeps backward compatibility with the existing `wandb` block. If no
+`tracking` block is provided, `wandb.enabled: true` still uses W&B exactly as
+before.
+
+To switch the same `accelerator.log(...)` metrics to SwanLab, add:
+
+```yaml
+tracking:
+  enabled: true
+  backend: swanlab
+
+swanlab:
+  project: fact-checking-stage-ab
+  run_name: llm_baseline_b0_sft
+  mode: cloud
+  workspace: null
+  logdir: null
+```
+
+To force W&B through the new switch, use `tracking.backend: wandb`. To disable
+remote experiment tracking, use `tracking.enabled: false` or
+`tracking.backend: none`.

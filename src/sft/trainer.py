@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import math
-import os
 import traceback
 from pathlib import Path
 
@@ -34,6 +33,7 @@ from sft.runtime.adapters import apply_lora_if_enabled, lora_enabled
 from sft.runtime.config import apply_runtime_output_layout, normalize_prompt_truncation_config
 from sft.runtime.deps import flash_attn2_available, fla_fast_path_available
 from sft.runtime.device import enable_tf32_if_available, maybe_empty_cache
+from sft.runtime.tracking import build_tracking_setup, log_metrics
 from sft.vllm_online_eval import OnlineVLLMEvaluator, online_vllm_eval_enabled
 
 logger = init_logger(__name__)
@@ -77,33 +77,23 @@ def main() -> None:
     data_cfg = cfg["data"]
     baseline_cfg = cfg["baseline"]
     train_cfg = cfg["sft_train"]
-    wandb_cfg = cfg.get("wandb", {})
 
     enable_tf32_if_available()
-
-    wandb_enabled = bool(wandb_cfg.get("enabled", False))
-    if wandb_enabled:
-        os.environ.setdefault("WANDB_PROJECT", str(wandb_cfg.get("project", "fact-checking-stage-ab")))
-        if wandb_cfg.get("entity"):
-            os.environ["WANDB_ENTITY"] = str(wandb_cfg["entity"])
-        os.environ.setdefault("WANDB_LOG_MODEL", str(wandb_cfg.get("log_model", "false")))
-        os.environ.setdefault("WANDB_WATCH", str(wandb_cfg.get("watch", "false")))
+    tracking_setup = build_tracking_setup(cfg)
 
     mixed_precision = "bf16" if bool(train_cfg.get("bf16", True)) else "no"
-    report_to = "wandb" if wandb_enabled else None
-    run_name = str(wandb_cfg.get("run_name", "llm_baseline_sft"))
 
     accelerator = Accelerator(
         gradient_accumulation_steps=int(train_cfg.get("gradient_accumulation_steps", 8)),
         mixed_precision=mixed_precision,
-        log_with=report_to,
+        log_with=tracking_setup.log_with,
     )
 
-    if wandb_enabled:
+    if tracking_setup.enabled:
         accelerator.init_trackers(
-            project_name=os.environ["WANDB_PROJECT"],
+            project_name=tracking_setup.project_name,
             config=cfg,
-            init_kwargs={"wandb": {"name": run_name}},
+            init_kwargs=tracking_setup.init_kwargs,
         )
 
     train_rows = load_jsonl(data_cfg["train_candidates"])
@@ -435,7 +425,12 @@ def main() -> None:
                 if global_step % logging_steps == 0:
                     train_loss = accelerator.gather_for_metrics(loss.detach().float().unsqueeze(0)).mean().item()
                     lr = scheduler.get_last_lr()[0]
-                    accelerator.log({"train/loss": train_loss, "train/lr": lr, "train/epoch": epoch}, step=global_step)
+                    log_metrics(
+                        accelerator,
+                        {"train/loss": train_loss, "train/lr": lr, "train/epoch": epoch},
+                        step=global_step,
+                        backend=tracking_setup.backend,
+                    )
 
                 if global_step % eval_steps == 0:
                     logger.info("[rank %d] before evaluate step=%d", accelerator.process_index, global_step)
@@ -476,7 +471,8 @@ def main() -> None:
                         )
                     logger.info("[rank %d] after evaluate step=%d", accelerator.process_index, global_step)
                     macro_f1 = float(eval_metrics["macro_f1"])
-                    accelerator.log(
+                    log_metrics(
+                        accelerator,
                         {
                             "eval/accuracy": float(eval_metrics["accuracy"]),
                             "eval/macro_precision": float(eval_metrics["macro_precision"]),
@@ -485,18 +481,21 @@ def main() -> None:
                             "eval/parse_error_rate": float(eval_metrics["parse_error_rate"]),
                         },
                         step=global_step,
+                        backend=tracking_setup.backend,
                     )
                     per_class = eval_metrics.get("per_class", {})
                     if isinstance(per_class, dict):
                         for label, label_metrics in per_class.items():
                             if isinstance(label_metrics, dict):
-                                accelerator.log(
+                                log_metrics(
+                                    accelerator,
                                     {
                                         f"eval/{label}/precision": float(label_metrics.get("precision", 0.0)),
                                         f"eval/{label}/recall": float(label_metrics.get("recall", 0.0)),
                                         f"eval/{label}/f1": float(label_metrics.get("f1", 0.0)),
                                     },
                                     step=global_step,
+                                    backend=tracking_setup.backend,
                                 )
 
                     accelerator.wait_for_everyone()
@@ -517,7 +516,8 @@ def main() -> None:
                             confusion_labels=eval_metrics["confusion_labels"],
                             prediction_records=eval_metrics.get("prediction_records", []),
                         )
-                        accelerator.log(
+                        log_metrics(
+                            accelerator,
                             {
                                 "eval/metrics_path": artifacts["metrics_path"],
                                 "eval/confusion_data_path": artifacts["confusion_data_path"],
@@ -525,6 +525,7 @@ def main() -> None:
                                 "eval/predictions_path": artifacts["predictions_path"],
                             },
                             step=global_step,
+                            backend=tracking_setup.backend,
                         )
 
                     if macro_f1 > best_val_loss:
