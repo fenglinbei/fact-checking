@@ -53,7 +53,22 @@ def main() -> None:
     if bool(context.train_cfg.get("use_flash_attention_2", True)) and flash_attn2_available():
         model_kwargs["attn_implementation"] = "flash_attention_2"
 
-    model = AutoModelForCausalLM.from_pretrained(str(context.checkpoint_dir), **model_kwargs)
+    if context.is_peft_adapter:
+        try:
+            from peft import PeftModel
+        except ImportError as exc:
+            raise RuntimeError(
+                "This checkpoint is a LoRA adapter and requires the `peft` package for inference."
+            ) from exc
+
+        model = AutoModelForCausalLM.from_pretrained(
+            str(context.baseline_cfg["model_name_or_path"]),
+            **model_kwargs,
+        )
+        model = PeftModel.from_pretrained(model, str(context.checkpoint_dir))
+    else:
+        model = AutoModelForCausalLM.from_pretrained(str(context.checkpoint_dir), **model_kwargs)
+
     eval_dataset = EvalPromptDataset(context.samples)
     eval_dataloader = build_eval_dataloader(
         eval_dataset,
