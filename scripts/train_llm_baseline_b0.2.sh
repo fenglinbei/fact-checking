@@ -24,10 +24,14 @@ export FC_RUN_TIMESTAMP="${FC_RUN_TIMESTAMP:-$(date +%Y%m%d-%H%M%S)}"
 
 # 训练输出将自动写入：
 # outputs/liar-raw/llm_baseline/<baseline.variant 或时间戳>_<timestamp>/
+#
+# Online vLLM eval layout:
+# - CUDA 0/1/2: ZeRO-2 full fine-tuning ranks.
+# - CUDA 3: rank0 embeds a vLLM engine and updates it through NCCL weight sync.
 CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
-  --num_processes=4 \
+  --num_processes=3 \
   --num_machines=1 \
   --mixed_precision=bf16 \
   --use_deepspeed \
-  --deepspeed_config_file configs/deepspeed_zero3_v2.json \
+  --deepspeed_config_file configs/deepspeed_zero2.json \
   scripts/train_llm_baseline_sft.py --config configs/baseline_b0.2.yaml
