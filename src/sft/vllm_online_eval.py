@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import re
+import socket
 from dataclasses import dataclass
 from logging import Logger
 from unittest.mock import patch
@@ -17,6 +19,27 @@ from sft.parser import _parse_label_id
 from sft.runtime.adapters import is_peft_model
 
 module_logger = init_logger(__name__)
+
+_DIST_ENV_DEFAULTS = {
+    "MASTER_ADDR": "127.0.0.1",
+    "RANK": "0",
+    "WORLD_SIZE": "1",
+    "LOCAL_RANK": "0",
+    "LOCAL_WORLD_SIZE": "1",
+    "GROUP_RANK": "0",
+    "ROLE_RANK": "0",
+    "ROLE_WORLD_SIZE": "1",
+    "NODE_RANK": "0",
+}
+_DIST_ENV_UNSET = (
+    "OMPI_COMM_WORLD_RANK",
+    "OMPI_COMM_WORLD_SIZE",
+    "PMI_RANK",
+    "PMI_SIZE",
+    "PMIX_RANK",
+    "MV2_COMM_WORLD_RANK",
+    "MV2_COMM_WORLD_SIZE",
+)
 
 
 def online_vllm_eval_enabled(train_cfg: dict) -> bool:
@@ -36,6 +59,32 @@ def _parse_cuda_device_index(device: str) -> int | None:
         return None
     value = match.group(1)
     return 0 if value is None else int(value)
+
+
+def _get_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("", 0))
+        return int(sock.getsockname()[1])
+
+
+@contextlib.contextmanager
+def _temporary_env(overrides: dict[str, str | None]):
+    sentinel = object()
+    previous: dict[str, str | object] = {}
+    try:
+        for key, value in overrides.items():
+            previous[key] = os.environ.get(key, sentinel)
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is sentinel:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = str(value)
 
 
 @dataclass
@@ -99,6 +148,7 @@ class OnlineVLLMEvaluator:
         self.max_length = int(max_length)
         self._sleeping = False
 
+        os.environ.setdefault("VLLM_USE_V1", "0")
         try:
             from vllm import LLM, SamplingParams
         except ImportError as exc:
@@ -136,8 +186,32 @@ class OnlineVLLMEvaluator:
 
     def _build_llm(self, llm_cls: type, llm_kwargs: dict) -> object:
         def build_with_accelerate_patches(kwargs: dict) -> object:
+            env_overrides: dict[str, str | None] = dict(_DIST_ENV_DEFAULTS)
+            env_overrides["MASTER_PORT"] = str(_get_free_port())
+            env_overrides["VLLM_USE_V1"] = "0"
+            for key in _DIST_ENV_UNSET:
+                env_overrides[key] = None
+
             with contextlib.ExitStack() as stack:
+                stack.enter_context(_temporary_env(env_overrides))
+                stack.enter_context(patch("torch.distributed.is_initialized", return_value=False))
+                stack.enter_context(patch("torch.distributed.get_rank", return_value=0))
                 stack.enter_context(patch("torch.distributed.get_world_size", return_value=1))
+                stack.enter_context(patch("torch.distributed.barrier", return_value=None))
+                with contextlib.suppress(AttributeError):
+                    stack.enter_context(
+                        patch("torch.distributed.distributed_c10d.is_initialized", return_value=False)
+                    )
+                with contextlib.suppress(AttributeError):
+                    stack.enter_context(patch("torch.distributed.distributed_c10d.get_rank", return_value=0))
+                with contextlib.suppress(AttributeError):
+                    stack.enter_context(
+                        patch("torch.distributed.distributed_c10d.get_world_size", return_value=1)
+                    )
+                with contextlib.suppress(AttributeError):
+                    stack.enter_context(
+                        patch("torch.distributed.distributed_c10d.barrier", return_value=None)
+                    )
                 try:
                     stack.enter_context(
                         patch(
@@ -147,6 +221,15 @@ class OnlineVLLMEvaluator:
                     )
                 except (AttributeError, ImportError, ModuleNotFoundError):
                     pass
+                self.logger.info(
+                    "[INFO] isolating embedded vLLM init from outer distributed env "
+                    "(MASTER_ADDR=%s, MASTER_PORT=%s, RANK=%s, WORLD_SIZE=%s, VLLM_USE_V1=%s)",
+                    env_overrides["MASTER_ADDR"],
+                    env_overrides["MASTER_PORT"],
+                    env_overrides["RANK"],
+                    env_overrides["WORLD_SIZE"],
+                    env_overrides["VLLM_USE_V1"],
+                )
                 return llm_cls(**kwargs)
 
         kwargs_with_device = dict(llm_kwargs)
