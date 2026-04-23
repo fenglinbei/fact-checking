@@ -4,14 +4,40 @@ import math
 import re
 from typing import Iterable
 
-_WHITESPACE = re.compile(r"\s+")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9%$]+")
-
+_PLACEHOLDER_DOT = "<DOT>"
+_COMMON_ABBREVIATIONS = (
+    "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "st.", "vs.", "etc.",
+    "i.e.", "e.g.", "u.s.", "u.k.", "no.", "fig.",
+)
+_SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[\"'(\[]*[A-Z0-9])")
+_WHITESPACE_RE = re.compile(r"\s+")
 
 def clean_text(text: str) -> str:
-    text = text.replace("\u0000", " ")
-    return _WHITESPACE.sub(" ", text).strip()
+    text = text or ""
+    text = text.replace("\u00a0", " ").replace("\n", " ")
+    text = _WHITESPACE_RE.sub(" ", text).strip()
+    return text
 
+def robust_sentence_split(text: str) -> list[str]:
+    """Split report content into sentences with simple abbreviation protection."""
+    text = clean_text(text)
+    if not text:
+        return []
+
+    protected = text
+    for abbr in _COMMON_ABBREVIATIONS:
+        escaped = re.escape(abbr)
+        protected = re.sub(
+            escaped,
+            lambda m: m.group(0).replace(".", _PLACEHOLDER_DOT),
+            protected,
+            flags=re.IGNORECASE,
+        )
+
+    parts = [p.strip() for p in _SENT_SPLIT_RE.split(protected) if p.strip()]
+    sentences = [p.replace(_PLACEHOLDER_DOT, ".").strip() for p in parts]
+    return [s for s in sentences if s]
 
 def word_tokens(text: str) -> list[str]:
     return [t.lower() for t in _TOKEN_RE.findall(clean_text(text))]

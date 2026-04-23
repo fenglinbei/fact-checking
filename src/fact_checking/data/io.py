@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -7,45 +8,7 @@ from typing import Iterable
 
 from fact_checking import LABEL2ID
 from fact_checking.data.types import SampleRecord, SentenceRecord
-
-_WHITESPACE_RE = re.compile(r"\s+")
-
-
-def clean_text(text: str) -> str:
-    text = text or ""
-    text = text.replace("\u00a0", " ").replace("\n", " ")
-    text = _WHITESPACE_RE.sub(" ", text).strip()
-    return text
-
-
-_PLACEHOLDER_DOT = "<DOT>"
-_COMMON_ABBREVIATIONS = (
-    "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "st.", "vs.", "etc.",
-    "i.e.", "e.g.", "u.s.", "u.k.", "no.", "fig.",
-)
-_SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[\"'(\[]*[A-Z0-9])")
-
-
-def robust_sentence_split(text: str) -> list[str]:
-    """Split report content into sentences with simple abbreviation protection."""
-    text = clean_text(text)
-    if not text:
-        return []
-
-    protected = text
-    for abbr in _COMMON_ABBREVIATIONS:
-        escaped = re.escape(abbr)
-        protected = re.sub(
-            escaped,
-            lambda m: m.group(0).replace(".", _PLACEHOLDER_DOT),
-            protected,
-            flags=re.IGNORECASE,
-        )
-
-    parts = [p.strip() for p in _SENT_SPLIT_RE.split(protected) if p.strip()]
-    sentences = [p.replace(_PLACEHOLDER_DOT, ".").strip() for p in parts]
-    return [s for s in sentences if s]
-
+from fact_checking.utils.text import clean_text, robust_sentence_split
 
 
 def load_split(path: str | Path) -> list[SampleRecord]:
