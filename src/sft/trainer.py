@@ -11,7 +11,7 @@ from torch.optim import AdamW
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
 
-from fact_checking.baselines.llm_baseline import load_jsonl
+from fact_checking.data.io import load_jsonl
 from fact_checking.config import load_yaml, save_yaml
 from fact_checking.utils.logging import init_logger
 from sft.data.io import _save_eval_artifacts, save_model
