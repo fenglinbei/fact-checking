@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import traceback
 from pathlib import Path
 
 import torch
@@ -33,8 +34,19 @@ from sft.runtime.adapters import apply_lora_if_enabled, lora_enabled
 from sft.runtime.config import apply_runtime_output_layout, normalize_prompt_truncation_config
 from sft.runtime.deps import flash_attn2_available, fla_fast_path_available
 from sft.runtime.device import enable_tf32_if_available, maybe_empty_cache
+from sft.vllm_online_eval import OnlineVLLMEvaluator, online_vllm_eval_enabled
 
 logger = init_logger(__name__)
+
+
+def _broadcast_object_from_main(obj: object, accelerator: Accelerator) -> object:
+    if accelerator.num_processes <= 1:
+        return obj
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return obj
+    payload = [obj if accelerator.is_main_process else None]
+    torch.distributed.broadcast_object_list(payload, src=0)
+    return payload[0]
 
 
 def main() -> None:
@@ -367,6 +379,30 @@ def main() -> None:
             max_train_steps,
         )
 
+    online_vllm_evaluator: OnlineVLLMEvaluator | None = None
+    use_online_vllm_eval = online_vllm_eval_enabled(train_cfg)
+    if use_online_vllm_eval:
+        if accelerator.num_processes < 1:
+            raise RuntimeError("online_vllm_eval requires at least one training process.")
+        init_error = None
+        if accelerator.is_main_process:
+            try:
+                online_vllm_evaluator = OnlineVLLMEvaluator(
+                    model_name_or_path=model_name_or_path,
+                    tokenizer_name_or_path=model_name_or_path,
+                    samples=val_samples,
+                    max_length=max_length,
+                    baseline_cfg=baseline_cfg,
+                    train_cfg=train_cfg,
+                    logger=logger,
+                )
+            except Exception:
+                init_error = traceback.format_exc()
+        init_error = _broadcast_object_from_main(init_error, accelerator)
+        if init_error:
+            raise RuntimeError(f"Failed to initialize online vLLM evaluator on rank 0:\n{init_error}")
+        accelerator.wait_for_everyone()
+
     logging_steps = int(train_cfg.get("logging_steps", 20))
     eval_steps = int(train_cfg.get("eval_steps", 500))
     save_steps = int(train_cfg.get("save_steps", 500))
@@ -403,16 +439,41 @@ def main() -> None:
 
                 if global_step % eval_steps == 0:
                     logger.info("[rank %d] before evaluate step=%d", accelerator.process_index, global_step)
-                    eval_metrics = evaluate(
-                        model,
-                        val_eval_dl,
-                        tokenizer,
-                        accelerator,
-                        max_length=max_length,
-                        max_new_tokens=int(baseline_cfg.get("max_new_tokens", 24)),
-                        eval_logger=logger,
-                        log_predictions_limit=int(train_cfg.get("eval_log_predictions", 5)),
-                    )
+                    if use_online_vllm_eval:
+                        accelerator.wait_for_everyone()
+                        eval_error = None
+                        if accelerator.is_main_process:
+                            try:
+                                if online_vllm_evaluator is None:
+                                    raise RuntimeError(
+                                        "online_vllm_eval is enabled but the rank-0 evaluator is missing."
+                                    )
+                                eval_metrics = online_vllm_evaluator.evaluate(
+                                    model=accelerator.unwrap_model(model),
+                                    max_new_tokens=int(baseline_cfg.get("max_new_tokens", 24)),
+                                    log_predictions_limit=int(train_cfg.get("eval_log_predictions", 5)),
+                                )
+                            except Exception:
+                                eval_metrics = None
+                                eval_error = traceback.format_exc()
+                        else:
+                            eval_metrics = None
+                        eval_error = _broadcast_object_from_main(eval_error, accelerator)
+                        if eval_error:
+                            raise RuntimeError(f"Online vLLM eval failed on rank 0:\n{eval_error}")
+                        eval_metrics = _broadcast_object_from_main(eval_metrics, accelerator)
+                        accelerator.wait_for_everyone()
+                    else:
+                        eval_metrics = evaluate(
+                            model,
+                            val_eval_dl,
+                            tokenizer,
+                            accelerator,
+                            max_length=max_length,
+                            max_new_tokens=int(baseline_cfg.get("max_new_tokens", 24)),
+                            eval_logger=logger,
+                            log_predictions_limit=int(train_cfg.get("eval_log_predictions", 5)),
+                        )
                     logger.info("[rank %d] after evaluate step=%d", accelerator.process_index, global_step)
                     macro_f1 = float(eval_metrics["macro_f1"])
                     accelerator.log(
@@ -493,6 +554,8 @@ def main() -> None:
             break
 
     save_model(accelerator, model, tokenizer, output_dir / "final")
+    if online_vllm_evaluator is not None:
+        online_vllm_evaluator.shutdown()
     accelerator.end_training()
 
 
