@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from fact_checking import LABELS
+from fact_checking.data.constants import LABELS
 from fact_checking.utils.logging import init_logger
 from sft.data.io import save_eval_artifacts
 from sft.eval import summarize_prediction_records
