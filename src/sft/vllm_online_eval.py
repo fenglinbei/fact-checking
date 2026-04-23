@@ -14,7 +14,7 @@ from fact_checking.utils.logging import init_logger
 from sft.data.types import PreparedSample
 from sft.eval import summarize_prediction_records
 from sft.parser import _parse_label_id
-from sft.runtime.adapters import lora_enabled
+from sft.runtime.adapters import is_peft_model
 
 module_logger = init_logger(__name__)
 
@@ -93,12 +93,6 @@ class OnlineVLLMEvaluator:
             raise ValueError(
                 "sft_train.online_vllm_eval.backend supports 'direct_load', 'load_weights', or 'cppo'."
             )
-        if lora_enabled(train_cfg):
-            raise ValueError(
-                "Online vLLM eval currently supports full fine-tuning only. "
-                "Disable sft_train.lora.enabled or use offline vLLM LoRA eval."
-            )
-
         self.samples = samples
         self.baseline_cfg = baseline_cfg
         self.logger = logger or module_logger
@@ -229,14 +223,58 @@ class OnlineVLLMEvaluator:
             else:
                 yield name, tensor
 
+    def _prepare_state_dict_for_vllm(self, model: AutoModelForCausalLM) -> tuple[dict[str, object], bool]:
+        merged_adapter = False
+        if hasattr(model, "_orig_mod"):
+            model = model._orig_mod
+
+        if is_peft_model(model):
+            if not hasattr(model, "merge_adapter") or not hasattr(model, "unmerge_adapter"):
+                raise RuntimeError(
+                    "Online vLLM eval with LoRA requires a PEFT model that supports "
+                    "merge_adapter() and unmerge_adapter()."
+                )
+            self.logger.info("[INFO] merging LoRA adapter before loading weights into online vLLM evaluator")
+            model.merge_adapter()
+            merged_adapter = True
+            try:
+                adapter_prefix = str(getattr(model, "prefix", "lora_"))
+                state_dict = {
+                    name.removeprefix("base_model.model.").replace(".base_layer", ""): tensor
+                    for name, tensor in model.state_dict().items()
+                }
+                if adapter_prefix:
+                    state_dict = {name: tensor for name, tensor in state_dict.items() if adapter_prefix not in name}
+                state_dict = {
+                    name.replace("modules_to_save.default.", ""): tensor
+                    for name, tensor in state_dict.items()
+                    if "original_module" not in name
+                }
+                return state_dict, merged_adapter
+            except Exception:
+                model.unmerge_adapter()
+                raise
+
+        return dict(model.state_dict()), merged_adapter
+
+    def _unmerge_adapter_if_needed(self, model: AutoModelForCausalLM, merged_adapter: bool) -> None:
+        if not merged_adapter:
+            return
+        if hasattr(model, "_orig_mod"):
+            model = model._orig_mod
+        model.unmerge_adapter()
+
     def sync_weights(self, model: AutoModelForCausalLM) -> None:
         self._maybe_wake()
         llm_model = self._get_vllm_model()
-        state_dict = model.state_dict()
-        self.logger.info("[INFO] loading %d tensors into online vLLM evaluator", len(state_dict))
-        loaded_params = llm_model.load_weights(self._iter_state_dict_items(state_dict))
-        with contextlib.suppress(TypeError):
-            self.logger.info("[INFO] vLLM load_weights loaded %d tensors", len(loaded_params))
+        state_dict, merged_adapter = self._prepare_state_dict_for_vllm(model)
+        try:
+            self.logger.info("[INFO] loading %d tensors into online vLLM evaluator", len(state_dict))
+            loaded_params = llm_model.load_weights(self._iter_state_dict_items(state_dict))
+            with contextlib.suppress(TypeError):
+                self.logger.info("[INFO] vLLM load_weights loaded %d tensors", len(loaded_params))
+        finally:
+            self._unmerge_adapter_if_needed(model, merged_adapter)
 
     def evaluate(
         self,
