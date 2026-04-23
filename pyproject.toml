@@ -29,4 +29,4 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
-include = ["fact_checking*"]
+include = ["fact_checking*", "sft*"]
