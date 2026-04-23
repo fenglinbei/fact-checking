@@ -56,7 +56,7 @@ sft_train:
   padding: longest
   use_length_bucket: true
   lora:
-    enabled: false
+    enabled: true
     r: 16
     alpha: 32
     dropout: 0.05
@@ -70,6 +70,20 @@ sft_train:
       - up_proj
       - down_proj
     modules_to_save: null
+  online_vllm_eval:
+    enabled: true
+    device: cuda:3
+    tensor_parallel_size: 1
+    gpu_memory_utilization: 0.95
+    dtype: bfloat16
+    backend: nccl
+    load_format: dummy
+    enforce_eager: true
+    packed: true
+    sleep_before_sync: true
+    sleep_after_eval: true
+    use_tqdm: true
+    max_num_seqs: 64
   empty_cache_steps: 1
   empty_cache_on_eval: true
   empty_cache_on_save: true
