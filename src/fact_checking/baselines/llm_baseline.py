@@ -11,7 +11,7 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from fact_checking import LABELS
+from fact_checking.data.constants import LABELS
 from fact_checking.retrieval.embedder import EmbedderConfig, TextEmbedder
 from fact_checking.retrieval.mmr import maximal_marginal_relevance
 
@@ -31,16 +31,6 @@ class BaselineConfig:
     max_new_tokens: int = 24
     temperature: float = 0.0
     do_sample: bool = False
-
-
-def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    with Path(path).open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    return rows
 
 
 def _format_label_space() -> str:
