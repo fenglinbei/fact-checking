@@ -48,14 +48,33 @@ def main() -> None:
         config_path=args.config,
     )
 
+    model_path = str(context.checkpoint_dir)
+    tokenizer_path = str(context.checkpoint_dir)
+    if context.is_peft_adapter and not (context.checkpoint_dir / "tokenizer_config.json").exists():
+        tokenizer_path = str(context.baseline_cfg["model_name_or_path"])
+    llm_kwargs = {}
+    lora_request = None
+    if context.is_peft_adapter:
+        try:
+            from vllm.lora.request import LoRARequest
+        except ImportError as exc:
+            raise RuntimeError("vLLM LoRA inference requires a vLLM build with LoRA support.") from exc
+
+        model_path = str(context.baseline_cfg["model_name_or_path"])
+        lora_cfg = context.train_cfg.get("lora", {}) or {}
+        max_lora_rank = int(lora_cfg.get("r", 16)) if isinstance(lora_cfg, dict) else 16
+        llm_kwargs.update({"enable_lora": True, "max_lora_rank": max_lora_rank})
+        lora_request = LoRARequest("sft-lora", 1, str(context.checkpoint_dir))
+
     llm = LLM(
-        model=str(context.checkpoint_dir),
-        tokenizer=str(context.checkpoint_dir),
+        model=model_path,
+        tokenizer=tokenizer_path,
         trust_remote_code=True,
         tensor_parallel_size=int(args.tensor_parallel_size),
         gpu_memory_utilization=float(args.gpu_memory_utilization),
         dtype=args.dtype,
         max_model_len=context.max_length,
+        **llm_kwargs,
     )
     sampling_params = SamplingParams(
         max_tokens=int(
@@ -66,11 +85,14 @@ def main() -> None:
         temperature=float(context.baseline_cfg.get("temperature", 0.0)),
     )
 
-    outputs = llm.generate(
-        prompts=[sample.prompt for sample in context.samples],
-        sampling_params=sampling_params,
-        use_tqdm=True,
-    )
+    generate_kwargs = {
+        "prompts": [sample.prompt for sample in context.samples],
+        "sampling_params": sampling_params,
+        "use_tqdm": True,
+    }
+    if lora_request is not None:
+        generate_kwargs["lora_request"] = lora_request
+    outputs = llm.generate(**generate_kwargs)
 
     prediction_records: list[dict[str, object]] = []
     for sample_idx, (sample, output) in enumerate(zip(context.samples, outputs)):
