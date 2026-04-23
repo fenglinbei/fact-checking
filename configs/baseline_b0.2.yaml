@@ -76,12 +76,10 @@ sft_train:
     tensor_parallel_size: 1
     gpu_memory_utilization: 0.95
     dtype: bfloat16
-    backend: nccl
+    backend: direct_load
     load_format: dummy
     enforce_eager: true
-    packed: true
-    sleep_before_sync: true
-    sleep_after_eval: true
+    sleep_after_eval: false
     use_tqdm: true
     max_num_seqs: 64
   empty_cache_steps: 1
