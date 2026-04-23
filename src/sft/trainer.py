@@ -23,6 +23,7 @@ from sft.eval import evaluate
 from sft.prompting.output import build_output_strategy
 from sft.prompting.preparation import build_prepared_samples
 from sft.prompting.stats import (
+    build_prompt_snapshots,
     log_prompt_summary,
     save_prompt_statistics,
     summarize_prompt_preparation,
@@ -155,8 +156,24 @@ def main() -> None:
         truncation_strategy=truncation_strategy,
     )
 
-    train_instances = [{"prompt": sample.prompt, "target": sample.target} for sample in train_samples]
-    val_instances = [{"prompt": sample.prompt, "target": sample.target} for sample in val_samples]
+    train_instances = [
+        {
+            "prompt": sample.prompt,
+            "target": sample.target,
+            "prompt_add_special_tokens": sample.prompt_add_special_tokens,
+            "preserve_prompt_prefix": sample.preserve_prompt_prefix,
+        }
+        for sample in train_samples
+    ]
+    val_instances = [
+        {
+            "prompt": sample.prompt,
+            "target": sample.target,
+            "prompt_add_special_tokens": sample.prompt_add_special_tokens,
+            "preserve_prompt_prefix": sample.preserve_prompt_prefix,
+        }
+        for sample in val_samples
+    ]
     val_eval_ds = EvalPromptDataset(val_samples)
 
     train_prompt_summary = summarize_prompt_preparation(
@@ -165,6 +182,7 @@ def main() -> None:
         split="train",
         truncation_strategy_name=truncation_strategy.name,
         output_mode=output_strategy.name,
+        prompt_version=output_strategy.prompt_version,
     )
     val_prompt_summary = summarize_prompt_preparation(
         val_prompt_records,
@@ -172,14 +190,27 @@ def main() -> None:
         split="val",
         truncation_strategy_name=truncation_strategy.name,
         output_mode=output_strategy.name,
+        prompt_version=output_strategy.prompt_version,
     )
     if accelerator.is_main_process:
         log_prompt_summary(train_prompt_summary, logger=logger)
         log_prompt_summary(val_prompt_summary, logger=logger)
+        train_prompt_snapshots = build_prompt_snapshots(
+            train_samples,
+            train_prompt_records,
+            split="train",
+        )
+        val_prompt_snapshots = build_prompt_snapshots(
+            val_samples,
+            val_prompt_records,
+            split="val",
+        )
         prompt_stats_path = save_prompt_statistics(
             output_dir=output_dir,
             train_summary=train_prompt_summary,
             val_summary=val_prompt_summary,
+            train_snapshots=train_prompt_snapshots,
+            val_snapshots=val_prompt_snapshots,
         )
         logger.info("[INFO] prompt statistics saved to %s", prompt_stats_path)
 

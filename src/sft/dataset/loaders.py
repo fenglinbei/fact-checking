@@ -51,6 +51,13 @@ def build_eval_dataloader(
 ) -> DataLoader:
     def _collate_fn(items):
         prompts = [str(x["prompt"]) for x in items]
+        prompt_add_special_tokens = bool(items[0].get("prompt_add_special_tokens", True))
+        preserve_prompt_prefix = bool(items[0].get("preserve_prompt_prefix", False))
+        if any(bool(x.get("prompt_add_special_tokens", True)) != prompt_add_special_tokens for x in items):
+            raise ValueError("Mixed prompt_add_special_tokens values are not supported in one eval batch.")
+        if any(bool(x.get("preserve_prompt_prefix", False)) != preserve_prompt_prefix for x in items):
+            raise ValueError("Mixed preserve_prompt_prefix values are not supported in one eval batch.")
+
         gold_ids = torch.tensor([int(x["gold_id"]) for x in items], dtype=torch.long)
         sample_indices = torch.tensor([int(x["sample_idx"]) for x in items], dtype=torch.long)
 
@@ -64,10 +71,16 @@ def build_eval_dataloader(
             enc = tokenizer(
                 prompts,
                 padding="max_length" if padding == "max_length" else True,
-                truncation=True,
+                truncation=not preserve_prompt_prefix,
                 max_length=max_length,
+                add_special_tokens=prompt_add_special_tokens,
                 return_tensors="pt",
             )
+            if preserve_prompt_prefix and enc["input_ids"].shape[1] > max_length:
+                raise ValueError(
+                    "Protected eval prompt is longer than max_length after evidence truncation. "
+                    "Increase sft_train.max_length or reduce evidence/context length."
+                )
         finally:
             tokenizer.padding_side = old_padding_side
             tokenizer.truncation_side = old_truncation_side

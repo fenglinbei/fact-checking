@@ -21,14 +21,14 @@ def _context_window(content: str, sent_idx: int, k: int) -> str:
     return " ".join(snippet)
 
 
-def build_evidence_block(row: dict[str, Any], top_k: int, use_context: bool, context_k: int) -> str:
+def build_evidence_items(row: dict[str, Any], top_k: int, use_context: bool, context_k: int) -> list[str]:
     candidates = sorted(
         row.get("candidates", []),
         key=lambda x: float(x.get("hybrid_score", 0.0)),
         reverse=True,
     )[:top_k]
-    lines: list[str] = []
-    for i, cand in enumerate(candidates, start=1):
+    items: list[str] = []
+    for cand in candidates:
         sent = str(cand.get("text", "")).strip()
         if use_context:
             report = cand.get("source_report", {}) if isinstance(cand.get("source_report", {}), dict) else {}
@@ -37,5 +37,15 @@ def build_evidence_block(row: dict[str, Any], top_k: int, use_context: bool, con
             evidence_text = ctx or sent
         else:
             evidence_text = sent
+        items.append(evidence_text)
+    return items
+
+
+def build_evidence_block(row: dict[str, Any], top_k: int, use_context: bool, context_k: int) -> str:
+    lines: list[str] = []
+    for i, evidence_text in enumerate(
+        build_evidence_items(row, top_k=top_k, use_context=use_context, context_k=context_k),
+        start=1,
+    ):
         lines.append(f"[{i}] {evidence_text}")
     return "\n".join(lines)

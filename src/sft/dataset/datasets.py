@@ -32,7 +32,7 @@ class SFTDatasetBuilder:
     padding: str = "max_length"
     cache_dir: Path | None = None
 
-    def build(self, instances: list[dict[str, str]], split: str, accelerator: Accelerator) -> Dataset:
+    def build(self, instances: list[dict[str, object]], split: str, accelerator: Accelerator) -> Dataset:
         if self.cache_dir is None:
             tokenized = tokenize_instances(
                 instances=instances,
@@ -65,11 +65,13 @@ class SFTDatasetBuilder:
 
 class EvalPromptDataset(Dataset):
     def __init__(self, samples: list[PreparedSample]) -> None:
-        self.samples: list[dict[str, str | int]] = [
+        self.samples: list[dict[str, str | int | bool]] = [
             {
                 "sample_idx": idx,
                 "prompt": sample.prompt,
                 "target": sample.target,
+                "prompt_add_special_tokens": sample.prompt_add_special_tokens,
+                "preserve_prompt_prefix": sample.preserve_prompt_prefix,
                 "gold_id": sample.gold_id,
                 "gold_label": sample.gold_label,
                 "gold_explain": sample.gold_explain,
@@ -80,5 +82,5 @@ class EvalPromptDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx: int) -> dict[str, str | int]:
+    def __getitem__(self, idx: int) -> dict[str, str | int | bool]:
         return self.samples[idx]
