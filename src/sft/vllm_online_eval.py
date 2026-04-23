@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import contextlib
 import re
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from logging import Logger
-from typing import Callable, Iterable
+from unittest.mock import patch
 
 import torch
 from transformers import AutoModelForCausalLM
@@ -31,10 +30,6 @@ def _label_name_from_id(label_id: int) -> str:
     return "parse_error"
 
 
-def _dtype_name(tensor: torch.Tensor) -> str:
-    return str(tensor.dtype).split(".")[-1]
-
-
 def _parse_cuda_device_index(device: str) -> int | None:
     match = re.fullmatch(r"\s*cuda(?::(\d+))?\s*", device)
     if not match:
@@ -53,8 +48,6 @@ class OnlineVLLMEvalConfig:
     backend: str
     load_format: str | None
     enforce_eager: bool
-    packed: bool
-    sleep_before_sync: bool
     sleep_after_eval: bool
     use_tqdm: bool
     max_num_seqs: int | None
@@ -72,19 +65,17 @@ class OnlineVLLMEvalConfig:
             tensor_parallel_size=int(cfg.get("tensor_parallel_size", 1)),
             gpu_memory_utilization=float(cfg.get("gpu_memory_utilization", 0.85)),
             dtype=str(cfg.get("dtype", "bfloat16")),
-            backend=str(cfg.get("backend", "nccl")),
+            backend=str(cfg.get("backend", "direct_load")),
             load_format=load_format,
             enforce_eager=bool(cfg.get("enforce_eager", True)),
-            packed=bool(cfg.get("packed", True)),
-            sleep_before_sync=bool(cfg.get("sleep_before_sync", True)),
-            sleep_after_eval=bool(cfg.get("sleep_after_eval", True)),
+            sleep_after_eval=bool(cfg.get("sleep_after_eval", False)),
             use_tqdm=bool(cfg.get("use_tqdm", True)),
             max_num_seqs=None if max_num_seqs is None else int(max_num_seqs),
         )
 
 
 class OnlineVLLMEvaluator:
-    """Rank-0 vLLM evaluator with NCCL weight sync from a ZeRO-2 trainer."""
+    """Rank-0 vLLM evaluator that reloads in-memory ZeRO-2 weights CPPO-style."""
 
     def __init__(
         self,
@@ -98,8 +89,10 @@ class OnlineVLLMEvaluator:
         logger: Logger | None = None,
     ) -> None:
         self.cfg = OnlineVLLMEvalConfig.from_train_cfg(train_cfg)
-        if self.cfg.backend != "nccl":
-            raise ValueError("sft_train.online_vllm_eval.backend currently supports only 'nccl'.")
+        if self.cfg.backend not in {"direct_load", "load_weights", "cppo"}:
+            raise ValueError(
+                "sft_train.online_vllm_eval.backend supports 'direct_load', 'load_weights', or 'cppo'."
+            )
         if lora_enabled(train_cfg):
             raise ValueError(
                 "Online vLLM eval currently supports full fine-tuning only. "
@@ -114,22 +107,12 @@ class OnlineVLLMEvaluator:
 
         try:
             from vllm import LLM, SamplingParams
-            from vllm.config import WeightTransferConfig
-            from vllm.distributed.weight_transfer.nccl_engine import (
-                NCCLTrainerSendWeightsArgs,
-                NCCLWeightTransferEngine,
-            )
-            from vllm.utils.network_utils import get_ip, get_open_port
         except ImportError as exc:
             raise RuntimeError(
-                "sft_train.online_vllm_eval.enabled=true requires vLLM with NCCL weight transfer support."
+                "sft_train.online_vllm_eval.enabled=true requires vLLM in this environment."
             ) from exc
 
         self._SamplingParams = SamplingParams
-        self._NCCLTrainerSendWeightsArgs = NCCLTrainerSendWeightsArgs
-        self._NCCLWeightTransferEngine = NCCLWeightTransferEngine
-        self._get_ip = get_ip
-        self._get_open_port = get_open_port
 
         llm_kwargs = {
             "model": model_name_or_path,
@@ -140,9 +123,8 @@ class OnlineVLLMEvaluator:
             "dtype": self.cfg.dtype,
             "max_model_len": self.max_length,
             "enforce_eager": self.cfg.enforce_eager,
-            "weight_transfer_config": WeightTransferConfig(backend=self.cfg.backend),
         }
-        if self.cfg.sleep_before_sync or self.cfg.sleep_after_eval:
+        if self.cfg.sleep_after_eval:
             llm_kwargs["enable_sleep_mode"] = True
         if self.cfg.load_format is not None:
             llm_kwargs["load_format"] = self.cfg.load_format
@@ -157,14 +139,26 @@ class OnlineVLLMEvaluator:
             self.cfg.load_format,
         )
         self.llm = self._build_llm(LLM, llm_kwargs)
-        self.model_update_group = None
-        self._init_weight_transfer_group()
 
     def _build_llm(self, llm_cls: type, llm_kwargs: dict) -> object:
+        def build_with_accelerate_patches(kwargs: dict) -> object:
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(patch("torch.distributed.get_world_size", return_value=1))
+                try:
+                    stack.enter_context(
+                        patch(
+                            "vllm.worker.worker.Worker._assert_memory_footprint_increased_during_profiling",
+                            return_value=None,
+                        )
+                    )
+                except (AttributeError, ImportError, ModuleNotFoundError):
+                    pass
+                return llm_cls(**kwargs)
+
         kwargs_with_device = dict(llm_kwargs)
         kwargs_with_device["device"] = self.cfg.device
         try:
-            return llm_cls(**kwargs_with_device)
+            return build_with_accelerate_patches(kwargs_with_device)
         except TypeError as exc:
             if "device" not in str(exc):
                 raise
@@ -184,51 +178,10 @@ class OnlineVLLMEvaluator:
                 "[WARN] vLLM LLM(...) did not accept device=; falling back to torch.cuda.set_device(%d) during init.",
                 device_index,
             )
-            return llm_cls(**llm_kwargs)
+            return build_with_accelerate_patches(llm_kwargs)
         finally:
             if previous_device is not None:
                 torch.cuda.set_device(previous_device)
-
-    def _run_weight_transfer_pair(
-        self,
-        inference_fn: Callable[[], object],
-        trainer_fn: Callable[[], object],
-    ) -> tuple[object, object]:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            inference_future = executor.submit(inference_fn)
-            trainer_future = executor.submit(trainer_fn)
-            trainer_result = trainer_future.result()
-            inference_result = inference_future.result()
-        return trainer_result, inference_result
-
-    def _init_weight_transfer_group(self) -> None:
-        master_address = self._get_ip()
-        master_port = self._get_open_port()
-        world_size = int(self.llm.get_world_size()) + 1
-        init_request = {
-            "init_info": {
-                "master_address": master_address,
-                "master_port": master_port,
-                "rank_offset": 1,
-                "world_size": world_size,
-            }
-        }
-        trainer_init = {
-            "master_address": master_address,
-            "master_port": master_port,
-            "world_size": world_size,
-        }
-        self.logger.info(
-            "[INFO] initializing online vLLM NCCL weight-transfer group at %s:%s (world_size=%d)",
-            master_address,
-            master_port,
-            world_size,
-        )
-        trainer_result, _ = self._run_weight_transfer_pair(
-            inference_fn=lambda: self.llm.init_weight_transfer_engine(init_request),
-            trainer_fn=lambda: self._NCCLWeightTransferEngine.trainer_init(trainer_init),
-        )
-        self.model_update_group = trainer_result
 
     def _maybe_sleep(self) -> None:
         if self._sleeping or not hasattr(self.llm, "sleep"):
@@ -245,49 +198,45 @@ class OnlineVLLMEvaluator:
             self.llm.wake_up()
         self._sleeping = False
 
-    def _named_parameters(self, model: AutoModelForCausalLM) -> Iterable[tuple[str, torch.Tensor]]:
-        for name, param in model.named_parameters():
-            yield name, param.detach()
+    def _get_vllm_model(self) -> object:
+        llm_engine = getattr(self.llm, "llm_engine", None)
+        model_executor = getattr(llm_engine, "model_executor", None)
+        if model_executor is None:
+            raise RuntimeError("Cannot find vLLM model_executor on the embedded LLM engine.")
 
-    def _weight_metadata(self, model: AutoModelForCausalLM) -> tuple[list[str], list[str], list[list[int]]]:
-        names: list[str] = []
-        dtype_names: list[str] = []
-        shapes: list[list[int]] = []
-        for name, param in self._named_parameters(model):
-            names.append(name)
-            dtype_names.append(_dtype_name(param))
-            shapes.append(list(param.shape))
-        return names, dtype_names, shapes
+        candidates = (
+            ("driver_worker", "model_runner", "model"),
+            ("driver_worker", "worker", "model_runner", "model"),
+        )
+        for path in candidates:
+            value = model_executor
+            for attr in path:
+                value = getattr(value, attr, None)
+                if value is None:
+                    break
+            if value is not None and hasattr(value, "load_weights"):
+                return value
+
+        raise RuntimeError(
+            "Cannot locate vLLM's internal model.load_weights() path. "
+            "This CPPO-style evaluator expects vLLM 0.7.x/0.8.x style executors."
+        )
+
+    def _iter_state_dict_items(self, state_dict: dict[str, object]):
+        for name, tensor in state_dict.items():
+            if torch.is_tensor(tensor):
+                yield name, tensor.detach()
+            else:
+                yield name, tensor
 
     def sync_weights(self, model: AutoModelForCausalLM) -> None:
-        if self.model_update_group is None:
-            raise RuntimeError("Online vLLM weight-transfer group has not been initialized.")
-
-        if self.cfg.sleep_before_sync:
-            self._maybe_sleep()
-
-        names, dtype_names, shapes = self._weight_metadata(model)
-        update_request = {
-            "update_info": {
-                "names": names,
-                "dtype_names": dtype_names,
-                "shapes": shapes,
-                "packed": self.cfg.packed,
-            }
-        }
-        trainer_args = self._NCCLTrainerSendWeightsArgs(
-            group=self.model_update_group,
-            packed=self.cfg.packed,
-        )
-        self.logger.info("[INFO] syncing %d tensors to online vLLM evaluator", len(names))
-        self._run_weight_transfer_pair(
-            inference_fn=lambda: self.llm.update_weights(update_request),
-            trainer_fn=lambda: self._NCCLWeightTransferEngine.trainer_send_weights(
-                iterator=self._named_parameters(model),
-                trainer_args=trainer_args,
-            ),
-        )
         self._maybe_wake()
+        llm_model = self._get_vllm_model()
+        state_dict = model.state_dict()
+        self.logger.info("[INFO] loading %d tensors into online vLLM evaluator", len(state_dict))
+        loaded_params = llm_model.load_weights(self._iter_state_dict_items(state_dict))
+        with contextlib.suppress(TypeError):
+            self.logger.info("[INFO] vLLM load_weights loaded %d tensors", len(loaded_params))
 
     def evaluate(
         self,
