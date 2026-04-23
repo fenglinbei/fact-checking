@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from transformers import AutoTokenizer
-
-from fact_checking import LABELS
+from fact_checking.data.constants import LABELS
 from fact_checking.baselines.llm_baseline import build_zero_shot_prompt
 
 LABEL_DEFINITIONS = {
