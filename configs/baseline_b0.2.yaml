@@ -52,11 +52,11 @@ sft_train:
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 8
   learning_rate: 1.0e-5
-  num_train_epochs: 2
+  num_train_epochs: 4
   weight_decay: 0.0
   warmup_ratio: 0.03
   bf16: true
-  max_length: 1024
+  max_length: 1280
   logging_steps: 2
   save_steps: 50
   eval_steps: 50
@@ -86,7 +86,7 @@ sft_train:
     enabled: true
     device: cuda:3
     tensor_parallel_size: 1
-    gpu_memory_utilization: 0.95
+    gpu_memory_utilization: 0.90
     dtype: bfloat16
     backend: direct_load
     load_format: dummy
