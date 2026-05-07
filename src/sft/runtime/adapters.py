@@ -114,3 +114,19 @@ def checkpoint_has_peft_adapter(output_path: Path) -> bool:
     if not (output_path / "adapter_config.json").exists():
         return False
     return (output_path / "adapter_model.safetensors").exists() or (output_path / "adapter_model.bin").exists()
+
+
+def checkpoint_has_hf_artifacts(output_path: Path) -> bool:
+    if checkpoint_has_peft_adapter(output_path):
+        return True
+
+    if not (output_path / "config.json").exists():
+        return False
+
+    weight_patterns = [
+        "model.safetensors",
+        "model-*.safetensors",
+        "pytorch_model.bin",
+        "pytorch_model-*.bin",
+    ]
+    return any(any(output_path.glob(pattern)) for pattern in weight_patterns)

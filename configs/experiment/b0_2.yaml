@@ -1,0 +1,37 @@
+# @package _global_
+defaults:
+  - b0
+  - _self_
+
+experiment:
+  name: b0_2
+
+baseline:
+  variant: b0_2
+  top_k: 10
+  max_new_tokens: 128
+  prompt_version: v2
+  output_mode: explanation_label
+  prompt_truncation:
+    enabled: true
+    strategy: tail_evidence
+    min_evidence_to_keep: 1
+
+sft_train:
+  num_train_epochs: 4
+  max_length: 1280
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    modules_to_save: null
