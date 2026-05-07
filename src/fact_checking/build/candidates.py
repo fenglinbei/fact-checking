@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -14,6 +16,12 @@ from fact_checking.retrieval.embedder import EmbedderConfig, TextEmbedder
 from fact_checking.retrieval.mmr import maximal_marginal_relevance
 from fact_checking.retrieval.text_utils import bm25_like_score, lexical_overlap_f1
 from fact_checking.utils.logging import init_logger
+
+
+@dataclass(frozen=True)
+class BuildResult:
+    output_dir: Path
+    split_paths: dict[str, Path]
 
 
 def canonicalize_sentence(text: str) -> str:
@@ -38,7 +46,7 @@ def build_candidates_for_sample(
     alpha_lexical: float,
     alpha_bm25: float,
     mmr_lambda: float,
-) -> dict:
+) -> dict[str, Any]:
     sentences = list(iter_sentences(sample))
     if not sentences:
         return {
@@ -61,9 +69,7 @@ def build_candidates_for_sample(
     lexical_scaled = minmax_scale(lexical_scores)
     bm25_scaled = minmax_scale(bm25_scores)
 
-    hybrid_scores = (
-        alpha_dense * dense_scaled + alpha_lexical * lexical_scaled + alpha_bm25 * bm25_scaled
-    )
+    hybrid_scores = alpha_dense * dense_scaled + alpha_lexical * lexical_scaled + alpha_bm25 * bm25_scaled
 
     keep_indices = maximal_marginal_relevance(
         query_scores=hybrid_scores,
@@ -72,7 +78,7 @@ def build_candidates_for_sample(
         lambda_weight=mmr_lambda,
     )
 
-    deduped_by_text: dict[str, dict] = {}
+    deduped_by_text: dict[str, dict[str, Any]] = {}
     for idx in keep_indices:
         sent = sentences[idx]
         candidate = {
@@ -107,22 +113,15 @@ def build_candidates_for_sample(
     }
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Build oracle-free Stage A retrieval candidates.")
-    parser.add_argument("--config", type=str, required=True)
-    parser.add_argument("--split", type=str, default=None, choices=["train", "val", "test", None])
-    args = parser.parse_args()
-
+def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, split: str | None = None) -> BuildResult:
     logger = init_logger(__name__)
-    cfg = load_yaml(args.config)
     data_cfg = cfg["data"]
     retrieval_cfg = cfg["retrieval"]
-    output_dir = Path(cfg["output_dir"])
-    output_dir.mkdir(parents=True, exist_ok=True)
+    target_dir = Path(output_dir or cfg.get("output_dir", "outputs/cache/build/manual"))
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     run_summary = {
-        "config_path": args.config,
-        "output_dir": str(output_dir),
+        "output_dir": str(target_dir),
         "embedder_model": retrieval_cfg["embedder_model"],
         "device": retrieval_cfg.get("device", "cuda"),
         "cuda_available": torch.cuda.is_available(),
@@ -134,7 +133,7 @@ def main() -> None:
         "alpha_bm25": float(retrieval_cfg.get("alpha_bm25", 0.10)),
         "mmr_lambda": float(retrieval_cfg.get("mmr_lambda", 0.70)),
     }
-    logger.info("Stage A run summary: %s", run_summary)
+    logger.info("Build run summary: %s", run_summary)
 
     embedder = TextEmbedder(
         EmbedderConfig(
@@ -145,13 +144,14 @@ def main() -> None:
         )
     )
 
-    split_names = [args.split] if args.split else ["train", "val", "test"]
+    split_names = [split] if split else ["train", "val", "test"]
+    split_paths: dict[str, Path] = {}
     for split_name in split_names:
         input_path = data_cfg[f"{split_name}_path"]
         samples = load_split(input_path)
-        output_path = output_dir / f"stage_a_{split_name}.jsonl"
+        output_path = target_dir / f"build_{split_name}.jsonl"
         with output_path.open("w", encoding="utf-8") as writer:
-            for sample in tqdm(samples, desc=f"Stage A [{split_name}]"):
+            for sample in tqdm(samples, desc=f"Build [{split_name}]"):
                 row = build_candidates_for_sample(
                     sample=sample,
                     embedder=embedder,
@@ -162,7 +162,22 @@ def main() -> None:
                     mmr_lambda=run_summary["mmr_lambda"],
                 )
                 writer.write(json.dumps(row, ensure_ascii=False) + "\n")
-        logger.info("Wrote output file: %s", output_path)
+        split_paths[split_name] = output_path
+        logger.info("Wrote build file: %s", output_path)
+
+    return BuildResult(output_dir=target_dir, split_paths=split_paths)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Build candidate evidence files.")
+    parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--output-dir", type=str, default=None)
+    parser.add_argument("--split", type=str, default=None, choices=["train", "val", "test"])
+    args = parser.parse_args()
+
+    cfg = load_yaml(args.config)
+    build_cfg = cfg.get("build", cfg)
+    run_build(build_cfg, output_dir=args.output_dir, split=args.split)
 
 
 if __name__ == "__main__":

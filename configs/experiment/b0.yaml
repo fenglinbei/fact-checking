@@ -1,0 +1,21 @@
+# @package _global_
+experiment:
+  name: b0
+
+baseline:
+  variant: b0
+  model_name_or_path: /data/models/Qwen2.5-7B-Instruct
+  top_k: 5
+  use_context: false
+  context_k: 1
+  prompt_mode: zero_shot
+  few_shot_k: 16
+  few_shot_mmr_lambda: 0.7
+  retrieval_model: /data/models/bge-base-en-v1.5/
+  retrieval_batch_size: 256
+  retrieval_max_length: 256
+  max_new_tokens: 8
+  temperature: 0.0
+  do_sample: false
+  output_mode: label_only
+  prompt_version: v1

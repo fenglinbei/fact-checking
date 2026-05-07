@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from fact_checking.data.constants import LABEL2ID
 from fact_checking.data.types import SampleRecord, SentenceRecord

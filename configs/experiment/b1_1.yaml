@@ -1,0 +1,14 @@
+# @package _global_
+defaults:
+  - b1
+  - _self_
+
+experiment:
+  name: b1_1
+
+baseline:
+  variant: b1_1
+  prompt_truncation:
+    enabled: true
+    strategy: tail_evidence
+    min_evidence_to_keep: 1
