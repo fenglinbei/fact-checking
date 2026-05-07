@@ -1,0 +1,32 @@
+# @package _global_
+defaults:
+  - _self_
+  - /build: default
+  - /train: default
+  - /infer: vllm_api
+  - /experiment: b0
+
+pipeline:
+  mode: full
+  steps: []
+  resume: true
+  force:
+    build: false
+    train: false
+    infer: false
+  output_root: outputs/runs
+  cache_root: outputs/cache
+  run_dir: null
+
+runtime:
+  env:
+    NCCL_CUMEM_HOST_ENABLE: "0"
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    TOKENIZERS_PARALLELISM: "false"
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false
