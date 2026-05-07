@@ -1,0 +1,23 @@
+# @package _global_
+infer:
+  provider: vllm_openai
+  split: test
+  checkpoint: best
+  served_model_name: fact-checking-sft
+  host: 127.0.0.1
+  port: 8000
+  base_url: null
+  wait_seconds: 180
+  request_timeout_seconds: 120
+  log_predictions: 5
+  cuda_visible_devices: "0"
+  tensor_parallel_size: 1
+  gpu_memory_utilization: 0.90
+  dtype: auto
+  max_model_len: null
+  max_new_tokens: null
+  temperature: null
+  server:
+    manage: true
+    stop_after_infer: true
+    extra_args: []

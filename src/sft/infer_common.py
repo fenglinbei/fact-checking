@@ -6,14 +6,13 @@ from typing import Any
 
 from transformers import AutoTokenizer
 
-from fact_checking.baselines.llm_baseline import load_jsonl
+from fact_checking.data.io import load_jsonl
 from fact_checking.config import load_yaml
-from sft.data.io import checkpoint_has_hf_artifacts
 from sft.data.types import PreparedSample
 from sft.prompting.output import build_output_strategy
 from sft.prompting.preparation import build_prepared_samples
 from sft.prompting.truncation import build_prompt_truncation_strategy
-from sft.runtime.adapters import checkpoint_has_peft_adapter
+from sft.runtime.adapters import checkpoint_has_hf_artifacts, checkpoint_has_peft_adapter
 from sft.runtime.config import normalize_prompt_truncation_config
 
 

@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - b0
+  - _self_
+
+experiment:
+  name: b1
+
+baseline:
+  variant: b1
+  top_k: 5
+  use_context: true
+  context_k: 1
+
+sft_train:
+  num_train_epochs: 5
+  save_steps: 200
+  eval_steps: 100

@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - b0
+  - _self_
+
+experiment:
+  name: b0_1
+
+baseline:
+  variant: b0_1
+  top_k: 10
