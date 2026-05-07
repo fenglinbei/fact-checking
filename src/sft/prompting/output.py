@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from fact_checking.data.constants import LABELS
-from fact_checking.baselines.llm_baseline import build_zero_shot_prompt
 
 LABEL_DEFINITIONS = {
     "pants-fire": "completely false and implausible",
@@ -11,6 +10,22 @@ LABEL_DEFINITIONS = {
     "mostly-true": "mostly true, with minor missing context or caveats",
     "true": "accurate based on the available evidence",
 }
+
+
+def _format_label_space() -> str:
+    return ", ".join(LABELS)
+
+
+def build_zero_shot_prompt(claim: str, evidence_block: str) -> str:
+    return (
+        "You are a fact-checking classifier for the LIAR-RAW 6-way labels.\n"
+        f"Label set: {_format_label_space()}.\n"
+        "Given a claim and retrieved evidence, output exactly one label from the label set.\n"
+        "Do not explain. Only output the label token.\n\n"
+        f"Claim: {claim}\n"
+        f"Evidence:\n{evidence_block}\n\n"
+        "Label:"
+    )
 
 
 class OutputStrategy:

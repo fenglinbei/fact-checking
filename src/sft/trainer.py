@@ -50,7 +50,7 @@ def _broadcast_object_from_main(obj: object, accelerator: Accelerator) -> object
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="SFT train for LLM baselines (Accelerate).")
+    parser = argparse.ArgumentParser(description="SFT train for fact-checking experiments (Accelerate).")
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument(
         "--mini-val-size",
@@ -120,7 +120,7 @@ def main() -> None:
     output_strategy = build_output_strategy(baseline_cfg)
     truncation_strategy = build_prompt_truncation_strategy(baseline_cfg)
 
-    output_dir = Path(cfg.get("output_dir", "outputs/liar-raw/llm_baseline"))
+    output_dir = Path(cfg.get("output_dir", "outputs/runs/train"))
     if accelerator.is_main_process:
         output_dir.mkdir(parents=True, exist_ok=True)
     accelerator.wait_for_everyone()

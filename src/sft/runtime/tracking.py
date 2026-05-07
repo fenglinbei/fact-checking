@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from numbers import Number
 from typing import Any
 
-DEFAULT_PROJECT = "fact-checking-stage-ab"
-DEFAULT_RUN_NAME = "llm_baseline_sft"
+DEFAULT_PROJECT = "fact-checking-build-train-infer"
+DEFAULT_RUN_NAME = "fact_checking_sft"
 
 _DISABLED_BACKENDS = {"", "none", "off", "false", "disabled", "null"}
 _TRACKING_CONTROL_KEYS = {"enabled", "backend", "type", "log_with", "provider"}

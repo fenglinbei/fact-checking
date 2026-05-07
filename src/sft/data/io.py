@@ -12,26 +12,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from fact_checking.data.constants import LABEL2ID, LABELS
 from fact_checking.data.types import SampleRecord, SentenceRecord
 from fact_checking.utils.logging import init_logger
-from sft.runtime.adapters import checkpoint_has_peft_adapter, is_peft_model
+from sft.runtime.adapters import checkpoint_has_hf_artifacts, is_peft_model
 from sft.prompting.utils import clean_text, robust_sentence_split
 
 logger = init_logger(__name__)
-
-
-def checkpoint_has_hf_artifacts(output_path: Path) -> bool:
-    if checkpoint_has_peft_adapter(output_path):
-        return True
-
-    if not (output_path / "config.json").exists():
-        return False
-
-    weight_patterns = [
-        "model.safetensors",
-        "model-*.safetensors",
-        "pytorch_model.bin",
-        "pytorch_model-*.bin",
-    ]
-    return any(any(output_path.glob(pattern)) for pattern in weight_patterns)
 
 
 def _export_zero3_checkpoint_to_hf(

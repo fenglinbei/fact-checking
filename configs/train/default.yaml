@@ -1,0 +1,38 @@
+# @package _global_
+train:
+  backend: accelerate_deepspeed
+  cuda_visible_devices: "0,1,2,3"
+  nproc_per_node: 4
+  num_machines: 1
+  mixed_precision: bf16
+  deepspeed_config: configs/deepspeed_zero2.json
+  checkpoint_for_infer: best
+  run_dir: null
+
+tracking:
+  enabled: false
+  backend: none
+
+sft_train:
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 1.0e-5
+  num_train_epochs: 2
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  bf16: true
+  max_length: 2048
+  logging_steps: 2
+  save_steps: 50
+  eval_steps: 50
+  dataloader_num_workers: 4
+  gradient_checkpointing: true
+  use_flash_attention_2: true
+  lr_scheduler_type: cosine
+  max_grad_norm: 1.0
+  padding: longest
+  use_length_bucket: true
+  empty_cache_steps: 1
+  empty_cache_on_eval: true
+  empty_cache_on_save: true
