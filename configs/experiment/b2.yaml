@@ -1,0 +1,15 @@
+# @package _global_
+defaults:
+  - b0
+  - _self_
+
+experiment:
+  name: b2
+
+baseline:
+  variant: b2
+  output_mode: explanation_label
+  prompt_truncation:
+    enabled: true
+    strategy: tail_evidence
+    min_evidence_to_keep: 1
