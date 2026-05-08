@@ -15,6 +15,13 @@ class EmbedderConfig:
     max_length: int = 256
     batch_size: int = 64
     normalize: bool = True
+    precision: str = "fp32"
+
+_PRECISION_MAP: dict[str, torch.dtype | None] = {
+    "fp32": None,
+    "fp16": torch.float16,
+    "bf16": torch.bfloat16,
+}
 
 
 class TextEmbedder:
@@ -22,7 +29,13 @@ class TextEmbedder:
         self.cfg = cfg
         self.device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
-        self.model = AutoModel.from_pretrained(cfg.model_name)
+        torch_dtype = _PRECISION_MAP.get(cfg.precision)
+        if torch_dtype is None and cfg.precision not in _PRECISION_MAP:
+            raise ValueError(f"Unknown precision: {cfg.precision!r}. Use one of {list(_PRECISION_MAP.keys())}.")
+        self.model = AutoModel.from_pretrained(
+            cfg.model_name,
+            torch_dtype=torch_dtype,
+        )
         self.model.to(self.device)
         self.model.eval()
 

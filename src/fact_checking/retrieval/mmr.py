@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 
 
-
 def maximal_marginal_relevance(
     query_scores: np.ndarray,
     sentence_vectors: np.ndarray,
@@ -24,20 +23,20 @@ def maximal_marginal_relevance(
     if top_k >= n_items:
         return list(np.argsort(-query_scores))
 
-    selected: list[int] = [int(np.argmax(query_scores))]
-    candidate_set = set(range(n_items)) - set(selected)
     similarity = sentence_vectors @ sentence_vectors.T
 
-    while len(selected) < top_k and candidate_set:
-        best_idx = None
-        best_score = -1e9
-        for idx in candidate_set:
-            max_sim = max(similarity[idx, s] for s in selected)
-            mmr_score = lambda_weight * float(query_scores[idx]) - (1.0 - lambda_weight) * float(max_sim)
-            if mmr_score > best_score:
-                best_score = mmr_score
-                best_idx = idx
-        assert best_idx is not None
+    selected: list[int] = [int(np.argmax(query_scores))]
+    candidate_mask = np.ones(n_items, dtype=bool)
+    candidate_mask[selected[0]] = False
+    max_sim_to_selected = np.zeros(n_items, dtype=np.float32)
+
+    while len(selected) < top_k:
+        last_selected = selected[-1]
+        np.maximum(max_sim_to_selected, similarity[last_selected, :], out=max_sim_to_selected)
+        mmr_scores = lambda_weight * query_scores - (1.0 - lambda_weight) * max_sim_to_selected
+        mmr_scores[~candidate_mask] = -np.inf
+        best_idx = int(np.argmax(mmr_scores))
         selected.append(best_idx)
-        candidate_set.remove(best_idx)
+        candidate_mask[best_idx] = False
+
     return selected

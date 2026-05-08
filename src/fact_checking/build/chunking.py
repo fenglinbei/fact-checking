@@ -11,12 +11,22 @@ class ChunkingStrategy(ABC):
     @abstractmethod
     def chunk(self, content: str, sent_idx: int) -> str: ...
 
+    def chunk_from_presplit(self, sents: list[str], sent_idx: int) -> str:
+        """Same as chunk() but accepts pre-split sentences to avoid redundant splitting."""
+        return self.chunk(" ".join(sents), sent_idx)
+
 
 class SentenceChunking(ChunkingStrategy):
     """Return the single sentence at sent_idx (the current default behaviour)."""
 
     def chunk(self, content: str, sent_idx: int) -> str:
         sents = robust_sentence_split(content)
+        if not sents:
+            return ""
+        idx = min(max(int(sent_idx), 0), len(sents) - 1)
+        return sents[idx]
+
+    def chunk_from_presplit(self, sents: list[str], sent_idx: int) -> str:
         if not sents:
             return ""
         idx = min(max(int(sent_idx), 0), len(sents) - 1)
@@ -31,6 +41,14 @@ class ContextWindowChunking(ChunkingStrategy):
 
     def chunk(self, content: str, sent_idx: int) -> str:
         sents = robust_sentence_split(content)
+        if not sents:
+            return ""
+        idx = min(max(int(sent_idx), 0), len(sents) - 1)
+        left = max(0, idx - self.k)
+        right = min(len(sents), idx + self.k + 1)
+        return " ".join(sents[pos] for pos in range(left, right))
+
+    def chunk_from_presplit(self, sents: list[str], sent_idx: int) -> str:
         if not sents:
             return ""
         idx = min(max(int(sent_idx), 0), len(sents) - 1)
