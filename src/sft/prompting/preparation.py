@@ -16,8 +16,6 @@ LONG_REPORT_CHAR_THRESHOLD = 8000
 def build_prepared_samples(
     rows: list[dict],
     top_k: int,
-    use_context: bool,
-    context_k: int,
     tokenizer: AutoTokenizer,
     max_length: int,
     output_strategy: OutputStrategy,
@@ -36,21 +34,16 @@ def build_prepared_samples(
         evidence_items = build_evidence_items(
             row,
             top_k=top_k,
-            use_context=use_context,
-            context_k=context_k,
         )
         evidence_block = build_evidence_block(
             row,
             top_k=top_k,
-            use_context=use_context,
-            context_k=context_k,
         )
         claim_token_count = _count_tokens(claim, tokenizer)
-        max_report_char_count = _max_source_report_chars(row, top_k=top_k)
+        max_report_char_count = _max_candidate_text_chars(row, top_k=top_k)
         no_evidence = len(evidence_items) == 0 or not evidence_block.strip()
         long_claim = claim_token_count >= LONG_CLAIM_TOKEN_THRESHOLD
         duplicate_evidence = _has_duplicate_evidence(evidence_items)
-        context_mode = bool(use_context)
         long_report = max_report_char_count >= LONG_REPORT_CHAR_THRESHOLD
         prompt_builder = lambda candidate_claim, candidate_evidence: output_strategy.build_prompt(
             candidate_claim,
@@ -92,7 +85,6 @@ def build_prepared_samples(
                 no_evidence=no_evidence,
                 long_claim=long_claim,
                 duplicate_evidence=duplicate_evidence,
-                context_mode=context_mode,
                 long_report=long_report,
             )
         )
@@ -114,7 +106,6 @@ def build_prepared_samples(
                 no_evidence=no_evidence,
                 long_claim=long_claim,
                 duplicate_evidence=duplicate_evidence,
-                context_mode=context_mode,
                 long_report=long_report,
             )
         )
@@ -137,21 +128,10 @@ def _has_duplicate_evidence(evidence_items: list[str]) -> bool:
     return len(normalized) != len(set(normalized))
 
 
-def _max_source_report_chars(row: dict, top_k: int) -> int:
+def _max_candidate_text_chars(row: dict, top_k: int) -> int:
     candidates = sorted(
         row.get("candidates", []),
         key=lambda x: float(x.get("hybrid_score", 0.0)),
         reverse=True,
     )[:top_k]
-    max_chars = 0
-    for candidate in candidates:
-        if not isinstance(candidate, dict):
-            continue
-        report = candidate.get("source_report", {})
-        if not isinstance(report, dict):
-            continue
-        content = str(report.get("content", ""))
-        if not content:
-            continue
-        max_chars = max(max_chars, len(content))
-    return max_chars
+    return max((len(str(c.get("text", ""))) for c in candidates if isinstance(c, dict)), default=0)

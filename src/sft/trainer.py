@@ -114,9 +114,7 @@ def main() -> None:
         accelerator=accelerator,
     )
 
-    use_context = bool(baseline_cfg.get("use_context", False))
     top_k = int(baseline_cfg.get("top_k", 8))
-    context_k = int(baseline_cfg.get("context_k", 1))
     output_strategy = build_output_strategy(baseline_cfg)
     truncation_strategy = build_prompt_truncation_strategy(baseline_cfg)
 
@@ -141,8 +139,6 @@ def main() -> None:
     train_samples, train_prompt_records = build_prepared_samples(
         train_rows,
         top_k=top_k,
-        use_context=use_context,
-        context_k=context_k,
         tokenizer=tokenizer,
         max_length=max_length,
         output_strategy=output_strategy,
@@ -151,8 +147,6 @@ def main() -> None:
     val_samples, val_prompt_records = build_prepared_samples(
         val_rows,
         top_k=top_k,
-        use_context=use_context,
-        context_k=context_k,
         tokenizer=tokenizer,
         max_length=max_length,
         output_strategy=output_strategy,
