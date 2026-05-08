@@ -108,8 +108,6 @@ def build_inference_context(
     samples, _ = build_prepared_samples(
         rows,
         top_k=int(baseline_cfg.get("top_k", 8)),
-        use_context=bool(baseline_cfg.get("use_context", False)),
-        context_k=int(baseline_cfg.get("context_k", 1)),
         tokenizer=tokenizer,
         max_length=max_length,
         output_strategy=output_strategy,

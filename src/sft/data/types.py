@@ -21,7 +21,6 @@ class PromptPreparationRecord:
     no_evidence: bool
     long_claim: bool
     duplicate_evidence: bool
-    context_mode: bool
     long_report: bool
 
 
@@ -50,5 +49,4 @@ class PreparedSample:
     no_evidence: bool
     long_claim: bool
     duplicate_evidence: bool
-    context_mode: bool
     long_report: bool

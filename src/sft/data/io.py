@@ -12,8 +12,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from fact_checking.data.constants import LABEL2ID, LABELS
 from fact_checking.data.types import SampleRecord, SentenceRecord
 from fact_checking.utils.logging import init_logger
+from fact_checking.utils.text import clean_text, robust_sentence_split
 from sft.runtime.adapters import checkpoint_has_hf_artifacts, is_peft_model
-from sft.prompting.utils import clean_text, robust_sentence_split
 
 logger = init_logger(__name__)
 

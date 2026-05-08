@@ -15,7 +15,6 @@ SNAPSHOT_CATEGORIES = [
     "no_evidence",
     "long_claim",
     "duplicate_evidence",
-    "context_mode",
     "long_report",
 ]
 

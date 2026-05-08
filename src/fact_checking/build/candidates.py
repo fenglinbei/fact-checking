@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from fact_checking.build.chunking import ChunkingStrategy, SentenceChunking, build_chunking_strategy
 from fact_checking.config import load_yaml
 from fact_checking.data.io import iter_sentences, load_split
 from fact_checking.retrieval.embedder import EmbedderConfig, TextEmbedder
@@ -46,6 +47,7 @@ def build_candidates_for_sample(
     alpha_lexical: float,
     alpha_bm25: float,
     mmr_lambda: float,
+    chunking_strategy: ChunkingStrategy | None = None,
 ) -> dict[str, Any]:
     sentences = list(iter_sentences(sample))
     if not sentences:
@@ -78,13 +80,16 @@ def build_candidates_for_sample(
         lambda_weight=mmr_lambda,
     )
 
+    strategy = chunking_strategy if chunking_strategy is not None else SentenceChunking()
     deduped_by_text: dict[str, dict[str, Any]] = {}
     for idx in keep_indices:
         sent = sentences[idx]
+        content = sent.raw.get("content", "") if isinstance(sent.raw, dict) else ""
+        evidence_text = strategy.chunk(content, sent.sent_idx) if content else sent.text
         candidate = {
             "report_id": sent.report_id,
             "sent_idx": sent.sent_idx,
-            "text": sent.text,
+            "text": evidence_text,
             "dense_score": float(dense_scores[idx]),
             "lexical_score": float(lexical_scores[idx]),
             "bm25_score": float(bm25_scores[idx]),
@@ -93,10 +98,9 @@ def build_candidates_for_sample(
                 "report_id": sent.report_id,
                 "link": sent.link,
                 "domain": sent.domain,
-                "content": sent.raw.get("content", "") if isinstance(sent.raw, dict) else "",
             },
         }
-        dedup_key = canonicalize_sentence(sent.text)
+        dedup_key = canonicalize_sentence(evidence_text)
         old_candidate = deduped_by_text.get(dedup_key)
         if old_candidate is None or candidate["hybrid_score"] > old_candidate["hybrid_score"]:
             deduped_by_text[dedup_key] = candidate
@@ -144,6 +148,10 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         )
     )
 
+    chunking_cfg = retrieval_cfg.get("chunking")
+    chunking_strategy = build_chunking_strategy(chunking_cfg)
+    logger.info("Chunking strategy: %s", type(chunking_strategy).__name__)
+
     split_names = [split] if split else ["train", "val", "test"]
     split_paths: dict[str, Path] = {}
     for split_name in split_names:
@@ -160,6 +168,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                     alpha_lexical=run_summary["alpha_lexical"],
                     alpha_bm25=run_summary["alpha_bm25"],
                     mmr_lambda=run_summary["mmr_lambda"],
+                    chunking_strategy=chunking_strategy,
                 )
                 writer.write(json.dumps(row, ensure_ascii=False) + "\n")
         split_paths[split_name] = output_path

@@ -9,8 +9,12 @@ experiment:
 baseline:
   variant: b1
   top_k: 5
-  use_context: true
-  context_k: 1
+
+build:
+  retrieval:
+    chunking:
+      strategy: ctx_window
+      context_k: 1
 
 sft_train:
   num_train_epochs: 5
