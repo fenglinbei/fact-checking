@@ -62,7 +62,7 @@ def main() -> None:
             ) from exc
 
         model = AutoModelForCausalLM.from_pretrained(
-            str(context.baseline_cfg["model_name_or_path"]),
+            context.model_name_or_path,
             **model_kwargs,
         )
         model = PeftModel.from_pretrained(model, str(context.checkpoint_dir))
@@ -98,7 +98,7 @@ def main() -> None:
         max_new_tokens=int(
             args.max_new_tokens
             if args.max_new_tokens is not None
-            else int(context.baseline_cfg.get("max_new_tokens", 24))
+            else int(context.train_cfg.get("max_new_tokens", context.baseline_cfg.get("max_new_tokens", 24)))
         ),
         eval_logger=eval_logger,
         log_predictions_limit=int(args.log_predictions),

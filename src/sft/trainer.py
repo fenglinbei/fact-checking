@@ -15,28 +15,51 @@ from fact_checking.data.io import load_jsonl
 from fact_checking.config import load_yaml, save_yaml
 from fact_checking.utils.logging import init_logger
 from sft.data.io import _save_eval_artifacts, save_model
+from sft.data.labels import normalize_gold_label
 from sft.data.sampling import select_mini_val_rows
+from sft.data.types import PreparedSample
 from sft.dataset.collators import CausalLMSFTCollator
 from sft.dataset.datasets import EvalPromptDataset, SFTDatasetBuilder
 from sft.dataset.loaders import build_dataloader, build_eval_dataloader
 from sft.eval import evaluate
-from sft.prompting.output import build_output_strategy
-from sft.prompting.preparation import build_prepared_samples
 from sft.prompting.stats import (
     build_prompt_snapshots,
     log_prompt_summary,
     save_prompt_statistics,
-    summarize_prompt_preparation,
+    summarize_prebuilt_prompts,
 )
-from sft.prompting.truncation import build_prompt_truncation_strategy
 from sft.runtime.adapters import apply_lora_if_enabled, lora_enabled
-from sft.runtime.config import apply_runtime_output_layout, normalize_prompt_truncation_config
+from sft.runtime.config import apply_runtime_output_layout
 from sft.runtime.deps import flash_attn2_available, fla_fast_path_available
 from sft.runtime.device import enable_tf32_if_available, maybe_empty_cache
 from sft.runtime.tracking import build_tracking_setup, log_metrics
 from sft.vllm_online_eval import OnlineVLLMEvaluator, online_vllm_eval_enabled
 
 logger = init_logger(__name__)
+
+
+def _load_prebuilt_samples(rows: list[dict]) -> list[PreparedSample]:
+    samples: list[PreparedSample] = []
+    for row in rows:
+        gold_label = str(row.get("gold_label", ""))
+        if not gold_label:
+            continue
+        samples.append(PreparedSample(
+            prompt=str(row["prompt"]),
+            target=str(row["target"]),
+            prompt_add_special_tokens=bool(row.get("prompt_add_special_tokens", False)),
+            preserve_prompt_prefix=bool(row.get("preserve_prompt_prefix", True)),
+            gold_id=int(row.get("gold_id", -1)),
+            gold_label=gold_label,
+            gold_explain=str(row.get("gold_explain", "")),
+            prompt_token_count=int(row.get("prompt_token_count", 0)),
+            target_token_count=int(row.get("target_token_count", 0)),
+            evidence_count=int(row.get("evidence_count", 0)),
+            was_truncated=bool(row.get("was_truncated", False)),
+            claim=str(row.get("claim", "")),
+            no_evidence=int(row.get("evidence_count", 0)) == 0,
+        ))
+    return samples
 
 
 def _broadcast_object_from_main(obj: object, accelerator: Accelerator) -> object:
@@ -72,7 +95,6 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
-    cfg = normalize_prompt_truncation_config(cfg)
     cfg = apply_runtime_output_layout(cfg)
     data_cfg = cfg["data"]
     baseline_cfg = cfg["baseline"]
@@ -114,9 +136,8 @@ def main() -> None:
         accelerator=accelerator,
     )
 
-    top_k = int(baseline_cfg.get("top_k", 8))
-    output_strategy = build_output_strategy(baseline_cfg)
-    truncation_strategy = build_prompt_truncation_strategy(baseline_cfg)
+    train_samples = _load_prebuilt_samples(train_rows)
+    val_samples = _load_prebuilt_samples(val_rows)
 
     output_dir = Path(cfg.get("output_dir", "outputs/runs/train"))
     if accelerator.is_main_process:
@@ -130,28 +151,15 @@ def main() -> None:
     else:
         logger = init_logger(__name__)
 
-    model_name_or_path = str(baseline_cfg.get("model_name_or_path", "/data/models/Qwen3.5-9B"))
+    model_name_or_path = str(
+        cfg.get("model_name_or_path")
+        or baseline_cfg.get("model_name_or_path", "/data/models/Qwen3.5-9B")
+    )
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     max_length = int(train_cfg.get("max_length", 2048))
-    train_samples, train_prompt_records = build_prepared_samples(
-        train_rows,
-        top_k=top_k,
-        tokenizer=tokenizer,
-        max_length=max_length,
-        output_strategy=output_strategy,
-        truncation_strategy=truncation_strategy,
-    )
-    val_samples, val_prompt_records = build_prepared_samples(
-        val_rows,
-        top_k=top_k,
-        tokenizer=tokenizer,
-        max_length=max_length,
-        output_strategy=output_strategy,
-        truncation_strategy=truncation_strategy,
-    )
 
     train_instances = [
         {
@@ -173,33 +181,25 @@ def main() -> None:
     ]
     val_eval_ds = EvalPromptDataset(val_samples)
 
-    train_prompt_summary = summarize_prompt_preparation(
-        train_prompt_records,
+    train_prompt_summary = summarize_prebuilt_prompts(
+        train_samples,
         max_length=max_length,
         split="train",
-        truncation_strategy_name=truncation_strategy.name,
-        output_mode=output_strategy.name,
-        prompt_version=output_strategy.prompt_version,
     )
-    val_prompt_summary = summarize_prompt_preparation(
-        val_prompt_records,
+    val_prompt_summary = summarize_prebuilt_prompts(
+        val_samples,
         max_length=max_length,
         split="val",
-        truncation_strategy_name=truncation_strategy.name,
-        output_mode=output_strategy.name,
-        prompt_version=output_strategy.prompt_version,
     )
     if accelerator.is_main_process:
         log_prompt_summary(train_prompt_summary, logger=logger)
         log_prompt_summary(val_prompt_summary, logger=logger)
         train_prompt_snapshots = build_prompt_snapshots(
             train_samples,
-            train_prompt_records,
             split="train",
         )
         val_prompt_snapshots = build_prompt_snapshots(
             val_samples,
-            val_prompt_records,
             split="val",
         )
         prompt_stats_path = save_prompt_statistics(
@@ -376,6 +376,7 @@ def main() -> None:
                     tokenizer_name_or_path=model_name_or_path,
                     samples=val_samples,
                     max_length=max_length,
+                    temperature=float(train_cfg.get("temperature", baseline_cfg.get("temperature", 0.0))),
                     baseline_cfg=baseline_cfg,
                     train_cfg=train_cfg,
                     logger=logger,
@@ -439,7 +440,7 @@ def main() -> None:
                                     )
                                 eval_metrics = online_vllm_evaluator.evaluate(
                                     model=accelerator.unwrap_model(model),
-                                    max_new_tokens=int(baseline_cfg.get("max_new_tokens", 24)),
+                                    max_new_tokens=int(train_cfg.get("max_new_tokens", baseline_cfg.get("max_new_tokens", 24))),
                                     log_predictions_limit=int(train_cfg.get("eval_log_predictions", 5)),
                                 )
                             except Exception:
@@ -459,7 +460,7 @@ def main() -> None:
                             tokenizer,
                             accelerator,
                             max_length=max_length,
-                            max_new_tokens=int(baseline_cfg.get("max_new_tokens", 24)),
+                            max_new_tokens=int(train_cfg.get("max_new_tokens", baseline_cfg.get("max_new_tokens", 24))),
                             eval_logger=logger,
                             log_predictions_limit=int(train_cfg.get("eval_log_predictions", 5)),
                         )
