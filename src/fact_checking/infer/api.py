@@ -321,7 +321,7 @@ def _build_vllm_command(*, context, infer_cfg: dict[str, Any]) -> list[str]:
     command.extend(["--max-model-len", str(int(max_model_len))])
 
     if checkpoint_has_peft_adapter(checkpoint_dir):
-        model_path = str(context.baseline_cfg["model_name_or_path"])
+        model_path = context.model_name_or_path
         tokenizer_path = model_path
         lora_cfg = context.train_cfg.get("lora", {}) or {}
         max_lora_rank = int(lora_cfg.get("r", 16)) if isinstance(lora_cfg, dict) else 16

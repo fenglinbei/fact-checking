@@ -9,11 +9,7 @@ from transformers import AutoTokenizer
 from fact_checking.data.io import load_jsonl
 from fact_checking.config import load_yaml
 from sft.data.types import PreparedSample
-from sft.prompting.output import build_output_strategy
-from sft.prompting.preparation import build_prepared_samples
-from sft.prompting.truncation import build_prompt_truncation_strategy
 from sft.runtime.adapters import checkpoint_has_hf_artifacts, checkpoint_has_peft_adapter
-from sft.runtime.config import normalize_prompt_truncation_config
 
 
 @dataclass
@@ -26,6 +22,7 @@ class InferenceContext:
     cfg: dict[str, Any]
     baseline_cfg: dict[str, Any]
     train_cfg: dict[str, Any]
+    model_name_or_path: str
     tokenizer: AutoTokenizer
     max_length: int
     samples: list[PreparedSample]
@@ -39,8 +36,31 @@ def load_inference_config(run_dir: Path, config_path: str | None = None) -> dict
             f"Cannot find resolved config at {resolved_path}. "
             "Pass --config explicitly or use a run directory produced by the updated trainer."
         )
-    cfg = load_yaml(resolved_path)
-    return normalize_prompt_truncation_config(cfg)
+    return load_yaml(resolved_path)
+
+
+def _load_prebuilt_samples(rows: list[dict]) -> list[PreparedSample]:
+    samples: list[PreparedSample] = []
+    for row in rows:
+        gold_label = str(row.get("gold_label", ""))
+        if not gold_label:
+            continue
+        samples.append(PreparedSample(
+            prompt=str(row["prompt"]),
+            target=str(row["target"]),
+            prompt_add_special_tokens=bool(row.get("prompt_add_special_tokens", False)),
+            preserve_prompt_prefix=bool(row.get("preserve_prompt_prefix", True)),
+            gold_id=int(row.get("gold_id", -1)),
+            gold_label=gold_label,
+            gold_explain=str(row.get("gold_explain", "")),
+            prompt_token_count=int(row.get("prompt_token_count", 0)),
+            target_token_count=int(row.get("target_token_count", 0)),
+            evidence_count=int(row.get("evidence_count", 0)),
+            was_truncated=bool(row.get("was_truncated", False)),
+            claim=str(row.get("claim", "")),
+            no_evidence=int(row.get("evidence_count", 0)) == 0,
+        ))
+    return samples
 
 
 def resolve_checkpoint_dir(run_dir: Path, checkpoint: str) -> tuple[str, Path]:
@@ -84,6 +104,10 @@ def build_inference_context(
     data_cfg = cfg["data"]
     baseline_cfg = cfg["baseline"]
     train_cfg = cfg["sft_train"]
+    model_name_or_path = str(
+        cfg.get("model_name_or_path")
+        or baseline_cfg.get("model_name_or_path", "")
+    )
     is_peft_adapter = checkpoint_has_peft_adapter(checkpoint_dir)
 
     split_map = {
@@ -96,23 +120,14 @@ def build_inference_context(
 
     tokenizer_dir = checkpoint_dir
     if is_peft_adapter and not (checkpoint_dir / "tokenizer_config.json").exists():
-        tokenizer_dir = Path(str(baseline_cfg.get("model_name_or_path")))
+        tokenizer_dir = Path(str(baseline_cfg.get("model_name_or_path") or model_name_or_path))
     tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_dir), trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     max_length = int(train_cfg.get("max_length", 2048))
     rows = load_jsonl(split_map[split])
-    output_strategy = build_output_strategy(baseline_cfg)
-    truncation_strategy = build_prompt_truncation_strategy(baseline_cfg)
-    samples, _ = build_prepared_samples(
-        rows,
-        top_k=int(baseline_cfg.get("top_k", 8)),
-        tokenizer=tokenizer,
-        max_length=max_length,
-        output_strategy=output_strategy,
-        truncation_strategy=truncation_strategy,
-    )
+    samples = _load_prebuilt_samples(rows)
 
     return InferenceContext(
         run_dir=resolved_run_dir,
@@ -123,6 +138,7 @@ def build_inference_context(
         cfg=cfg,
         baseline_cfg=baseline_cfg,
         train_cfg=train_cfg,
+        model_name_or_path=model_name_or_path,
         tokenizer=tokenizer,
         max_length=max_length,
         samples=samples,

@@ -1,0 +1,31 @@
+# @package _global_
+# MMR lambda 参数扫描实验
+# mmr_lambda 控制 MMR 候选中多样性与相关性的权衡：
+#   0.0 = 纯相关性（无多样性惩罚）
+#   1.0 = 最大多样性
+# b0 默认值为 0.70。
+#
+# 扫描命令（11 个值，步长 0.1）：
+#   PYTHONPATH=src python -m fact_checking.pipeline.run -m \
+#     experiment=mmr_lambda_sweep \
+#     build.retrieval.mmr_lambda=0.0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0
+#
+# 仅构建阶段验证：
+#   PYTHONPATH=src python -m fact_checking.pipeline.run -m \
+#     experiment=mmr_lambda_sweep \
+#     build.retrieval.mmr_lambda=0.0,1.0 \
+#     pipeline.mode=build
+
+defaults:
+  - b0
+  - _self_
+
+experiment:
+  name: mmr_lambda_sweep
+
+baseline:
+  variant: mmr_lambda_sweep
+
+build:
+  retrieval:
+    mmr_lambda: 0.50  # 文档默认值，实际扫描值由 CLI multirun 覆盖

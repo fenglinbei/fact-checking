@@ -7,16 +7,17 @@ from pathlib import Path
 import numpy as np
 
 from fact_checking.utils.logging import init_logger
-from sft.data.types import PreparedSample, PromptPreparationRecord
+from sft.data.types import PreparedSample
 
 module_logger = init_logger(__name__)
 
 SNAPSHOT_CATEGORIES = [
     "no_evidence",
     "long_claim",
-    "duplicate_evidence",
-    "long_report",
+    "was_truncated",
 ]
+
+LONG_CLAIM_TOKEN_THRESHOLD = 64
 
 
 def _summarize_lengths(lengths: list[int], max_length: int) -> dict[str, float]:
@@ -51,90 +52,62 @@ def _summarize_lengths(lengths: list[int], max_length: int) -> dict[str, float]:
 
 
 def log_prompt_summary(summary: dict[str, object], logger: Logger | None = None) -> None:
-    before = summary["prompt_length_before_truncation"]
-    after = summary["prompt_length_after_truncation"]
+    before = summary.get("prompt_token_count", summary.get("prompt_length_before_truncation", {}))
+    after = summary.get("prompt_token_count", summary.get("prompt_length_after_truncation", {}))
     trunc = summary["evidence_truncation"]
     target_logger = logger or module_logger
     target_logger.info(
-        "[PROMPT_STATS] split=%s version=%s mode=%s strategy=%s pre_mean=%.2f pre_p95=%.0f "
+        "[PROMPT_STATS] split=%s pre_mean=%.2f pre_p95=%.0f "
         "pre_overflow=%d post_mean=%.2f post_p95=%.0f post_overflow=%d truncated=%s trunc_rate=%.4f",
         summary["split"],
-        summary["prompt_version"],
-        summary["output_mode"],
-        summary["prompt_truncation_strategy"],
-        before["mean"],
-        before["p95"],
-        int(before["overflow_count"]),
-        after["mean"],
-        after["p95"],
-        int(after["overflow_count"]),
-        trunc["truncated_count"],
-        trunc["truncation_rate"],
+        before.get("mean", 0),
+        before.get("p95", 0),
+        int(before.get("overflow_count", 0)),
+        after.get("mean", 0),
+        after.get("p95", 0),
+        int(after.get("overflow_count", 0)),
+        trunc.get("truncated_count", 0),
+        trunc.get("truncation_rate", 0.0),
     )
 
 
-def summarize_prompt_preparation(
-    records: list[PromptPreparationRecord],
+def summarize_prebuilt_prompts(
+    samples: list[PreparedSample],
     max_length: int,
     split: str,
-    truncation_strategy_name: str,
-    output_mode: str,
-    prompt_version: str,
 ) -> dict[str, object]:
-    before_lengths = [record.prompt_length_before_trunc for record in records]
-    after_lengths = [record.prompt_length_after_trunc for record in records]
-    target_lengths = [record.target_length for record in records]
-    sequence_before_lengths = [record.sequence_length_before_trunc for record in records]
-    sequence_after_lengths = [record.sequence_length_after_trunc for record in records]
-    claim_lengths = [record.claim_token_count for record in records]
-    report_lengths = [record.max_report_char_count for record in records]
-    evidence_before = [record.evidence_count_before_trunc for record in records]
-    evidence_after = [record.evidence_count_after_trunc for record in records]
-    truncated_count = sum(int(record.was_truncated) for record in records)
-    overflow_before_count = sum(int(record.overflow_before_trunc) for record in records)
-    overflow_after_count = sum(int(record.overflow_after_trunc) for record in records)
-    count = len(records)
+    prompt_tokens = [s.prompt_token_count for s in samples]
+    target_tokens = [s.target_token_count for s in samples]
+    evidence_counts = [s.evidence_count for s in samples]
+    truncated_count = sum(int(s.was_truncated) for s in samples)
+    count = len(samples)
 
     return {
         "split": split,
         "max_length": int(max_length),
-        "prompt_version": prompt_version,
-        "output_mode": output_mode,
-        "prompt_truncation_strategy": truncation_strategy_name,
-        "prompt_length_before_truncation": _summarize_lengths(before_lengths, max_length=max_length),
-        "prompt_length_after_truncation": _summarize_lengths(after_lengths, max_length=max_length),
-        "target_length": _summarize_lengths(target_lengths, max_length=max_length),
-        "sequence_length_before_truncation": _summarize_lengths(sequence_before_lengths, max_length=max_length),
-        "sequence_length_after_truncation": _summarize_lengths(sequence_after_lengths, max_length=max_length),
-        "claim_length": _summarize_lengths(claim_lengths, max_length=max_length),
-        "max_source_report_char_length": _summarize_lengths(report_lengths, max_length=max_length),
-        "snapshot_category_counts": _summarize_categories(records),
+        "prompt_token_count": _summarize_lengths(prompt_tokens, max_length=max_length),
+        "target_token_count": _summarize_lengths(target_tokens, max_length=max_length),
+        "snapshot_category_counts": _summarize_categories(samples),
         "evidence_truncation": {
             "truncated_count": int(truncated_count),
             "truncation_rate": float(truncated_count / count) if count > 0 else 0.0,
-            "overflow_before_count": int(overflow_before_count),
-            "overflow_before_rate": float(overflow_before_count / count) if count > 0 else 0.0,
-            "overflow_after_count": int(overflow_after_count),
-            "overflow_after_rate": float(overflow_after_count / count) if count > 0 else 0.0,
-            "mean_evidence_count_before": float(np.mean(evidence_before)) if evidence_before else 0.0,
-            "mean_evidence_count_after": float(np.mean(evidence_after)) if evidence_after else 0.0,
-            "min_evidence_count_after": int(min(evidence_after)) if evidence_after else 0,
-            "max_evidence_count_after": int(max(evidence_after)) if evidence_after else 0,
+            "mean_evidence_count": float(np.mean(evidence_counts)) if evidence_counts else 0.0,
+            "min_evidence_count": int(min(evidence_counts)) if evidence_counts else 0,
+            "max_evidence_count": int(max(evidence_counts)) if evidence_counts else 0,
         },
     }
 
 
 def build_prompt_snapshots(
     samples: list[PreparedSample],
-    records: list[PromptPreparationRecord],
     *,
     split: str,
     limit_per_category: int = 3,
     max_prompt_chars: int = 6000,
 ) -> dict[str, list[dict[str, object]]]:
     snapshots: dict[str, list[dict[str, object]]] = {category: [] for category in SNAPSHOT_CATEGORIES}
-    for sample_idx, (sample, record) in enumerate(zip(samples, records)):
-        for category in _record_categories(record):
+    for sample_idx, sample in enumerate(samples):
+        for category in _record_categories(sample):
             if len(snapshots[category]) >= limit_per_category:
                 continue
             snapshots[category].append(
@@ -146,13 +119,10 @@ def build_prompt_snapshots(
                     "prompt": _truncate_text(sample.prompt, max_prompt_chars),
                     "target": sample.target,
                     "prompt_was_truncated_for_snapshot": len(sample.prompt) > max_prompt_chars,
-                    "prompt_length_after_trunc": record.prompt_length_after_trunc,
-                    "target_length": record.target_length,
-                    "sequence_length_after_trunc": record.sequence_length_after_trunc,
-                    "evidence_count_before_trunc": record.evidence_count_before_trunc,
-                    "evidence_count_after_trunc": record.evidence_count_after_trunc,
-                    "claim_token_count": record.claim_token_count,
-                    "max_report_char_count": record.max_report_char_count,
+                    "prompt_token_count": sample.prompt_token_count,
+                    "target_token_count": sample.target_token_count,
+                    "evidence_count": sample.evidence_count,
+                    "was_truncated": sample.was_truncated,
                 }
             )
     return snapshots
@@ -184,11 +154,11 @@ def save_prompt_statistics(
     return stats_path
 
 
-def _summarize_categories(records: list[PromptPreparationRecord]) -> dict[str, dict[str, float]]:
-    count = len(records)
+def _summarize_categories(samples: list[PreparedSample]) -> dict[str, dict[str, float]]:
+    count = len(samples)
     summary: dict[str, dict[str, float]] = {}
     for category in SNAPSHOT_CATEGORIES:
-        category_count = sum(int(getattr(record, category)) for record in records)
+        category_count = sum(int(getattr(s, category)) for s in samples)
         summary[category] = {
             "count": float(category_count),
             "rate": float(category_count / count) if count > 0 else 0.0,
@@ -196,8 +166,15 @@ def _summarize_categories(records: list[PromptPreparationRecord]) -> dict[str, d
     return summary
 
 
-def _record_categories(record: PromptPreparationRecord) -> list[str]:
-    return [category for category in SNAPSHOT_CATEGORIES if bool(getattr(record, category))]
+def _record_categories(sample: PreparedSample) -> list[str]:
+    categories: list[str] = []
+    if sample.no_evidence:
+        categories.append("no_evidence")
+    if len(sample.claim.split()) > LONG_CLAIM_TOKEN_THRESHOLD:
+        categories.append("long_claim")
+    if sample.was_truncated:
+        categories.append("was_truncated")
+    return categories
 
 
 def _truncate_text(text: str, max_chars: int) -> str:

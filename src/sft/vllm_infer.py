@@ -51,7 +51,7 @@ def main() -> None:
     model_path = str(context.checkpoint_dir)
     tokenizer_path = str(context.checkpoint_dir)
     if context.is_peft_adapter and not (context.checkpoint_dir / "tokenizer_config.json").exists():
-        tokenizer_path = str(context.baseline_cfg["model_name_or_path"])
+        tokenizer_path = context.model_name_or_path
     llm_kwargs = {}
     lora_request = None
     if context.is_peft_adapter:
@@ -60,7 +60,7 @@ def main() -> None:
         except ImportError as exc:
             raise RuntimeError("vLLM LoRA inference requires a vLLM build with LoRA support.") from exc
 
-        model_path = str(context.baseline_cfg["model_name_or_path"])
+        model_path = context.model_name_or_path
         lora_cfg = context.train_cfg.get("lora", {}) or {}
         max_lora_rank = int(lora_cfg.get("r", 16)) if isinstance(lora_cfg, dict) else 16
         llm_kwargs.update({"enable_lora": True, "max_lora_rank": max_lora_rank})
@@ -80,9 +80,9 @@ def main() -> None:
         max_tokens=int(
             args.max_new_tokens
             if args.max_new_tokens is not None
-            else int(context.baseline_cfg.get("max_new_tokens", 24))
+            else int(context.train_cfg.get("max_new_tokens", context.baseline_cfg.get("max_new_tokens", 24)))
         ),
-        temperature=float(context.baseline_cfg.get("temperature", 0.0)),
+        temperature=float(context.train_cfg.get("temperature", context.baseline_cfg.get("temperature", 0.0))),
     )
 
     generate_kwargs = {

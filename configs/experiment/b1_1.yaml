@@ -8,7 +8,3 @@ experiment:
 
 baseline:
   variant: b1_1
-  prompt_truncation:
-    enabled: true
-    strategy: tail_evidence
-    min_evidence_to_keep: 1

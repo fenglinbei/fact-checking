@@ -13,8 +13,11 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from transformers import AutoTokenizer
+
 from fact_checking.build.chunking import ChunkingStrategy, SentenceChunking, build_chunking_strategy
 from fact_checking.config import load_yaml
+from fact_checking.data.constants import LABEL_DEFINITIONS, LABEL2ID
 from fact_checking.data.io import iter_sentences, load_split
 from fact_checking.retrieval.embedder import EmbedderConfig, TextEmbedder
 from fact_checking.retrieval.mmr import maximal_marginal_relevance
@@ -25,6 +28,7 @@ from fact_checking.retrieval.text_utils import (
 )
 from fact_checking.utils.logging import init_logger
 from fact_checking.utils.text import robust_sentence_split
+from sft.data.labels import normalize_gold_label
 
 
 @dataclass(frozen=True)
@@ -321,6 +325,15 @@ def _build_worker(
         )
     )
 
+    # Load prompt tokenizer independently (multiprocessing-compatible)
+    tokenizer = _load_prompt_tokenizer(run_summary["prompt_model_name_or_path"])
+    prompt_cfg = {
+        "auto_length": run_summary["prompt_auto_length"],
+        "max_length": run_summary["prompt_max_length"],
+        "output_mode": run_summary["prompt_output_mode"],
+        "system_prompt": run_summary.get("prompt_system_prompt"),
+    }
+
     chunking_cfg = retrieval_cfg.get("chunking")
     chunking_strategy = build_chunking_strategy(chunking_cfg)
     prefetch_size = run_summary["prefetch_size"]
@@ -328,7 +341,9 @@ def _build_worker(
 
     with output_path.open("w", encoding="utf-8") as writer:
         if prefetch_size > 1:
-            for start in range(0, len(samples_chunk), prefetch_size):
+            for start in tqdm(range(0, len(samples_chunk), prefetch_size),
+                              desc=f"Build [{split_name}] GPU {gpu_id}",
+                              unit="batch"):
                 batch = samples_chunk[start : start + prefetch_size]
                 rows = _build_candidates_batch(
                     samples=batch,
@@ -342,9 +357,11 @@ def _build_worker(
                     cpu_workers=cpu_workers,
                 )
                 for row in rows:
-                    writer.write(json.dumps(row, ensure_ascii=False) + "\n")
+                    training_row = _build_training_row(row, tokenizer, prompt_cfg)
+                    writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
         else:
-            for sample in samples_chunk:
+            for sample in tqdm(samples_chunk,
+                               desc=f"Build [{split_name}] GPU {gpu_id}"):
                 row = build_candidates_for_sample(
                     sample=sample,
                     embedder=embedder,
@@ -355,7 +372,230 @@ def _build_worker(
                     mmr_lambda=run_summary["mmr_lambda"],
                     chunking_strategy=chunking_strategy,
                 )
-                writer.write(json.dumps(row, ensure_ascii=False) + "\n")
+                training_row = _build_training_row(row, tokenizer, prompt_cfg)
+                writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# Prompt construction helpers
+# ---------------------------------------------------------------------------
+
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are a careful fact-checking assistant for LIAR-RAW claims. "
+    "Classify claims using only the claim and retrieved evidence supplied by the user."
+)
+
+
+def _load_prompt_tokenizer(model_name_or_path: str) -> AutoTokenizer:
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer
+
+
+def _count_tokens(text: str, tokenizer: AutoTokenizer, *, add_special_tokens: bool = False) -> int:
+    return len(tokenizer(text, truncation=False, add_special_tokens=add_special_tokens)["input_ids"])
+
+
+def _count_target_tokens(target: str, tokenizer: AutoTokenizer) -> int:
+    ids = tokenizer(target.strip(), truncation=False, add_special_tokens=False)["input_ids"]
+    if tokenizer.eos_token_id is not None:
+        ids = ids + [tokenizer.eos_token_id]
+    return len(ids)
+
+
+def _build_system_message(system_prompt: str | None) -> str:
+    if system_prompt and str(system_prompt).strip():
+        return str(system_prompt).strip()
+    return _DEFAULT_SYSTEM_PROMPT
+
+
+def _format_evidence_block(evidence_texts: list[str]) -> str:
+    lines = [f"[{i}] {text}" for i, text in enumerate(evidence_texts, start=1)]
+    return "\n".join(lines)
+
+
+def _label_definitions_text() -> str:
+    return "\n".join(f"- {label}: {LABEL_DEFINITIONS[label]}" for label in LABEL_DEFINITIONS)
+
+
+def _build_user_content(claim: str, evidence_texts: list[str], output_mode: str) -> str:
+    evidence_block = _format_evidence_block(evidence_texts)
+    evidence_display = evidence_block.strip() if evidence_block.strip() else "(no evidence available)"
+
+    if output_mode == "explanation_label":
+        return (
+            "Classify the claim into exactly one LIAR-RAW label and provide a concise evidence-grounded explanation.\n\n"
+            "Labels:\n"
+            f"{_label_definitions_text()}\n\n"
+            "Rules:\n"
+            "- Use the retrieved evidence as the primary source.\n"
+            "- Do not invent facts not supported by the evidence.\n"
+            "- Keep the explanation brief and evidence-grounded.\n"
+            "- Respond with exactly two lines in this format:\n"
+            "Explanation: <brief explanation>\n"
+            "Label: <label>\n\n"
+            f"Claim:\n{claim.strip()}\n\n"
+            f"Evidence:\n{evidence_display}"
+        )
+    # label_only (default)
+    return (
+        "Classify the claim into exactly one LIAR-RAW label.\n\n"
+        "Labels:\n"
+        f"{_label_definitions_text()}\n\n"
+        "Rules:\n"
+        "- Use the retrieved evidence as the primary source.\n"
+        "- Do not invent facts not supported by the evidence.\n"
+        "- Respond with exactly one line: Label: <label>\n\n"
+        f"Claim:\n{claim.strip()}\n\n"
+        f"Evidence:\n{evidence_display}"
+    )
+
+
+def _build_chat_prompt(tokenizer: AutoTokenizer, system_msg: str, user_content: str) -> str:
+    messages = [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": user_content},
+    ]
+    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+
+def _build_target(row: dict, gold_label: str, output_mode: str) -> str:
+    if output_mode == "explanation_label":
+        explanation = str(row.get("explain", "")).strip() or "The available evidence supports this label."
+        return f"Explanation: {explanation}\nLabel: {gold_label}"
+    return f"Label: {gold_label}"
+
+
+def _auto_truncate_evidence(
+    *,
+    claim: str,
+    evidence_texts: list[str],
+    tokenizer: AutoTokenizer,
+    max_length: int,
+    output_mode: str,
+    system_prompt: str | None,
+    row: dict,
+    gold_label: str,
+) -> dict:
+    """Remove evidence items from the tail until the prompt fits within max_length."""
+    system_msg = _build_system_message(system_prompt)
+    target = _build_target(row, gold_label, output_mode)
+    target_token_count = _count_target_tokens(target, tokenizer)
+    budget = max(0, int(max_length) - target_token_count)
+
+    evidence_count_before = len(evidence_texts)
+    kept = list(evidence_texts)
+
+    # Build prompt with all evidence
+    user_content = _build_user_content(claim, kept, output_mode)
+    prompt = _build_chat_prompt(tokenizer, system_msg, user_content)
+    prompt_tokens = _count_tokens(prompt, tokenizer, add_special_tokens=False)
+
+    was_truncated = False
+    while prompt_tokens > budget and len(kept) > 1:
+        kept.pop()  # Remove last (lowest-score) evidence item
+        was_truncated = True
+        user_content = _build_user_content(claim, kept, output_mode)
+        prompt = _build_chat_prompt(tokenizer, system_msg, user_content)
+        prompt_tokens = _count_tokens(prompt, tokenizer, add_special_tokens=False)
+
+    return {
+        "prompt": prompt,
+        "target": target,
+        "prompt_token_count": prompt_tokens,
+        "target_token_count": target_token_count,
+        "evidence_count": len(kept),
+        "evidence_count_before": evidence_count_before,
+        "was_truncated": was_truncated,
+        "overflow_after": prompt_tokens > budget,
+    }
+
+
+def _build_training_row(
+    retrieval_result: dict,
+    tokenizer: AutoTokenizer,
+    prompt_cfg: dict,
+) -> dict:
+    row = retrieval_result
+    gold_label = normalize_gold_label(row)
+    if not gold_label:
+        return {**row, "gold_label": "", "gold_id": -1, "gold_explain": "",
+                "prompt": "", "target": "", "prompt_add_special_tokens": False,
+                "preserve_prompt_prefix": True, "prompt_token_count": 0,
+                "target_token_count": 0, "evidence_count": 0, "was_truncated": False}
+
+    candidates = row.get("candidates", [])
+    evidence_texts = [str(c.get("text", "")).strip() for c in candidates if isinstance(c, dict)]
+
+    auto_length = bool(prompt_cfg.get("auto_length", True))
+    max_length = int(prompt_cfg.get("max_length", 2048))
+    output_mode = str(prompt_cfg.get("output_mode", "label_only")).strip().lower()
+    system_prompt = prompt_cfg.get("system_prompt") or None
+
+    if auto_length and evidence_texts:
+        result = _auto_truncate_evidence(
+            claim=str(row.get("claim", "")),
+            evidence_texts=evidence_texts,
+            tokenizer=tokenizer,
+            max_length=max_length,
+            output_mode=output_mode,
+            system_prompt=system_prompt,
+            row=row,
+            gold_label=gold_label,
+        )
+        return {
+            "event_id": row.get("event_id", ""),
+            "claim": row.get("claim", ""),
+            "label": row.get("label", ""),
+            "explain": row.get("explain", ""),
+            "candidates": candidates,
+            "prompt": result["prompt"],
+            "target": result["target"],
+            "gold_label": gold_label,
+            "gold_id": LABEL2ID.get(gold_label, -1),
+            "gold_explain": str(row.get("explain", "")).strip(),
+            "prompt_add_special_tokens": False,
+            "preserve_prompt_prefix": True,
+            "prompt_token_count": result["prompt_token_count"],
+            "target_token_count": result["target_token_count"],
+            "evidence_count": result["evidence_count"],
+            "evidence_count_before": result["evidence_count_before"],
+            "was_truncated": result["was_truncated"],
+        }
+
+    # auto_length disabled: build prompt without truncation
+    system_msg = _build_system_message(system_prompt)
+    target = _build_target(row, gold_label, output_mode)
+    target_token_count = _count_target_tokens(target, tokenizer)
+    user_content = _build_user_content(str(row.get("claim", "")), evidence_texts, output_mode)
+    prompt = _build_chat_prompt(tokenizer, system_msg, user_content)
+    prompt_token_count = _count_tokens(prompt, tokenizer, add_special_tokens=False)
+    no_evidence = len(evidence_texts) == 0
+
+    return {
+        "event_id": row.get("event_id", ""),
+        "claim": row.get("claim", ""),
+        "label": row.get("label", ""),
+        "explain": row.get("explain", ""),
+        "candidates": candidates,
+        "prompt": prompt,
+        "target": target,
+        "gold_label": gold_label,
+        "gold_id": LABEL2ID.get(gold_label, -1),
+        "gold_explain": str(row.get("explain", "")).strip(),
+        "prompt_add_special_tokens": False,
+        "preserve_prompt_prefix": True,
+        "prompt_token_count": prompt_token_count,
+        "target_token_count": target_token_count,
+        "evidence_count": len(evidence_texts),
+        "was_truncated": False,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 
 
 def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, split: str | None = None) -> BuildResult:
@@ -363,6 +603,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
     logger = init_logger(__name__)
     data_cfg = cfg["data"]
     retrieval_cfg = cfg["retrieval"]
+    prompt_cfg = cfg.get("prompt", {})
     target_dir = Path(output_dir or cfg.get("output_dir", "outputs/cache/build/manual"))
     target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -382,6 +623,12 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         "prefetch_size": int(retrieval_cfg.get("prefetch_size", 1)),
         "cpu_workers": int(retrieval_cfg.get("cpu_workers", 1)),
         "num_gpus": num_gpus,
+        # Prompt config for workers
+        "prompt_model_name_or_path": str(prompt_cfg.get("model_name_or_path", "")),
+        "prompt_auto_length": bool(prompt_cfg.get("auto_length", True)),
+        "prompt_max_length": int(prompt_cfg.get("max_length", 2048)),
+        "prompt_output_mode": str(prompt_cfg.get("output_mode", "label_only")).strip().lower(),
+        "prompt_system_prompt": prompt_cfg.get("system_prompt") or None,
     }
 
     split_names = [split] if split else ["train", "val", "test"]
@@ -424,7 +671,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
             split_paths[split_name] = output_path
             logger.info("Wrote build file: %s", output_path)
     else:
-        # Single-GPU path (original behaviour)
+        # Single-GPU path
         run_summary["cuda_available"] = torch.cuda.is_available()
         logger.info("Build run summary: %s", run_summary)
 
@@ -442,6 +689,15 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         chunking_strategy = build_chunking_strategy(chunking_cfg)
         logger.info("Chunking strategy: %s", type(chunking_strategy).__name__)
         prefetch_size = run_summary["prefetch_size"]
+
+        # Load prompt tokenizer
+        tokenizer = _load_prompt_tokenizer(run_summary["prompt_model_name_or_path"])
+        prompt_cfg_local = {
+            "auto_length": run_summary["prompt_auto_length"],
+            "max_length": run_summary["prompt_max_length"],
+            "output_mode": run_summary["prompt_output_mode"],
+            "system_prompt": run_summary.get("prompt_system_prompt"),
+        }
 
         for split_name in split_names:
             input_path = data_cfg[f"{split_name}_path"]
@@ -463,7 +719,8 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                             cpu_workers=run_summary["cpu_workers"],
                         )
                         for row in rows:
-                            writer.write(json.dumps(row, ensure_ascii=False) + "\n")
+                            training_row = _build_training_row(row, tokenizer, prompt_cfg_local)
+                            writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
                 else:
                     for sample in tqdm(samples, desc=f"Build [{split_name}]"):
                         row = build_candidates_for_sample(
@@ -476,7 +733,8 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                             mmr_lambda=run_summary["mmr_lambda"],
                             chunking_strategy=chunking_strategy,
                         )
-                        writer.write(json.dumps(row, ensure_ascii=False) + "\n")
+                        training_row = _build_training_row(row, tokenizer, prompt_cfg_local)
+                        writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
             split_paths[split_name] = output_path
             logger.info("Wrote build file: %s", output_path)
 
