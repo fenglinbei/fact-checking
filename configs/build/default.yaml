@@ -23,3 +23,9 @@ build:
     chunking:
       strategy: sentence
       context_k: 1
+  prompt:
+    model_name_or_path: /data/models/Qwen2.5-7B-Instruct
+    auto_length: true
+    max_length: 2048
+    output_mode: label_only          # label_only | explanation_label
+    system_prompt: null              # null = use default system prompt

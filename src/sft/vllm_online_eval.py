@@ -133,6 +133,7 @@ class OnlineVLLMEvaluator:
         tokenizer_name_or_path: str,
         samples: list[PreparedSample],
         max_length: int,
+        temperature: float,
         baseline_cfg: dict,
         train_cfg: dict,
         logger: Logger | None = None,
@@ -143,6 +144,7 @@ class OnlineVLLMEvaluator:
                 "sft_train.online_vllm_eval.backend supports 'direct_load', 'load_weights', or 'cppo'."
             )
         self.samples = samples
+        self.temperature = float(temperature)
         self.baseline_cfg = baseline_cfg
         self.logger = logger or module_logger
         self.max_length = int(max_length)
@@ -369,7 +371,7 @@ class OnlineVLLMEvaluator:
         self.sync_weights(model)
         sampling_params = self._SamplingParams(
             max_tokens=int(max_new_tokens),
-            temperature=float(self.baseline_cfg.get("temperature", 0.0)),
+            temperature=self.temperature,
         )
         outputs = self.llm.generate(
             prompts=[sample.prompt for sample in self.samples],

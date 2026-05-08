@@ -6,18 +6,20 @@ defaults:
 experiment:
   name: b0_2
 
+infer:
+  max_new_tokens: 128
+
 baseline:
   variant: b0_2
   top_k: 10
-  max_new_tokens: 128
-  prompt_version: v2
   output_mode: explanation_label
-  prompt_truncation:
-    enabled: true
-    strategy: tail_evidence
-    min_evidence_to_keep: 1
+
+build:
+  prompt:
+    output_mode: explanation_label
 
 sft_train:
+  max_new_tokens: 128
   num_train_epochs: 4
   max_length: 1280
   lora:

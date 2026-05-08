@@ -63,7 +63,7 @@ class PipelineRunner:
     def _build_state(self) -> PipelineState:
         build_cfg = self.cfg["build"]
         pipeline_cfg = self.cfg.get("pipeline", {})
-        experiment_name = str(self.cfg.get("experiment", {}).get("name", self.cfg.get("baseline", {}).get("variant", "default")))
+        experiment_name = str(self.cfg.get("experiment", {}).get("name", "default"))
         build_id = fingerprint({"build": build_cfg})
         run_id = fingerprint(
             {
@@ -306,6 +306,7 @@ class PipelineRunner:
                 "val_candidates": str(build_paths["val"]),
                 "test_candidates": str(build_paths["test"]),
             },
+            "model_name_or_path": str(self.cfg.get("train", {}).get("model_name_or_path", "")),
             "baseline": dict(self.cfg.get("baseline", {}) or {}),
             "sft_train": sft_train,
         }
