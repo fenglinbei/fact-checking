@@ -148,6 +148,8 @@ PYTHONPATH=src python -m fact_checking.pipeline.run -m experiment=b0,b1 baseline
 | `retrieval.alpha_lexical` | float | `0.20` | 词汇重叠 F1 权重 |
 | `retrieval.alpha_bm25` | float | `0.10` | BM25 近似评分权重 |
 | `retrieval.mmr_lambda` | float | `0.70` | MMR 权衡：相关性 (λ) vs 多样性 (1-λ) |
+| `retrieval.chunking.strategy` | str | `sentence` | 证据分块策略：`sentence` 或 `ctx_window` |
+| `retrieval.chunking.context_k` | int | `1` | 上下文窗口的前后句子数（仅 `ctx_window` 策略） |
 
 #### `train` (`configs/train/default.yaml`)
 
@@ -205,8 +207,6 @@ PYTHONPATH=src python -m fact_checking.pipeline.run -m experiment=b0,b1 baseline
 | `variant` | str | `b0` | 实验变体标识 |
 | `model_name_or_path` | str | Qwen2.5-7B-Instruct | HuggingFace 基础模型路径 |
 | `top_k` | int | `5` | 放入 prompt 的证据条数 |
-| `use_context` | bool | `false` | 是否在匹配句子周围包含上下文句子 |
-| `context_k` | int | `1` | 上下文窗口的前后句子数 |
 | `prompt_mode` | str | `zero_shot` | 提示模式 |
 | `few_shot_k` | int | `16` | 少样本示例数量 |
 | `few_shot_mmr_lambda` | float | `0.7` | 少样本选择时的 MMR λ 值 |
