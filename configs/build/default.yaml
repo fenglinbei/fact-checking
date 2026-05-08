@@ -15,6 +15,11 @@ build:
     alpha_lexical: 0.20
     alpha_bm25: 0.10
     mmr_lambda: 0.70
+    # Performance optimizations
+    precision: bf16              # fp32 | fp16 | bf16
+    num_gpus: 4                  # 1 = serial, >1 = multi-GPU via multiprocessing
+    prefetch_size: 200             # samples per embedding batch (1 = per-sample)
+    cpu_workers: 4               # thread workers for CPU post-embedding work
     chunking:
       strategy: sentence
       context_k: 1
