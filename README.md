@@ -150,6 +150,8 @@ PYTHONPATH=src python -m fact_checking.pipeline.run -m experiment=b0,b1 baseline
 | `retrieval.alpha_lexical` | float | `0.20` | Lexical overlap F1 weight |
 | `retrieval.alpha_bm25` | float | `0.10` | BM25-like score weight |
 | `retrieval.mmr_lambda` | float | `0.70` | MMR tradeoff: relevance (λ) vs diversity (1-λ) |
+| `retrieval.chunking.strategy` | str | `sentence` | Evidence chunking strategy: `sentence` or `ctx_window` |
+| `retrieval.chunking.context_k` | int | `1` | Number of sentences before/after for context window (only `ctx_window` strategy) |
 
 #### `train` (`configs/train/default.yaml`)
 
@@ -207,8 +209,6 @@ PYTHONPATH=src python -m fact_checking.pipeline.run -m experiment=b0,b1 baseline
 | `variant` | str | `b0` | Experiment variant identifier |
 | `model_name_or_path` | str | Qwen2.5-7B-Instruct | Base HuggingFace model path |
 | `top_k` | int | `5` | Number of evidence items included in the prompt |
-| `use_context` | bool | `false` | Include context sentences around each match |
-| `context_k` | int | `1` | Number of sentences before/after for context window |
 | `prompt_mode` | str | `zero_shot` | Prompting mode |
 | `few_shot_k` | int | `16` | Number of few-shot examples in prompt |
 | `few_shot_mmr_lambda` | float | `0.7` | MMR lambda for few-shot example selection |
