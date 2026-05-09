@@ -29,3 +29,20 @@ baseline:
 build:
   retrieval:
     mmr_lambda: 0.50  # 文档默认值，实际扫描值由 CLI multirun 覆盖
+
+sft_train:
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    modules_to_save: null
