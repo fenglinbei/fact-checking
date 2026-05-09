@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from tqdm.auto import tqdm
 
 from fact_checking.data.constants import LABELS
 from sft.infer_common import build_inference_context
@@ -93,9 +94,27 @@ def run_api_inference(
         temperature = float(temperature_value)
 
         prediction_records: list[dict[str, object]] = []
-        for sample_idx, sample in enumerate(context.samples):
+        correct = 0
+        parse_errors = 0
+        progress = tqdm(
+            context.samples,
+            total=len(context.samples),
+            desc=f"infer[{split}/{checkpoint}]",
+            unit="sample",
+            dynamic_ncols=True,
+        )
+        for sample_idx, sample in enumerate(progress):
             raw_output = client.generate(sample.prompt, max_tokens=max_tokens, temperature=temperature)
             pred_id = _parse_label_id(raw_output)
+            if pred_id == int(sample.gold_id):
+                correct += 1
+            if pred_id < 0:
+                parse_errors += 1
+            processed = sample_idx + 1
+            progress.set_postfix(
+                acc=f"{correct / processed:.3f}",
+                parse_err=f"{parse_errors / processed:.3f}",
+            )
             prediction_records.append(
                 {
                     "sample_idx": sample_idx,
@@ -109,6 +128,7 @@ def run_api_inference(
                     "gold_explain": sample.gold_explain,
                 }
             )
+        progress.close()
 
         eval_metrics = _summarize_prediction_records(prediction_records)
         artifacts = _save_eval_artifacts(
