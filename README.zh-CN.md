@@ -148,8 +148,21 @@ PYTHONPATH=src python -m fact_checking.pipeline.run -m experiment=b0,b1 baseline
 | `retrieval.alpha_lexical` | float | `0.20` | 词汇重叠 F1 权重 |
 | `retrieval.alpha_bm25` | float | `0.10` | BM25 近似评分权重 |
 | `retrieval.mmr_lambda` | float | `0.70` | MMR 权衡：相关性 (λ) vs 多样性 (1-λ) |
-| `retrieval.chunking.strategy` | str | `sentence` | 证据分块策略：`sentence` 或 `ctx_window` |
-| `retrieval.chunking.context_k` | int | `1` | 上下文窗口的前后句子数（仅 `ctx_window` 策略） |
+| `retrieval.chunking.strategy` | str | `sentence` | 证据分块策略：`sentence`、`raw`、`ctx_window`、`semantic` 或 `ctx_semantic` |
+| `retrieval.chunking.context_k` | int | `1` | 窗口大小（句子数）。`ctx_window` 取目标句前后各 k 条共 2k+1 句；`ctx_semantic` 中以 k 条句子为相似度计算单元（非重叠） |
+| `retrieval.chunking.theta` | float | `0.7` | `semantic` / `ctx_semantic` 的余弦相似度阈值。相邻单元相似度大于该值时合并为同一块 |
+| `retrieval.chunking.embedder_model` | str \| null | `null` | `semantic` / `ctx_semantic` 使用的嵌入模型路径，`null` 表示复用 `retrieval.embedder_model` |
+| `retrieval.chunking.device` | str | `cpu` | 语义分块嵌入器的计算设备，建议设为 `cpu`（检索嵌入器已占用 GPU） |
+| `retrieval.chunking.max_length` | int | `256` | 语义分块嵌入器的最大 token 长度 |
+| `retrieval.chunking.batch_size` | int | `64` | 语义分块嵌入器的批次大小 |
+| `retrieval.chunking.precision` | str | `fp32` | 语义分块嵌入器精度：`fp32`、`fp16` 或 `bf16` |
+
+分块策略说明（对应 `todo/1_chunking.md`）：
+- `sentence`：以单句为检索单元（默认）。
+- `raw`：不切分，以原 report 为单元。
+- `ctx_window`：目标句子加上前后各 `context_k` 条相邻句子。
+- `semantic`：按句子切分后，对相邻句子计算余弦相似度，相似度大于 `theta` 时归入同一块。
+- `ctx_semantic`：在 `semantic` 基础上将相似度计算单元由单句替换为 `context_k` 条句子的非重叠窗口；`context_k=1` 时与 `semantic` 等价。
 
 #### `train` (`configs/train/default.yaml`)
 
