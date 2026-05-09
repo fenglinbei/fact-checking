@@ -150,8 +150,21 @@ PYTHONPATH=src python -m fact_checking.pipeline.run -m experiment=b0,b1 baseline
 | `retrieval.alpha_lexical` | float | `0.20` | Lexical overlap F1 weight |
 | `retrieval.alpha_bm25` | float | `0.10` | BM25-like score weight |
 | `retrieval.mmr_lambda` | float | `0.70` | MMR tradeoff: relevance (λ) vs diversity (1-λ) |
-| `retrieval.chunking.strategy` | str | `sentence` | Evidence chunking strategy: `sentence` or `ctx_window` |
-| `retrieval.chunking.context_k` | int | `1` | Number of sentences before/after for context window (only `ctx_window` strategy) |
+| `retrieval.chunking.strategy` | str | `sentence` | Evidence chunking strategy: `sentence`, `raw`, `ctx_window`, `semantic`, or `ctx_semantic` |
+| `retrieval.chunking.context_k` | int | `1` | Window size in sentences. For `ctx_window`: 2k+1 sentences centred on the target. For `ctx_semantic`: non-overlapping windows of k sentences as the similarity unit |
+| `retrieval.chunking.theta` | float | `0.7` | Cosine similarity threshold for `semantic` / `ctx_semantic`. Adjacent units with similarity > theta are merged into the same chunk |
+| `retrieval.chunking.embedder_model` | str \| null | `null` | Embedder model path for `semantic` / `ctx_semantic`. `null` reuses `retrieval.embedder_model` |
+| `retrieval.chunking.device` | str | `cpu` | Device for the semantic chunking embedder. Recommended: `cpu` (the retrieval embedder already uses GPUs) |
+| `retrieval.chunking.max_length` | int | `256` | Max token length for the semantic chunking embedder |
+| `retrieval.chunking.batch_size` | int | `64` | Batch size for the semantic chunking embedder |
+| `retrieval.chunking.precision` | str | `fp32` | Precision for the semantic chunking embedder: `fp32`, `fp16`, or `bf16` |
+
+Chunking strategies (per `todo/1_chunking.md`):
+- `sentence`: each sentence is one retrieval unit (default).
+- `raw`: do not split — the whole report is the unit.
+- `ctx_window`: take the target sentence plus its `context_k` neighbours on each side.
+- `semantic`: split by sentences, then merge adjacent sentences whose cosine similarity exceeds `theta`.
+- `ctx_semantic`: like `semantic`, but the similarity unit is a window of `context_k` consecutive sentences (non-overlapping). Reduces to `semantic` when `context_k=1`.
 
 #### `train` (`configs/train/default.yaml`)
 
