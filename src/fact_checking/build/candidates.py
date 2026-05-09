@@ -983,7 +983,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         "output_mode": run_summary["prompt_output_mode"],
         "system_prompt": run_summary.get("prompt_system_prompt"),
     }
-    chunking_strategy = build_chunking_strategy(retrieval_cfg.get("chunking"))
+    chunking_strategy = build_chunking_strategy(retrieval_cfg.get("chunking"), retrieval_cfg)
     logger.info("Chunking strategy: %s", type(chunking_strategy).__name__)
 
     for split_name in split_names:
