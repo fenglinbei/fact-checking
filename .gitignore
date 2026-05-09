@@ -217,3 +217,4 @@ data/raw/LIAR-RAW/
 outputs/
 .vscode
 wandb/
+multirun/
