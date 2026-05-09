@@ -22,6 +22,41 @@ from fact_checking.pipeline.artifacts import (
 )
 
 
+def _run_subprocess_tee(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    log_path: Path,
+) -> None:
+    """Run a subprocess and tee its combined stdout/stderr to both the terminal and a log file."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w", encoding="utf-8") as log_file:
+        header = "$ " + " ".join(command) + "\n\n"
+        log_file.write(header)
+        log_file.flush()
+        sys.stdout.write(header)
+        sys.stdout.flush()
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            text=True,
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            log_file.write(line)
+            log_file.flush()
+        return_code = process.wait()
+    if return_code != 0:
+        raise subprocess.CalledProcessError(return_code, command)
+
+
 @dataclass(frozen=True)
 class PipelineState:
     run_dir: Path
@@ -217,10 +252,7 @@ class PipelineRunner:
         command = self._train_command(train_config_path)
         log_path = self.state.run_dir / "logs" / "train.log"
         env = self._subprocess_env(cuda_visible_devices=str(self.cfg.get("train", {}).get("cuda_visible_devices", "")))
-        with log_path.open("w", encoding="utf-8") as log_file:
-            log_file.write("$ " + " ".join(command) + "\n\n")
-            log_file.flush()
-            subprocess.run(command, cwd=self.project_root, env=env, stdout=log_file, stderr=subprocess.STDOUT, check=True)
+        _run_subprocess_tee(command, cwd=self.project_root, env=env, log_path=log_path)
 
         mark_phase(
             manifest,
