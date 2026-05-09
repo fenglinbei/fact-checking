@@ -19,7 +19,7 @@ from transformers import AutoTokenizer
 
 from fact_checking.build.chunking import ChunkingStrategy, SentenceChunking, build_chunking_strategy
 from fact_checking.config import load_yaml
-from fact_checking.data.constants import LABEL_DEFINITIONS, LABEL2ID
+from fact_checking.data.constants import LABEL_DEFINITIONS, LABEL_LETTERS, LABEL2ID
 from fact_checking.data.io import iter_sentences, load_split
 from fact_checking.retrieval.embedder import EmbedderConfig, TextEmbedder
 from fact_checking.retrieval.mmr import maximal_marginal_relevance
@@ -422,6 +422,7 @@ def _build_worker(
         "auto_length": run_summary["prompt_auto_length"],
         "max_length": run_summary["prompt_max_length"],
         "output_mode": run_summary["prompt_output_mode"],
+        "label_format": run_summary["prompt_label_format"],
         "system_prompt": run_summary.get("prompt_system_prompt"),
     }
 
@@ -506,26 +507,35 @@ def _format_evidence_block(evidence_texts: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _label_definitions_text() -> str:
+def _label_definitions_text(label_format: str = "name") -> str:
+    if label_format == "letter":
+        return "\n".join(
+            f"- {LABEL_LETTERS[label]} ({label}): {LABEL_DEFINITIONS[label]}"
+            for label in LABEL_DEFINITIONS
+        )
     return "\n".join(f"- {label}: {LABEL_DEFINITIONS[label]}" for label in LABEL_DEFINITIONS)
 
 
-def _build_user_content(claim: str, evidence_texts: list[str], output_mode: str) -> str:
+def _build_user_content(
+    claim: str, evidence_texts: list[str], output_mode: str, label_format: str = "name"
+) -> str:
     evidence_block = _format_evidence_block(evidence_texts)
     evidence_display = evidence_block.strip() if evidence_block.strip() else "(no evidence available)"
+
+    label_placeholder = "<a single letter from A-F>" if label_format == "letter" else "<label>"
 
     if output_mode == "explanation_label":
         return (
             "Classify the claim into exactly one LIAR-RAW label and provide a concise evidence-grounded explanation.\n\n"
             "Labels:\n"
-            f"{_label_definitions_text()}\n\n"
+            f"{_label_definitions_text(label_format)}\n\n"
             "Rules:\n"
             "- Use the retrieved evidence as the primary source.\n"
             "- Do not invent facts not supported by the evidence.\n"
             "- Keep the explanation brief and evidence-grounded.\n"
             "- Respond with exactly two lines in this format:\n"
             "Explanation: <brief explanation>\n"
-            "Label: <label>\n\n"
+            f"Label: {label_placeholder}\n\n"
             f"Claim:\n{claim.strip()}\n\n"
             f"Evidence:\n{evidence_display}"
         )
@@ -533,11 +543,11 @@ def _build_user_content(claim: str, evidence_texts: list[str], output_mode: str)
     return (
         "Classify the claim into exactly one LIAR-RAW label.\n\n"
         "Labels:\n"
-        f"{_label_definitions_text()}\n\n"
+        f"{_label_definitions_text(label_format)}\n\n"
         "Rules:\n"
         "- Use the retrieved evidence as the primary source.\n"
         "- Do not invent facts not supported by the evidence.\n"
-        "- Respond with exactly one line: Label: <label>\n\n"
+        f"- Respond with exactly one line: Label: {label_placeholder}\n\n"
         f"Claim:\n{claim.strip()}\n\n"
         f"Evidence:\n{evidence_display}"
     )
@@ -551,11 +561,12 @@ def _build_chat_prompt(tokenizer: AutoTokenizer, system_msg: str, user_content: 
     return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
 
-def _build_target(row: dict, gold_label: str, output_mode: str) -> str:
+def _build_target(row: dict, gold_label: str, output_mode: str, label_format: str = "name") -> str:
+    target_label = LABEL_LETTERS[gold_label] if label_format == "letter" else gold_label
     if output_mode == "explanation_label":
         explanation = str(row.get("explain", "")).strip() or "The available evidence supports this label."
-        return f"Explanation: {explanation}\nLabel: {gold_label}"
-    return f"Label: {gold_label}"
+        return f"Explanation: {explanation}\nLabel: {target_label}"
+    return f"Label: {target_label}"
 
 
 def _auto_truncate_evidence(
@@ -568,10 +579,11 @@ def _auto_truncate_evidence(
     system_prompt: str | None,
     row: dict,
     gold_label: str,
+    label_format: str = "name",
 ) -> dict:
     """Remove evidence items from the tail until the prompt fits within max_length."""
     system_msg = _build_system_message(system_prompt)
-    target = _build_target(row, gold_label, output_mode)
+    target = _build_target(row, gold_label, output_mode, label_format)
     target_token_count = _count_target_tokens(target, tokenizer)
     budget = max(0, int(max_length) - target_token_count)
 
@@ -579,7 +591,7 @@ def _auto_truncate_evidence(
     kept = list(evidence_texts)
 
     # Build prompt with all evidence
-    user_content = _build_user_content(claim, kept, output_mode)
+    user_content = _build_user_content(claim, kept, output_mode, label_format)
     prompt = _build_chat_prompt(tokenizer, system_msg, user_content)
     prompt_tokens = _count_tokens(prompt, tokenizer, add_special_tokens=False)
 
@@ -587,7 +599,7 @@ def _auto_truncate_evidence(
     while prompt_tokens > budget and len(kept) > 1:
         kept.pop()  # Remove last (lowest-score) evidence item
         was_truncated = True
-        user_content = _build_user_content(claim, kept, output_mode)
+        user_content = _build_user_content(claim, kept, output_mode, label_format)
         prompt = _build_chat_prompt(tokenizer, system_msg, user_content)
         prompt_tokens = _count_tokens(prompt, tokenizer, add_special_tokens=False)
 
@@ -622,6 +634,7 @@ def _build_training_row(
     auto_length = bool(prompt_cfg.get("auto_length", True))
     max_length = int(prompt_cfg.get("max_length", 2048))
     output_mode = str(prompt_cfg.get("output_mode", "label_only")).strip().lower()
+    label_format = str(prompt_cfg.get("label_format", "name")).strip().lower()
     system_prompt = prompt_cfg.get("system_prompt") or None
 
     if auto_length and evidence_texts:
@@ -634,6 +647,7 @@ def _build_training_row(
             system_prompt=system_prompt,
             row=row,
             gold_label=gold_label,
+            label_format=label_format,
         )
         return {
             "event_id": row.get("event_id", ""),
@@ -657,9 +671,9 @@ def _build_training_row(
 
     # auto_length disabled: build prompt without truncation
     system_msg = _build_system_message(system_prompt)
-    target = _build_target(row, gold_label, output_mode)
+    target = _build_target(row, gold_label, output_mode, label_format)
     target_token_count = _count_target_tokens(target, tokenizer)
-    user_content = _build_user_content(str(row.get("claim", "")), evidence_texts, output_mode)
+    user_content = _build_user_content(str(row.get("claim", "")), evidence_texts, output_mode, label_format)
     prompt = _build_chat_prompt(tokenizer, system_msg, user_content)
     prompt_token_count = _count_tokens(prompt, tokenizer, add_special_tokens=False)
     no_evidence = len(evidence_texts) == 0
@@ -944,6 +958,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         "prompt_auto_length": bool(prompt_cfg.get("auto_length", True)),
         "prompt_max_length": int(prompt_cfg.get("max_length", 2048)),
         "prompt_output_mode": str(prompt_cfg.get("output_mode", "label_only")).strip().lower(),
+        "prompt_label_format": str(prompt_cfg.get("label_format", "name")).strip().lower(),
         "prompt_system_prompt": prompt_cfg.get("system_prompt") or None,
     }
 
@@ -983,6 +998,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         "auto_length": run_summary["prompt_auto_length"],
         "max_length": run_summary["prompt_max_length"],
         "output_mode": run_summary["prompt_output_mode"],
+        "label_format": run_summary["prompt_label_format"],
         "system_prompt": run_summary.get("prompt_system_prompt"),
     }
     chunking_strategy = build_chunking_strategy(retrieval_cfg.get("chunking"), retrieval_cfg)

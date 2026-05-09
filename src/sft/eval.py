@@ -108,6 +108,46 @@ def summarize_prediction_records(
     )
 
 
+def _predict_with_logit_adjust(
+    *,
+    model: AutoModelForCausalLM,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    prefix_token_ids: torch.Tensor,
+    letter_token_ids: torch.Tensor,
+    log_priors: torch.Tensor,
+    tau: float,
+    eos_id: int,
+) -> tuple[list[int], torch.Tensor]:
+    """One forward pass with 'Label:' appended; restricted argmax over letter tokens.
+
+    Returns (pred_label_ids, continuation_ids). pred_label_ids[i] == LABELS index since
+    LETTER_ORDER is aligned with LABELS.
+    """
+    batch_size = input_ids.shape[0]
+    device = input_ids.device
+    extension = prefix_token_ids.to(device).unsqueeze(0).expand(batch_size, -1)
+    extension_attn = torch.ones_like(extension)
+    new_input_ids = torch.cat([input_ids, extension], dim=1)
+    new_attn = torch.cat([attention_mask, extension_attn], dim=1)
+    outputs = model(input_ids=new_input_ids, attention_mask=new_attn, use_cache=False)
+    last_logits = outputs.logits[:, -1, :]  # [B, V]
+    letter_token_ids_dev = letter_token_ids.to(device)
+    letter_logits = last_logits.index_select(1, letter_token_ids_dev)  # [B, K]
+    log_priors_dev = log_priors.to(letter_logits.dtype).to(device)
+    adjusted = letter_logits - tau * log_priors_dev.unsqueeze(0)
+    pred_letter_idx = adjusted.argmax(dim=-1)  # [B]
+    chosen_letter_tok = letter_token_ids_dev.index_select(0, pred_letter_idx)
+    eos_col = torch.full(
+        (batch_size, 1),
+        int(eos_id),
+        dtype=torch.long,
+        device=device,
+    )
+    continuation_ids = torch.cat([extension, chosen_letter_tok.unsqueeze(1), eos_col], dim=1)
+    return pred_letter_idx.tolist(), continuation_ids
+
+
 def evaluate(
     model: AutoModelForCausalLM,
     dataloader: DataLoader,
@@ -117,6 +157,7 @@ def evaluate(
     max_new_tokens: int = 24,
     eval_logger: Logger | None = None,
     log_predictions_limit: int = 5,
+    logit_adjust_cfg: dict | None = None,
 ) -> dict[str, object]:
     del max_length
     model.eval()
@@ -126,6 +167,16 @@ def evaluate(
     if old_use_cache is not None:
         unwrapped.config.use_cache = True
 
+    use_logit_adjust = bool(logit_adjust_cfg and logit_adjust_cfg.get("enabled"))
+    if use_logit_adjust:
+        prefix_token_ids = torch.as_tensor(logit_adjust_cfg["prefix_token_ids"], dtype=torch.long)
+        letter_token_ids = torch.as_tensor(logit_adjust_cfg["letter_token_ids"], dtype=torch.long)
+        log_priors = torch.as_tensor(logit_adjust_cfg["log_priors"], dtype=torch.float32)
+        tau = float(logit_adjust_cfg.get("tau", 1.0))
+    else:
+        prefix_token_ids = letter_token_ids = log_priors = None
+        tau = 0.0
+
     all_pred_ids: list[torch.Tensor] = []
     all_gold_ids: list[torch.Tensor] = []
     all_prediction_records: list[dict[str, object]] = []
@@ -134,6 +185,7 @@ def evaluate(
     generation_pad_id = tokenizer.pad_token_id
     if generation_pad_id is None:
         generation_pad_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
+    eos_id_for_pred = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else generation_pad_id
     dataset_samples = getattr(getattr(dataloader, "dataset", None), "samples", None)
     eval_progress = tqdm(
         total=len(dataloader),
@@ -148,22 +200,34 @@ def evaluate(
                 gold_ids = batch["gold_ids"]
                 sample_indices = batch["sample_indices"]
 
-                generated = model.generate(
-                    input_ids=batch["input_ids"],
-                    attention_mask=batch["attention_mask"],
-                    max_new_tokens=max_new_tokens,
-                    do_sample=False,
-                    use_cache=True,
-                    pad_token_id=tokenizer.pad_token_id,
-                    eos_token_id=tokenizer.eos_token_id,
-                    synced_gpus=accelerator.num_processes > 1,
-                )
-                prompt_length = batch["input_ids"].shape[1]
-                continuation_ids = generated[:, prompt_length:]
-                pred_ids: list[int] = []
-                for i in range(continuation_ids.shape[0]):
-                    raw_pred = tokenizer.decode(continuation_ids[i], skip_special_tokens=True)
-                    pred_ids.append(_parse_label_id(raw_pred))
+                if use_logit_adjust:
+                    pred_ids, continuation_ids = _predict_with_logit_adjust(
+                        model=model,
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                        prefix_token_ids=prefix_token_ids,
+                        letter_token_ids=letter_token_ids,
+                        log_priors=log_priors,
+                        tau=tau,
+                        eos_id=int(eos_id_for_pred),
+                    )
+                else:
+                    generated = model.generate(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                        max_new_tokens=max_new_tokens,
+                        do_sample=False,
+                        use_cache=True,
+                        pad_token_id=tokenizer.pad_token_id,
+                        eos_token_id=tokenizer.eos_token_id,
+                        synced_gpus=accelerator.num_processes > 1,
+                    )
+                    prompt_length = batch["input_ids"].shape[1]
+                    continuation_ids = generated[:, prompt_length:]
+                    pred_ids: list[int] = []
+                    for i in range(continuation_ids.shape[0]):
+                        raw_pred = tokenizer.decode(continuation_ids[i], skip_special_tokens=True)
+                        pred_ids.append(_parse_label_id(raw_pred))
 
                 pred_tensor = torch.tensor(pred_ids, dtype=torch.long, device=gold_ids.device)
                 continuation_ids = accelerator.pad_across_processes(
