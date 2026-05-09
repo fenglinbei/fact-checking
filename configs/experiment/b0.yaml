@@ -76,12 +76,12 @@ infer:
   served_model_name: fact-checking-sft
   host: 127.0.0.1
   port: 35001
-  wait_seconds: 180
+  wait_seconds: 180/
   request_timeout_seconds: 120
   max_new_tokens: 8
   temperature: 0.0
-  cuda_visible_devices: "0"
-  tensor_parallel_size: 1
+  cuda_visible_devices: "0,1,2,3"
+  tensor_parallel_size: 4
   gpu_memory_utilization: 0.90
   dtype: auto
   server:
