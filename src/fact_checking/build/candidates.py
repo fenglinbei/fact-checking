@@ -108,6 +108,7 @@ def _load_pickle(path: Path) -> Any:
 
 def _sentence_to_dict(sent) -> dict[str, Any]:
     return {
+        "event_id": sent.event_id,
         "report_id": sent.report_id,
         "sent_idx": sent.sent_idx,
         "text": sent.text,
@@ -117,10 +118,11 @@ def _sentence_to_dict(sent) -> dict[str, Any]:
     }
 
 
-def _dict_to_sentence(d: dict[str, Any]):
+def _dict_to_sentence(d: dict[str, Any], *, event_id_fallback: str | None = None):
     from fact_checking.data.io import SentenceRecord
 
     return SentenceRecord(
+        event_id=d.get("event_id") or event_id_fallback or "",
         report_id=d["report_id"],
         sent_idx=d["sent_idx"],
         text=d["text"],
@@ -870,7 +872,7 @@ def _mmr_phase_from_premmr(
     """From cached PreMMRSamples, run MMR + candidates + training rows, write JSONL."""
 
     def _process_one(pre: PreMMRSample):
-        sents = [_dict_to_sentence(d) for d in pre.sentences]
+        sents = [_dict_to_sentence(d, event_id_fallback=pre.event_id) for d in pre.sentences]
         sent_texts = [d["text"] for d in pre.sentences]
         if not sents:
             return {
