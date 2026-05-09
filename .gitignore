@@ -11,6 +11,7 @@ __pycache__/
 build/
 !src/fact_checking/build/
 !src/fact_checking/build/**
+src/fact_checking/build/**/__pycache__/
 develop-eggs/
 dist/
 downloads/
