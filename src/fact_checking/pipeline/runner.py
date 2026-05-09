@@ -78,6 +78,8 @@ class PipelineRunner:
     def run(self) -> dict[str, Any]:
         manifest = self._load_manifest()
         steps = self._resolve_steps()
+        print(f"[pipeline] run_dir={self.state.run_dir}", flush=True)
+        print(f"[pipeline] steps={steps}", flush=True)
         build_paths: dict[str, Path] | None = None
 
         if "build" in steps or "train" in steps:
@@ -93,7 +95,25 @@ class PipelineRunner:
             self._run_infer(manifest)
 
         self._save_manifest(manifest)
+        print(f"[pipeline] DONE run_dir={self.state.run_dir}", flush=True)
         return manifest
+
+    def _compute_sweep_slug(self) -> str:
+        try:
+            from hydra.core.hydra_config import HydraConfig
+
+            overrides = list(HydraConfig.get().overrides.task)
+        except Exception:
+            return ""
+        keep: list[str] = []
+        for ov in overrides:
+            if "=" not in ov:
+                continue
+            key = ov.split("=", 1)[0].lstrip("+~")
+            if key == "experiment":
+                continue
+            keep.append(ov)
+        return ",".join(keep)
 
     def _build_state(self) -> PipelineState:
         build_cfg = self.cfg["build"]
@@ -118,7 +138,9 @@ class PipelineRunner:
             output_root = Path(str(pipeline_cfg.get("output_root", "outputs/runs")))
             if not output_root.is_absolute():
                 output_root = self.project_root / output_root
-            run_dir = output_root / experiment_name / run_id
+            sweep_slug = self._compute_sweep_slug()
+            leaf = f"{sweep_slug}__{run_id[:8]}" if sweep_slug else run_id
+            run_dir = output_root / experiment_name / leaf
 
         cache_root = Path(str(pipeline_cfg.get("cache_root", "outputs/cache")))
         if not cache_root.is_absolute():
@@ -236,6 +258,7 @@ class PipelineRunner:
         )
         train_config_path = self._write_train_config(build_paths, train_dir)
         if can_reuse:
+            print(f"[pipeline] train: reuse checkpoint={best_dir}", flush=True)
             mark_phase(
                 manifest,
                 "train",
@@ -252,7 +275,9 @@ class PipelineRunner:
         command = self._train_command(train_config_path)
         log_path = self.state.run_dir / "logs" / "train.log"
         env = self._subprocess_env(cuda_visible_devices=str(self.cfg.get("train", {}).get("cuda_visible_devices", "")))
+        print(f"[pipeline] train: launching backend={command[0]} log={log_path}", flush=True)
         _run_subprocess_tee(command, cwd=self.project_root, env=env, log_path=log_path)
+        print(f"[pipeline] train: subprocess exited 0; best_dir_exists={best_dir.exists()} ({best_dir})", flush=True)
 
         mark_phase(
             manifest,
@@ -285,6 +310,7 @@ class PipelineRunner:
             and metrics_path.exists()
         )
         if can_reuse:
+            print(f"[pipeline] infer: reuse metrics={metrics_path}", flush=True)
             mark_phase(
                 manifest,
                 "infer",
@@ -297,6 +323,17 @@ class PipelineRunner:
             )
             self._save_manifest(manifest)
             return
+
+        checkpoint_dir = train_dir / checkpoint
+        if not checkpoint_dir.exists():
+            raise FileNotFoundError(
+                f"[pipeline] infer: checkpoint dir not found: {checkpoint_dir}. "
+                f"Train may not have saved '{checkpoint}'. Inspect logs at {self.state.run_dir / 'logs' / 'train.log'}."
+            )
+        print(
+            f"[pipeline] infer: starting split={split} checkpoint={checkpoint_dir} infer_dir={infer_dir}",
+            flush=True,
+        )
 
         train_config_path = self.state.run_dir / "configs" / "train.resolved.yaml"
         artifacts = run_api_inference(
@@ -345,6 +382,19 @@ class PipelineRunner:
         for key in ("tracking", "wandb", "swanlab"):
             if key in self.cfg:
                 train_cfg[key] = self.cfg[key]
+
+        sweep_slug = self._compute_sweep_slug()
+        exp_name = str(self.cfg.get("experiment", {}).get("name", "default"))
+        descriptive_name = f"{exp_name}__{sweep_slug}" if sweep_slug else exp_name
+        if isinstance(train_cfg.get("swanlab"), dict):
+            sl = dict(train_cfg["swanlab"])
+            sl["experiment_name"] = descriptive_name
+            train_cfg["swanlab"] = sl
+        if isinstance(train_cfg.get("wandb"), dict):
+            wb = dict(train_cfg["wandb"])
+            wb["run_name"] = descriptive_name
+            train_cfg["wandb"] = wb
+
         path = self.state.run_dir / "configs" / "train.resolved.yaml"
         save_yaml(train_cfg, path)
         return path
