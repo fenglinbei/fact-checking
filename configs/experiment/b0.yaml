@@ -80,7 +80,7 @@ infer:
   served_model_name: fact-checking-sft
   host: 127.0.0.1
   port: 35001
-  wait_seconds: 180/
+  wait_seconds: 180
   request_timeout_seconds: 120
   max_new_tokens: 8
   temperature: 0.0
