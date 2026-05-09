@@ -429,7 +429,6 @@ def main() -> None:
                     )
 
                 if global_step % eval_steps == 0:
-                    logger.info("[rank %d] before evaluate step=%d", accelerator.process_index, global_step)
                     if use_online_vllm_eval:
                         accelerator.wait_for_everyone()
                         eval_error = None
@@ -465,8 +464,32 @@ def main() -> None:
                             eval_logger=logger,
                             log_predictions_limit=int(train_cfg.get("eval_log_predictions", 5)),
                         )
-                    logger.info("[rank %d] after evaluate step=%d", accelerator.process_index, global_step)
                     macro_f1 = float(eval_metrics["macro_f1"])
+                    if accelerator.is_main_process:
+                        per_class_summary = eval_metrics.get("per_class", {}) or {}
+                        per_class_lines = []
+                        if isinstance(per_class_summary, dict):
+                            for label in sorted(per_class_summary.keys()):
+                                label_metrics = per_class_summary[label]
+                                if isinstance(label_metrics, dict):
+                                    per_class_lines.append(
+                                        f"  - {label}: P={float(label_metrics.get('precision', 0.0)):.4f} "
+                                        f"R={float(label_metrics.get('recall', 0.0)):.4f} "
+                                        f"F1={float(label_metrics.get('f1', 0.0)):.4f}"
+                                    )
+                        summary_lines = [
+                            f"[eval] step={global_step} "
+                            f"accuracy={float(eval_metrics['accuracy']):.4f} "
+                            f"macro_precision={float(eval_metrics['macro_precision']):.4f} "
+                            f"macro_recall={float(eval_metrics['macro_recall']):.4f} "
+                            f"macro_f1={macro_f1:.4f} "
+                            f"parse_error_rate={float(eval_metrics['parse_error_rate']):.4f}",
+                        ]
+                        if per_class_lines:
+                            summary_lines.append("[eval] per_class:")
+                            summary_lines.extend(per_class_lines)
+                        for line in summary_lines:
+                            logger.info(line)
                     log_metrics(
                         accelerator,
                         {
@@ -526,17 +549,13 @@ def main() -> None:
 
                     if macro_f1 > best_val_loss:
                         best_val_loss = macro_f1
-                        logger.info("[rank %d] before save best step=%d", accelerator.process_index, global_step)
                         save_model(accelerator, model, tokenizer, output_dir / "best")
-                        logger.info("[rank %d] after save best step=%d", accelerator.process_index, global_step)
 
                     if empty_cache_on_eval:
                         maybe_empty_cache(accelerator)
 
                 if global_step % save_steps == 0:
-                    logger.info("[rank %d] before save checkpoint step=%d", accelerator.process_index, global_step)
                     save_model(accelerator, model, tokenizer, output_dir / f"checkpoint-{global_step}")
-                    logger.info("[rank %d] after save checkpoint step=%d", accelerator.process_index, global_step)
 
                     if empty_cache_on_save:
                         maybe_empty_cache(accelerator)
