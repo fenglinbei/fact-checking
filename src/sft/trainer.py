@@ -11,6 +11,7 @@ from torch.optim import AdamW
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
 
+from fact_checking.data.constants import LABEL2ID, LABELS, LETTER_ORDER
 from fact_checking.data.io import load_jsonl
 from fact_checking.config import load_yaml, save_yaml
 from fact_checking.utils.logging import init_logger
@@ -71,6 +72,60 @@ def _broadcast_object_from_main(obj: object, accelerator: Accelerator) -> object
     payload = [obj if accelerator.is_main_process else None]
     torch.distributed.broadcast_object_list(payload, src=0)
     return payload[0]
+
+
+def _build_logit_adjust_cfg(
+    *,
+    train_cfg: dict,
+    tokenizer: AutoTokenizer,
+    train_samples: list[PreparedSample],
+    accelerator: Accelerator,
+    logger,
+) -> dict | None:
+    cfg_block = train_cfg.get("logit_adjust", {}) or {}
+    if not bool(cfg_block.get("enabled", False)):
+        return None
+
+    letter_token_ids: list[int] = []
+    for letter in LETTER_ORDER:
+        ids = tokenizer(" " + letter, add_special_tokens=False)["input_ids"]
+        if len(ids) != 1:
+            raise RuntimeError(
+                f"logit_adjust: ' {letter}' is not single token in this tokenizer (got {ids}). "
+                "Disable sft_train.logit_adjust or pick a different letter set."
+            )
+        letter_token_ids.append(int(ids[0]))
+
+    counts = [0] * len(LABELS)
+    for sample in train_samples:
+        gid = LABEL2ID.get(getattr(sample, "gold_label", ""), -1)
+        if gid >= 0:
+            counts[gid] += 1
+    total = sum(counts)
+    floor = 1.0 / max(total, len(LABELS))
+    if total <= 0:
+        priors = [1.0 / len(LABELS)] * len(LABELS)
+    else:
+        priors = [(c / total) if c > 0 else floor for c in counts]
+    log_priors = [math.log(p) for p in priors]
+    prefix_token_ids = list(tokenizer("Label:", add_special_tokens=False)["input_ids"])
+
+    logit_adjust_cfg = {
+        "enabled": True,
+        "tau": float(cfg_block.get("tau", 1.0)),
+        "letter_token_ids": letter_token_ids,
+        "log_priors": log_priors,
+        "prefix_token_ids": prefix_token_ids,
+    }
+    if accelerator.is_main_process:
+        logger.info(
+            "[INFO] logit_adjust enabled: tau=%.3f priors=%s letters=%s prefix=%s",
+            logit_adjust_cfg["tau"],
+            ["%.4f" % p for p in priors],
+            letter_token_ids,
+            prefix_token_ids,
+        )
+    return logit_adjust_cfg
 
 
 def main() -> None:
@@ -397,6 +452,14 @@ def main() -> None:
     empty_cache_on_eval = bool(train_cfg.get("empty_cache_on_eval", False))
     empty_cache_on_save = bool(train_cfg.get("empty_cache_on_save", False))
 
+    logit_adjust_cfg = _build_logit_adjust_cfg(
+        train_cfg=train_cfg,
+        tokenizer=tokenizer,
+        train_samples=train_samples,
+        accelerator=accelerator,
+        logger=logger,
+    )
+
     progress_bar = tqdm(total=max_train_steps, disable=not accelerator.is_local_main_process)
     global_step = 0
     best_val_loss = float("-inf")
@@ -463,6 +526,7 @@ def main() -> None:
                             max_new_tokens=int(train_cfg.get("max_new_tokens", baseline_cfg.get("max_new_tokens", 24))),
                             eval_logger=logger,
                             log_predictions_limit=int(train_cfg.get("eval_log_predictions", 5)),
+                            logit_adjust_cfg=logit_adjust_cfg,
                         )
                     macro_f1 = float(eval_metrics["macro_f1"])
                     if accelerator.is_main_process:
