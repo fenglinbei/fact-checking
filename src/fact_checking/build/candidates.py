@@ -4,6 +4,8 @@ import argparse
 import json
 import multiprocessing
 import os
+import pickle
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +39,21 @@ class BuildResult:
     split_paths: dict[str, Path]
 
 
+@dataclass
+class PreMMRSample:
+    """Cached intermediate: embeddings + metadata for one sample.
+
+    Everything needed to resume from the MMR step without re-running the GPU embedder.
+    """
+    event_id: str
+    claim: str
+    label: str
+    explain: str
+    sentences: list[dict]   # serialized SentenceRecord dicts
+    sent_emb: np.ndarray    # [N, D] float32
+    claim_emb: np.ndarray   # [D] float32
+
+
 def canonicalize_sentence(text: str) -> str:
     return " ".join(text.lower().strip().split())
 
@@ -49,6 +66,78 @@ def minmax_scale(values: np.ndarray) -> np.ndarray:
     if abs(vmax - vmin) < 1e-8:
         return np.zeros_like(values)
     return (values - vmin) / (vmax - vmin)
+
+
+# ---------------------------------------------------------------------------
+# Pre-MMR cache helpers
+# ---------------------------------------------------------------------------
+
+
+def _premmr_config_fingerprint(cfg: dict[str, Any]) -> str:
+    """Fingerprint build config with mmr_lambda excluded."""
+    from fact_checking.pipeline.artifacts import fingerprint
+
+    retrieval = dict(cfg.get("retrieval", {}) or {})
+    retrieval.pop("mmr_lambda", None)
+    payload = {
+        **{k: v for k, v in cfg.items() if k != "retrieval"},
+        "retrieval": retrieval,
+    }
+    return fingerprint(payload)
+
+
+def _save_pickle_atomic(path: Path, obj: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _load_pickle(path: Path) -> Any:
+    with path.open("rb") as f:
+        return pickle.load(f)
+
+
+def _sentence_to_dict(sent) -> dict[str, Any]:
+    return {
+        "report_id": sent.report_id,
+        "sent_idx": sent.sent_idx,
+        "text": sent.text,
+        "link": sent.link,
+        "domain": sent.domain,
+        "raw": sent.raw,
+    }
+
+
+def _dict_to_sentence(d: dict[str, Any]):
+    from fact_checking.data.io import SentenceRecord
+
+    return SentenceRecord(
+        report_id=d["report_id"],
+        sent_idx=d["sent_idx"],
+        text=d["text"],
+        link=d.get("link"),
+        domain=d.get("domain"),
+        raw=d.get("raw", {}),
+    )
+
+
+class _ClaimProxy:
+    __slots__ = ("claim", "event_id", "label", "explain")
+
+    def __init__(self, pre: PreMMRSample):
+        self.claim = pre.claim
+        self.event_id = pre.event_id
+        self.label = pre.label
+        self.explain = pre.explain
 
 
 def build_candidates_for_sample(
@@ -594,6 +683,231 @@ def _build_training_row(
 
 
 # ---------------------------------------------------------------------------
+# Pre-MMR phase: embedding + caching
+# ---------------------------------------------------------------------------
+
+
+def _compute_pre_mmr_batch(
+    samples: list,
+    embedder: TextEmbedder,
+) -> list[PreMMRSample]:
+    """Batch-embed all sentences and claims; return PreMMRSample list.
+
+    Mirrors the batching logic in _build_candidates_batch() but stops after embedding.
+    """
+    all_sent_texts: list[str] = []
+    sample_boundaries: list[tuple[int, int]] = []
+    claims: list[str] = []
+    per_sample: list[tuple[list, list[str]]] = []
+
+    for sample in samples:
+        sents = list(iter_sentences(sample))
+        if not sents:
+            sample_boundaries.append((0, 0))
+            claims.append(sample.claim)
+            per_sample.append(([], []))
+            continue
+        start = len(all_sent_texts)
+        sent_texts = [s.text for s in sents]
+        all_sent_texts.extend(sent_texts)
+        end = len(all_sent_texts)
+        sample_boundaries.append((start, end))
+        claims.append(sample.claim)
+        per_sample.append((sents, sent_texts))
+
+    if all_sent_texts:
+        all_sent_emb = embedder.encode(all_sent_texts, is_query=False)
+    else:
+        all_sent_emb = np.zeros((0,), dtype=np.float32)
+    all_claim_emb = embedder.encode(claims, is_query=True)
+
+    results: list[PreMMRSample] = []
+    for i in range(len(samples)):
+        sample = samples[i]
+        sents, _sent_texts = per_sample[i]
+        start, end = sample_boundaries[i]
+        sent_emb = all_sent_emb[start:end].copy() if end > start else np.zeros((0,), dtype=np.float32)
+        claim_emb = all_claim_emb[i].copy()
+        results.append(PreMMRSample(
+            event_id=sample.event_id,
+            claim=sample.claim,
+            label=sample.label,
+            explain=sample.explain,
+            sentences=[_sentence_to_dict(s) for s in sents],
+            sent_emb=sent_emb,
+            claim_emb=claim_emb,
+        ))
+    return results
+
+
+def _premmr_worker(
+    gpu_id: int,
+    run_summary: dict[str, Any],
+    data_cfg: dict[str, Any],
+    split_name: str,
+    output_path: Path,
+) -> None:
+    """GPU worker: embed its chunk of the split, write PreMMRSample pickle."""
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    os.environ["TOKENIZERS_PARALLELISM"] = "true"
+
+    samples = load_split(data_cfg[f"{split_name}_path"])
+    num_gpus = run_summary["num_gpus"]
+    chunk_size = (len(samples) + num_gpus - 1) // num_gpus
+    samples_chunk = samples[gpu_id * chunk_size : (gpu_id + 1) * chunk_size]
+    if not samples_chunk:
+        _save_pickle_atomic(output_path, [])
+        return
+
+    embedder = TextEmbedder(
+        EmbedderConfig(
+            model_name=run_summary["embedder_model"],
+            device="cuda",
+            max_length=run_summary["max_length"],
+            batch_size=run_summary["batch_size"],
+            precision=run_summary["precision"],
+        )
+    )
+
+    prefetch_size = run_summary["prefetch_size"]
+    results: list[PreMMRSample] = []
+    if prefetch_size > 1:
+        for start in tqdm(range(0, len(samples_chunk), prefetch_size),
+                          desc=f"PreMMR [{split_name}] GPU {gpu_id}",
+                          unit="batch"):
+            batch = samples_chunk[start : start + prefetch_size]
+            results.extend(_compute_pre_mmr_batch(batch, embedder))
+    else:
+        for sample in tqdm(samples_chunk,
+                           desc=f"PreMMR [{split_name}] GPU {gpu_id}"):
+            results.extend(_compute_pre_mmr_batch([sample], embedder))
+
+    _save_pickle_atomic(output_path, results)
+
+
+def _compute_pre_mmr_split(
+    split_name: str,
+    data_cfg: dict[str, Any],
+    retrieval_cfg: dict[str, Any],
+    run_summary: dict[str, Any],
+    cache_dir: Path,
+    num_gpus: int,
+) -> Path:
+    """Ensure pre-MMR cache exists for one split; return path to cached pickle."""
+    cache_path = cache_dir / f"{split_name}.pkl"
+    if cache_path.exists():
+        return cache_path
+
+    if num_gpus > 1:
+        ctx = multiprocessing.get_context("fork")
+        chunk_paths: list[Path] = []
+        workers: list[multiprocessing.Process] = []
+        for gpu_id in range(num_gpus):
+            chunk_path = cache_dir / f"{split_name}_gpu{gpu_id}.pkl"
+            chunk_paths.append(chunk_path)
+            p = ctx.Process(
+                target=_premmr_worker,
+                args=(gpu_id, run_summary, data_cfg, split_name, chunk_path),
+            )
+            p.start()
+            workers.append(p)
+        for p in workers:
+            p.join()
+            if p.exitcode != 0:
+                raise RuntimeError(f"PreMMR worker failed with exit code {p.exitcode}")
+
+        # Merge worker chunks
+        all_results: list[PreMMRSample] = []
+        for chunk_path in chunk_paths:
+            all_results.extend(_load_pickle(chunk_path))
+            chunk_path.unlink()
+        _save_pickle_atomic(cache_path, all_results)
+    else:
+        embedder = TextEmbedder(
+            EmbedderConfig(
+                model_name=run_summary["embedder_model"],
+                device=run_summary.get("device", "cuda"),
+                max_length=run_summary["max_length"],
+                batch_size=run_summary["batch_size"],
+                precision=run_summary["precision"],
+            )
+        )
+        samples = load_split(data_cfg[f"{split_name}_path"])
+        prefetch_size = run_summary["prefetch_size"]
+        results: list[PreMMRSample] = []
+        if prefetch_size > 1:
+            for start in tqdm(range(0, len(samples), prefetch_size),
+                              desc=f"PreMMR [{split_name}]",
+                              unit="batch"):
+                batch = samples[start : start + prefetch_size]
+                results.extend(_compute_pre_mmr_batch(batch, embedder))
+        else:
+            for sample in tqdm(samples, desc=f"PreMMR [{split_name}]"):
+                results.extend(_compute_pre_mmr_batch([sample], embedder))
+        _save_pickle_atomic(cache_path, results)
+
+    return cache_path
+
+
+# ---------------------------------------------------------------------------
+# MMR phase: CPU-only candidate construction from cached embeddings
+# ---------------------------------------------------------------------------
+
+
+def _mmr_phase_from_premmr(
+    pre_samples: list[PreMMRSample],
+    mmr_lambda: float,
+    top_k: int,
+    alpha_dense: float,
+    alpha_lexical: float,
+    alpha_bm25: float,
+    strategy,
+    tokenizer,
+    prompt_cfg: dict[str, Any],
+    output_path: Path,
+    cpu_workers: int = 1,
+) -> None:
+    """From cached PreMMRSamples, run MMR + candidates + training rows, write JSONL."""
+
+    def _process_one(pre: PreMMRSample):
+        sents = [_dict_to_sentence(d) for d in pre.sentences]
+        sent_texts = [d["text"] for d in pre.sentences]
+        if not sents:
+            return {
+                "event_id": pre.event_id,
+                "claim": pre.claim,
+                "label": pre.label,
+                "explain": pre.explain,
+                "candidates": [],
+            }
+        return _process_sample_post_embed(
+            sample=_ClaimProxy(pre),
+            sents=sents,
+            sent_texts=sent_texts,
+            sent_emb=pre.sent_emb,
+            claim_emb=pre.claim_emb,
+            top_k=top_k,
+            alpha_dense=alpha_dense,
+            alpha_lexical=alpha_lexical,
+            alpha_bm25=alpha_bm25,
+            mmr_lambda=mmr_lambda,
+            strategy=strategy,
+        )
+
+    with output_path.open("w", encoding="utf-8") as writer:
+        if cpu_workers > 1:
+            with ThreadPoolExecutor(max_workers=cpu_workers) as pool:
+                for row in pool.map(_process_one, pre_samples):
+                    training_row = _build_training_row(row, tokenizer, prompt_cfg)
+                    writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
+        else:
+            for pre in pre_samples:
+                row = _process_one(pre)
+                training_row = _build_training_row(row, tokenizer, prompt_cfg)
+                writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -634,109 +948,62 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
     split_names = [split] if split else ["train", "val", "test"]
     split_paths: dict[str, Path] = {}
 
-    if num_gpus > 1:
-        # Multi-GPU path: fork workers, no CUDA init in parent.
-        # Each worker loads the split independently and processes its slice,
-        # avoiding pickle serialization overhead for large sample lists.
-        run_summary["cuda_available"] = True  # assumed in multi-GPU mode
-        logger.info("Build run summary: %s", run_summary)
-        ctx = multiprocessing.get_context("fork")
-        for split_name in split_names:
-            output_path = target_dir / f"build_{split_name}.jsonl"
-            chunk_paths: list[Path] = []
-            workers: list[multiprocessing.Process] = []
+    # ---- Phase 1: pre-MMR cache (GPU embedding, shared across mmr_lambda values) ----
+    premmr_fp = _premmr_config_fingerprint(cfg)
+    premmr_cache_dir = Path("outputs/cache/pre_mmr") / premmr_fp
+    logger.info("Pre-MMR cache dir: %s (fp=%s)", premmr_cache_dir, premmr_fp)
 
-            for gpu_id in range(num_gpus):
-                chunk_path = target_dir / f"build_{split_name}_gpu{gpu_id}.jsonl"
-                chunk_paths.append(chunk_path)
-                p = ctx.Process(
-                    target=_build_worker,
-                    args=(gpu_id, run_summary, retrieval_cfg, data_cfg, split_name, chunk_path),
-                )
-                p.start()
-                workers.append(p)
+    premmr_summary = {
+        "embedder_model": run_summary["embedder_model"],
+        "max_length": run_summary["max_length"],
+        "batch_size": run_summary["batch_size"],
+        "precision": run_summary["precision"],
+        "prefetch_size": run_summary["prefetch_size"],
+        "num_gpus": num_gpus,
+        "device": run_summary["device"],
+    }
 
-            for p in workers:
-                p.join()
-                if p.exitcode != 0:
-                    raise RuntimeError(f"Worker GPU {gpu_id} failed with exit code {p.exitcode}")
-
-            # Concatenate chunk files in order
-            with output_path.open("w", encoding="utf-8") as writer:
-                for chunk_path in chunk_paths:
-                    with chunk_path.open("r", encoding="utf-8") as reader:
-                        writer.write(reader.read())
-                    chunk_path.unlink()  # clean up temp file
-
-            split_paths[split_name] = output_path
-            logger.info("Wrote build file: %s", output_path)
-    else:
-        # Single-GPU path
-        run_summary["cuda_available"] = torch.cuda.is_available()
-        logger.info("Build run summary: %s", run_summary)
-
-        embedder = TextEmbedder(
-            EmbedderConfig(
-                model_name=run_summary["embedder_model"],
-                device=run_summary["device"],
-                max_length=run_summary["max_length"],
-                batch_size=run_summary["batch_size"],
-                precision=run_summary["precision"],
-            )
+    pre_mmr_split_paths: dict[str, Path] = {}
+    for split_name in split_names:
+        pre_mmr_split_paths[split_name] = _compute_pre_mmr_split(
+            split_name=split_name,
+            data_cfg=data_cfg,
+            retrieval_cfg=retrieval_cfg,
+            run_summary=premmr_summary,
+            cache_dir=premmr_cache_dir,
+            num_gpus=num_gpus,
         )
 
-        chunking_cfg = retrieval_cfg.get("chunking")
-        chunking_strategy = build_chunking_strategy(chunking_cfg)
-        logger.info("Chunking strategy: %s", type(chunking_strategy).__name__)
-        prefetch_size = run_summary["prefetch_size"]
+    # ---- Phase 2: MMR + candidate construction (CPU-only, fast) ----
+    logger.info("Build run summary: %s", run_summary)
+    tokenizer = _load_prompt_tokenizer(run_summary["prompt_model_name_or_path"])
+    prompt_cfg_local = {
+        "auto_length": run_summary["prompt_auto_length"],
+        "max_length": run_summary["prompt_max_length"],
+        "output_mode": run_summary["prompt_output_mode"],
+        "system_prompt": run_summary.get("prompt_system_prompt"),
+    }
+    chunking_strategy = build_chunking_strategy(retrieval_cfg.get("chunking"), retrieval_cfg)
+    logger.info("Chunking strategy: %s", type(chunking_strategy).__name__)
 
-        # Load prompt tokenizer
-        tokenizer = _load_prompt_tokenizer(run_summary["prompt_model_name_or_path"])
-        prompt_cfg_local = {
-            "auto_length": run_summary["prompt_auto_length"],
-            "max_length": run_summary["prompt_max_length"],
-            "output_mode": run_summary["prompt_output_mode"],
-            "system_prompt": run_summary.get("prompt_system_prompt"),
-        }
-
-        for split_name in split_names:
-            input_path = data_cfg[f"{split_name}_path"]
-            samples = load_split(input_path)
-            output_path = target_dir / f"build_{split_name}.jsonl"
-            with output_path.open("w", encoding="utf-8") as writer:
-                if prefetch_size > 1:
-                    for start in tqdm(range(0, len(samples), prefetch_size), desc=f"Build [{split_name}]"):
-                        chunk = samples[start : start + prefetch_size]
-                        rows = _build_candidates_batch(
-                            samples=chunk,
-                            embedder=embedder,
-                            top_k=run_summary["top_k"],
-                            alpha_dense=run_summary["alpha_dense"],
-                            alpha_lexical=run_summary["alpha_lexical"],
-                            alpha_bm25=run_summary["alpha_bm25"],
-                            mmr_lambda=run_summary["mmr_lambda"],
-                            chunking_strategy=chunking_strategy,
-                            cpu_workers=run_summary["cpu_workers"],
-                        )
-                        for row in rows:
-                            training_row = _build_training_row(row, tokenizer, prompt_cfg_local)
-                            writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
-                else:
-                    for sample in tqdm(samples, desc=f"Build [{split_name}]"):
-                        row = build_candidates_for_sample(
-                            sample=sample,
-                            embedder=embedder,
-                            top_k=run_summary["top_k"],
-                            alpha_dense=run_summary["alpha_dense"],
-                            alpha_lexical=run_summary["alpha_lexical"],
-                            alpha_bm25=run_summary["alpha_bm25"],
-                            mmr_lambda=run_summary["mmr_lambda"],
-                            chunking_strategy=chunking_strategy,
-                        )
-                        training_row = _build_training_row(row, tokenizer, prompt_cfg_local)
-                        writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
-            split_paths[split_name] = output_path
-            logger.info("Wrote build file: %s", output_path)
+    for split_name in split_names:
+        pre_samples = _load_pickle(pre_mmr_split_paths[split_name])
+        output_path = target_dir / f"build_{split_name}.jsonl"
+        _mmr_phase_from_premmr(
+            pre_samples=pre_samples,
+            mmr_lambda=run_summary["mmr_lambda"],
+            top_k=run_summary["top_k"],
+            alpha_dense=run_summary["alpha_dense"],
+            alpha_lexical=run_summary["alpha_lexical"],
+            alpha_bm25=run_summary["alpha_bm25"],
+            strategy=chunking_strategy,
+            tokenizer=tokenizer,
+            prompt_cfg=prompt_cfg_local,
+            output_path=output_path,
+            cpu_workers=run_summary["cpu_workers"],
+        )
+        split_paths[split_name] = output_path
+        logger.info("Wrote build file: %s", output_path)
 
     return BuildResult(output_dir=target_dir, split_paths=split_paths)
 
