@@ -38,9 +38,9 @@ build:
 sft_train:
   max_new_tokens: 8
   temperature: 0.0
-  per_device_train_batch_size: 1
-  per_device_eval_batch_size: 1
-  gradient_accumulation_steps: 8
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 2
   learning_rate: 1.0e-5
   num_train_epochs: 2
   weight_decay: 0.0
@@ -48,8 +48,8 @@ sft_train:
   bf16: true
   max_length: 2048
   logging_steps: 2
-  save_steps: 50
-  eval_steps: 50
+  save_steps: 100
+  eval_steps: 100
   dataloader_num_workers: 4
   gradient_checkpointing: true
   use_flash_attention_2: true
@@ -75,7 +75,7 @@ infer:
   checkpoint: best
   served_model_name: fact-checking-sft
   host: 127.0.0.1
-  port: 8000
+  port: 35001
   wait_seconds: 180
   request_timeout_seconds: 120
   max_new_tokens: 8
