@@ -87,3 +87,11 @@ infer:
   server:
     manage: true
     stop_after_infer: true
+
+tracking:
+  enabled: true
+  backend: swanlab
+
+swanlab:
+  project: fact-checking-build-train-infer
+  experiment_name: b0
