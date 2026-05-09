@@ -18,3 +18,4 @@ class PreparedSample:
     was_truncated: bool = False
     claim: str = ""
     no_evidence: bool = False
+    long_claim: bool = False

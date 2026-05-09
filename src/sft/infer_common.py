@@ -59,6 +59,7 @@ def _load_prebuilt_samples(rows: list[dict]) -> list[PreparedSample]:
             was_truncated=bool(row.get("was_truncated", False)),
             claim=str(row.get("claim", "")),
             no_evidence=int(row.get("evidence_count", 0)) == 0,
+            long_claim=len(str(row.get("claim", "")).split()) > 64,
         ))
     return samples
 
