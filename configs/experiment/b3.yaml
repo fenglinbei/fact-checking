@@ -1,0 +1,20 @@
+# @package _global_
+# b3: 在 b0 baseline 基础上，将 chunking 策略由 sentence 切换为 semantic，
+# 用于评估基于句向量相似度的语义切块对检索证据质量与下游事实核查表现的影响。
+# 其余检索/训练/推理参数与 b0 保持一致，仅替换 chunking 配置以隔离变量。
+defaults:
+  - b0
+  - _self_
+
+experiment:
+  name: b3
+
+baseline:
+  variant: b3
+  chunking_strategy: semantic
+
+build:
+  retrieval:
+    chunking:
+      strategy: semantic
+      theta: 0.7
