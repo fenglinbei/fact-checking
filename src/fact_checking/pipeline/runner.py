@@ -294,10 +294,14 @@ class PipelineRunner:
         self._save_manifest(manifest)
 
     def _run_infer(self, manifest: dict[str, Any]) -> None:
-        from fact_checking.infer.api import run_api_inference
-
         train_dir = self._train_dir()
         infer_cfg = dict(self.cfg.get("infer", {}) or {})
+        infer_kind = str(infer_cfg.get("kind", "generative")).strip().lower()
+        if infer_kind == "classifier":
+            from sft.classifier_infer import run_classifier_inference as run_inference
+        else:
+            from fact_checking.infer.api import run_api_inference as run_inference
+
         split = str(infer_cfg.get("split", "test"))
         checkpoint = str(infer_cfg.get("checkpoint", self.cfg.get("train", {}).get("checkpoint_for_infer", "best")))
         infer_id = fingerprint({"infer": infer_cfg})
@@ -336,7 +340,7 @@ class PipelineRunner:
         )
 
         train_config_path = self.state.run_dir / "configs" / "train.resolved.yaml"
-        artifacts = run_api_inference(
+        artifacts = run_inference(
             run_dir=train_dir,
             checkpoint=checkpoint,
             split=split,
@@ -401,7 +405,10 @@ class PipelineRunner:
 
     def _train_command(self, train_config_path: Path) -> list[str]:
         train_cfg = self.cfg.get("train", {})
+        kind = str(train_cfg.get("kind", "generative")).strip().lower()
         backend = str(train_cfg.get("backend", "accelerate_deepspeed")).strip().lower()
+        if kind == "classifier":
+            return [sys.executable, "-m", "sft.classifier_trainer", "--config", str(train_config_path)]
         if backend == "single":
             return [sys.executable, "-m", "sft.trainer", "--config", str(train_config_path)]
         if backend != "accelerate_deepspeed":
