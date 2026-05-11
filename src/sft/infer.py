@@ -12,6 +12,7 @@ from sft.dataset.datasets import EvalPromptDataset
 from sft.dataset.loaders import build_eval_dataloader
 from sft.eval import evaluate
 from sft.infer_common import build_inference_context, build_serializable_metrics
+from sft.logit_adjust import build_logit_adjust_cfg_from_train_config, load_logit_adjust_cfg
 from sft.runtime.deps import flash_attn2_available
 
 logger = init_logger(__name__)
@@ -86,6 +87,9 @@ def main() -> None:
         max_length=context.max_length,
         padding=str(context.train_cfg.get("padding", "max_length")),
     )
+    logit_adjust_cfg = load_logit_adjust_cfg(context.run_dir)
+    if logit_adjust_cfg is None:
+        logit_adjust_cfg = build_logit_adjust_cfg_from_train_config(context.cfg, context.tokenizer)
 
     model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
     eval_logger = logger if accelerator.is_main_process else None
@@ -102,6 +106,7 @@ def main() -> None:
         ),
         eval_logger=eval_logger,
         log_predictions_limit=int(args.log_predictions),
+        logit_adjust_cfg=logit_adjust_cfg,
     )
 
     accelerator.wait_for_everyone()

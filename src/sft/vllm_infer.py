@@ -7,7 +7,7 @@ from fact_checking.utils.logging import init_logger
 from sft.data.io import save_eval_artifacts
 from sft.eval import summarize_prediction_records
 from sft.infer_common import build_inference_context, build_serializable_metrics
-from sft.logit_adjust import build_logit_adjust_cfg_from_train_config, create_logit_adjust_processor, load_logit_adjust_cfg
+from sft.logit_adjust import build_logit_adjust_cfg_from_train_config, create_label_choice_processor, load_logit_adjust_cfg
 from sft.parser import _parse_label_id
 
 logger = init_logger(__name__)
@@ -81,11 +81,14 @@ def main() -> None:
     if logit_adjust_cfg is None:
         logit_adjust_cfg = build_logit_adjust_cfg_from_train_config(context.cfg, context.tokenizer)
     logits_processors = []
-    if logit_adjust_cfg and logit_adjust_cfg.get("enabled"):
-        logits_processors.append(create_logit_adjust_processor(logit_adjust_cfg))
+    use_label_decoding = bool(logit_adjust_cfg and logit_adjust_cfg.get("enabled"))
+    if use_label_decoding:
+        logits_processors.append(create_label_choice_processor(logit_adjust_cfg))
 
     sampling_params = SamplingParams(
-        max_tokens=int(
+        max_tokens=1
+        if use_label_decoding
+        else int(
             args.max_new_tokens
             if args.max_new_tokens is not None
             else int(context.train_cfg.get("max_new_tokens", context.baseline_cfg.get("max_new_tokens", 24)))
@@ -95,7 +98,7 @@ def main() -> None:
     )
 
     generate_kwargs = {
-        "prompts": [sample.prompt for sample in context.samples],
+        "prompts": [sample.prompt + "Label:" if use_label_decoding else sample.prompt for sample in context.samples],
         "sampling_params": sampling_params,
         "use_tqdm": True,
     }
@@ -105,7 +108,8 @@ def main() -> None:
 
     prediction_records: list[dict[str, object]] = []
     for sample_idx, (sample, output) in enumerate(zip(context.samples, outputs)):
-        raw_output = output.outputs[0].text if output.outputs else ""
+        raw_completion = output.outputs[0].text if output.outputs else ""
+        raw_output = f"Label:{raw_completion}" if use_label_decoding else raw_completion
         pred_id = _parse_label_id(raw_output)
 
         prediction_records.append(
@@ -114,6 +118,7 @@ def main() -> None:
                 "prompt": sample.prompt,
                 "target": sample.target,
                 "raw_output": raw_output,
+                "raw_completion": raw_completion,
                 "pred_id": int(pred_id),
                 "pred_label": _label_name_from_id(int(pred_id)),
                 "gold_id": int(sample.gold_id),

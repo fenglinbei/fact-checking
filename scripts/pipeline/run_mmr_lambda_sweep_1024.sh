@@ -25,5 +25,6 @@ echo "[run_mmr_lambda_sweep_1024] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 
 python -m fact_checking.pipeline.run -m \
     experiment=mmr_lambda_sweep_1024 \
+    "pipeline.mode=${PIPELINE_MODE}" \
     "build.retrieval.mmr_lambda=${MMR_LAMBDAS}" \
     "$@"

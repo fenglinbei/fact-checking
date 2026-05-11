@@ -17,6 +17,11 @@ infer:
   max_model_len: null
   max_new_tokens: null
   temperature: null
+  label_decoding:
+    enabled: true
+    prefix: "Label:"
+    guided_choice: true
+    max_tokens: 1
   server:
     manage: true
     stop_after_infer: true
