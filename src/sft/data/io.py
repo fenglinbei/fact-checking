@@ -17,6 +17,92 @@ from sft.runtime.adapters import checkpoint_has_hf_artifacts, is_peft_model
 
 logger = init_logger(__name__)
 
+_LORA_KEY_MARKERS = (".lora_A.", ".lora_B.", ".lora_embedding_A.", ".lora_embedding_B.")
+
+
+def _is_lora_state_key(key: str) -> bool:
+    return any(marker in key for marker in _LORA_KEY_MARKERS)
+
+
+def _strip_default_adapter_name(key: str) -> str:
+    for marker in ("lora_A", "lora_B", "lora_embedding_A", "lora_embedding_B"):
+        key = key.replace(f".{marker}.default.", f".{marker}.")
+    return key
+
+
+def _normalize_adapter_state_key(key: str) -> str:
+    key = str(key)
+    while key.startswith("_orig_mod."):
+        key = key.removeprefix("_orig_mod.")
+    while key.startswith("module."):
+        key = key.removeprefix("module.")
+    return _strip_default_adapter_name(key)
+
+
+def _adapter_weight_path(output_path: Path) -> Path | None:
+    for name in ("adapter_model.safetensors", "adapter_model.bin"):
+        path = output_path / name
+        if path.exists():
+            return path
+    return None
+
+
+def _count_saved_lora_tensors(path: Path) -> int:
+    if path.suffix == ".safetensors":
+        from safetensors import safe_open
+
+        with safe_open(str(path), framework="pt", device="cpu") as f:
+            return sum(1 for key in f.keys() if _is_lora_state_key(str(key)))
+
+    import torch
+
+    state = torch.load(str(path), map_location="cpu")
+    if isinstance(state, dict) and isinstance(state.get("state_dict"), dict):
+        state = state["state_dict"]
+    if not isinstance(state, dict):
+        return 0
+    return sum(1 for key in state.keys() if _is_lora_state_key(str(key)))
+
+
+def _collect_lora_state_dict(model: AutoModelForCausalLM) -> dict[str, object]:
+    import torch
+
+    state: dict[str, object] = {}
+    for key, tensor in model.state_dict().items():
+        key = _normalize_adapter_state_key(key)
+        if not _is_lora_state_key(key):
+            continue
+        if torch.is_tensor(tensor):
+            state[key] = tensor.detach().cpu().contiguous()
+    return state
+
+
+def _repair_or_validate_peft_adapter(output_path: Path, model: AutoModelForCausalLM) -> None:
+    weight_path = _adapter_weight_path(output_path)
+    if weight_path is not None:
+        lora_count = _count_saved_lora_tensors(weight_path)
+        if lora_count > 0:
+            logger.info("[INFO] saved LoRA adapter contains %d LoRA tensors: %s", lora_count, weight_path)
+            return
+        logger.warning("[WARN] saved adapter has no LoRA tensors; rebuilding adapter weights from model state.")
+
+    fallback_state = _collect_lora_state_dict(model)
+    if not fallback_state:
+        raise RuntimeError(
+            f"Saved PEFT adapter at {output_path} has no LoRA tensors, and no LoRA tensors could be collected "
+            "from the in-memory model. The checkpoint would behave like the base model."
+        )
+
+    import safetensors.torch
+
+    repaired_path = output_path / "adapter_model.safetensors"
+    safetensors.torch.save_file(fallback_state, str(repaired_path), metadata={"format": "pt"})
+    logger.warning(
+        "[WARN] Rewrote %s with %d LoRA tensors collected from the in-memory model.",
+        repaired_path,
+        len(fallback_state),
+    )
+
 
 def _export_zero3_checkpoint_to_hf(
     model: AutoModelForCausalLM,
@@ -82,6 +168,7 @@ def save_model(
             )
             if accelerator.is_main_process:
                 tokenizer.save_pretrained(str(output_path))
+                _repair_or_validate_peft_adapter(output_path, unwrapped)
             accelerator.wait_for_everyone()
             return
 
