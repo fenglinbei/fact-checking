@@ -14,7 +14,7 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from fact_checking.data.constants import LABELS
-from sft.infer_common import build_inference_context
+from sft.logit_adjust import build_logit_bias, build_logit_adjust_cfg_from_train_config, load_logit_adjust_cfg
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
 from sft.parser import _parse_label_id
 from sft.runtime.adapters import checkpoint_has_peft_adapter
@@ -27,18 +27,21 @@ def _label_name_from_id(label_id: int) -> str:
 
 
 class OpenAICompletionsClient:
-    def __init__(self, *, base_url: str, model: str, timeout: float = 120.0) -> None:
+    def __init__(self, *, base_url: str, model: str, timeout: float = 120.0, logit_bias: dict[str, float] | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = float(timeout)
+        self.logit_bias = logit_bias
 
     def generate(self, prompt: str, *, max_tokens: int, temperature: float) -> str:
-        payload = {
+        payload: dict = {
             "model": self.model,
             "prompt": prompt,
             "max_tokens": int(max_tokens),
             "temperature": float(temperature),
         }
+        if self.logit_bias:
+            payload["logit_bias"] = self.logit_bias
         req = urllib.request.Request(
             url=f"{self.base_url}/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -77,11 +80,17 @@ def run_api_inference(
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
 
+    logit_adjust_cfg = load_logit_adjust_cfg(Path(run_dir))
+    if logit_adjust_cfg is None:
+        logit_adjust_cfg = build_logit_adjust_cfg_from_train_config(context.cfg, context.tokenizer)
+    logit_bias = build_logit_bias(logit_adjust_cfg) if logit_adjust_cfg else None
+
     process = _ensure_vllm_server(context=context, infer_cfg=infer_cfg, log_path=log_path / "vllm_server.log")
     try:
         client = OpenAICompletionsClient(
             base_url=_base_url(infer_cfg),
             model=str(infer_cfg.get("served_model_name", "fact-checking-sft")),
+            logit_bias=logit_bias,
             timeout=float(infer_cfg.get("request_timeout_seconds", 120)),
         )
         max_tokens_value = infer_cfg.get("max_new_tokens")
