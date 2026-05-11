@@ -470,6 +470,9 @@ def main() -> None:
     progress_bar = tqdm(total=max_train_steps, disable=not accelerator.is_local_main_process)
     global_step = 0
     best_macro_f1 = float("-inf")
+    patience = int(train_cfg.get("early_stopping_patience", 0))
+    no_improve_count = 0
+    should_stop = False
 
     for epoch in range(num_epochs):
         model.train()
@@ -621,6 +624,17 @@ def main() -> None:
                     if macro_f1 > best_macro_f1:
                         best_macro_f1 = macro_f1
                         save_model(accelerator, model, tokenizer, output_dir / "best")
+                        no_improve_count = 0
+                    elif patience > 0:
+                        no_improve_count += 1
+                        if no_improve_count >= patience:
+                            if accelerator.is_main_process:
+                                logger.info(
+                                    "[early-stop] no val improvement for %d evals, stopping at step=%d",
+                                    patience,
+                                    global_step,
+                                )
+                            should_stop = True
 
                     if empty_cache_on_eval:
                         maybe_empty_cache(accelerator)
@@ -634,10 +648,10 @@ def main() -> None:
                 if empty_cache_steps > 0 and global_step % empty_cache_steps == 0:
                     maybe_empty_cache(accelerator)
 
-                if global_step >= max_train_steps:
+                if global_step >= max_train_steps or should_stop:
                     break
 
-        if global_step >= max_train_steps:
+        if should_stop or global_step >= max_train_steps:
             break
 
     save_model(accelerator, model, tokenizer, output_dir / "final")

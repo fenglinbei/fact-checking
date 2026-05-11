@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -86,7 +87,7 @@ def run_api_inference(
         logit_adjust_cfg = build_logit_adjust_cfg_from_train_config(context.cfg, context.tokenizer)
     logit_bias = build_logit_bias(logit_adjust_cfg) if logit_adjust_cfg else None
 
-    process = _ensure_vllm_server(context=context, infer_cfg=infer_cfg, log_path=log_path / "vllm_server.log")
+    process, merged_model_dir = _ensure_vllm_server(context=context, infer_cfg=infer_cfg, log_path=log_path / "vllm_server.log")
     try:
         client = OpenAICompletionsClient(
             base_url=_base_url(infer_cfg),
@@ -158,6 +159,8 @@ def run_api_inference(
                 process.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 process.kill()
+        if merged_model_dir is not None:
+            shutil.rmtree(str(merged_model_dir), ignore_errors=True)
 
 
 def _base_url(infer_cfg: dict[str, Any]) -> str:
@@ -286,15 +289,51 @@ def _wait_for_server(infer_cfg: dict[str, Any]) -> None:
     raise TimeoutError(f"Timed out waiting for inference server at {_base_url(infer_cfg)}.")
 
 
-def _ensure_vllm_server(*, context, infer_cfg: dict[str, Any], log_path: Path) -> subprocess.Popen | None:
+def _merge_lora_to_tmp(
+    base_model: str,
+    adapter_dir: str | Path,
+    tokenizer_dir: str | Path,
+    dtype: str = "bfloat16",
+) -> Path:
+    import tempfile
+
+    import torch
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    torch_dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}.get(dtype, "auto")
+    model = AutoModelForCausalLM.from_pretrained(base_model, torch_dtype=torch_dtype, trust_remote_code=True)
+    model = PeftModel.from_pretrained(model, adapter_dir)
+    model = model.merge_and_unload()
+    tmp = Path(tempfile.mkdtemp(prefix="merged_lora_"))
+    model.save_pretrained(tmp)
+    del model
+
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_dir, trust_remote_code=True)
+    tokenizer.save_pretrained(tmp)
+    return tmp
+
+
+def _ensure_vllm_server(
+    *, context, infer_cfg: dict[str, Any], log_path: Path
+) -> tuple[subprocess.Popen | None, Path | None]:
     server_cfg = dict(infer_cfg.get("server", {}) or {})
     manage = bool(server_cfg.get("manage", True))
     if _server_ready(infer_cfg):
-        return None
+        return None, None
     if not manage:
         raise RuntimeError(f"Inference server is not reachable at {_base_url(infer_cfg)} and infer.server.manage=false.")
 
-    command = _build_vllm_command(context=context, infer_cfg=infer_cfg)
+    merged_dir: Path | None = None
+    if checkpoint_has_peft_adapter(context.checkpoint_dir):
+        merged_dir = _merge_lora_to_tmp(
+            base_model=context.model_name_or_path,
+            adapter_dir=context.checkpoint_dir,
+            tokenizer_dir=context.checkpoint_dir,
+            dtype=infer_cfg.get("dtype", "bfloat16"),
+        )
+
+    command = _build_vllm_command(context=context, infer_cfg=infer_cfg, merged_model_dir=merged_dir)
     env = os.environ.copy()
     env.setdefault("PYTHONNOUSERSITE", "1")
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -315,14 +354,20 @@ def _ensure_vllm_server(*, context, infer_cfg: dict[str, Any], log_path: Path) -
         except subprocess.TimeoutExpired:
             process.kill()
         raise
-    return process
+    return process, merged_dir
 
 
-def _build_vllm_command(*, context, infer_cfg: dict[str, Any]) -> list[str]:
+def _build_vllm_command(
+    *, context, infer_cfg: dict[str, Any], merged_model_dir: Path | None = None
+) -> list[str]:
     checkpoint_dir = context.checkpoint_dir
     served_model_name = str(infer_cfg.get("served_model_name", "fact-checking-sft"))
-    model_path = str(checkpoint_dir)
-    tokenizer_path = str(checkpoint_dir)
+    if merged_model_dir is not None:
+        model_path = str(merged_model_dir)
+        tokenizer_path = str(merged_model_dir)
+    else:
+        model_path = str(checkpoint_dir)
+        tokenizer_path = str(checkpoint_dir)
     command = [
         sys.executable,
         "-m",
@@ -353,7 +398,7 @@ def _build_vllm_command(*, context, infer_cfg: dict[str, Any]) -> list[str]:
         max_model_len = int(context.max_length) + int(max_new_tokens)
     command.extend(["--max-model-len", str(int(max_model_len))])
 
-    if checkpoint_has_peft_adapter(checkpoint_dir):
+    if merged_model_dir is None and checkpoint_has_peft_adapter(checkpoint_dir):
         model_path = context.model_name_or_path
         tokenizer_path = model_path
         lora_cfg = context.train_cfg.get("lora", {}) or {}
