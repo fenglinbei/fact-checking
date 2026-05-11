@@ -1,0 +1,18 @@
+# @package _global_
+# b4 证据消融实验：仅输入 claim，不拼接检索证据。
+# 用于判断检索证据是否提供了有效的判别信号。
+defaults:
+  - b4
+  - _self_
+
+experiment:
+  name: b4_no_evidence
+
+sft_train:
+  top_k_evidence: 0         # 0 = 仅 claim，无证据
+  loss:
+    kind: ce                # 回退到 CE（CORAL 已证明无效）
+  num_train_epochs: 3       # 与原始 b4 保持一致的训练量，便于公平对比
+
+swanlab:
+  experiment_name: b4_no_evidence

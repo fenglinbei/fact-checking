@@ -25,12 +25,14 @@ class ClassifierDataset(torch.utils.data.Dataset):
         *,
         top_k_evidence: int = 16,
         max_length: int = 2048,
+        label_map: dict[int, int] | None = None,
     ) -> None:
         rows = load_jsonl(jsonl_path)
         self.rows = [row for row in rows if int(row.get("gold_id", -1)) >= 0]
         self.tokenizer = tokenizer
         self.top_k = int(top_k_evidence)
         self.max_length = int(max_length)
+        self.label_map = label_map
         sep = tokenizer.sep_token or tokenizer.eos_token or "\n"
         self.sep = f" {sep} "
 
@@ -59,5 +61,8 @@ class ClassifierDataset(torch.utils.data.Dataset):
             padding=False,
             return_tensors=None,
         )
-        enc["labels"] = int(row["gold_id"])
+        gold_id = int(row["gold_id"])
+        if self.label_map is not None:
+            gold_id = self.label_map[gold_id]
+        enc["labels"] = gold_id
         return enc
