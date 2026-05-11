@@ -1,0 +1,48 @@
+# @package _global_
+# MMR lambda 参数扫描实验 — max_length=1024 版本
+# 与 mmr_lambda_sweep 相同，但将 prompt/train max_length 从 2048 缩小到 1024。
+#
+# 扫描命令（11 个值，步长 0.1）：
+#   PYTHONPATH=src python -m fact_checking.pipeline.run -m \
+#     experiment=mmr_lambda_sweep_1024 \
+#     build.retrieval.mmr_lambda=0.0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0
+#
+# 仅构建阶段验证：
+#   PYTHONPATH=src python -m fact_checking.pipeline.run -m \
+#     experiment=mmr_lambda_sweep_1024 \
+#     build.retrieval.mmr_lambda=0.0,1.0 \
+#     pipeline.mode=build
+
+defaults:
+  - b0
+  - _self_
+
+experiment:
+  name: mmr_lambda_sweep_1024
+
+baseline:
+  variant: mmr_lambda_sweep_1024
+
+build:
+  retrieval:
+    mmr_lambda: 0.50
+  prompt:
+    max_length: 1024
+
+sft_train:
+  max_length: 1024
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    modules_to_save: null

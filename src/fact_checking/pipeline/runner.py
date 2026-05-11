@@ -112,7 +112,7 @@ class PipelineRunner:
             key = ov.split("=", 1)[0].lstrip("+~")
             if key == "experiment":
                 continue
-            keep.append(ov)
+            keep.append(ov.replace("=", "-"))
         return ",".join(keep)
 
     def _build_state(self) -> PipelineState:
