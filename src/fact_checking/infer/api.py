@@ -67,36 +67,26 @@ def run_api_inference(
     eval_dir: str | Path,
     log_dir: str | Path,
 ) -> dict[str, str]:
-    print("[DEBUG api] run_api_inference ENTERED", flush=True)
     provider = str(infer_cfg.get("provider", "vllm_openai")).strip().lower()
-    print(f"[DEBUG api] provider={provider}", flush=True)
     if provider != "vllm_openai":
         raise ValueError("infer.provider currently supports 'vllm_openai'.")
 
-    print("[DEBUG api] calling build_inference_context...", flush=True)
     context = build_inference_context(
         run_dir=run_dir,
         checkpoint=checkpoint,
         split=split,
         config_path=str(config_path),
     )
-    print(f"[DEBUG api] build_inference_context OK, model={context.model_name_or_path}", flush=True)
     eval_path = Path(eval_dir)
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
-    print(f"[DEBUG api] log_path={log_path}", flush=True)
 
-    print("[DEBUG api] loading logit_adjust_cfg...", flush=True)
     logit_adjust_cfg = load_logit_adjust_cfg(Path(run_dir))
-    print(f"[DEBUG api] logit_adjust_cfg is None = {logit_adjust_cfg is None}", flush=True)
     if logit_adjust_cfg is None:
         logit_adjust_cfg = build_logit_adjust_cfg_from_train_config(context.cfg, context.tokenizer)
     logit_bias = build_logit_bias(logit_adjust_cfg) if logit_adjust_cfg else None
-    print(f"[DEBUG api] logit_bias built, keys={list(logit_bias.keys()) if logit_bias else 'None'}", flush=True)
 
-    print("[DEBUG api] calling _ensure_vllm_server...", flush=True)
     process = _ensure_vllm_server(context=context, infer_cfg=infer_cfg, log_path=log_path / "vllm_server.log")
-    print(f"[DEBUG api] _ensure_vllm_server returned, process={process}", flush=True)
     try:
         client = OpenAICompletionsClient(
             base_url=_base_url(infer_cfg),
@@ -357,7 +347,10 @@ def _build_vllm_command(*, context, infer_cfg: dict[str, Any]) -> list[str]:
     ]
     max_model_len = infer_cfg.get("max_model_len")
     if max_model_len is None:
-        max_model_len = context.max_length
+        max_new_tokens = infer_cfg.get("max_new_tokens")
+        if max_new_tokens is None:
+            max_new_tokens = context.baseline_cfg.get("max_new_tokens", 24)
+        max_model_len = int(context.max_length) + int(max_new_tokens)
     command.extend(["--max-model-len", str(int(max_model_len))])
 
     if checkpoint_has_peft_adapter(checkpoint_dir):
