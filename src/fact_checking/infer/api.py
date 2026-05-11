@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -14,7 +15,7 @@ from typing import Any
 import numpy as np
 from tqdm.auto import tqdm
 
-from fact_checking.data.constants import LABELS
+from fact_checking.data.constants import LABELS, LETTER_ORDER
 from sft.infer_common import build_inference_context
 from sft.logit_adjust import build_logit_bias, build_logit_adjust_cfg_from_train_config, load_logit_adjust_cfg
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
@@ -28,6 +29,16 @@ def _label_name_from_id(label_id: int) -> str:
     return "parse_error"
 
 
+_LETTER_LABEL_ONLY_TARGET = re.compile(r"(?is)^\s*label\s*:\s*[A-F]\s*$")
+
+
+def _is_letter_label_only_task(samples: list[Any]) -> bool:
+    if not samples:
+        return False
+    checked = samples[: min(len(samples), 32)]
+    return all(_LETTER_LABEL_ONLY_TARGET.match(str(sample.target)) is not None for sample in checked)
+
+
 class OpenAICompletionsClient:
     def __init__(self, *, base_url: str, model: str, timeout: float = 120.0, logit_bias: dict[str, float] | None = None) -> None:
         self.base_url = base_url.rstrip("/")
@@ -35,7 +46,14 @@ class OpenAICompletionsClient:
         self.timeout = float(timeout)
         self.logit_bias = logit_bias
 
-    def generate(self, prompt: str, *, max_tokens: int, temperature: float) -> str:
+    def generate(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int,
+        temperature: float,
+        extra_body: dict[str, Any] | None = None,
+    ) -> str:
         payload: dict = {
             "model": self.model,
             "prompt": prompt,
@@ -44,6 +62,8 @@ class OpenAICompletionsClient:
         }
         if self.logit_bias:
             payload["logit_bias"] = self.logit_bias
+        if extra_body:
+            payload.update(extra_body)
         req = urllib.request.Request(
             url=f"{self.base_url}/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -103,6 +123,16 @@ def run_api_inference(
             temperature_value = context.baseline_cfg.get("temperature", 0.0)
         max_tokens = int(max_tokens_value)
         temperature = float(temperature_value)
+        label_decoding_cfg = dict(infer_cfg.get("label_decoding", {}) or {})
+        use_label_decoding = bool(label_decoding_cfg.get("enabled", True)) and _is_letter_label_only_task(
+            context.samples
+        )
+        label_prefix = str(label_decoding_cfg.get("prefix", "Label:"))
+        label_choices = [f" {letter}" for letter in LETTER_ORDER]
+        label_extra_body: dict[str, Any] | None = None
+        if use_label_decoding and bool(label_decoding_cfg.get("guided_choice", True)):
+            label_extra_body = {"guided_choice": label_choices}
+        label_max_tokens = int(label_decoding_cfg.get("max_tokens", 1))
 
         prediction_records: list[dict[str, object]] = []
         correct = 0
@@ -115,7 +145,20 @@ def run_api_inference(
             dynamic_ncols=True,
         )
         for sample_idx, sample in enumerate(progress):
-            raw_output = client.generate(sample.prompt, max_tokens=max_tokens, temperature=temperature)
+            request_prompt = sample.prompt
+            request_max_tokens = max_tokens
+            extra_body = None
+            if use_label_decoding:
+                request_prompt = sample.prompt + label_prefix
+                request_max_tokens = label_max_tokens
+                extra_body = label_extra_body
+            raw_completion = client.generate(
+                request_prompt,
+                max_tokens=request_max_tokens,
+                temperature=temperature,
+                extra_body=extra_body,
+            )
+            raw_output = f"{label_prefix}{raw_completion}" if use_label_decoding else raw_completion
             pred_id = _parse_label_id(raw_output)
             if pred_id == int(sample.gold_id):
                 correct += 1
@@ -132,6 +175,7 @@ def run_api_inference(
                     "prompt": sample.prompt,
                     "target": sample.target,
                     "raw_output": raw_output,
+                    "raw_completion": raw_completion,
                     "pred_id": int(pred_id),
                     "pred_label": _label_name_from_id(int(pred_id)),
                     "gold_id": int(sample.gold_id),
@@ -295,19 +339,54 @@ def _merge_lora_to_tmp(
     tokenizer_dir: str | Path,
     dtype: str = "bfloat16",
 ) -> Path:
+    import logging
     import tempfile
 
+    import safetensors.torch
     import torch
-    from peft import PeftModel
+    from peft import LoraConfig, PeftModel, get_peft_model, set_peft_model_state_dict
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    logger = logging.getLogger(__name__)
     torch_dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}.get(dtype, "auto")
     model = AutoModelForCausalLM.from_pretrained(base_model, torch_dtype=torch_dtype, trust_remote_code=True)
-    model = PeftModel.from_pretrained(model, adapter_dir)
-    model = model.merge_and_unload()
+
+    # Load saved adapter weights and config
+    adapter_config = LoraConfig.from_pretrained(adapter_dir)
+    adapter_state = safetensors.torch.load_file(str(adapter_dir / "adapter_model.safetensors"))
+
+    # Build fresh PeftModel with the same adapter config
+    peft_model = get_peft_model(model, adapter_config)
+
+    # Try loading with automatic key mapping (handles DeepSpeed prefix mismatches)
+    expected_keys = set(name for name, _ in peft_model.named_parameters())
+    saved_keys = set(adapter_state.keys())
+
+    # Find common prefix between saved keys and expected keys
+    common_prefix = ""
+    for saved_key in saved_keys:
+        for expected_key in expected_keys:
+            if saved_key.endswith(expected_key):
+                common_prefix = saved_key[: -len(expected_key)]
+                break
+        if common_prefix:
+            break
+
+    if common_prefix:
+        adapter_state = {k.removeprefix(common_prefix): v for k, v in adapter_state.items()}
+        if logger:
+            logger.info("Stripped adapter key prefix %r for %d keys", common_prefix, len(adapter_state))
+
+    missing, unexpected = set_peft_model_state_dict(peft_model, adapter_state)
+    if missing and logger:
+        logger.warning("PeftModel still missing %d adapter keys (e.g. %s)", len(missing), list(missing)[:3])
+    if unexpected and logger:
+        logger.warning("PeftModel has %d unexpected adapter keys (e.g. %s)", len(unexpected), list(unexpected)[:3])
+
+    merged = peft_model.merge_and_unload()
     tmp = Path(tempfile.mkdtemp(prefix="merged_lora_"))
-    model.save_pretrained(tmp)
-    del model
+    merged.save_pretrained(tmp)
+    del merged, peft_model
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_dir, trust_remote_code=True)
     tokenizer.save_pretrained(tmp)
