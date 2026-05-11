@@ -33,6 +33,7 @@ for lam in "${LAMBDAS[@]}"; do
   python -m fact_checking.pipeline.run \
     experiment=mmr_lambda_sweep_1024 \
     pipeline.mode=infer \
+    pipeline.force.infer=true \
     "build.retrieval.mmr_lambda=${lam}" \
     infer.split=test \
     "pipeline.run_dir=${run_dir}"
