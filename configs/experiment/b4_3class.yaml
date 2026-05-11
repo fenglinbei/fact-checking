@@ -1,0 +1,18 @@
+# @package _global_
+# b4 3分类基线实验：将 LIAR 6 类合并为 3 类（false/mixed/true）。
+# 用于验证降低任务难度后模型能否学到有效的判别信号。
+defaults:
+  - b4
+  - _self_
+
+experiment:
+  name: b4_3class
+
+sft_train:
+  loss:
+    kind: ce                # CE（CORAL 已证明无效）
+  num_train_epochs: 3       # 与原始 b4 一致，公平对比
+  label_map: "6to3"         # pants-fire+false→false, barely+half→mixed, mostly+true→true
+
+swanlab:
+  experiment_name: b4_3class

@@ -14,14 +14,15 @@ from transformers import (
 )
 
 from fact_checking.config import load_yaml
-from fact_checking.data.constants import LABELS
+from fact_checking.data.constants import LABELS, LABELS_3CLASS, LABEL_MAP_6TO3
 from sft.classifier_dataset import ClassifierDataset
 from sft.data.io import save_eval_artifacts
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
 
 
-def _label_name(idx: int) -> str:
-    return LABELS[idx] if 0 <= idx < len(LABELS) else "parse_error"
+def _label_name(idx: int, *, labels: list[str] | None = None) -> str:
+    _labels = labels if labels is not None else LABELS
+    return _labels[idx] if 0 <= idx < len(_labels) else "parse_error"
 
 
 def run_classifier_inference(
@@ -38,6 +39,13 @@ def run_classifier_inference(
     sft_train_cfg = train_cfg.get("sft_train", {})
     loss_cfg = sft_train_cfg.get("loss", {})
     loss_kind = str(loss_cfg.get("kind", "ce")).lower()
+    label_map_name = sft_train_cfg.get("label_map")
+    if label_map_name == "6to3":
+        effective_labels: list[str] = list(LABELS_3CLASS)
+        label_map_dict: dict[int, int] | None = dict(LABEL_MAP_6TO3)
+    else:
+        effective_labels = list(LABELS)
+        label_map_dict = None
     data_cfg = train_cfg["data"]
 
     split_key = f"{split}_candidates"
@@ -67,6 +75,7 @@ def run_classifier_inference(
         tokenizer,
         top_k_evidence=int(sft_train_cfg.get("top_k_evidence", 16)),
         max_length=int(sft_train_cfg.get("max_length", 2048)),
+        label_map=label_map_dict,
     )
 
     collator = DataCollatorWithPadding(tokenizer)
@@ -109,9 +118,9 @@ def run_classifier_inference(
                     "sample_idx": sample_idx,
                     "event_id": str(row.get("event_id", "")),
                     "claim": str(row.get("claim", "")),
-                    "gold_label": _label_name(gold_id),
+                    "gold_label": _label_name(gold_id, labels=effective_labels),
                     "gold_id": gold_id,
-                    "pred_label": _label_name(int(pid)),
+                    "pred_label": _label_name(int(pid), labels=effective_labels),
                     "pred_id": int(pid),
                     "probs": probs[local_i].tolist(),
                 }
@@ -122,8 +131,8 @@ def run_classifier_inference(
 
     pred_arr = np.asarray(pred_ids, dtype=np.int64)
     gold_arr = np.asarray(gold_ids, dtype=np.int64)
-    metrics = _compute_classification_metrics(pred_arr, gold_arr)
-    cm, cm_labels = _build_confusion_matrix(pred_arr, gold_arr)
+    metrics = _compute_classification_metrics(pred_arr, gold_arr, labels=effective_labels)
+    cm, cm_labels = _build_confusion_matrix(pred_arr, gold_arr, labels=effective_labels)
     artifacts = save_eval_artifacts(
         eval_dir=eval_path,
         metrics=metrics,

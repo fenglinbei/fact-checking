@@ -30,3 +30,7 @@ LABEL_DEFINITIONS = {
     "mostly-true": "mostly true, with minor missing context or caveats",
     "true": "accurate based on the available evidence",
 }
+
+# 3-class coarsened labels for reduced task difficulty.
+LABELS_3CLASS = ["false", "mixed", "true"]
+LABEL_MAP_6TO3 = {0: 0, 1: 0, 2: 1, 3: 1, 4: 2, 5: 2}
