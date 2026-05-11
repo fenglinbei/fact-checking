@@ -15,7 +15,7 @@ from fact_checking.data.constants import LABELS
 from fact_checking.utils.logging import init_logger
 from sft.data.types import PreparedSample
 from sft.eval import summarize_prediction_records
-from sft.logit_adjust import create_logit_adjust_processor
+from sft.logit_adjust import create_label_choice_processor
 from sft.parser import _parse_label_id
 from sft.runtime.adapters import is_peft_model
 
@@ -373,22 +373,24 @@ class OnlineVLLMEvaluator:
     ) -> dict[str, object]:
         self.sync_weights(model)
         logits_processors = []
-        if self._logit_adjust_cfg and self._logit_adjust_cfg.get("enabled"):
-            logits_processors.append(create_logit_adjust_processor(self._logit_adjust_cfg))
+        use_label_decoding = bool(self._logit_adjust_cfg and self._logit_adjust_cfg.get("enabled"))
+        if use_label_decoding:
+            logits_processors.append(create_label_choice_processor(self._logit_adjust_cfg))
         sampling_params = self._SamplingParams(
-            max_tokens=int(max_new_tokens),
+            max_tokens=1 if use_label_decoding else int(max_new_tokens),
             temperature=self.temperature,
             logits_processors=logits_processors if logits_processors else None,
         )
         outputs = self.llm.generate(
-            prompts=[sample.prompt for sample in self.samples],
+            prompts=[sample.prompt + "Label:" if use_label_decoding else sample.prompt for sample in self.samples],
             sampling_params=sampling_params,
             use_tqdm=self.cfg.use_tqdm,
         )
 
         prediction_records: list[dict[str, object]] = []
         for sample_idx, (sample, output) in enumerate(zip(self.samples, outputs)):
-            raw_output = output.outputs[0].text if output.outputs else ""
+            raw_completion = output.outputs[0].text if output.outputs else ""
+            raw_output = f"Label:{raw_completion}" if use_label_decoding else raw_completion
             pred_id = _parse_label_id(raw_output)
             prediction_records.append(
                 {
@@ -396,6 +398,7 @@ class OnlineVLLMEvaluator:
                     "prompt": sample.prompt,
                     "target": sample.target,
                     "raw_output": raw_output,
+                    "raw_completion": raw_completion,
                     "pred_id": int(pred_id),
                     "pred_label": _label_name_from_id(int(pred_id)),
                     "gold_id": int(sample.gold_id),
