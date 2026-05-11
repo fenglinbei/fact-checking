@@ -376,7 +376,11 @@ def _merge_lora_to_tmp(
             adapter_state = adapter_state["state_dict"]
     saved_lora_keys = _filter_lora_state_keys(adapter_state.keys())
     if not saved_lora_keys:
-        raise RuntimeError(f"No LoRA tensors found in adapter checkpoint: {adapter_path}")
+        sample_keys = sorted(str(key) for key in adapter_state.keys())[:10]
+        raise RuntimeError(
+            f"No LoRA tensors found in adapter checkpoint: {adapter_path}. "
+            f"First saved tensor keys: {sample_keys}"
+        )
 
     peft_model = get_peft_model(model, adapter_config)
     common_prefix = _find_adapter_key_prefix(
