@@ -462,7 +462,7 @@ def main() -> None:
 
     progress_bar = tqdm(total=max_train_steps, disable=not accelerator.is_local_main_process)
     global_step = 0
-    best_val_loss = float("-inf")
+    best_macro_f1 = float("-inf")
 
     for epoch in range(num_epochs):
         model.train()
@@ -611,8 +611,8 @@ def main() -> None:
                             backend=tracking_setup.backend,
                         )
 
-                    if macro_f1 > best_val_loss:
-                        best_val_loss = macro_f1
+                    if macro_f1 > best_macro_f1:
+                        best_macro_f1 = macro_f1
                         save_model(accelerator, model, tokenizer, output_dir / "best")
 
                     if empty_cache_on_eval:
