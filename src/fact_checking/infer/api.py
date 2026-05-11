@@ -14,6 +14,7 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from fact_checking.data.constants import LABELS
+from sft.infer_common import build_inference_context
 from sft.logit_adjust import build_logit_bias, build_logit_adjust_cfg_from_train_config, load_logit_adjust_cfg
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
 from sft.parser import _parse_label_id
