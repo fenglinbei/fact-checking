@@ -31,7 +31,6 @@ build:
 
 sft_train:
   max_length: 1024
-  early_stopping_patience: 3
   lora:
     enabled: true
     r: 16
