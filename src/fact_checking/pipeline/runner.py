@@ -110,7 +110,7 @@ class PipelineRunner:
             if "=" not in ov:
                 continue
             key = ov.split("=", 1)[0].lstrip("+~")
-            if key == "experiment":
+            if key in ("experiment", "pipeline.mode", "pipeline.steps", "pipeline.resume", "pipeline.force.build", "pipeline.force.train", "pipeline.force.infer"):
                 continue
             keep.append(ov.replace("=", "-"))
         return ",".join(keep)
