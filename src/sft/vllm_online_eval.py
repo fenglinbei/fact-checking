@@ -15,6 +15,7 @@ from fact_checking.data.constants import LABELS
 from fact_checking.utils.logging import init_logger
 from sft.data.types import PreparedSample
 from sft.eval import summarize_prediction_records
+from sft.logit_adjust import create_logit_adjust_processor
 from sft.parser import _parse_label_id
 from sft.runtime.adapters import is_peft_model
 
@@ -137,6 +138,7 @@ class OnlineVLLMEvaluator:
         baseline_cfg: dict,
         train_cfg: dict,
         logger: Logger | None = None,
+        logit_adjust_cfg: dict | None = None,
     ) -> None:
         self.cfg = OnlineVLLMEvalConfig.from_train_cfg(train_cfg)
         if self.cfg.backend not in {"direct_load", "load_weights", "cppo"}:
@@ -149,6 +151,7 @@ class OnlineVLLMEvaluator:
         self.logger = logger or module_logger
         self.max_length = int(max_length)
         self._sleeping = False
+        self._logit_adjust_cfg = logit_adjust_cfg
 
         os.environ.setdefault("VLLM_USE_V1", "0")
         try:
@@ -369,9 +372,13 @@ class OnlineVLLMEvaluator:
         log_predictions_limit: int,
     ) -> dict[str, object]:
         self.sync_weights(model)
+        logits_processors = []
+        if self._logit_adjust_cfg and self._logit_adjust_cfg.get("enabled"):
+            logits_processors.append(create_logit_adjust_processor(self._logit_adjust_cfg))
         sampling_params = self._SamplingParams(
             max_tokens=int(max_new_tokens),
             temperature=self.temperature,
+            logits_processors=logits_processors if logits_processors else None,
         )
         outputs = self.llm.generate(
             prompts=[sample.prompt for sample in self.samples],

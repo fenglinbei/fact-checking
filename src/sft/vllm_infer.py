@@ -7,6 +7,7 @@ from fact_checking.utils.logging import init_logger
 from sft.data.io import save_eval_artifacts
 from sft.eval import summarize_prediction_records
 from sft.infer_common import build_inference_context, build_serializable_metrics
+from sft.logit_adjust import build_logit_adjust_cfg_from_train_config, create_logit_adjust_processor, load_logit_adjust_cfg
 from sft.parser import _parse_label_id
 
 logger = init_logger(__name__)
@@ -76,6 +77,13 @@ def main() -> None:
         max_model_len=context.max_length,
         **llm_kwargs,
     )
+    logit_adjust_cfg = load_logit_adjust_cfg(context.run_dir)
+    if logit_adjust_cfg is None:
+        logit_adjust_cfg = build_logit_adjust_cfg_from_train_config(context.cfg, context.tokenizer)
+    logits_processors = []
+    if logit_adjust_cfg and logit_adjust_cfg.get("enabled"):
+        logits_processors.append(create_logit_adjust_processor(logit_adjust_cfg))
+
     sampling_params = SamplingParams(
         max_tokens=int(
             args.max_new_tokens
@@ -83,6 +91,7 @@ def main() -> None:
             else int(context.train_cfg.get("max_new_tokens", context.baseline_cfg.get("max_new_tokens", 24)))
         ),
         temperature=float(context.train_cfg.get("temperature", context.baseline_cfg.get("temperature", 0.0))),
+        logits_processors=logits_processors if logits_processors else None,
     )
 
     generate_kwargs = {

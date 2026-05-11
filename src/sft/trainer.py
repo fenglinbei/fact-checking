@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import traceback
 from pathlib import Path
@@ -419,6 +420,19 @@ def main() -> None:
             max_train_steps,
         )
 
+    logit_adjust_cfg = _build_logit_adjust_cfg(
+        train_cfg=train_cfg,
+        tokenizer=tokenizer,
+        train_samples=train_samples,
+        accelerator=accelerator,
+        logger=logger,
+    )
+
+    if logit_adjust_cfg and accelerator.is_main_process:
+        logit_adjust_path = output_dir / "logit_adjust.json"
+        logit_adjust_path.write_text(json.dumps(logit_adjust_cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.info("[INFO] logit_adjust config saved to %s", logit_adjust_path)
+
     online_vllm_evaluator: OnlineVLLMEvaluator | None = None
     use_online_vllm_eval = online_vllm_eval_enabled(train_cfg)
     if use_online_vllm_eval:
@@ -436,6 +450,7 @@ def main() -> None:
                     baseline_cfg=baseline_cfg,
                     train_cfg=train_cfg,
                     logger=logger,
+                    logit_adjust_cfg=logit_adjust_cfg,
                 )
             except Exception:
                 init_error = traceback.format_exc()
@@ -451,14 +466,6 @@ def main() -> None:
     empty_cache_steps = int(train_cfg.get("empty_cache_steps", 0))
     empty_cache_on_eval = bool(train_cfg.get("empty_cache_on_eval", False))
     empty_cache_on_save = bool(train_cfg.get("empty_cache_on_save", False))
-
-    logit_adjust_cfg = _build_logit_adjust_cfg(
-        train_cfg=train_cfg,
-        tokenizer=tokenizer,
-        train_samples=train_samples,
-        accelerator=accelerator,
-        logger=logger,
-    )
 
     progress_bar = tqdm(total=max_train_steps, disable=not accelerator.is_local_main_process)
     global_step = 0
