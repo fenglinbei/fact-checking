@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -21,6 +22,8 @@ from sft.logit_adjust import build_logit_bias, build_logit_adjust_cfg_from_train
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
 from sft.parser import _parse_label_id
 from sft.runtime.adapters import checkpoint_has_peft_adapter
+
+logger = logging.getLogger(__name__)
 
 
 def _label_name_from_id(label_id: int) -> str:
@@ -133,6 +136,13 @@ def run_api_inference(
         if use_label_decoding and bool(label_decoding_cfg.get("guided_choice", True)):
             label_extra_body = {"guided_choice": label_choices}
         label_max_tokens = int(label_decoding_cfg.get("max_tokens", 1))
+        logger.info(
+            "API inference decoding: label_decoding=%s guided_choice=%s max_tokens=%d logit_bias_tokens=%d",
+            use_label_decoding,
+            bool(label_extra_body),
+            label_max_tokens if use_label_decoding else max_tokens,
+            len(logit_bias or {}),
+        )
 
         prediction_records: list[dict[str, object]] = []
         correct = 0
@@ -339,58 +349,112 @@ def _merge_lora_to_tmp(
     tokenizer_dir: str | Path,
     dtype: str = "bfloat16",
 ) -> Path:
-    import logging
     import tempfile
 
     import safetensors.torch
     import torch
-    from peft import LoraConfig, PeftModel, get_peft_model, set_peft_model_state_dict
+    from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    logger = logging.getLogger(__name__)
+    adapter_dir = Path(adapter_dir)
+    tokenizer_dir = Path(tokenizer_dir)
     torch_dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}.get(dtype, "auto")
     model = AutoModelForCausalLM.from_pretrained(base_model, torch_dtype=torch_dtype, trust_remote_code=True)
 
-    # Load saved adapter weights and config
+    adapter_path = adapter_dir / "adapter_model.safetensors"
+    if not adapter_path.exists():
+        adapter_path = adapter_dir / "adapter_model.bin"
+    if not adapter_path.exists():
+        raise FileNotFoundError(f"LoRA adapter weights not found in {adapter_dir}")
+
     adapter_config = LoraConfig.from_pretrained(adapter_dir)
-    adapter_state = safetensors.torch.load_file(str(adapter_dir / "adapter_model.safetensors"))
+    if adapter_path.suffix == ".safetensors":
+        adapter_state = safetensors.torch.load_file(str(adapter_path))
+    else:
+        adapter_state = torch.load(str(adapter_path), map_location="cpu")
+        if isinstance(adapter_state, dict) and isinstance(adapter_state.get("state_dict"), dict):
+            adapter_state = adapter_state["state_dict"]
+    saved_lora_keys = _filter_lora_state_keys(adapter_state.keys())
+    if not saved_lora_keys:
+        raise RuntimeError(f"No LoRA tensors found in adapter checkpoint: {adapter_path}")
 
-    # Build fresh PeftModel with the same adapter config
     peft_model = get_peft_model(model, adapter_config)
-
-    # Try loading with automatic key mapping (handles DeepSpeed prefix mismatches)
-    expected_keys = set(name for name, _ in peft_model.named_parameters())
-    saved_keys = set(adapter_state.keys())
-
-    # Find common prefix between saved keys and expected keys
-    common_prefix = ""
-    for saved_key in saved_keys:
-        for expected_key in expected_keys:
-            if saved_key.endswith(expected_key):
-                common_prefix = saved_key[: -len(expected_key)]
-                break
-        if common_prefix:
-            break
-
+    common_prefix = _find_adapter_key_prefix(
+        adapter_state.keys(),
+        (name for name, _ in peft_model.named_parameters()),
+    )
     if common_prefix:
         adapter_state = {k.removeprefix(common_prefix): v for k, v in adapter_state.items()}
-        if logger:
-            logger.info("Stripped adapter key prefix %r for %d keys", common_prefix, len(adapter_state))
+        saved_lora_keys = _filter_lora_state_keys(adapter_state.keys())
+        logger.info("Stripped adapter key prefix %r for %d tensors", common_prefix, len(adapter_state))
 
-    missing, unexpected = set_peft_model_state_dict(peft_model, adapter_state)
-    if missing and logger:
-        logger.warning("PeftModel still missing %d adapter keys (e.g. %s)", len(missing), list(missing)[:3])
-    if unexpected and logger:
-        logger.warning("PeftModel has %d unexpected adapter keys (e.g. %s)", len(unexpected), list(unexpected)[:3])
+    load_result = set_peft_model_state_dict(peft_model, adapter_state)
+    missing, unexpected = _unpack_incompatible_keys(load_result)
+    missing_lora = _filter_lora_state_keys(missing)
+    unexpected_lora = _filter_lora_state_keys(unexpected)
+    model_lora_keys = _filter_lora_state_keys(name for name, _ in peft_model.named_parameters())
+    logger.info(
+        "LoRA adapter load check: checkpoint_lora_tensors=%d model_lora_tensors=%d "
+        "missing_lora=%d unexpected_lora=%d non_lora_missing=%d",
+        len(saved_lora_keys),
+        len(model_lora_keys),
+        len(missing_lora),
+        len(unexpected_lora),
+        len(missing) - len(missing_lora),
+    )
+    if missing_lora or unexpected_lora:
+        raise RuntimeError(
+            "Failed to load LoRA adapter tensors: "
+            f"missing_lora={missing_lora[:5]} unexpected_lora={unexpected_lora[:5]}"
+        )
 
     merged = peft_model.merge_and_unload()
     tmp = Path(tempfile.mkdtemp(prefix="merged_lora_"))
     merged.save_pretrained(tmp)
     del merged, peft_model
 
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_dir, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_dir), trust_remote_code=True)
     tokenizer.save_pretrained(tmp)
+    logger.info("Merged LoRA adapter %s into temporary HF model %s", adapter_dir, tmp)
     return tmp
+
+
+def _is_lora_state_key(key: str) -> bool:
+    return any(marker in key for marker in (".lora_A.", ".lora_B.", ".lora_embedding_A.", ".lora_embedding_B."))
+
+
+def _filter_lora_state_keys(keys) -> list[str]:
+    return sorted(str(key) for key in keys if _is_lora_state_key(str(key)))
+
+
+def _find_adapter_key_prefix(saved_keys, expected_keys) -> str:
+    expected: list[str] = []
+    for key in expected_keys:
+        key = str(key)
+        expected.append(key)
+        expected.append(_strip_default_adapter_name(key))
+    for saved_key in sorted(str(key) for key in saved_keys):
+        for expected_key in expected:
+            if saved_key.endswith(expected_key):
+                return saved_key[: -len(expected_key)]
+    return ""
+
+
+def _strip_default_adapter_name(key: str) -> str:
+    for marker in ("lora_A", "lora_B", "lora_embedding_A", "lora_embedding_B"):
+        key = key.replace(f".{marker}.default.", f".{marker}.")
+    return key
+
+
+def _unpack_incompatible_keys(load_result) -> tuple[list[str], list[str]]:
+    if load_result is None:
+        return [], []
+    missing = getattr(load_result, "missing_keys", None)
+    unexpected = getattr(load_result, "unexpected_keys", None)
+    if missing is not None and unexpected is not None:
+        return list(missing), list(unexpected)
+    missing, unexpected = load_result
+    return list(missing), list(unexpected)
 
 
 def _ensure_vllm_server(
