@@ -133,3 +133,29 @@ def create_logit_adjust_processor(logit_adjust_cfg: dict):
     log_priors = logit_adjust_cfg["log_priors"]
     biases = [float(-tau * lp) for lp in log_priors]
     return LabelLogitAdjustProcessor(letter_token_ids, biases)
+
+
+class LabelChoiceLogitsProcessor:
+    """vLLM LogitsProcessor that masks generation to the configured label tokens."""
+
+    def __init__(self, letter_token_ids: list[int], biases: list[float] | None = None) -> None:
+        self._letter_ids = [int(x) for x in letter_token_ids]
+        self._biases = [float(x) for x in (biases or [0.0] * len(self._letter_ids))]
+
+    def __call__(self, token_ids: list[int], logits: torch.Tensor) -> torch.Tensor:
+        del token_ids
+        masked = torch.full_like(logits, torch.finfo(logits.dtype).min)
+        letter_ids = torch.as_tensor(self._letter_ids, dtype=torch.long, device=logits.device)
+        values = logits.index_select(logits.dim() - 1, letter_ids)
+        bias = torch.as_tensor(self._biases, dtype=logits.dtype, device=logits.device)
+        masked.index_copy_(logits.dim() - 1, letter_ids, values + bias)
+        return masked
+
+
+def create_label_choice_processor(logit_adjust_cfg: dict):
+    """Create a processor equivalent to native eval's restricted A-F argmax."""
+    tau = float(logit_adjust_cfg.get("tau", 0.0))
+    letter_token_ids = logit_adjust_cfg["letter_token_ids"]
+    log_priors = logit_adjust_cfg.get("log_priors", [0.0] * len(letter_token_ids))
+    biases = [float(-tau * lp) for lp in log_priors]
+    return LabelChoiceLogitsProcessor(letter_token_ids, biases)

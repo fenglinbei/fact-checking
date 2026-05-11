@@ -12,6 +12,7 @@ _LABEL_PATTERNS = [
 ]
 
 _LETTER_LINE_PATTERN = re.compile(r"(?mi)^\s*label\s*:\s*([A-F])\b")
+_BARE_LETTER_PATTERN = re.compile(r"(?is)^\s*([A-F])\s*$")
 
 
 def _normalize_for_match(text: str) -> str:
@@ -31,7 +32,15 @@ def _parse_label_id(raw_text: str) -> int:
         if label is not None:
             return LABEL2ID[label]
 
-    # 2. Legacy full-name 'Label: <name>' line.
+    # 2. Some constrained decoders return only the selected letter.
+    bare_letter_match = _BARE_LETTER_PATTERN.match(raw_text)
+    if bare_letter_match:
+        letter = bare_letter_match.group(1).upper()
+        label = LETTER2LABEL.get(letter)
+        if label is not None:
+            return LABEL2ID[label]
+
+    # 3. Legacy full-name 'Label: <name>' line.
     label_line_match = re.search(r"(?mi)^\s*label\s*:\s*([^\n\r]+)", raw_text)
     if label_line_match:
         clean = _normalize_for_match(label_line_match.group(1))
@@ -39,7 +48,7 @@ def _parse_label_id(raw_text: str) -> int:
             if re.search(pattern, clean):
                 return LABEL2ID[label]
 
-    # 3. Fallback: scan whole text for any label keyword.
+    # 4. Fallback: scan whole text for any label keyword.
     clean = _normalize_for_match(raw_text)
     for label, pattern in _LABEL_PATTERNS:
         if re.search(pattern, clean):
