@@ -26,5 +26,4 @@ echo "[run_mmr_lambda_sweep] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 python -m fact_checking.pipeline.run -m \
     experiment=mmr_lambda_sweep \
     "build.retrieval.mmr_lambda=${MMR_LAMBDAS}" \
-    sft_train.early_stopping_patience=3 \
     "$@"
