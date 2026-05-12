@@ -8,6 +8,7 @@
 #   PREMMR_CACHE=outputs/cache/pre_mmr/<fingerprint>/train.pkl bash scripts/learned_lambda/run_train_predictor.sh
 #   PREMMR_CACHE_FINGERPRINT=68c6d9f97eee bash scripts/learned_lambda/run_train_predictor.sh
 #   EPOCHS=100 BATCH_SIZE=128 PROGRESS=false bash scripts/learned_lambda/run_train_predictor.sh
+#   OBJECTIVE=classification OUTPUT_DIR=outputs/learned_lambda_cls bash scripts/learned_lambda/run_train_predictor.sh
 #
 # Extra CLI args are forwarded to train_predictor.py, for example:
 #   bash scripts/learned_lambda/run_train_predictor.sh --lr 5e-4 --patience 20
@@ -32,6 +33,11 @@ WEIGHT_DECAY="${WEIGHT_DECAY:-1e-4}"
 BATCH_SIZE="${BATCH_SIZE:-256}"
 PATIENCE="${PATIENCE:-30}"
 VAL_FRACTION="${VAL_FRACTION:-0.2}"
+OBJECTIVE="${OBJECTIVE:-regression}"
+REGRESSION_LOSS="${REGRESSION_LOSS:-mse}"
+HUBER_DELTA="${HUBER_DELTA:-0.1}"
+LAMBDA_GRID="${LAMBDA_GRID:-auto}"
+SOFTMAX_TEMPERATURE="${SOFTMAX_TEMPERATURE:-1.0}"
 ALPHA_DENSE="${ALPHA_DENSE:-0.70}"
 ALPHA_LEXICAL="${ALPHA_LEXICAL:-0.20}"
 ALPHA_BM25="${ALPHA_BM25:-0.10}"
@@ -84,6 +90,11 @@ echo "[run_train_predictor] weight_decay=${WEIGHT_DECAY}"
 echo "[run_train_predictor] batch_size=${BATCH_SIZE}"
 echo "[run_train_predictor] patience=${PATIENCE}"
 echo "[run_train_predictor] val_fraction=${VAL_FRACTION}"
+echo "[run_train_predictor] objective=${OBJECTIVE}"
+echo "[run_train_predictor] regression_loss=${REGRESSION_LOSS}"
+echo "[run_train_predictor] huber_delta=${HUBER_DELTA}"
+echo "[run_train_predictor] lambda_grid=${LAMBDA_GRID}"
+echo "[run_train_predictor] softmax_temperature=${SOFTMAX_TEMPERATURE}"
 echo "[run_train_predictor] alpha_dense=${ALPHA_DENSE}"
 echo "[run_train_predictor] alpha_lexical=${ALPHA_LEXICAL}"
 echo "[run_train_predictor] alpha_bm25=${ALPHA_BM25}"
@@ -103,6 +114,11 @@ cmd=(
   --batch-size "${BATCH_SIZE}"
   --patience "${PATIENCE}"
   --val-fraction "${VAL_FRACTION}"
+  --objective "${OBJECTIVE}"
+  --regression-loss "${REGRESSION_LOSS}"
+  --huber-delta "${HUBER_DELTA}"
+  --lambda-grid "${LAMBDA_GRID}"
+  --softmax-temperature "${SOFTMAX_TEMPERATURE}"
   --alpha-dense "${ALPHA_DENSE}"
   --alpha-lexical "${ALPHA_LEXICAL}"
   --alpha-bm25 "${ALPHA_BM25}"
