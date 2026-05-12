@@ -8,9 +8,9 @@
 
 给定一条 claim `c` 和一个 report/chunk 候选集合 `C = {d_1, ..., d_N}`，目标是选择一个 evidence set：
 
-\[
+$$
 S_K = \{d_1^*, ..., d_K^*\}
-\]
+$$
 
 使其对事实核查 verifier 的最终判断最有用，而不仅仅是单文档相关性最高。
 
@@ -79,32 +79,26 @@ claim c
 
 基础 MMR：
 
-\[
+$$
 d_t = \arg\max_{d \in C \setminus S_{t-1}}
 \left[
-\lambda \cdot Rel(c,d)
--
+\lambda \cdot Rel(c,d) -
 (1-\lambda) \cdot Red(d,S_{t-1})
 \right]
-\]
+$$
 
 常用冗余项：
 
-\[
+$$
 Red(d,S_{t-1}) = \max_{s \in S_{t-1}} Sim(d,s)
-\]
+$$
 
 可扩展为 fact-checking-aware 版本：
 
-\[
-Score(d_t) =
-\lambda_t Rel(c,d)
--
-(1-\lambda_t) Red(d,S_{t-1})
-+ \alpha Cov(d,S_{t-1},c)
-+ \beta SrcNovelty(d,S_{t-1})
-+ \gamma StanceNovelty(d,S_{t-1})
-\]
+$$
+Score(d_t) = \lambda_t Rel(c,d) -
+(1-\lambda_t) Red(d,S_{t-1}) + \alpha Cov(d,S_{t-1},c) + \beta SrcNovelty(d,S_{t-1}) + \gamma StanceNovelty(d,S_{t-1})
+$$
 
 ---
 
@@ -122,9 +116,9 @@ C_N(c) -> reranker score Rel_rerank(c,d) -> top-K evidence
 
 输出：
 
-\[
+$$
 S_K = TopK_{d \in C_N(c)} Rel_{rerank}(c,d)
-\]
+$$
 
 说明：该系统不显式建模 diversity、coverage 或 redundancy。
 
@@ -142,18 +136,16 @@ C_N(c) -> base relevance score -> fixed-λ MMR -> S_K
 
 公式：
 
-\[
+$$
 \lambda = \lambda_0
-\]
+$$
 
-\[
-d_t = \arg\max_d
-\left[
-\lambda_0 Rel_{base}(c,d)
--
+$$
+d_t = \arg\max_d \left[
+\lambda_0 Rel_{base}(c,d) -
 (1-\lambda_0) Red(d,S_{t-1})
 \right]
-\]
+$$
 
 说明：`λ_0` 通过 dev set 选择；所有 claims 共享同一个 λ。
 
@@ -171,18 +163,16 @@ C_N(c) -> feature extractor -> λ_hat(c,C) -> MMR -> S_K
 
 公式：
 
-\[
+$$
 \hat{\lambda}(c,C) = \sigma(g_\theta(F_c, F_C, F_{c,C}))
-\]
+$$
 
-\[
-d_t = \arg\max_d
-\left[
-\hat{\lambda}(c,C) Rel_{base}(c,d)
--
+$$
+d_t = \arg\max_d \left[
+\hat{\lambda}(c,C) Rel_{base}(c,d) -
 (1-\hat{\lambda}(c,C)) Red(d,S_{t-1})
 \right]
-\]
+$$
 
 训练思想：
 
@@ -192,9 +182,9 @@ d_t = \arg\max_d
 
 Oracle λ：
 
-\[
+$$
 \lambda^*(c) = \arg\max_{\lambda \in \Lambda} Metric(S_K(c,\lambda), E^*, y^*)
-\]
+$$
 
 ---
 
@@ -212,45 +202,39 @@ C_N(c) -> policy πθ -> λ or λ_t -> MMR -> S_K -> reward/preference update
 
 #### A. Single-step λ policy
 
-\[
+$$
 \lambda \sim \pi_\theta(\lambda | c,C)
-\]
+$$
 
 然后运行 MMR 得到 `S_K`。
 
 #### B. Step-wise λ policy
 
-\[
+$$
 \lambda_t \sim \pi_\theta(\lambda | c,C,S_{t-1},t)
-\]
+$$
 
 每一步重新决定 relevance-diversity trade-off。
 
 Reward 思想：
 
-\[
-R =
-w_1 R_{evidence}
-+ w_2 R_{verdict}
-+ w_3 R_{coverage}
-+ w_4 R_{diversity}
-- w_5 R_{redundancy}
-- w_6 R_{cost}
-\]
+$$
+R = w_1 R_{evidence} + w_2 R_{verdict} + w_3 R_{coverage} + w_4 R_{diversity} - w_5 R_{redundancy} - w_6 R_{cost}
+$$
 
 DPO preference 思想：
 
-\[
+$$
 S^+ \succ S^-
-\]
+$$
 
 其中 `S+` 是 reward 更高的 evidence set，`S-` 是 reward 更低的 evidence set。
 
 GRPO 思想：同一 claim 采样多条 trajectories，使用组内相对 reward 作为 advantage。
 
-\[
+$$
 A_i = \frac{R_i - mean(R_1,...,R_G)}{std(R_1,...,R_G)}
-\]
+$$
 
 ---
 
@@ -266,18 +250,17 @@ C_N(c) -> reranker Rel_rerank(c,d) -> λ_hat(c,C) -> MMR -> S_K
 
 公式：
 
-\[
+$$
 \hat{\lambda}(c,C) = \sigma(g_\theta(F_c, F_C, F_{c,C}))
-\]
+$$
 
-\[
+$$
 d_t = \arg\max_d
 \left[
-\hat{\lambda}(c,C) Rel_{rerank}(c,d)
--
+\hat{\lambda}(c,C) Rel_{rerank}(c,d) -
 (1-\hat{\lambda}(c,C)) Red(d,S_{t-1})
 \right]
-\]
+$$
 
 说明：该系统用于验证“reranker 提供更强 relevance，learned-λ MMR 提供 set-level selection”的组合价值。
 
@@ -301,19 +284,17 @@ C_N(c)
 
 公式：
 
-\[
+$$
 \lambda_t \sim \pi_\theta(\lambda | c,C,S_{t-1},Rel_{rerank},M_C)
-\]
+$$
 
-\[
+$$
 d_t = \arg\max_d
 \left[
-\lambda_t Rel_{rerank}(c,d)
--
-(1-\lambda_t) Red(d,S_{t-1})
-+ \alpha Cov(d,S_{t-1},c)
+\lambda_t Rel_{rerank}(c,d) -
+(1-\lambda_t) Red(d,S_{t-1}) + \alpha Cov(d,S_{t-1},c)
 \right]
-\]
+$$
 
 说明：该系统是主要目标系统，预期在复杂 claim、多跳 claim、冲突证据 claim、高冗余候选池上优于 `reranker-only`。
 
@@ -333,13 +314,13 @@ BM25 / dense / hybrid retrieval -> C_N(c)
 
 为 System 3/5/6 提供初始化。
 
-\[
+$$
 \lambda^*(c) = \arg\max_{\lambda \in \Lambda} Utility(S_K(c,\lambda))
-\]
+$$
 
-\[
+$$
 \min_\theta \sum_c \ell(g_\theta(c,C), \lambda^*(c))
-\]
+$$
 
 ### 6.3 Stage 2: preference construction
 
@@ -357,18 +338,16 @@ claim c
 
 用于稳定的离线 preference optimization。
 
-\[
-\mathcal{L}_{DPO}
-=
+$$
+\mathcal{L}_{DPO} =
 -\log \sigma
 \left(
 \beta [
-\log \pi_\theta(S^+|c) - \log \pi_\theta(S^-|c)
--
+\log \pi_\theta(S^+|c) - \log \pi_\theta(S^-|c) -
 \log \pi_{ref}(S^+|c) + \log \pi_{ref}(S^-|c)
 ]
 \right)
-\]
+$$
 
 ### 6.5 Stage 4: GRPO/PPO online refinement
 
@@ -399,15 +378,9 @@ for each claim:
 
 建议主 reward：
 
-\[
-R =
-w_1 EvidenceF1
-+ w_2 VerdictCorrect
-+ w_3 Coverage
-+ w_4 SourceDiversity
-- w_5 Redundancy
-- w_6 Cost
-\]
+$$
+R = w_1 EvidenceF1 + w_2 VerdictCorrect + w_3 Coverage + w_4 SourceDiversity - w_5 Redundancy - w_6 Cost
+$$
 
 对于不同数据集，可替换为 FEVER score、FEVEROUS score、AVeriTeC score 或自定义 joint score。
 
@@ -589,9 +562,9 @@ Evaluator
 
 目标不是证明 MMR 完全替代 reranker，而是证明：
 
-\[
+$$
 reranker + RL\text{-}MMR > reranker\text{-}only
-\]
+$$
 
 在以下方面至少部分成立：
 

@@ -1030,6 +1030,7 @@ def _mmr_phase_from_premmr(
     output_path: Path,
     cpu_workers: int = 1,
     reuse_chunk_embeddings: bool = False,
+    lambda_overrides: dict[str, float] | None = None,
 ) -> None:
     """From cached PreMMRSamples, run MMR + candidates + training rows, write JSONL."""
 
@@ -1044,6 +1045,9 @@ def _mmr_phase_from_premmr(
                 "explain": pre.explain,
                 "candidates": [],
             }
+        effective_lambda = mmr_lambda
+        if lambda_overrides is not None:
+            effective_lambda = lambda_overrides.get(pre.event_id, mmr_lambda)
         return _process_sample_post_embed(
             sample=_ClaimProxy(pre),
             sents=sents,
@@ -1054,7 +1058,7 @@ def _mmr_phase_from_premmr(
             alpha_dense=alpha_dense,
             alpha_lexical=alpha_lexical,
             alpha_bm25=alpha_bm25,
-            mmr_lambda=mmr_lambda,
+            mmr_lambda=effective_lambda,
             strategy=strategy,
             reuse_chunk_embeddings=reuse_chunk_embeddings,
         )
@@ -1155,8 +1159,26 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
     logger.info("Chunking strategy: %s", type(chunking_strategy).__name__)
     logger.info("Reuse pre-MMR embeddings for chunking: %s", reuse_chunk_embeddings)
 
+    # ---- Optional: learned λ predictor ----
+    learned_lambda_cfg = retrieval_cfg.get("learned_lambda", {}) or {}
+    use_learned_lambda = bool(learned_lambda_cfg.get("enabled", False))
+
     for split_name in split_names:
         pre_samples = _load_pickle(pre_mmr_split_paths[split_name])
+
+        lambda_overrides: dict[str, float] | None = None
+        if use_learned_lambda:
+            from fact_checking.learned_lambda.predictor import load_predictor, predict_lambdas_for_samples
+            model_path = str(learned_lambda_cfg["model_path"])
+            stats_path = str(learned_lambda_cfg["feature_stats_path"])
+            predictor, stats = load_predictor(model_path, stats_path)
+            lambda_overrides = predict_lambdas_for_samples(pre_samples, predictor, stats, retrieval_cfg)
+            vals = list(lambda_overrides.values())
+            logger.info(
+                "Learned lambda: %d overrides, mean=%.3f, std=%.3f",
+                len(vals), np.mean(vals), np.std(vals),
+            )
+
         output_path = target_dir / f"build_{split_name}.jsonl"
         _mmr_phase_from_premmr(
             pre_samples=pre_samples,
@@ -1171,6 +1193,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
             output_path=output_path,
             cpu_workers=run_summary["cpu_workers"],
             reuse_chunk_embeddings=reuse_chunk_embeddings,
+            lambda_overrides=lambda_overrides,
         )
         split_paths[split_name] = output_path
         logger.info("Wrote build file: %s", output_path)

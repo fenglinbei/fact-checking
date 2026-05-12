@@ -1,0 +1,54 @@
+# @package _global_
+# System 3: learned-λ MMR (non-RL)
+#
+# 使用训练好的 MLP predictor 为每条 claim 预测 λ，替代全局固定 λ。
+# 需要先运行 scripts/learned_lambda/ 中的脚本生成 predictor.pt。
+#
+# 运行命令：
+#   PYTHONPATH=src python -m fact_checking.pipeline.run \
+#     experiment=learned_lambda_mmr pipeline.mode=full
+
+defaults:
+  - b0
+  - _self_
+
+experiment:
+  name: learned_lambda_mmr
+
+baseline:
+  variant: learned_lambda_mmr
+
+build:
+  retrieval:
+    mmr_lambda: 0.70  # fallback for samples not in predictor
+    learned_lambda:
+      enabled: true
+      model_path: outputs/learned_lambda/predictor.pt
+      feature_stats_path: outputs/learned_lambda/feature_stats.json
+  prompt:
+    max_length: 1024
+
+train:
+  deepspeed_config: configs/deepspeed_zero2_bsz8_ga1.json
+
+sft_train:
+  max_length: 1024
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 1
+  empty_cache_steps: 0
+  early_stopping_patience: 3
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    modules_to_save: null
