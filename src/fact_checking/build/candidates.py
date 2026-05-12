@@ -74,11 +74,12 @@ def minmax_scale(values: np.ndarray) -> np.ndarray:
 
 
 def _premmr_config_fingerprint(cfg: dict[str, Any]) -> str:
-    """Fingerprint build config with mmr_lambda excluded."""
+    """Fingerprint build config with MMR-only settings excluded."""
     from fact_checking.pipeline.artifacts import fingerprint
 
     retrieval = dict(cfg.get("retrieval", {}) or {})
     retrieval.pop("mmr_lambda", None)
+    retrieval.pop("top_k", None)
     payload = {
         **{k: v for k, v in cfg.items() if k != "retrieval"},
         "retrieval": retrieval,
