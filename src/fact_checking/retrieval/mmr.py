@@ -18,7 +18,7 @@ def maximal_marginal_relevance(
         lambda_weight: query relevance vs diversity tradeoff.
     """
     n_items = int(query_scores.shape[0])
-    if n_items == 0:
+    if n_items == 0 or top_k <= 0:
         return []
     if top_k >= n_items:
         return list(np.argsort(-query_scores))

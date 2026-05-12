@@ -1,0 +1,23 @@
+# @package _global_
+# build.retrieval.top_k 参数扫描实验（复用 mmr_lambda=0.7 的已训练模型推理）。
+#
+# 默认搜索脚本:
+#   bash scripts/pipeline/run_mmr_topk_sweep_infer.sh
+#
+# 该实验只重建不同 top_k 的候选与 prompt，再复用 BASE_RUN_DIR/train/best 推理。
+# 如需最终确定训练配置，建议对筛出的 top_k 再跑 full pipeline 重训确认。
+
+defaults:
+  - mmr_lambda_sweep
+  - _self_
+
+experiment:
+  name: mmr_topk_sweep_infer
+
+baseline:
+  variant: mmr_topk_sweep_infer
+
+build:
+  retrieval:
+    mmr_lambda: 0.70
+    top_k: 16  # 文档默认值，实际扫描值由脚本覆盖

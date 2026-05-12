@@ -341,7 +341,13 @@ class PipelineRunner:
             flush=True,
         )
 
-        train_config_path = self.state.run_dir / "configs" / "train.resolved.yaml"
+        infer_config_override = str(infer_cfg.get("config_path", "") or "").strip()
+        if infer_config_override:
+            train_config_path = Path(infer_config_override)
+            if not train_config_path.is_absolute():
+                train_config_path = self.project_root / train_config_path
+        else:
+            train_config_path = self.state.run_dir / "configs" / "train.resolved.yaml"
         artifacts = run_inference(
             run_dir=train_dir,
             checkpoint=checkpoint,

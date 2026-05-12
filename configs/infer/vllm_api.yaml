@@ -1,5 +1,6 @@
 # @package _global_
 infer:
+  config_path: null
   provider: vllm_openai
   split: test
   checkpoint: best
