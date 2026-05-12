@@ -14,12 +14,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import glob
 import re
 from pathlib import Path
 
 import numpy as np
+from tqdm.auto import tqdm
 
 from fact_checking.data.constants import LABEL_LETTERS, LABEL2ID
 
@@ -34,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     p.add_argument("--max-model-len", type=int, default=2048)
     p.add_argument("--default-lambda", type=float, default=0.7, help="Tie-break preference")
+    p.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars")
     return p.parse_args()
 
 
@@ -54,6 +57,7 @@ def _extract_lambda_from_filename(name: str) -> float | None:
 
 def main() -> None:
     args = parse_args()
+    show_progress = not args.no_progress
 
     try:
         from vllm import LLM, SamplingParams
@@ -67,7 +71,13 @@ def main() -> None:
         raise FileNotFoundError(f"No JSONL files matching {pattern} in {prompts_dir}")
 
     lambda_to_rows: dict[float, list[dict]] = {}
-    for fpath in jsonl_files:
+    for fpath in tqdm(
+        jsonl_files,
+        desc="load prompt files",
+        unit="file",
+        dynamic_ncols=True,
+        disable=not show_progress,
+    ):
         lam = _extract_lambda_from_filename(Path(fpath).name)
         if lam is None:
             continue
@@ -84,19 +94,27 @@ def main() -> None:
     # Build flat prompt list with metadata
     all_prompts: list[str] = []
     all_meta: list[dict] = []  # {event_id, gold_label, gold_id, lambda_val, idx_in_lambda}
-    for lam in lambda_grid:
-        for i, row in enumerate(lambda_to_rows[lam]):
-            prompt = row.get("prompt", "")
-            if not prompt:
-                continue
-            all_prompts.append(prompt)
-            all_meta.append({
-                "event_id": row.get("event_id", ""),
-                "gold_label": row.get("gold_label", ""),
-                "gold_id": int(row.get("gold_id", -1)),
-                "lambda_val": lam,
-                "idx": i,
-            })
+    with tqdm(
+        total=total_prompts,
+        desc="build inference batch",
+        unit="prompt",
+        dynamic_ncols=True,
+        disable=not show_progress,
+    ) as build_progress:
+        for lam in lambda_grid:
+            for i, row in enumerate(lambda_to_rows[lam]):
+                prompt = row.get("prompt", "")
+                build_progress.update(1)
+                if not prompt:
+                    continue
+                all_prompts.append(prompt)
+                all_meta.append({
+                    "event_id": row.get("event_id", ""),
+                    "gold_label": row.get("gold_label", ""),
+                    "gold_id": int(row.get("gold_id", -1)),
+                    "lambda_val": lam,
+                    "idx": i,
+                })
 
     print(f"Total prompts to process: {len(all_prompts)}", flush=True)
 
@@ -127,7 +145,11 @@ def main() -> None:
     )
 
     print("Running batch inference...", flush=True)
-    outputs = llm.generate(all_prompts, sampling_params)
+    generate_params = inspect.signature(llm.generate).parameters
+    if "use_tqdm" in generate_params:
+        outputs = llm.generate(all_prompts, sampling_params, use_tqdm=show_progress)
+    else:
+        outputs = llm.generate(all_prompts, sampling_params)
     print(f"Inference complete: {len(outputs)} outputs", flush=True)
 
     # Extract log-probs and compute oracle λ
@@ -135,7 +157,14 @@ def main() -> None:
     event_logprobs: dict[str, dict[float, float]] = {}
     event_gold: dict[str, str] = {}
 
-    for output, meta in zip(outputs, all_meta):
+    for output, meta in tqdm(
+        zip(outputs, all_meta),
+        total=len(all_meta),
+        desc="extract label logprobs",
+        unit="prompt",
+        dynamic_ncols=True,
+        disable=not show_progress,
+    ):
         event_id = meta["event_id"]
         lam = meta["lambda_val"]
         gold_label = meta["gold_label"]
@@ -157,8 +186,15 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     oracle_lambdas: list[float] = []
+    event_ids = sorted(event_logprobs.keys())
     with output_path.open("w") as f:
-        for event_id in sorted(event_logprobs.keys()):
+        for event_id in tqdm(
+            event_ids,
+            desc="write oracle labels",
+            unit="claim",
+            dynamic_ncols=True,
+            disable=not show_progress,
+        ):
             lp_by_lam = event_logprobs[event_id]
             best_lp = max(lp_by_lam.values())
 
