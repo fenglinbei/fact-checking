@@ -1,0 +1,36 @@
+{
+  "gold_labels": [
+    "pants-fire",
+    "false",
+    "barely-true",
+    "half-true",
+    "mostly-true",
+    "true"
+  ],
+  "pred_labels": [
+    "false",
+    "mixed",
+    "true",
+    "parse_error"
+  ],
+  "matrix": [
+    [
+      61,
+      202,
+      111,
+      0
+    ],
+    [
+      41,
+      256,
+      183,
+      0
+    ],
+    [
+      44,
+      158,
+      218,
+      0
+    ]
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "step": 3000,
+  "eval_loss": 0.5121586918830872,
+  "accuracy": 0.20957613814756673,
+  "macro_precision": 0.11247019932112008,
+  "macro_recall": 0.183350187284574,
+  "macro_f1": 0.12168476649611264,
+  "parse_error_rate": 0.0,
+  "per_class": {
+    "pants-fire": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "false": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "barely-true": {
+      "precision": 0.17587939698492416,
+      "recall": 0.2966101694915242,
+      "f1": 0.2208201892739799
+    },
+    "half-true": {
+      "precision": 0.2156084656084653,
+      "recall": 0.6680327868852431,
+      "f1": 0.3259999999996304
+    },
+    "mostly-true": {
+      "precision": 0.283333333333331,
+      "recall": 0.13545816733067675,
+      "f1": 0.18328840970306545
+    },
+    "true": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    }
+  }
+}
