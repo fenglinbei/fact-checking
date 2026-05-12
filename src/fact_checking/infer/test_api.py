@@ -7,6 +7,7 @@ from fact_checking.infer.api import (
     _cleanup_vllm_server,
     _merged_lora_cache_complete,
     _merged_lora_cache_key,
+    _merge_lora_to_cache,
 )
 
 
@@ -48,6 +49,31 @@ def test_merged_lora_cache_complete_requires_model_and_tokenizer(tmp_path: Path)
     (cache_dir / "tokenizer_config.json").write_text("{}", encoding="utf-8")
 
     assert _merged_lora_cache_complete(cache_dir)
+
+
+def test_merge_lora_to_cache_creates_persistent_cache(tmp_path: Path, monkeypatch) -> None:
+    adapter_dir = tmp_path / "adapter"
+    _write_adapter_files(adapter_dir)
+
+    def fake_merge_lora_to_dir(*, output_dir: Path, **_kwargs):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "config.json").write_text("{}", encoding="utf-8")
+        (output_dir / "model.safetensors").write_bytes(b"model")
+        (output_dir / "tokenizer_config.json").write_text("{}", encoding="utf-8")
+        return output_dir
+
+    monkeypatch.setattr("fact_checking.infer.api._merge_lora_to_dir", fake_merge_lora_to_dir)
+
+    result = _merge_lora_to_cache(
+        base_model="/models/base",
+        adapter_dir=adapter_dir,
+        tokenizer_dir=adapter_dir,
+        dtype="auto",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert _merged_lora_cache_complete(result)
+    assert (result / "merge_cache.json").exists()
 
 
 def test_cleanup_does_not_delete_persistent_merged_cache(tmp_path: Path) -> None:
