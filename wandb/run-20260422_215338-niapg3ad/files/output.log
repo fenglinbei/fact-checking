@@ -1,0 +1,273 @@
+2026-04-22 21:54:03 | INFO | sft.train_loop | train_loop.py:184 | [PROMPT_STATS] split=train mode=explanation_label strategy=tail_evidence pre_mean=515.52 pre_p95=737 pre_overflow=0 post_mean=515.52 post_p95=737 post_overflow=0 truncated=0 trunc_rate=0.0000
+2026-04-22 21:54:03 | INFO | sft.train_loop | train_loop.py:184 | [PROMPT_STATS] split=val mode=explanation_label strategy=tail_evidence pre_mean=521.21 pre_p95=742 pre_overflow=0 post_mean=521.21 post_p95=742 post_overflow=0 truncated=0 trunc_rate=0.0000
+2026-04-22 21:54:03 | INFO | sft.train_loop | train_loop.py:914 | [INFO] prompt statistics saved to outputs/liar-raw/llm_baseline/b0.2_20260422-215333/prompt_stats/prompt_stats.json
+2026-04-22 21:54:31 | INFO | sft.train_loop | train_loop.py:1017 | [INFO] dataloader length around accelerator.prepare: before=10065, after=2516
+2026-04-22 21:54:31 | WARNING | sft.train_loop | train_loop.py:1019 | [WARN] len(train_dl) changed after accelerator.prepare: before=10065, after=2516. This may indicate duplicated sharding/re-partitioning across distributed samplers.
+2026-04-22 21:54:31 | INFO | sft.train_loop | train_loop.py:1031 | [INFO] train progress setup (post-prepare): num_epochs=2, len(train_dl)=2516, effective_grad_accum_steps=8, update_steps_per_epoch=315, max_train_steps=630
+  0%|▍                                                                                                                                                                                                                                                       | 1/630 [00:40<7:08:29, 40.87s/it]Traceback (most recent call last):
+[2026-04-22 21:55:12,540] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+  File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 110, in <module>
+    main()
+  File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 66, in main
+    train_loop.main()
+  File "/data/liaozijie/fact-checking/src/sft/train_loop.py", line 1050, in main
+    outputs = model(**batch)
+              ^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+    ret_val = func(*args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 2358, in forward
+    loss = self.module(*inputs, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+    return inner()
+           ^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+    result = forward_call(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/utils/generic.py", line 876, in wrapper
+    output = func(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 462, in forward
+    outputs: BaseModelOutputWithPast = self.model(
+                                       ^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+    return inner()
+           ^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+    result = forward_call(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/utils/generic.py", line 952, in wrapper
+    output = func(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/utils/output_capturing.py", line 248, in wrapper
+    outputs = func(self, *args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 399, in forward
+    hidden_states = decoder_layer(
+                    ^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/modeling_layers.py", line 92, in __call__
+    return self._gradient_checkpointing_func(partial(super().__call__, **kwargs), *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/_compile.py", line 32, in inner
+    return disable_fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/_dynamo/eval_frame.py", line 745, in _fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/utils/checkpoint.py", line 496, in checkpoint
+    ret = function(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+    return inner()
+           ^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+    result = forward_call(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 293, in forward
+    hidden_states, _ = self.self_attn(
+                       ^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+    return inner()
+           ^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+    result = forward_call(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 217, in forward
+    query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+    return inner()
+           ^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1782, in inner
+    args_result = hook(self, args)
+                  ^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/_dynamo/eval_frame.py", line 745, in _fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/parameter_offload.py", line 300, in _pre_forward_module_hook
+    self.pre_sub_module_forward_function(module)
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/parameter_offload.py", line 475, in pre_sub_module_forward_function
+    param_coordinator.fetch_sub_module(sub_module, forward=True)
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/_dynamo/eval_frame.py", line 745, in _fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+    ret_val = func(*args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/partitioned_param_coordinator.py", line 325, in fetch_sub_module
+    self._fetch_sub_module_impl(current_submodule, forward, is_leaf)
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/partitioned_param_coordinator.py", line 382, in _fetch_sub_module_impl
+    self.__inflight_param_registry.pop(param).wait(handle_dependency=not fast_fetch)
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/partition_parameters.py", line 792, in wait
+    handle.wait(handle_dependency)
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+    ret_val = func(*args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/partition_parameters.py", line 767, in wait
+    param.data = instrument_w_nvtx(torch.cat)(partitions).view(param.ds_shape).to(param.ds_tensor.dtype)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+    ret_val = func(*args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 110, in <module>
+[rank0]:     main()
+[rank0]:   File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 66, in main
+[rank0]:     train_loop.main()
+[rank0]:   File "/data/liaozijie/fact-checking/src/sft/train_loop.py", line 1050, in main
+[rank0]:     outputs = model(**batch)
+[rank0]:               ^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1750, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank0]:     ret_val = func(*args, **kwargs)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 2358, in forward
+[rank0]:     loss = self.module(*inputs, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+[rank0]:     return inner()
+[rank0]:            ^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+[rank0]:     result = forward_call(*args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/utils/generic.py", line 876, in wrapper
+[rank0]:     output = func(self, *args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 462, in forward
+[rank0]:     outputs: BaseModelOutputWithPast = self.model(
+[rank0]:                                        ^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+[rank0]:     return inner()
+[rank0]:            ^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+[rank0]:     result = forward_call(*args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/utils/generic.py", line 952, in wrapper
+[rank0]:     output = func(self, *args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/utils/output_capturing.py", line 248, in wrapper
+[rank0]:     outputs = func(self, *args, **kwargs)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 399, in forward
+[rank0]:     hidden_states = decoder_layer(
+[rank0]:                     ^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/modeling_layers.py", line 92, in __call__
+[rank0]:     return self._gradient_checkpointing_func(partial(super().__call__, **kwargs), *args)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/_compile.py", line 32, in inner
+[rank0]:     return disable_fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/_dynamo/eval_frame.py", line 745, in _fn
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/utils/checkpoint.py", line 496, in checkpoint
+[rank0]:     ret = function(*args, **kwargs)
+[rank0]:           ^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+[rank0]:     return inner()
+[rank0]:            ^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+[rank0]:     result = forward_call(*args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 293, in forward
+[rank0]:     hidden_states, _ = self.self_attn(
+[rank0]:                        ^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+[rank0]:     return inner()
+[rank0]:            ^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+[rank0]:     result = forward_call(*args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 217, in forward
+[rank0]:     query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+[rank0]:                    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+[rank0]:     return inner()
+[rank0]:            ^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1782, in inner
+[rank0]:     args_result = hook(self, args)
+[rank0]:                   ^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/_dynamo/eval_frame.py", line 745, in _fn
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/parameter_offload.py", line 300, in _pre_forward_module_hook
+[rank0]:     self.pre_sub_module_forward_function(module)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+[rank0]:     return func(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/parameter_offload.py", line 475, in pre_sub_module_forward_function
+[rank0]:     param_coordinator.fetch_sub_module(sub_module, forward=True)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/_dynamo/eval_frame.py", line 745, in _fn
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank0]:     ret_val = func(*args, **kwargs)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+[rank0]:     return func(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/partitioned_param_coordinator.py", line 325, in fetch_sub_module
+[rank0]:     self._fetch_sub_module_impl(current_submodule, forward, is_leaf)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/partitioned_param_coordinator.py", line 382, in _fetch_sub_module_impl
+[rank0]:     self.__inflight_param_registry.pop(param).wait(handle_dependency=not fast_fetch)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/partition_parameters.py", line 792, in wait
+[rank0]:     handle.wait(handle_dependency)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank0]:     ret_val = func(*args, **kwargs)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/partition_parameters.py", line 767, in wait
+[rank0]:     param.data = instrument_w_nvtx(torch.cat)(partitions).view(param.ds_shape).to(param.ds_tensor.dtype)
+[rank0]:                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank0]:     ret_val = func(*args, **kwargs)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^^^
+[rank0]: KeyboardInterrupt

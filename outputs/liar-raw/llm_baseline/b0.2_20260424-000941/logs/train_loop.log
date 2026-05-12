@@ -1,0 +1,9 @@
+2026-04-24 00:10:34 | INFO | sft.trainer | trainer.py:131 | [INFO] saved resolved config to outputs/liar-raw/llm_baseline/b0.2_20260424-000941/config.resolved.yaml
+2026-04-24 00:10:50 | INFO | sft.trainer | stats.py:59 | [PROMPT_STATS] split=train version=v2 mode=explanation_label strategy=tail_evidence pre_mean=632.52 pre_p95=854 pre_overflow=18 post_mean=631.13 post_p95=852 post_overflow=0 truncated=36 trunc_rate=0.0036
+2026-04-24 00:10:50 | INFO | sft.trainer | stats.py:59 | [PROMPT_STATS] split=val version=v2 mode=explanation_label strategy=tail_evidence pre_mean=638.21 pre_p95=859 pre_overflow=1 post_mean=637.57 post_p95=855 post_overflow=0 truncated=4 trunc_rate=0.0031
+2026-04-24 00:10:50 | INFO | sft.trainer | trainer.py:218 | [INFO] prompt statistics saved to outputs/liar-raw/llm_baseline/b0.2_20260424-000941/prompt_stats/prompt_stats.json
+2026-04-24 00:10:52 | INFO | sft.trainer | adapters.py:97 | [INFO] LoRA enabled: trainable parameters=40370176 / 7655986688 (0.5273%), r=16, alpha=32
+2026-04-24 00:11:13 | INFO | sft.trainer | trainer.py:308 | [INFO] Optimizer will update LoRA/trainable parameters only.
+2026-04-24 00:12:27 | INFO | sft.trainer | trainer.py:339 | [INFO] dataloader length around accelerator.prepare: before=10065, after=3355
+2026-04-24 00:12:27 | WARNING | sft.trainer | trainer.py:345 | [WARN] len(train_dl) changed after accelerator.prepare: before=10065, after=3355. This may indicate duplicated sharding/re-partitioning across distributed samplers.
+2026-04-24 00:12:27 | INFO | sft.trainer | trainer.py:362 | [INFO] train progress setup (post-prepare): num_epochs=2, len(train_dl)=3355, effective_grad_accum_steps=8, update_steps_per_epoch=420, max_train_steps=840

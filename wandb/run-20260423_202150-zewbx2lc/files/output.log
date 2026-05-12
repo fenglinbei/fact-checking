@@ -1,0 +1,10 @@
+2026-04-23 20:21:57 | INFO | sft.trainer | trainer.py:128 | [INFO] saved resolved config to outputs/liar-raw/llm_baseline/b0.2_20260423-202108/config.resolved.yaml
+2026-04-23 20:22:13 | INFO | sft.trainer | stats.py:59 | [PROMPT_STATS] split=train version=v2 mode=explanation_label strategy=tail_evidence pre_mean=632.52 pre_p95=854 pre_overflow=0 post_mean=632.51 post_p95=854 post_overflow=0 truncated=1 trunc_rate=0.0001
+2026-04-23 20:22:13 | INFO | sft.trainer | stats.py:59 | [PROMPT_STATS] split=val version=v2 mode=explanation_label strategy=tail_evidence pre_mean=638.21 pre_p95=859 pre_overflow=0 post_mean=638.21 post_p95=859 post_overflow=0 truncated=0 trunc_rate=0.0000
+2026-04-23 20:22:13 | INFO | sft.trainer | trainer.py:215 | [INFO] prompt statistics saved to outputs/liar-raw/llm_baseline/b0.2_20260423-202108/prompt_stats/prompt_stats.json
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 339/339 [00:00<00:00, 8585.23it/s]
+2026-04-23 20:22:53 | INFO | sft.trainer | trainer.py:322 | [INFO] dataloader length around accelerator.prepare: before=10065, after=2516
+2026-04-23 20:22:53 | WARNING | sft.trainer | trainer.py:328 | [WARN] len(train_dl) changed after accelerator.prepare: before=10065, after=2516. This may indicate duplicated sharding/re-partitioning across distributed samplers.
+2026-04-23 20:22:53 | INFO | sft.trainer | trainer.py:345 | [INFO] train progress setup (post-prepare): num_epochs=2, len(train_dl)=2516, effective_grad_accum_steps=8, update_steps_per_epoch=315, max_train_steps=630
+  0%|▍                                                                                                                                                                                                                                                       | 1/630 [00:31<5:25:50, 31.08s/it]

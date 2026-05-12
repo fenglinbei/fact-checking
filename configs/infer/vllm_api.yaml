@@ -17,6 +17,10 @@ infer:
   max_model_len: null
   max_new_tokens: null
   temperature: null
+  top_p: 1.0
+  presence_penalty: 0.0
+  frequency_penalty: 0.0
+  repetition_penalty: 1.0
   label_decoding:
     enabled: true
     prefix: "Label:"

@@ -1,0 +1,19 @@
+$ accelerate launch --num_processes=4 --num_machines=1 --mixed_precision=bf16 --use_deepspeed --deepspeed_config_file /data/liaozijie/fact-checking/configs/deepspeed_zero2.json -m sft.trainer --config /data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep/build.retrieval.mmr_lambda-0.5__149a6c8c/configs/train.resolved.yaml
+
+The following values were not passed to `accelerate launch` and had defaults used instead:
+		More than one GPU was found, enabling multi-GPU training.
+		If this was unintended please pass in `--num_processes=1`.
+	`--dynamo_backend` was set to a value of `'no'`
+To avoid this warning pass in values for each of the problematic parameters or run `accelerate config`.
+W0512 01:11:27.951000 1059998 site-packages/torch/distributed/run.py:792] 
+W0512 01:11:27.951000 1059998 site-packages/torch/distributed/run.py:792] *****************************************
+W0512 01:11:27.951000 1059998 site-packages/torch/distributed/run.py:792] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0512 01:11:27.951000 1059998 site-packages/torch/distributed/run.py:792] *****************************************
+[RANK 0] Detected kernel version 4.18.0, which is below the recommended minimum of 5.5.0; this can cause the process to hang. It is recommended to upgrade the kernel to the minimum version or higher.
+swanlab: swanlab version 0.7.17 is available!  Upgrade: `pip install -U swanlab`
+swanlab: Tracking run with swanlab version 0.7.16
+swanlab: Run data will be saved locally in /data/liaozijie/fact-checking/swanlog/run-20260512_011140-dr8d7q0y459m7na2ngd8j
+swanlab: 👋 Hi fenglin,welcome to swanlab!
+swanlab: Syncing run mmr_lambda_sweep__build.retrieval.mmr_lambda-0.5 to the cloud
+swanlab: 🏠 View project at https://swanlab.cn/@fenglin/fact-checking-build-train-infer
+swanlab: 🚀 View run at https://swanlab.cn/@fenglin/fact-checking-build-train-infer/runs/dr8d7q0y459m7na2ngd8j

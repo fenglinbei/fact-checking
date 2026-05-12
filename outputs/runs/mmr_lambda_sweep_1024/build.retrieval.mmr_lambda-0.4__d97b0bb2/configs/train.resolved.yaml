@@ -1,0 +1,58 @@
+output_dir: /data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.4__d97b0bb2/train
+data:
+  train_candidates: /data/liaozijie/fact-checking/outputs/cache/build/0cff6f713ad3/build_train.jsonl
+  val_candidates: /data/liaozijie/fact-checking/outputs/cache/build/0cff6f713ad3/build_val.jsonl
+  test_candidates: /data/liaozijie/fact-checking/outputs/cache/build/0cff6f713ad3/build_test.jsonl
+model_name_or_path: /data/models/Qwen2.5-7B-Instruct
+baseline:
+  variant: mmr_lambda_sweep_1024
+sft_train:
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 2
+  learning_rate: 1.0e-05
+  num_train_epochs: 2
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  bf16: true
+  max_length: 1024
+  logging_steps: 2
+  save_steps: 100
+  eval_steps: 100
+  dataloader_num_workers: 4
+  gradient_checkpointing: true
+  use_flash_attention_2: true
+  lr_scheduler_type: cosine
+  max_grad_norm: 1.0
+  padding: longest
+  use_length_bucket: true
+  empty_cache_steps: 1
+  empty_cache_on_eval: true
+  empty_cache_on_save: true
+  max_new_tokens: 8
+  temperature: 0.0
+  logit_adjust:
+    enabled: true
+    tau: 1.0
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+    modules_to_save: null
+  resolved_output_dir: true
+tracking:
+  enabled: true
+  backend: swanlab
+swanlab:
+  project: fact-checking-build-train-infer
+  experiment_name: mmr_lambda_sweep_1024__build.retrieval.mmr_lambda-0.4

@@ -1,0 +1,63 @@
+[INFO] len(train_dl)=2517max_train_steps=630
+  0%|                                                                                                                                                                                                                                                                                                                                      | 0/630 [00:00<?, ?it/s]Traceback (most recent call last):
+  File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 956, in <module>
+    main()
+  File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 848, in main
+    accelerator.backward(loss)
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/accelerate/accelerator.py", line 2830, in backward
+    self.deepspeed_engine_wrapped.backward(loss, sync_gradients=self.sync_gradients, **kwargs)
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/accelerate/utils/deepspeed.py", line 270, in backward
+    self.engine.backward(loss, **kwargs)
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+    ret_val = func(*args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 2634, in backward
+    self._backward_epilogue()
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 2475, in _backward_epilogue
+    self.allreduce_gradients()
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+    ret_val = func(*args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 2425, in allreduce_gradients
+    self.optimizer.overlapping_partition_gradients_reduce_epilogue()
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/stage3.py", line 1303, in overlapping_partition_gradients_reduce_epilogue
+    self.independent_gradient_partition_epilogue()
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+    ret_val = func(*args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/stage3.py", line 1280, in independent_gradient_partition_epilogue
+    self.reduce_and_partition_stream.synchronize()
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/cuda/streams.py", line 99, in synchronize
+    super().synchronize()
+KeyboardInterrupt
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 956, in <module>
+[rank0]:     main()
+[rank0]:   File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 848, in main
+[rank0]:     accelerator.backward(loss)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/accelerate/accelerator.py", line 2830, in backward
+[rank0]:     self.deepspeed_engine_wrapped.backward(loss, sync_gradients=self.sync_gradients, **kwargs)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/accelerate/utils/deepspeed.py", line 270, in backward
+[rank0]:     self.engine.backward(loss, **kwargs)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank0]:     ret_val = func(*args, **kwargs)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 2634, in backward
+[rank0]:     self._backward_epilogue()
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 2475, in _backward_epilogue
+[rank0]:     self.allreduce_gradients()
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank0]:     ret_val = func(*args, **kwargs)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 2425, in allreduce_gradients
+[rank0]:     self.optimizer.overlapping_partition_gradients_reduce_epilogue()
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/stage3.py", line 1303, in overlapping_partition_gradients_reduce_epilogue
+[rank0]:     self.independent_gradient_partition_epilogue()
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank0]:     ret_val = func(*args, **kwargs)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/stage3.py", line 1280, in independent_gradient_partition_epilogue
+[rank0]:     self.reduce_and_partition_stream.synchronize()
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/cuda/streams.py", line 99, in synchronize
+[rank0]:     super().synchronize()
+[rank0]: KeyboardInterrupt

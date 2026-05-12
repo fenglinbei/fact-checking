@@ -1,0 +1,46 @@
+`torch_dtype` is deprecated! Use `dtype` instead!
+The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+  0%|                                                                                                                                                                                                             | 0/2518 [00:00<?, ?it/s]Traceback (most recent call last):
+  File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 293, in <module>
+    main()
+  File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 256, in main
+    accelerator.backward(loss)
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/accelerate/accelerator.py", line 2830, in backward
+    self.deepspeed_engine_wrapped.backward(loss, sync_gradients=self.sync_gradients, **kwargs)
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/accelerate/utils/deepspeed.py", line 270, in backward
+    self.engine.backward(loss, **kwargs)
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+    ret_val = func(*args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 2625, in backward
+    loss.backward(**backward_kwargs)
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/_tensor.py", line 626, in backward
+    torch.autograd.backward(
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/autograd/__init__.py", line 347, in backward
+    _engine_run_backward(
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/autograd/graph.py", line 823, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 293, in <module>
+[rank0]:     main()
+[rank0]:   File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 256, in main
+[rank0]:     accelerator.backward(loss)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/accelerate/accelerator.py", line 2830, in backward
+[rank0]:     self.deepspeed_engine_wrapped.backward(loss, sync_gradients=self.sync_gradients, **kwargs)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/accelerate/utils/deepspeed.py", line 270, in backward
+[rank0]:     self.engine.backward(loss, **kwargs)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank0]:     ret_val = func(*args, **kwargs)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 2625, in backward
+[rank0]:     loss.backward(**backward_kwargs)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/_tensor.py", line 626, in backward
+[rank0]:     torch.autograd.backward(
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/autograd/__init__.py", line 347, in backward
+[rank0]:     _engine_run_backward(
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/autograd/graph.py", line 823, in _engine_run_backward
+[rank0]:     return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]: KeyboardInterrupt

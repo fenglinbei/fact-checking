@@ -1,0 +1,179 @@
+2026-05-11 18:47:44 | INFO | __main__ | trainer.py:207 | [INFO] saved resolved config to /data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.3__f059f548/train/config.resolved.yaml
+2026-05-11 18:47:45 | INFO | __main__ | stats.py:59 | [PROMPT_STATS] split=train pre_mean=792.84 pre_p95=998 pre_overflow=0 post_mean=792.84 post_p95=998 post_overflow=0 truncated=775 trunc_rate=0.0770
+2026-05-11 18:47:45 | INFO | __main__ | stats.py:59 | [PROMPT_STATS] split=val pre_mean=806.62 pre_p95=996 pre_overflow=0 post_mean=806.62 post_p95=996 post_overflow=0 truncated=92 trunc_rate=0.0722
+2026-05-11 18:47:45 | INFO | __main__ | trainer.py:269 | [INFO] prompt statistics saved to /data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.3__f059f548/train/prompt_stats/prompt_stats.json
+2026-05-11 18:47:46 | INFO | __main__ | adapters.py:97 | [INFO] LoRA enabled: trainable parameters=40370176 / 7655986688 (0.5273%), r=16, alpha=32
+2026-05-11 18:48:07 | INFO | __main__ | trainer.py:359 | [INFO] Optimizer will update LoRA/trainable parameters only.
+2026-05-11 18:48:15 | INFO | __main__ | trainer.py:390 | [INFO] dataloader length around accelerator.prepare: before=2516, after=629
+2026-05-11 18:48:15 | WARNING | __main__ | trainer.py:396 | [WARN] len(train_dl) changed after accelerator.prepare: before=2516, after=629. This may indicate duplicated sharding/re-partitioning across distributed samplers.
+2026-05-11 18:48:15 | INFO | __main__ | trainer.py:413 | [INFO] train progress setup (post-prepare): num_epochs=2, len(train_dl)=629, effective_grad_accum_steps=2, update_steps_per_epoch=315, max_train_steps=630
+2026-05-11 18:48:15 | INFO | __main__ | trainer.py:122 | [INFO] logit_adjust enabled: tau=1.000 priors=['0.0807', '0.1945', '0.1601', '0.2074', '0.1937', '0.1636'] letters=[362, 425, 356, 422, 468, 434] prefix=[2476, 25]
+2026-05-11 18:48:15 | INFO | __main__ | trainer.py:434 | [INFO] logit_adjust config saved to /data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.3__f059f548/train/logit_adjust.json
+2026-05-11 18:58:42 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=0 pred=pants-fire gold=barely-true output=Label: A explain=Hartzler said, "We have less Americans working now than in the ‘70s." The statistics Hartzler’s staff said she cited show the employment-population ratio and labor force participation rate was indeed higher in 1979 than in 2015. However,... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 18:58:42 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=0 pred=pants-fire gold=barely-true output=Label: A explain=Hartzler said, "We have less Americans working now than in the ‘70s." The statistics Hartzler’s staff said she cited show the employment-population ratio and labor force participation rate was indeed higher in 1979 than in 2015. However,... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 18:58:42 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=1 pred=pants-fire gold=pants-fire output=Label: A explain=Ellison used a Koran that once belonged to Thomas Jefferson, borrowing the rare book from the Library of Congress. It goes without saying that Ellison is not Obama. UPDATE: Barack Obama resigned from Trinity United Church of Christ on Ma... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 18:58:42 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=1 pred=pants-fire gold=pants-fire output=Label: A explain=Ellison used a Koran that once belonged to Thomas Jefferson, borrowing the rare book from the Library of Congress. It goes without saying that Ellison is not Obama. UPDATE: Barack Obama resigned from Trinity United Church of Christ on Ma... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 18:58:42 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=2 pred=half-true gold=false output=Label: D explain=However, we have two professors who say the law is silent on political activity -- even if one of them sees an implicit prohibition -- and a plain reading of the law that states no explicit ban. Blumenauer said that "the statute a hundre... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 18:58:42 | INFO | __main__ | trainer.py:563 | [eval] step=100 accuracy=0.2094 macro_precision=0.2489 macro_recall=0.2400 macro_f1=0.1959 parse_error_rate=0.0000
+2026-05-11 18:58:42 | INFO | __main__ | trainer.py:563 | [eval] per_class:
+2026-05-11 18:58:42 | INFO | __main__ | trainer.py:563 |   - barely-true: P=0.1878 R=0.1688 F1=0.1778
+2026-05-11 18:58:42 | INFO | __main__ | trainer.py:563 |   - false: P=0.2857 R=0.1073 F1=0.1560
+2026-05-11 18:58:42 | INFO | __main__ | trainer.py:563 |   - half-true: P=0.2213 R=0.3130 F1=0.2593
+2026-05-11 18:58:42 | INFO | __main__ | trainer.py:563 |   - mostly-true: P=0.2681 R=0.1474 F1=0.1902
+2026-05-11 18:58:42 | INFO | __main__ | trainer.py:563 |   - pants-fire: P=0.1618 R=0.6207 F1=0.2567
+2026-05-11 18:58:42 | INFO | __main__ | trainer.py:563 |   - true: P=0.3684 R=0.0828 F1=0.1353
+2026-05-11 19:09:15 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=0 pred=pants-fire gold=barely-true output=Label: A explain=Hartzler said, "We have less Americans working now than in the ‘70s." The statistics Hartzler’s staff said she cited show the employment-population ratio and labor force participation rate was indeed higher in 1979 than in 2015. However,... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:09:15 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=0 pred=pants-fire gold=barely-true output=Label: A explain=Hartzler said, "We have less Americans working now than in the ‘70s." The statistics Hartzler’s staff said she cited show the employment-population ratio and labor force participation rate was indeed higher in 1979 than in 2015. However,... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:09:15 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=1 pred=pants-fire gold=pants-fire output=Label: A explain=Ellison used a Koran that once belonged to Thomas Jefferson, borrowing the rare book from the Library of Congress. It goes without saying that Ellison is not Obama. UPDATE: Barack Obama resigned from Trinity United Church of Christ on Ma... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:09:15 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=1 pred=pants-fire gold=pants-fire output=Label: A explain=Ellison used a Koran that once belonged to Thomas Jefferson, borrowing the rare book from the Library of Congress. It goes without saying that Ellison is not Obama. UPDATE: Barack Obama resigned from Trinity United Church of Christ on Ma... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:09:15 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=2 pred=mostly-true gold=false output=Label: E explain=However, we have two professors who say the law is silent on political activity -- even if one of them sees an implicit prohibition -- and a plain reading of the law that states no explicit ban. Blumenauer said that "the statute a hundre... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:09:15 | INFO | __main__ | trainer.py:563 | [eval] step=200 accuracy=0.2695 macro_precision=0.2974 macro_recall=0.2847 macro_f1=0.2537 parse_error_rate=0.0000
+2026-05-11 19:09:15 | INFO | __main__ | trainer.py:563 | [eval] per_class:
+2026-05-11 19:09:15 | INFO | __main__ | trainer.py:563 |   - barely-true: P=0.2284 R=0.4008 F1=0.2910
+2026-05-11 19:09:15 | INFO | __main__ | trainer.py:563 |   - false: P=0.2833 R=0.3180 F1=0.2996
+2026-05-11 19:09:15 | INFO | __main__ | trainer.py:563 |   - half-true: P=0.4000 R=0.0244 F1=0.0460
+2026-05-11 19:09:15 | INFO | __main__ | trainer.py:563 |   - mostly-true: P=0.3333 R=0.2590 F1=0.2915
+2026-05-11 19:09:15 | INFO | __main__ | trainer.py:563 |   - pants-fire: P=0.2452 R=0.4397 F1=0.3148
+2026-05-11 19:09:15 | INFO | __main__ | trainer.py:563 |   - true: P=0.2941 R=0.2663 F1=0.2795
+2026-05-11 19:19:56 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=0 pred=pants-fire gold=barely-true output=Label: A explain=Hartzler said, "We have less Americans working now than in the ‘70s." The statistics Hartzler’s staff said she cited show the employment-population ratio and labor force participation rate was indeed higher in 1979 than in 2015. However,... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:19:56 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=0 pred=pants-fire gold=barely-true output=Label: A explain=Hartzler said, "We have less Americans working now than in the ‘70s." The statistics Hartzler’s staff said she cited show the employment-population ratio and labor force participation rate was indeed higher in 1979 than in 2015. However,... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:19:56 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=1 pred=pants-fire gold=pants-fire output=Label: A explain=Ellison used a Koran that once belonged to Thomas Jefferson, borrowing the rare book from the Library of Congress. It goes without saying that Ellison is not Obama. UPDATE: Barack Obama resigned from Trinity United Church of Christ on Ma... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:19:56 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=1 pred=pants-fire gold=pants-fire output=Label: A explain=Ellison used a Koran that once belonged to Thomas Jefferson, borrowing the rare book from the Library of Congress. It goes without saying that Ellison is not Obama. UPDATE: Barack Obama resigned from Trinity United Church of Christ on Ma... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:19:56 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=2 pred=mostly-true gold=false output=Label: E explain=However, we have two professors who say the law is silent on political activity -- even if one of them sees an implicit prohibition -- and a plain reading of the law that states no explicit ban. Blumenauer said that "the statute a hundre... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:19:56 | INFO | __main__ | trainer.py:563 | [eval] step=300 accuracy=0.2703 macro_precision=0.3043 macro_recall=0.2850 macro_f1=0.2552 parse_error_rate=0.0000
+2026-05-11 19:19:56 | INFO | __main__ | trainer.py:563 | [eval] per_class:
+2026-05-11 19:19:56 | INFO | __main__ | trainer.py:563 |   - barely-true: P=0.2244 R=0.3797 F1=0.2821
+2026-05-11 19:19:56 | INFO | __main__ | trainer.py:563 |   - false: P=0.2761 R=0.3946 F1=0.3249
+2026-05-11 19:19:56 | INFO | __main__ | trainer.py:563 |   - half-true: P=0.3793 R=0.0447 F1=0.0800
+2026-05-11 19:19:56 | INFO | __main__ | trainer.py:563 |   - mostly-true: P=0.4059 R=0.1633 F1=0.2330
+2026-05-11 19:19:56 | INFO | __main__ | trainer.py:563 |   - pants-fire: P=0.2437 R=0.4138 F1=0.3067
+2026-05-11 19:19:56 | INFO | __main__ | trainer.py:563 |   - true: P=0.2961 R=0.3136 F1=0.3046
+2026-05-11 19:30:27 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=0 pred=false gold=barely-true output=Label: B explain=Hartzler said, "We have less Americans working now than in the ‘70s." The statistics Hartzler’s staff said she cited show the employment-population ratio and labor force participation rate was indeed higher in 1979 than in 2015. However,... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:30:27 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=0 pred=false gold=barely-true output=Label: B explain=Hartzler said, "We have less Americans working now than in the ‘70s." The statistics Hartzler’s staff said she cited show the employment-population ratio and labor force participation rate was indeed higher in 1979 than in 2015. However,... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:30:27 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=1 pred=false gold=pants-fire output=Label: B explain=Ellison used a Koran that once belonged to Thomas Jefferson, borrowing the rare book from the Library of Congress. It goes without saying that Ellison is not Obama. UPDATE: Barack Obama resigned from Trinity United Church of Christ on Ma... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:30:27 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=1 pred=pants-fire gold=pants-fire output=Label: A explain=Ellison used a Koran that once belonged to Thomas Jefferson, borrowing the rare book from the Library of Congress. It goes without saying that Ellison is not Obama. UPDATE: Barack Obama resigned from Trinity United Church of Christ on Ma... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:30:27 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=2 pred=barely-true gold=false output=Label: C explain=However, we have two professors who say the law is silent on political activity -- even if one of them sees an implicit prohibition -- and a plain reading of the law that states no explicit ban. Blumenauer said that "the statute a hundre... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:30:27 | INFO | __main__ | trainer.py:563 | [eval] step=400 accuracy=0.2727 macro_precision=0.2969 macro_recall=0.2812 macro_f1=0.2652 parse_error_rate=0.0000
+2026-05-11 19:30:27 | INFO | __main__ | trainer.py:563 | [eval] per_class:
+2026-05-11 19:30:27 | INFO | __main__ | trainer.py:563 |   - barely-true: P=0.2163 R=0.3924 F1=0.2789
+2026-05-11 19:30:27 | INFO | __main__ | trainer.py:563 |   - false: P=0.2982 R=0.3793 F1=0.3339
+2026-05-11 19:30:27 | INFO | __main__ | trainer.py:563 |   - half-true: P=0.2857 R=0.1138 F1=0.1628
+2026-05-11 19:30:27 | INFO | __main__ | trainer.py:563 |   - mostly-true: P=0.4382 R=0.1554 F1=0.2294
+2026-05-11 19:30:27 | INFO | __main__ | trainer.py:563 |   - pants-fire: P=0.2593 R=0.3621 F1=0.3022
+2026-05-11 19:30:27 | INFO | __main__ | trainer.py:563 |   - true: P=0.2840 R=0.2840 F1=0.2840
+2026-05-11 19:41:01 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=0 pred=false gold=barely-true output=Label: B explain=Hartzler said, "We have less Americans working now than in the ‘70s." The statistics Hartzler’s staff said she cited show the employment-population ratio and labor force participation rate was indeed higher in 1979 than in 2015. However,... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:41:01 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=0 pred=false gold=barely-true output=Label: B explain=Hartzler said, "We have less Americans working now than in the ‘70s." The statistics Hartzler’s staff said she cited show the employment-population ratio and labor force participation rate was indeed higher in 1979 than in 2015. However,... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:41:01 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=1 pred=pants-fire gold=pants-fire output=Label: A explain=Ellison used a Koran that once belonged to Thomas Jefferson, borrowing the rare book from the Library of Congress. It goes without saying that Ellison is not Obama. UPDATE: Barack Obama resigned from Trinity United Church of Christ on Ma... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:41:01 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=1 pred=pants-fire gold=pants-fire output=Label: A explain=Ellison used a Koran that once belonged to Thomas Jefferson, borrowing the rare book from the Library of Congress. It goes without saying that Ellison is not Obama. UPDATE: Barack Obama resigned from Trinity United Church of Christ on Ma... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:41:01 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=2 pred=barely-true gold=false output=Label: C explain=However, we have two professors who say the law is silent on political activity -- even if one of them sees an implicit prohibition -- and a plain reading of the law that states no explicit ban. Blumenauer said that "the statute a hundre... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:41:01 | INFO | __main__ | trainer.py:563 | [eval] step=500 accuracy=0.2914 macro_precision=0.3024 macro_recall=0.3077 macro_f1=0.2737 parse_error_rate=0.0000
+2026-05-11 19:41:01 | INFO | __main__ | trainer.py:563 | [eval] per_class:
+2026-05-11 19:41:01 | INFO | __main__ | trainer.py:563 |   - barely-true: P=0.2550 R=0.3249 F1=0.2857
+2026-05-11 19:41:01 | INFO | __main__ | trainer.py:563 |   - false: P=0.2983 R=0.4023 F1=0.3426
+2026-05-11 19:41:01 | INFO | __main__ | trainer.py:563 |   - half-true: P=0.3571 R=0.0407 F1=0.0730
+2026-05-11 19:41:01 | INFO | __main__ | trainer.py:563 |   - mostly-true: P=0.3320 R=0.3307 F1=0.3313
+2026-05-11 19:41:01 | INFO | __main__ | trainer.py:563 |   - pants-fire: P=0.2719 R=0.5345 F1=0.3605
+2026-05-11 19:41:01 | INFO | __main__ | trainer.py:563 |   - true: P=0.3000 R=0.2130 F1=0.2491
+2026-05-11 19:51:40 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=0 pred=false gold=barely-true output=Label: B explain=Hartzler said, "We have less Americans working now than in the ‘70s." The statistics Hartzler’s staff said she cited show the employment-population ratio and labor force participation rate was indeed higher in 1979 than in 2015. However,... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:51:40 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=0 pred=false gold=barely-true output=Label: B explain=Hartzler said, "We have less Americans working now than in the ‘70s." The statistics Hartzler’s staff said she cited show the employment-population ratio and labor force participation rate was indeed higher in 1979 than in 2015. However,... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:51:40 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=1 pred=pants-fire gold=pants-fire output=Label: A explain=Ellison used a Koran that once belonged to Thomas Jefferson, borrowing the rare book from the Library of Congress. It goes without saying that Ellison is not Obama. UPDATE: Barack Obama resigned from Trinity United Church of Christ on Ma... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:51:40 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=1 pred=pants-fire gold=pants-fire output=Label: A explain=Ellison used a Koran that once belonged to Thomas Jefferson, borrowing the rare book from the Library of Congress. It goes without saying that Ellison is not Obama. UPDATE: Barack Obama resigned from Trinity United Church of Christ on Ma... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:51:40 | INFO | __main__ | eval.py:43 | [EVAL_SAMPLE] idx=2 pred=true gold=false output=Label: F explain=However, we have two professors who say the law is silent on political activity -- even if one of them sees an implicit prohibition -- and a plain reading of the law that states no explicit ban. Blumenauer said that "the statute a hundre... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-05-11 19:51:40 | INFO | __main__ | trainer.py:563 | [eval] step=600 accuracy=0.2836 macro_precision=0.3890 macro_recall=0.3166 macro_f1=0.2583 parse_error_rate=0.0000
+2026-05-11 19:51:40 | INFO | __main__ | trainer.py:563 | [eval] per_class:
+2026-05-11 19:51:40 | INFO | __main__ | trainer.py:563 |   - barely-true: P=0.2430 R=0.4008 F1=0.3025
+2026-05-11 19:51:40 | INFO | __main__ | trainer.py:563 |   - false: P=0.2801 R=0.3563 F1=0.3137
+2026-05-11 19:51:40 | INFO | __main__ | trainer.py:563 |   - half-true: P=0.4545 R=0.0610 F1=0.1075
+2026-05-11 19:51:40 | INFO | __main__ | trainer.py:563 |   - mostly-true: P=0.7692 R=0.0398 F1=0.0758
+2026-05-11 19:51:40 | INFO | __main__ | trainer.py:563 |   - pants-fire: P=0.2938 R=0.4914 F1=0.3677
+2026-05-11 19:51:40 | INFO | __main__ | trainer.py:563 |   - true: P=0.2934 R=0.5503 F1=0.3827

@@ -42,6 +42,13 @@ def _is_letter_label_only_task(samples: list[Any]) -> bool:
     return all(_LETTER_LABEL_ONLY_TARGET.match(str(sample.target)) is not None for sample in checked)
 
 
+def _optional_float(cfg: dict[str, Any], key: str, default: float | None = None) -> float | None:
+    value = cfg.get(key, default)
+    if value is None:
+        return None
+    return float(value)
+
+
 class OpenAICompletionsClient:
     def __init__(self, *, base_url: str, model: str, timeout: float = 120.0, logit_bias: dict[str, float] | None = None) -> None:
         self.base_url = base_url.rstrip("/")
@@ -126,22 +133,43 @@ def run_api_inference(
             temperature_value = context.baseline_cfg.get("temperature", 0.0)
         max_tokens = int(max_tokens_value)
         temperature = float(temperature_value)
+        top_p = _optional_float(infer_cfg, "top_p", 1.0)
+        presence_penalty = _optional_float(infer_cfg, "presence_penalty", 0.0)
+        frequency_penalty = _optional_float(infer_cfg, "frequency_penalty", 0.0)
+        repetition_penalty = _optional_float(infer_cfg, "repetition_penalty", 1.0)
+        decoding_extra_body = {
+            key: value
+            for key, value in {
+                "top_p": top_p,
+                "presence_penalty": presence_penalty,
+                "frequency_penalty": frequency_penalty,
+                "repetition_penalty": repetition_penalty,
+            }.items()
+            if value is not None
+        }
         label_decoding_cfg = dict(infer_cfg.get("label_decoding", {}) or {})
         use_label_decoding = bool(label_decoding_cfg.get("enabled", True)) and _is_letter_label_only_task(
             context.samples
         )
         label_prefix = str(label_decoding_cfg.get("prefix", "Label:"))
         label_choices = [f" {letter}" for letter in LETTER_ORDER]
-        label_extra_body: dict[str, Any] | None = None
-        if use_label_decoding and bool(label_decoding_cfg.get("guided_choice", True)):
-            label_extra_body = {"guided_choice": label_choices}
+        label_extra_body: dict[str, Any] | None = dict(decoding_extra_body) if decoding_extra_body else None
+        use_guided_choice = use_label_decoding and bool(label_decoding_cfg.get("guided_choice", True))
+        if use_guided_choice:
+            label_extra_body = dict(label_extra_body or {})
+            label_extra_body["guided_choice"] = label_choices
         label_max_tokens = int(label_decoding_cfg.get("max_tokens", 1))
         logger.info(
-            "API inference decoding: label_decoding=%s guided_choice=%s max_tokens=%d logit_bias_tokens=%d",
+            "API inference decoding: label_decoding=%s guided_choice=%s max_tokens=%d logit_bias_tokens=%d "
+            "top_p=%s presence_penalty=%s frequency_penalty=%s repetition_penalty=%s",
             use_label_decoding,
-            bool(label_extra_body),
+            use_guided_choice,
             label_max_tokens if use_label_decoding else max_tokens,
             len(logit_bias or {}),
+            top_p,
+            presence_penalty,
+            frequency_penalty,
+            repetition_penalty,
         )
 
         prediction_records: list[dict[str, object]] = []
@@ -157,7 +185,7 @@ def run_api_inference(
         for sample_idx, sample in enumerate(progress):
             request_prompt = sample.prompt
             request_max_tokens = max_tokens
-            extra_body = None
+            extra_body = dict(decoding_extra_body) if decoding_extra_body else None
             if use_label_decoding:
                 request_prompt = sample.prompt + label_prefix
                 request_max_tokens = label_max_tokens
