@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 
 import numpy as np
 
@@ -18,6 +19,16 @@ class ChunkingStrategy(ABC):
     def chunk_from_presplit(self, sents: list[str], sent_idx: int) -> str:
         """Same as chunk() but accepts pre-split sentences to avoid redundant splitting."""
         return self.chunk(" ".join(sents), sent_idx)
+
+    def chunk_from_presplit_with_embeddings(
+        self,
+        sents: list[str],
+        sent_idx: int,
+        embeddings_by_sent_idx: Mapping[int, np.ndarray] | None,
+    ) -> str:
+        """Same as chunk_from_presplit(), optionally reusing sentence embeddings."""
+        del embeddings_by_sent_idx
+        return self.chunk_from_presplit(sents, sent_idx)
 
 
 class SentenceChunking(ChunkingStrategy):
@@ -94,11 +105,63 @@ class _SemanticBase(ChunkingStrategy):
         with self._embedder_lock:
             return embedder.encode(texts, is_query=False)
 
+    def _embeddings_for_partition(
+        self,
+        sents: tuple[str, ...],
+        embeddings_by_sent_idx: Mapping[int, np.ndarray] | None = None,
+    ) -> np.ndarray:
+        if not embeddings_by_sent_idx:
+            return self._encode(list(sents))
+
+        first_vec: np.ndarray | None = None
+        normalized: dict[int, np.ndarray] = {}
+        for sent_idx, embedding in embeddings_by_sent_idx.items():
+            idx = int(sent_idx)
+            if idx < 0 or idx >= len(sents):
+                continue
+            vec = np.asarray(embedding, dtype=np.float32).reshape(-1)
+            if vec.size == 0:
+                continue
+            if first_vec is None:
+                first_vec = vec
+            elif vec.shape != first_vec.shape:
+                return self._encode(list(sents))
+            normalized[idx] = vec
+
+        if first_vec is None:
+            return self._encode(list(sents))
+
+        embeddings = np.empty((len(sents), first_vec.shape[0]), dtype=np.float32)
+        missing_indices: list[int] = []
+        for idx in range(len(sents)):
+            vec = normalized.get(idx)
+            if vec is None:
+                missing_indices.append(idx)
+            else:
+                embeddings[idx] = vec
+
+        if missing_indices:
+            missing_embeddings = self._encode([sents[idx] for idx in missing_indices])
+            if (
+                missing_embeddings.ndim != 2
+                or missing_embeddings.shape[0] != len(missing_indices)
+                or missing_embeddings.shape[1] != first_vec.shape[0]
+            ):
+                return self._encode(list(sents))
+            for row_idx, sent_idx in enumerate(missing_indices):
+                embeddings[sent_idx] = missing_embeddings[row_idx]
+
+        return embeddings
+
 
 class SemanticChunking(_SemanticBase):
     """Merge adjacent sentences whose cosine similarity exceeds theta."""
 
-    def _partition(self, sents: tuple[str, ...]) -> list[list[int]]:
+    def _partition(
+        self,
+        sents: tuple[str, ...],
+        embeddings_by_sent_idx: Mapping[int, np.ndarray] | None = None,
+    ) -> list[list[int]]:
         n = len(sents)
         if n == 0:
             return []
@@ -109,7 +172,7 @@ class SemanticChunking(_SemanticBase):
         if cached is not None:
             return cached
 
-        embeddings = self._encode(list(sents))
+        embeddings = self._embeddings_for_partition(sents, embeddings_by_sent_idx)
         chunks: list[list[int]] = []
         current = [0]
         for i in range(n - 1):
@@ -139,6 +202,21 @@ class SemanticChunking(_SemanticBase):
                 return " ".join(sents[i] for i in chunk)
         return sents[idx]
 
+    def chunk_from_presplit_with_embeddings(
+        self,
+        sents: list[str],
+        sent_idx: int,
+        embeddings_by_sent_idx: Mapping[int, np.ndarray] | None,
+    ) -> str:
+        if not sents:
+            return ""
+        idx = min(max(int(sent_idx), 0), len(sents) - 1)
+        chunks = self._partition(tuple(sents), embeddings_by_sent_idx)
+        for chunk in chunks:
+            if idx in chunk:
+                return " ".join(sents[i] for i in chunk)
+        return sents[idx]
+
 
 class ContextSemanticChunking(_SemanticBase):
     """Group sentences into non-overlapping windows of k, then merge by similarity."""
@@ -156,7 +234,11 @@ class ContextSemanticChunking(_SemanticBase):
             start = end
         return windows
 
-    def _partition(self, sents: tuple[str, ...]) -> list[list[int]]:
+    def _partition(
+        self,
+        sents: tuple[str, ...],
+        embeddings_by_sent_idx: Mapping[int, np.ndarray] | None = None,
+    ) -> list[list[int]]:
         n = len(sents)
         if n == 0:
             return []
@@ -172,7 +254,7 @@ class ContextSemanticChunking(_SemanticBase):
                 self._partition_cache[sents] = chunks
             return chunks
 
-        sent_emb = self._encode(list(sents))
+        sent_emb = self._embeddings_for_partition(sents, embeddings_by_sent_idx)
         window_emb = np.stack([sent_emb[s:e].mean(axis=0) for s, e in windows], axis=0)
         norms = np.linalg.norm(window_emb, axis=1, keepdims=True)
         norms = np.clip(norms, 1e-12, None)
@@ -203,6 +285,21 @@ class ContextSemanticChunking(_SemanticBase):
             return ""
         idx = min(max(int(sent_idx), 0), len(sents) - 1)
         chunks = self._partition(tuple(sents))
+        for chunk in chunks:
+            if idx in chunk:
+                return " ".join(sents[i] for i in chunk)
+        return sents[idx]
+
+    def chunk_from_presplit_with_embeddings(
+        self,
+        sents: list[str],
+        sent_idx: int,
+        embeddings_by_sent_idx: Mapping[int, np.ndarray] | None,
+    ) -> str:
+        if not sents:
+            return ""
+        idx = min(max(int(sent_idx), 0), len(sents) - 1)
+        chunks = self._partition(tuple(sents), embeddings_by_sent_idx)
         for chunk in chunks:
             if idx in chunk:
                 return " ".join(sents[i] for i in chunk)

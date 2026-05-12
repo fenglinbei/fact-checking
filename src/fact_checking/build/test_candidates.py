@@ -92,11 +92,24 @@ def _base_build_cfg() -> dict:
     }
 
 
-def test_premmr_fingerprint_ignores_mmr_selection_settings() -> None:
+def test_premmr_fingerprint_ignores_non_embedding_settings() -> None:
     base = _base_build_cfg()
     changed = deepcopy(base)
     changed["retrieval"]["top_k"] = 24
     changed["retrieval"]["mmr_lambda"] = 0.1
+    changed["retrieval"]["alpha_dense"] = 0.5
+    changed["retrieval"]["alpha_lexical"] = 0.4
+    changed["retrieval"]["alpha_bm25"] = 0.1
+    changed["retrieval"]["num_gpus"] = 1
+    changed["retrieval"]["prefetch_size"] = 512
+    changed["retrieval"]["cpu_workers"] = 8
+    changed["retrieval"]["chunking"] = {
+        "strategy": "semantic",
+        "theta": 0.5,
+        "device": "cuda",
+        "precision": "bf16",
+    }
+    changed["prompt"]["max_length"] = 1024
 
     assert _premmr_config_fingerprint(base) == _premmr_config_fingerprint(changed)
 

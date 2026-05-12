@@ -74,14 +74,17 @@ def minmax_scale(values: np.ndarray) -> np.ndarray:
 
 
 def _premmr_config_fingerprint(cfg: dict[str, Any]) -> str:
-    """Fingerprint build config with MMR-only settings excluded."""
+    """Fingerprint only settings that affect cached sentence/claim embeddings."""
     from fact_checking.pipeline.artifacts import fingerprint
 
-    retrieval = dict(cfg.get("retrieval", {}) or {})
-    retrieval.pop("mmr_lambda", None)
-    retrieval.pop("top_k", None)
+    retrieval_cfg = dict(cfg.get("retrieval", {}) or {})
+    retrieval = {
+        key: retrieval_cfg.get(key)
+        for key in ("embedder_model", "device", "max_length", "precision")
+        if key in retrieval_cfg
+    }
     payload = {
-        **{k: v for k, v in cfg.items() if k != "retrieval"},
+        "data": cfg.get("data", {}),
         "retrieval": retrieval,
     }
     return fingerprint(payload)
@@ -131,6 +134,40 @@ def _dict_to_sentence(d: dict[str, Any], *, event_id_fallback: str | None = None
         domain=d.get("domain"),
         raw=d.get("raw", {}),
     )
+
+
+def _normalize_model_name(value: Any) -> str:
+    return str(value or "").strip().rstrip("/")
+
+
+def _can_reuse_chunk_embeddings(strategy: ChunkingStrategy, retrieval_cfg: dict[str, Any]) -> bool:
+    embedder_cfg = getattr(strategy, "_embedder_cfg", None)
+    if embedder_cfg is None:
+        return False
+    retrieval_model = retrieval_cfg.get("embedder_model")
+    if not retrieval_model:
+        return False
+    return (
+        _normalize_model_name(getattr(embedder_cfg, "model_name", ""))
+        == _normalize_model_name(retrieval_model)
+        and int(getattr(embedder_cfg, "max_length", 256)) == int(retrieval_cfg.get("max_length", 256))
+    )
+
+
+def _chunk_embeddings_by_content(
+    sents: list,
+    sent_emb: np.ndarray,
+) -> dict[str, dict[int, np.ndarray]]:
+    if sent_emb.ndim != 2 or len(sent_emb) < len(sents):
+        return {}
+
+    by_content: dict[str, dict[int, np.ndarray]] = {}
+    for row_idx, sent in enumerate(sents):
+        content = sent.raw.get("content", "") if isinstance(sent.raw, dict) else ""
+        if not content:
+            continue
+        by_content.setdefault(str(content), {})[int(sent.sent_idx)] = sent_emb[row_idx]
+    return by_content
 
 
 class _ClaimProxy:
@@ -244,6 +281,7 @@ def _process_sample_post_embed(
     alpha_bm25: float,
     mmr_lambda: float,
     strategy: ChunkingStrategy,
+    reuse_chunk_embeddings: bool = False,
 ) -> dict[str, Any]:
     """CPU-only portion: scoring, MMR, chunking, dedup for a single sample."""
     dense_scores = sent_emb @ claim_emb
@@ -270,6 +308,7 @@ def _process_sample_post_embed(
     )
 
     content_splits: dict[str, list[str]] = {}
+    content_embeddings = _chunk_embeddings_by_content(sents, sent_emb) if reuse_chunk_embeddings else {}
     deduped_by_text: dict[str, dict[str, Any]] = {}
     for idx in keep_indices:
         sent = sents[idx]
@@ -277,7 +316,15 @@ def _process_sample_post_embed(
         if content:
             if content not in content_splits:
                 content_splits[content] = robust_sentence_split(content)
-            evidence_text = strategy.chunk_from_presplit(content_splits[content], sent.sent_idx)
+            embeddings_by_sent_idx = content_embeddings.get(content)
+            if embeddings_by_sent_idx is None:
+                evidence_text = strategy.chunk_from_presplit(content_splits[content], sent.sent_idx)
+            else:
+                evidence_text = strategy.chunk_from_presplit_with_embeddings(
+                    content_splits[content],
+                    sent.sent_idx,
+                    embeddings_by_sent_idx,
+                )
         else:
             evidence_text = sent.text
         candidate = {
@@ -982,6 +1029,7 @@ def _mmr_phase_from_premmr(
     prompt_cfg: dict[str, Any],
     output_path: Path,
     cpu_workers: int = 1,
+    reuse_chunk_embeddings: bool = False,
 ) -> None:
     """From cached PreMMRSamples, run MMR + candidates + training rows, write JSONL."""
 
@@ -1008,6 +1056,7 @@ def _mmr_phase_from_premmr(
             alpha_bm25=alpha_bm25,
             mmr_lambda=mmr_lambda,
             strategy=strategy,
+            reuse_chunk_embeddings=reuse_chunk_embeddings,
         )
 
     with output_path.open("w", encoding="utf-8") as writer:
@@ -1102,7 +1151,9 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         "system_prompt": run_summary.get("prompt_system_prompt"),
     }
     chunking_strategy = build_chunking_strategy(retrieval_cfg.get("chunking"), retrieval_cfg)
+    reuse_chunk_embeddings = _can_reuse_chunk_embeddings(chunking_strategy, retrieval_cfg)
     logger.info("Chunking strategy: %s", type(chunking_strategy).__name__)
+    logger.info("Reuse pre-MMR embeddings for chunking: %s", reuse_chunk_embeddings)
 
     for split_name in split_names:
         pre_samples = _load_pickle(pre_mmr_split_paths[split_name])
@@ -1119,6 +1170,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
             prompt_cfg=prompt_cfg_local,
             output_path=output_path,
             cpu_workers=run_summary["cpu_workers"],
+            reuse_chunk_embeddings=reuse_chunk_embeddings,
         )
         split_paths[split_name] = output_path
         logger.info("Wrote build file: %s", output_path)
