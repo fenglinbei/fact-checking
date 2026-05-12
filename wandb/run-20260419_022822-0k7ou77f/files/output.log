@@ -1,6 +1,0 @@
-`torch_dtype` is deprecated! Use `dtype` instead!
-The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
-/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/utils/cpp_extension.py:2059: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation.
-If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'].
-  warnings.warn(
-  0%|                                                                                                                                                                                                             | 0/2518 [00:00<?, ?it/s]

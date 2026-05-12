@@ -25,6 +25,11 @@ SUMMARY_CSV="${SUMMARY_CSV:-outputs/runs/${EXPERIMENT}/summary.csv}"
 PIPELINE_MODE="${PIPELINE_MODE:-full}"  # full | build | infer
 FORCE_BUILD="${FORCE_BUILD:-false}"
 FORCE_INFER="${FORCE_INFER:-true}"
+MERGE_LORA_CACHE="${MERGE_LORA_CACHE:-true}"
+MERGE_LORA_CACHE_DIR="${MERGE_LORA_CACHE_DIR:-outputs/cache/merged_lora}"
+MERGE_LORA_CACHE_FORCE_REBUILD="${MERGE_LORA_CACHE_FORCE_REBUILD:-false}"
+REUSE_SERVER="${REUSE_SERVER:-true}"
+SERVER_PID_FILE="${SERVER_PID_FILE:-outputs/runs/${EXPERIMENT}/vllm_server.pid}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 export CUDA_VISIBLE_DEVICES
 
@@ -59,9 +64,23 @@ echo "[run_mmr_topk_sweep_infer] base_train_dir=${BASE_TRAIN_DIR}"
 echo "[run_mmr_topk_sweep_infer] checkpoint=${CHECKPOINT}"
 echo "[run_mmr_topk_sweep_infer] split=${SPLIT}"
 echo "[run_mmr_topk_sweep_infer] summary_csv=${SUMMARY_CSV}"
+echo "[run_mmr_topk_sweep_infer] merge_lora_cache=${MERGE_LORA_CACHE} dir=${MERGE_LORA_CACHE_DIR}"
+echo "[run_mmr_topk_sweep_infer] reuse_server=${REUSE_SERVER} pid_file=${SERVER_PID_FILE}"
 echo "[run_mmr_topk_sweep_infer] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 
 IFS=',' read -r -a TOP_K_ARRAY <<< "${TOP_KS}"
+CLEAN_TOP_K_ARRAY=()
+for raw_top_k in "${TOP_K_ARRAY[@]}"; do
+  top_k="${raw_top_k//[[:space:]]/}"
+  if [[ -n "${top_k}" ]]; then
+    CLEAN_TOP_K_ARRAY+=("${top_k}")
+  fi
+done
+if [[ "${#CLEAN_TOP_K_ARRAY[@]}" -eq 0 ]]; then
+  echo "[run_mmr_topk_sweep_infer] no top_k values configured" >&2
+  exit 1
+fi
+LAST_TOP_K_INDEX=$(("${#CLEAN_TOP_K_ARRAY[@]}" - 1))
 
 hydra_string_override() {
   local key="$1"
@@ -89,11 +108,8 @@ find_topk_run_dir() {
   printf '%s\n' "${run_dir}"
 }
 
-for raw_top_k in "${TOP_K_ARRAY[@]}"; do
-  top_k="${raw_top_k//[[:space:]]/}"
-  if [[ -z "${top_k}" ]]; then
-    continue
-  fi
+for top_k_index in "${!CLEAN_TOP_K_ARRAY[@]}"; do
+  top_k="${CLEAN_TOP_K_ARRAY[$top_k_index]}"
 
   echo "=== top_k=${top_k}: build ==="
   TOPK_RUN_DIR=""
@@ -126,6 +142,10 @@ for raw_top_k in "${TOP_K_ARRAY[@]}"; do
     --output-config "${REUSE_CONFIG}"
 
   echo "=== top_k=${top_k}: infer with reused checkpoint ==="
+  STOP_AFTER_INFER=true
+  if [[ "${REUSE_SERVER}" == "true" && "${top_k_index}" -lt "${LAST_TOP_K_INDEX}" ]]; then
+    STOP_AFTER_INFER=false
+  fi
   python -m fact_checking.pipeline.run \
     "experiment=${EXPERIMENT}" \
     pipeline.mode=infer \
@@ -135,6 +155,11 @@ for raw_top_k in "${TOP_K_ARRAY[@]}"; do
     "$(hydra_string_override infer.config_path "${REUSE_CONFIG}")" \
     "$(hydra_string_override infer.split "${SPLIT}")" \
     "$(hydra_string_override infer.checkpoint "${CHECKPOINT}")" \
+    "infer.merge_lora_cache.enabled=${MERGE_LORA_CACHE}" \
+    "$(hydra_string_override infer.merge_lora_cache.dir "${MERGE_LORA_CACHE_DIR}")" \
+    "infer.merge_lora_cache.force_rebuild=${MERGE_LORA_CACHE_FORCE_REBUILD}" \
+    "infer.server.stop_after_infer=${STOP_AFTER_INFER}" \
+    "$(hydra_string_override infer.server.pid_file "${SERVER_PID_FILE}")" \
     "build.retrieval.mmr_lambda=${MMR_LAMBDA}" \
     "build.retrieval.top_k=${top_k}" \
     "$@"

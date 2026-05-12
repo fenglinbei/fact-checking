@@ -27,7 +27,12 @@ infer:
     prefix: "Label:"
     guided_choice: true
     max_tokens: 1
+  merge_lora_cache:
+    enabled: true
+    dir: outputs/cache/merged_lora
+    force_rebuild: false
   server:
     manage: true
     stop_after_infer: true
+    pid_file: null
     extra_args: []
