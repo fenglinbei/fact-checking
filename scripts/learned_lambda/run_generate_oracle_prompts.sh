@@ -9,6 +9,7 @@
 #   LAMBDA_GRID="0.00,0.25,0.50,0.75,1.00" bash scripts/learned_lambda/run_generate_oracle_prompts.sh
 #   CONFIG_OVERRIDES="build.retrieval.chunking.theta=0.6" bash scripts/learned_lambda/run_generate_oracle_prompts.sh
 #   PREMMR_CACHE=outputs/cache/pre_mmr/<fingerprint>/train.pkl REBUILD_PREMMR_CACHE=false bash scripts/learned_lambda/run_generate_oracle_prompts.sh
+#   CHUNK_MMR_CACHE=outputs/cache/chunk_mmr/<fingerprint>/train.pkl REBUILD_CHUNK_MMR_CACHE=false bash scripts/learned_lambda/run_generate_oracle_prompts.sh
 #   PROGRESS=false bash scripts/learned_lambda/run_generate_oracle_prompts.sh
 #
 # Extra CLI args are forwarded to generate_oracle_prompts.py, for example:
@@ -24,10 +25,17 @@ SPLIT_NAME="${SPLIT_NAME:-train}"
 TOP_K="${TOP_K:-12}"
 PREMMR_CACHE="${PREMMR_CACHE:-}"
 PREMMR_CACHE_ROOT="${PREMMR_CACHE_ROOT:-outputs/cache/pre_mmr}"
+CHUNK_MMR_CACHE="${CHUNK_MMR_CACHE:-}"
+CHUNK_MMR_CACHE_ROOT="${CHUNK_MMR_CACHE_ROOT:-outputs/cache/chunk_mmr}"
 if [[ -n "${PREMMR_CACHE}" && -z "${REBUILD_PREMMR_CACHE+x}" ]]; then
   REBUILD_PREMMR_CACHE="false"
 else
   REBUILD_PREMMR_CACHE="${REBUILD_PREMMR_CACHE:-true}"
+fi
+if [[ -n "${CHUNK_MMR_CACHE}" && -z "${REBUILD_CHUNK_MMR_CACHE+x}" ]]; then
+  REBUILD_CHUNK_MMR_CACHE="false"
+else
+  REBUILD_CHUNK_MMR_CACHE="${REBUILD_CHUNK_MMR_CACHE:-${REBUILD_PREMMR_CACHE}}"
 fi
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/learned_lambda/prompts}"
 LAMBDA_GRID="${LAMBDA_GRID:-0.00,0.05,0.10,0.15,0.20,0.25,0.30,0.35,0.40,0.45,0.50,0.55,0.60,0.65,0.70,0.75,0.80,0.85,0.90,0.95,1.00}"
@@ -42,12 +50,21 @@ if [[ -n "${PREMMR_CACHE}" && ! -f "${PREMMR_CACHE}" ]]; then
   exit 1
 fi
 
+if [[ -n "${CHUNK_MMR_CACHE}" && ! -f "${CHUNK_MMR_CACHE}" ]]; then
+  echo "[run_generate_oracle_prompts] chunk-MMR cache not found: ${CHUNK_MMR_CACHE}" >&2
+  echo "[run_generate_oracle_prompts] Set CHUNK_MMR_CACHE=/path/to/{train,val,test}.pkl and rerun." >&2
+  exit 1
+fi
+
 echo "[run_generate_oracle_prompts] experiment=${EXPERIMENT}"
 echo "[run_generate_oracle_prompts] split_name=${SPLIT_NAME}"
 echo "[run_generate_oracle_prompts] top_k=${TOP_K}"
 echo "[run_generate_oracle_prompts] premmr_cache=${PREMMR_CACHE:-auto_by_fingerprint}"
 echo "[run_generate_oracle_prompts] premmr_cache_root=${PREMMR_CACHE_ROOT}"
 echo "[run_generate_oracle_prompts] rebuild_premmr_cache=${REBUILD_PREMMR_CACHE}"
+echo "[run_generate_oracle_prompts] chunk_mmr_cache=${CHUNK_MMR_CACHE:-auto_by_fingerprint}"
+echo "[run_generate_oracle_prompts] chunk_mmr_cache_root=${CHUNK_MMR_CACHE_ROOT}"
+echo "[run_generate_oracle_prompts] rebuild_chunk_mmr_cache=${REBUILD_CHUNK_MMR_CACHE}"
 echo "[run_generate_oracle_prompts] output_dir=${OUTPUT_DIR}"
 echo "[run_generate_oracle_prompts] lambda_grid=${LAMBDA_GRID}"
 echo "[run_generate_oracle_prompts] progress=${PROGRESS}"
@@ -61,6 +78,7 @@ cmd=(
   --experiment "${EXPERIMENT}"
   --output-dir "${OUTPUT_DIR}"
   --premmr-cache-root "${PREMMR_CACHE_ROOT}"
+  --chunk-mmr-cache-root "${CHUNK_MMR_CACHE_ROOT}"
   --lambda-grid "${LAMBDA_GRID}"
   --split-name "${SPLIT_NAME}"
   --top-k "${TOP_K}"
@@ -70,8 +88,16 @@ if [[ -n "${PREMMR_CACHE}" ]]; then
   cmd+=(--premmr-cache "${PREMMR_CACHE}")
 fi
 
+if [[ -n "${CHUNK_MMR_CACHE}" ]]; then
+  cmd+=(--chunk-mmr-cache "${CHUNK_MMR_CACHE}")
+fi
+
 if [[ "${REBUILD_PREMMR_CACHE}" == "true" ]]; then
   cmd+=(--rebuild-premmr-cache)
+fi
+
+if [[ "${REBUILD_CHUNK_MMR_CACHE}" == "true" ]]; then
+  cmd+=(--rebuild-chunk-mmr-cache)
 fi
 
 if [[ "${PROGRESS}" == "false" ]]; then

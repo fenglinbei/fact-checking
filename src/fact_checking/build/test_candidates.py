@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from fact_checking.build.candidates import _auto_truncate_evidence, _premmr_config_fingerprint
+import numpy as np
+
+from fact_checking.build.chunking import ChunkRecord, ChunkingStrategy
+from fact_checking.build.candidates import (
+    PreMMRSample,
+    _auto_truncate_evidence,
+    _chunk_mmr_config_fingerprint,
+    _compute_chunk_mmr_batch,
+    _premmr_config_fingerprint,
+    _select_candidates_from_chunk_sample,
+)
 
 
 class _FakeTokenizer:
@@ -120,6 +130,89 @@ def test_premmr_fingerprint_keeps_embedding_settings() -> None:
     changed["retrieval"]["max_length"] = 512
 
     assert _premmr_config_fingerprint(base) != _premmr_config_fingerprint(changed)
+
+
+def test_chunk_mmr_fingerprint_tracks_chunking_not_topk() -> None:
+    base = _base_build_cfg()
+    changed_topk = deepcopy(base)
+    changed_topk["retrieval"]["top_k"] = 24
+    changed_topk["retrieval"]["mmr_lambda"] = 0.1
+
+    changed_chunking = deepcopy(base)
+    changed_chunking["retrieval"]["chunking"] = {
+        "strategy": "semantic",
+        "theta": 0.5,
+    }
+
+    assert _chunk_mmr_config_fingerprint(base) == _chunk_mmr_config_fingerprint(changed_topk)
+    assert _chunk_mmr_config_fingerprint(base) != _chunk_mmr_config_fingerprint(changed_chunking)
+
+
+class _PairFirstTwoChunking(ChunkingStrategy):
+    def chunk(self, content: str, sent_idx: int) -> str:
+        del content, sent_idx
+        return ""
+
+    def chunks_from_presplit(self, sents: list[str]) -> list[ChunkRecord]:
+        return [
+            ChunkRecord(text=" ".join(sents[:2]), sent_indices=(0, 1)),
+            ChunkRecord(text=sents[2], sent_indices=(2,)),
+        ]
+
+
+class _ChunkEmbedder:
+    def __init__(self) -> None:
+        self.calls: list[tuple[tuple[str, ...], bool]] = []
+
+    def encode(self, texts: list[str], is_query: bool = False) -> np.ndarray:
+        self.calls.append((tuple(texts), is_query))
+        mapping = {
+            "Alpha. Beta.": np.array([1.0, 0.0], dtype=np.float32),
+            "Gamma.": np.array([0.8, 0.2], dtype=np.float32),
+        }
+        return np.stack([mapping[text] for text in texts], axis=0)
+
+
+def test_mmr_selects_over_reembedded_chunks_not_pre_chunk_sentences() -> None:
+    content = "Alpha. Beta. Gamma."
+    pre = PreMMRSample(
+        event_id="e1",
+        claim="alpha claim",
+        label="true",
+        explain="",
+        sentences=[
+            {"event_id": "e1", "report_id": "r1", "sent_idx": 0, "text": "Alpha.", "raw": {"content": content}},
+            {"event_id": "e1", "report_id": "r1", "sent_idx": 1, "text": "Beta.", "raw": {"content": content}},
+            {"event_id": "e1", "report_id": "r1", "sent_idx": 2, "text": "Gamma.", "raw": {"content": content}},
+        ],
+        sent_emb=np.array(
+            [
+                [1.0, 0.0],
+                [0.95, 0.05],
+                [0.0, 1.0],
+            ],
+            dtype=np.float32,
+        ),
+        claim_emb=np.array([1.0, 0.0], dtype=np.float32),
+    )
+    embedder = _ChunkEmbedder()
+
+    chunk_sample = _compute_chunk_mmr_batch(
+        [pre],
+        embedder=embedder,
+        strategy=_PairFirstTwoChunking(),
+    )[0]
+    row = _select_candidates_from_chunk_sample(
+        chunk_sample,
+        top_k=2,
+        alpha_dense=1.0,
+        alpha_lexical=0.0,
+        alpha_bm25=0.0,
+        mmr_lambda=1.0,
+    )
+
+    assert embedder.calls == [(("Alpha. Beta.", "Gamma."), False)]
+    assert [candidate["text"] for candidate in row["candidates"]] == ["Alpha. Beta.", "Gamma."]
 
 
 def test_auto_truncate_evidence_trims_single_long_evidence_item() -> None:

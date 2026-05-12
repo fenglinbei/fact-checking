@@ -9,7 +9,7 @@ from typing import Any
 
 from omegaconf import OmegaConf
 
-from fact_checking.build.candidates import run_build
+from fact_checking.build.candidates import BUILD_LOGIC_VERSION, run_build
 from fact_checking.config import save_yaml
 from fact_checking.pipeline.artifacts import (
     build_split_paths,
@@ -121,7 +121,7 @@ class PipelineRunner:
         build_cfg = self.cfg["build"]
         pipeline_cfg = self.cfg.get("pipeline", {})
         experiment_name = str(self.cfg.get("experiment", {}).get("name", "default"))
-        build_id = fingerprint({"build": build_cfg})
+        build_id = fingerprint({"build": build_cfg, "build_logic_version": BUILD_LOGIC_VERSION})
         run_id = fingerprint(
             {
                 "experiment": self.cfg.get("experiment", {}),

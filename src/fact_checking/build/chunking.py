@@ -3,11 +3,18 @@ from __future__ import annotations
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 import numpy as np
 
 from fact_checking.retrieval.embedder import EmbedderConfig, TextEmbedder
 from fact_checking.utils.text import robust_sentence_split
+
+
+@dataclass(frozen=True)
+class ChunkRecord:
+    text: str
+    sent_indices: tuple[int, ...]
 
 
 class ChunkingStrategy(ABC):
@@ -30,6 +37,26 @@ class ChunkingStrategy(ABC):
         del embeddings_by_sent_idx
         return self.chunk_from_presplit(sents, sent_idx)
 
+    def chunks_from_presplit(self, sents: list[str]) -> list[ChunkRecord]:
+        records: list[ChunkRecord] = []
+        seen: set[str] = set()
+        for idx in range(len(sents)):
+            text = self.chunk_from_presplit(sents, idx)
+            key = " ".join(text.lower().split())
+            if not text.strip() or key in seen:
+                continue
+            seen.add(key)
+            records.append(ChunkRecord(text=text, sent_indices=(idx,)))
+        return records
+
+    def chunks_from_presplit_with_embeddings(
+        self,
+        sents: list[str],
+        embeddings_by_sent_idx: Mapping[int, np.ndarray] | None,
+    ) -> list[ChunkRecord]:
+        del embeddings_by_sent_idx
+        return self.chunks_from_presplit(sents)
+
 
 class SentenceChunking(ChunkingStrategy):
     """Return the single sentence at sent_idx (the current default behaviour)."""
@@ -46,6 +73,13 @@ class SentenceChunking(ChunkingStrategy):
             return ""
         idx = min(max(int(sent_idx), 0), len(sents) - 1)
         return sents[idx]
+
+    def chunks_from_presplit(self, sents: list[str]) -> list[ChunkRecord]:
+        return [
+            ChunkRecord(text=text, sent_indices=(idx,))
+            for idx, text in enumerate(sents)
+            if text.strip()
+        ]
 
 
 class ContextWindowChunking(ChunkingStrategy):
@@ -71,6 +105,20 @@ class ContextWindowChunking(ChunkingStrategy):
         right = min(len(sents), idx + self.k + 1)
         return " ".join(sents[pos] for pos in range(left, right))
 
+    def chunks_from_presplit(self, sents: list[str]) -> list[ChunkRecord]:
+        records: list[ChunkRecord] = []
+        seen: set[str] = set()
+        for idx in range(len(sents)):
+            left = max(0, idx - self.k)
+            right = min(len(sents), idx + self.k + 1)
+            text = " ".join(sents[pos] for pos in range(left, right))
+            key = " ".join(text.lower().split())
+            if not text.strip() or key in seen:
+                continue
+            seen.add(key)
+            records.append(ChunkRecord(text=text, sent_indices=tuple(range(left, right))))
+        return records
+
 
 class RawChunking(ChunkingStrategy):
     """Use the full report content as a single unit."""
@@ -80,6 +128,12 @@ class RawChunking(ChunkingStrategy):
 
     def chunk_from_presplit(self, sents: list[str], sent_idx: int) -> str:
         return " ".join(sents)
+
+    def chunks_from_presplit(self, sents: list[str]) -> list[ChunkRecord]:
+        text = " ".join(sents)
+        if not text.strip():
+            return []
+        return [ChunkRecord(text=text, sent_indices=tuple(range(len(sents))))]
 
 
 class _SemanticBase(ChunkingStrategy):
@@ -202,6 +256,12 @@ class SemanticChunking(_SemanticBase):
                 return " ".join(sents[i] for i in chunk)
         return sents[idx]
 
+    def chunks_from_presplit(self, sents: list[str]) -> list[ChunkRecord]:
+        return [
+            ChunkRecord(text=" ".join(sents[i] for i in chunk), sent_indices=tuple(chunk))
+            for chunk in self._partition(tuple(sents))
+        ]
+
     def chunk_from_presplit_with_embeddings(
         self,
         sents: list[str],
@@ -216,6 +276,16 @@ class SemanticChunking(_SemanticBase):
             if idx in chunk:
                 return " ".join(sents[i] for i in chunk)
         return sents[idx]
+
+    def chunks_from_presplit_with_embeddings(
+        self,
+        sents: list[str],
+        embeddings_by_sent_idx: Mapping[int, np.ndarray] | None,
+    ) -> list[ChunkRecord]:
+        return [
+            ChunkRecord(text=" ".join(sents[i] for i in chunk), sent_indices=tuple(chunk))
+            for chunk in self._partition(tuple(sents), embeddings_by_sent_idx)
+        ]
 
 
 class ContextSemanticChunking(_SemanticBase):
@@ -290,6 +360,12 @@ class ContextSemanticChunking(_SemanticBase):
                 return " ".join(sents[i] for i in chunk)
         return sents[idx]
 
+    def chunks_from_presplit(self, sents: list[str]) -> list[ChunkRecord]:
+        return [
+            ChunkRecord(text=" ".join(sents[i] for i in chunk), sent_indices=tuple(chunk))
+            for chunk in self._partition(tuple(sents))
+        ]
+
     def chunk_from_presplit_with_embeddings(
         self,
         sents: list[str],
@@ -304,6 +380,16 @@ class ContextSemanticChunking(_SemanticBase):
             if idx in chunk:
                 return " ".join(sents[i] for i in chunk)
         return sents[idx]
+
+    def chunks_from_presplit_with_embeddings(
+        self,
+        sents: list[str],
+        embeddings_by_sent_idx: Mapping[int, np.ndarray] | None,
+    ) -> list[ChunkRecord]:
+        return [
+            ChunkRecord(text=" ".join(sents[i] for i in chunk), sent_indices=tuple(chunk))
+            for chunk in self._partition(tuple(sents), embeddings_by_sent_idx)
+        ]
 
 
 def _build_semantic_embedder_cfg(

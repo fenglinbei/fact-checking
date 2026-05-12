@@ -1,6 +1,6 @@
-"""Step 1: Generate build JSONL for each λ value from PreMMR cache.
+"""Step 1: Generate build JSONL for each λ value from chunk-MMR cache.
 
-Reuses the existing _mmr_phase_from_premmr to produce prompts identical to
+Reuses the main pipeline's chunk-first MMR path to produce prompts identical to
 those the main pipeline would generate, one file per λ.
 
 Usage:
@@ -22,11 +22,12 @@ from tqdm.auto import tqdm
 
 from fact_checking.build.chunking import build_chunking_strategy
 from fact_checking.build.candidates import (
-    _can_reuse_chunk_embeddings,
+    _chunk_mmr_config_fingerprint,
+    _compute_chunk_mmr_split,
     _compute_pre_mmr_split,
     _load_pickle,
     _load_prompt_tokenizer,
-    _mmr_phase_from_premmr,
+    _mmr_phase_from_chunk_cache,
     _premmr_config_fingerprint,
 )
 
@@ -53,6 +54,23 @@ def parse_args() -> argparse.Namespace:
         "--rebuild-premmr-cache",
         action="store_true",
         help="Rebuild the fingerprinted PreMMR cache for --split-name before generating prompts.",
+    )
+    p.add_argument(
+        "--chunk-mmr-cache",
+        type=str,
+        default=None,
+        help="Path to chunk-MMR cache pickle. If omitted, resolve it from the experiment build fingerprint.",
+    )
+    p.add_argument(
+        "--chunk-mmr-cache-root",
+        type=str,
+        default="outputs/cache/chunk_mmr",
+        help="Root directory for fingerprinted chunk-MMR caches.",
+    )
+    p.add_argument(
+        "--rebuild-chunk-mmr-cache",
+        action="store_true",
+        help="Rebuild the fingerprinted chunk-MMR cache for --split-name before generating prompts.",
     )
     p.add_argument("--output-dir", type=str, required=True, help="Directory for per-λ JSONL outputs")
     p.add_argument(
@@ -161,6 +179,56 @@ def _ensure_premmr_cache(
     )
 
 
+def _ensure_chunk_mmr_cache(
+    build_cfg: dict[str, Any],
+    *,
+    split_name: str,
+    pre_mmr_path: Path,
+    cache_root: Path,
+    rebuild: bool,
+) -> Path:
+    if not build_cfg:
+        raise ValueError("--experiment is required when --chunk-mmr-cache is omitted or --rebuild-chunk-mmr-cache is set.")
+
+    retrieval_cfg = build_cfg.get("retrieval")
+    if not isinstance(retrieval_cfg, dict):
+        raise ValueError("Resolved experiment build config must contain a build.retrieval dictionary.")
+
+    fp = _chunk_mmr_config_fingerprint(build_cfg)
+    cache_dir = cache_root / fp
+    cache_path = cache_dir / f"{split_name}.pkl"
+
+    if rebuild:
+        if cache_path.exists():
+            print(f"Removing existing chunk-MMR cache: {cache_path}", flush=True)
+            cache_path.unlink()
+        if cache_dir.exists():
+            for chunk_path in cache_dir.glob(f"{split_name}_gpu*.pkl"):
+                print(f"Removing stale chunk-MMR worker cache: {chunk_path}", flush=True)
+                chunk_path.unlink()
+
+    run_summary = {
+        "embedder_model": retrieval_cfg["embedder_model"],
+        "max_length": int(retrieval_cfg.get("max_length", 256)),
+        "batch_size": int(retrieval_cfg.get("batch_size", 64)),
+        "precision": retrieval_cfg.get("precision", "fp32"),
+        "prefetch_size": int(retrieval_cfg.get("prefetch_size", 1)),
+        "num_gpus": int(retrieval_cfg.get("num_gpus", 1)),
+        "device": retrieval_cfg.get("device", "cuda"),
+    }
+
+    print(f"ChunkMMR fingerprint: {fp}", flush=True)
+    print(f"Ensuring chunk-MMR cache: {cache_path}", flush=True)
+    return _compute_chunk_mmr_split(
+        split_name=split_name,
+        retrieval_cfg=retrieval_cfg,
+        run_summary=run_summary,
+        pre_mmr_path=pre_mmr_path,
+        cache_dir=cache_dir,
+        num_gpus=run_summary["num_gpus"],
+    )
+
+
 def main() -> None:
     args = parse_args()
     if args.config_overrides and not args.experiment:
@@ -201,7 +269,6 @@ def main() -> None:
         "system_prompt": prompt_cfg_from_config.get("system_prompt") or None,
     }
     strategy = build_chunking_strategy(retrieval_cfg.get("chunking"), retrieval_cfg)
-    reuse_chunk_embeddings = _can_reuse_chunk_embeddings(strategy, retrieval_cfg)
 
     print(
         "Build settings: "
@@ -215,8 +282,7 @@ def main() -> None:
         flush=True,
     )
     print(
-        f"Chunking strategy: {type(strategy).__name__}, "
-        f"reuse_pre_mmr_embeddings={reuse_chunk_embeddings}",
+        f"Chunking strategy: {type(strategy).__name__}; chunk candidate embeddings are cached separately.",
         flush=True,
     )
 
@@ -230,9 +296,20 @@ def main() -> None:
     else:
         premmr_cache_path = Path(args.premmr_cache)
 
-    print(f"Loading PreMMR cache: {premmr_cache_path}", flush=True)
-    pre_samples = _load_pickle(premmr_cache_path)
-    print(f"Loaded {len(pre_samples)} samples", flush=True)
+    if args.rebuild_chunk_mmr_cache or args.chunk_mmr_cache is None:
+        chunk_mmr_cache_path = _ensure_chunk_mmr_cache(
+            build_cfg,
+            split_name=args.split_name,
+            pre_mmr_path=premmr_cache_path,
+            cache_root=Path(args.chunk_mmr_cache_root),
+            rebuild=args.rebuild_chunk_mmr_cache,
+        )
+    else:
+        chunk_mmr_cache_path = Path(args.chunk_mmr_cache)
+
+    print(f"Loading chunk-MMR cache: {chunk_mmr_cache_path}", flush=True)
+    chunk_samples = _load_pickle(chunk_mmr_cache_path)
+    print(f"Loaded {len(chunk_samples)} samples", flush=True)
 
     tokenizer = _load_prompt_tokenizer(model_name_or_path)
 
@@ -245,19 +322,17 @@ def main() -> None:
     ):
         output_path = output_dir / f"lambda_{lam:.2f}_{args.split_name}.jsonl"
         print(f"Generating prompts for λ={lam:.2f} → {output_path}", flush=True)
-        _mmr_phase_from_premmr(
-            pre_samples=pre_samples,
+        _mmr_phase_from_chunk_cache(
+            chunk_samples=chunk_samples,
             mmr_lambda=lam,
             top_k=top_k,
             alpha_dense=alpha_dense,
             alpha_lexical=alpha_lexical,
             alpha_bm25=alpha_bm25,
-            strategy=strategy,
             tokenizer=tokenizer,
             prompt_cfg=prompt_cfg,
             output_path=output_path,
             cpu_workers=cpu_workers,
-            reuse_chunk_embeddings=reuse_chunk_embeddings,
             show_progress=show_progress,
             progress_desc=f"MMR λ={lam:.2f}",
         )

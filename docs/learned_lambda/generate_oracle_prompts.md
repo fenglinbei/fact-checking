@@ -1,6 +1,6 @@
 # `generate_oracle_prompts.py` 执行逻辑
 
-该脚本是 learned-lambda 流程的第 1 步：先显式读取或按签名构建 PreMMR 缓存，再复用 claim/sentence embedding，针对一组固定 `lambda` 值分别重新运行 MMR 证据选择，并为每个 `lambda` 生成一份 build JSONL prompt 文件。后续 `compute_oracle_lambda.py` 会读取这些 per-lambda prompt 文件，计算每条 claim 的 oracle `lambda`。
+该脚本是 learned-lambda 流程的第 1 步：先显式读取或按签名构建 PreMMR 缓存，再构建 chunk-MMR 缓存，对 evidence chunk 文本重新计算 embedding，最后针对一组固定 `lambda` 值分别重新运行 chunk-level MMR 证据选择，并为每个 `lambda` 生成一份 build JSONL prompt 文件。后续 `compute_oracle_lambda.py` 会读取这些 per-lambda prompt 文件，计算每条 claim 的 oracle `lambda`。
 
 ## 典型用法
 
@@ -8,7 +8,7 @@
 bash scripts/learned_lambda/run_generate_oracle_prompts.sh
 ```
 
-该启动脚本默认复用 `configs/experiment/b3_mmr_topk_sweep_1024.yaml` 的 build 策略，覆盖 `top_k=12`，重新构建当前 split 的 PreMMR cache，并在后续 prompt 生成阶段按签名自动读取：
+该启动脚本默认复用 `configs/experiment/b3_mmr_topk_sweep_1024.yaml` 的 build 策略，覆盖 `top_k=12`，重新构建当前 split 的 PreMMR cache，并按签名构建或读取 chunk-MMR cache：
 
 ```bash
 PYTHONPATH=src python scripts/learned_lambda/generate_oracle_prompts.py \
@@ -23,6 +23,9 @@ PYTHONPATH=src python scripts/learned_lambda/generate_oracle_prompts.py \
 - `--premmr-cache`：可选。PreMMR pickle 路径，例如 `train.pkl`。不传时会根据 `--experiment` 解析出的 build 配置计算签名，并自动定位 `outputs/cache/pre_mmr/<fingerprint>/<split>.pkl`。
 - `--premmr-cache-root`：可选。签名化 PreMMR cache 根目录，默认 `outputs/cache/pre_mmr`。
 - `--rebuild-premmr-cache`：可选。生成 prompt 前重新构建当前 `--split-name` 对应的签名化 PreMMR cache。
+- `--chunk-mmr-cache`：可选。chunk-MMR pickle 路径。不传时会根据 build 配置计算签名，并自动定位 `outputs/cache/chunk_mmr/<fingerprint>/<split>.pkl`。
+- `--chunk-mmr-cache-root`：可选。签名化 chunk-MMR cache 根目录，默认 `outputs/cache/chunk_mmr`。
+- `--rebuild-chunk-mmr-cache`：可选。生成 prompt 前重新构建当前 `--split-name` 对应的签名化 chunk-MMR cache。
 - `--output-dir`：必填。per-lambda JSONL 输出目录，不存在时会自动创建。
 - `--experiment`：可选。Hydra experiment 名称。提供后会从 `pipeline/default` 合成配置，并复用其中的 `build.retrieval` 与 `build.prompt`。
 - `--config-overrides`：可选。与 `--experiment` 一起使用的额外 Hydra override，例如 `build.retrieval.chunking.theta=0.6`。
@@ -46,11 +49,11 @@ PYTHONPATH=src python scripts/learned_lambda/generate_oracle_prompts.py \
    - `top_k`、`alpha_dense`、`alpha_lexical`、`alpha_bm25`、`cpu_workers` 来自 `build.retrieval`，命令行参数优先。
    - prompt 配置来自 `build.prompt`，命令行参数优先。
    - chunking 策略通过 `build_chunking_strategy(build.retrieval.chunking, build.retrieval)` 构造。
-5. 如果 chunking 策略的 embedder 配置与 PreMMR retrieval 配置兼容，则在 chunking 阶段复用 PreMMR 中的 sentence embedding。
-6. 如果没有显式传入 `--premmr-cache`，或传入了 `--rebuild-premmr-cache`，则根据 build 配置计算 PreMMR fingerprint，并确保 `outputs/cache/pre_mmr/<fingerprint>/<split>.pkl` 存在；`--rebuild-premmr-cache` 会先删除该 split 的旧缓存再重建。
-7. 通过 `_load_pickle()` 读取最终确定的 PreMMR cache，得到 `pre_samples`。
+5. 如果没有显式传入 `--premmr-cache`，或传入了 `--rebuild-premmr-cache`，则根据 build 配置计算 PreMMR fingerprint，并确保 `outputs/cache/pre_mmr/<fingerprint>/<split>.pkl` 存在；`--rebuild-premmr-cache` 会先删除该 split 的旧缓存再重建。
+6. 如果没有显式传入 `--chunk-mmr-cache`，或传入了 `--rebuild-chunk-mmr-cache`，则根据 build 配置计算 chunk-MMR fingerprint，并确保 `outputs/cache/chunk_mmr/<fingerprint>/<split>.pkl` 存在。该缓存会先按 chunking 策略生成 evidence chunk candidate，再对 chunk 文本重新计算 embedding。
+7. 通过 `_load_pickle()` 读取最终确定的 chunk-MMR cache，得到 `chunk_samples`。
 8. 通过 `_load_prompt_tokenizer()` 加载 tokenizer；如果 tokenizer 没有 `pad_token`，会将其设置为 `eos_token`。
-9. 遍历每个 `lambda`，显示 lambda 网格进度条，并调用 `_mmr_phase_from_premmr()` 生成对应 JSONL；每个 `lambda` 内部会显示样本级 MMR/prompt 生成进度条：
+9. 遍历每个 `lambda`，显示 lambda 网格进度条，并调用 `_mmr_phase_from_chunk_cache()` 生成对应 JSONL；每个 `lambda` 内部会显示样本级 MMR/prompt 生成进度条：
 
 ```text
 {output_dir}/lambda_{lambda:.2f}_{split_name}.jsonl
@@ -64,19 +67,18 @@ outputs/learned_lambda/prompts/lambda_0.70_train.jsonl
 
 ## 单个 lambda 的处理逻辑
 
-`_mmr_phase_from_premmr()` 会逐条处理 `PreMMRSample`：
+`_mmr_phase_from_chunk_cache()` 会逐条处理 `ChunkMMRSample`：
 
-1. 将缓存中的 sentence dict 恢复为 `SentenceRecord`。
-2. 从缓存读取 `sent_emb` 和 `claim_emb`，不重新运行 embedding 模型。
-3. 计算 dense score：
+1. 从 chunk-MMR cache 读取 evidence chunk candidate、`chunk_emb` 和 `claim_emb`。
+2. 计算 dense score：
 
 ```python
-dense_scores = sent_emb @ claim_emb
+dense_scores = chunk_emb @ claim_emb
 ```
 
-4. 对 claim 与每个 sentence 计算 lexical overlap 和 BM25-like score。
-5. 对 dense、lexical、BM25-like 三组分数分别做 min-max scaling。
-6. 按权重计算混合分数：
+3. 对 claim 与每个 evidence chunk 文本计算 lexical overlap 和 BM25-like score。
+4. 对 dense、lexical、BM25-like 三组分数分别做 min-max scaling。
+5. 按权重计算混合分数：
 
 ```python
 hybrid_scores = (
@@ -86,11 +88,10 @@ hybrid_scores = (
 )
 ```
 
-7. 调用 `maximal_marginal_relevance()`，使用当前 `lambda` 和 `hybrid_scores` 选择最多 `top_k` 条候选证据。
-8. 对每个候选句子使用配置中的 chunking 策略生成证据文本；无 `--experiment` 时默认等价于 `SentenceChunking`。
-9. 按 canonicalized evidence text 去重；如果重复，保留 `hybrid_score` 更高的候选。
-10. 将候选按 `hybrid_score` 降序排序，并截断到 `top_k`。
-11. 调用 `_build_training_row()` 将检索结果转成最终 JSONL 行。
+6. 调用 `maximal_marginal_relevance()`，使用当前 `lambda`、`hybrid_scores` 和 `chunk_emb` 选择最多 `top_k` 条 chunk candidate。
+7. 按 canonicalized evidence text 去重；如果重复，保留 `hybrid_score` 更高的候选。
+8. 将候选按 `hybrid_score` 降序排序，并截断到 `top_k`。
+9. 调用 `_build_training_row()` 将检索结果转成最终 JSONL 行。
 
 ## Prompt 构造逻辑
 

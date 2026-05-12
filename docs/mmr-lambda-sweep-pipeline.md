@@ -43,38 +43,46 @@ Pipeline 分三个阶段：**Build → Train → Infer**。
 - 支持多 GPU 并行：`num_gpus=4`，每个 GPU 处理数据的一个分片
 - 批量预处理大小：`prefetch_size=200`（每批 200 个样本一起编码）
 
-#### Phase 2 — MMR + 候选构建（CPU-only）
+#### Phase 2 — Chunk-MMR cache（GPU embedding）
 
-- 从缓存加载嵌入向量
-- 对每个样本独立运行 MMR 选择算法
+- 从 Pre-MMR cache 读取句子与 claim embedding
+- 先按 `build.retrieval.chunking` 组织 evidence chunk candidate
+- 对每个 chunk 文本重新运行 BGE embedding
+- 结果以 pickle 缓存到 `outputs/cache/chunk_mmr/<fingerprint>/`，排除 `top_k` 与 `mmr_lambda` 字段的指纹
+
+#### Phase 3 — MMR + 候选构建（CPU-only）
+
+- 从 chunk-MMR cache 加载 `chunk_emb` 与 `claim_emb`
+- 对每个样本独立运行 chunk-level MMR 选择算法
 - 最终输出 JSONL 文件，每行包含候选证据 + 预构建的 prompt-target 对
 
 ### 1.2 检索流程（逐样本）
 
 对每个样本，执行以下步骤：
 
-#### (a) 句子级嵌入
+#### (a) 句子级与 chunk 级嵌入
 
 ```python
 sent_emb = embedder.encode(sent_texts, is_query=False)  # [N, 768]
 claim_emb = embedder.encode([claim], is_query=True)[0]   # [768]
+chunk_emb = embedder.encode(chunk_texts, is_query=False) # [M, 768]
 ```
 
-BGE 模型对 query（claim）自动添加指令前缀：`"Represent this sentence for searching relevant passages: "`。对 passage（句子）不做特殊处理。
+Pre-MMR 句子向量用于 chunking 边界与 learned-lambda 特征；MMR 的候选单位是 evidence chunk，dense/MMR 使用重新编码后的 `chunk_emb`。BGE 模型对 query（claim）自动添加指令前缀：`"Represent this sentence for searching relevant passages: "`。对 passage（chunk 文本）不做特殊处理。
 
 #### (b) 三种分数的计算与融合
 
 **稠密语义分（dense）**：内积相似度（向量已 L2 归一化，等价于余弦相似度）
 
 ```
-dense_scores = sent_emb @ claim_emb   # [N]
+dense_scores = chunk_emb @ claim_emb   # [M]
 ```
 
 **词汇重叠分（lexical）**：基于内容词（去除英文停用词后）的 F1 分数
 
 ```
 q_tokens = {非停用词 token 的 Counter}  # 来自 claim
-s_tokens = {非停用词 token 的 Counter}  # 来自句子
+s_tokens = {非停用词 token 的 Counter}  # 来自 evidence chunk
 overlap = Σ min(q_tokens[t], s_tokens[t])
 
 precision = overlap / len(s_tokens)
@@ -445,16 +453,25 @@ LABEL_MAP_6TO3 = {0: 0, 1: 0,   # pants-fire, false → false
 └──────────────────────────┬───────────────────────────────────┘
                            │
 ┌──────────────────────────▼───────────────────────────────────┐
-│ Phase 2: MMR + Candidate (CPU-only, 每个 λ 独立执行)          │
+│ Phase 2: Chunk-MMR cache (GPU Embedding, 跨 top_k/λ 共享缓存) │
 ├──────────────────────────────────────────────────────────────┤
 │ 对每个样本:                                                    │
-│   1. dense_scores = sent_emb @ claim_emb                      │
-│   2. lexical_scores = F1(content_tokens(claim), sent)         │
-│   3. bm25_scores = simplified BM25(claim, sent)               │
+│   1. 按 chunking strategy 生成 evidence chunk candidate        │
+│   2. 重新编码 chunk_texts → chunk_emb [M, D]                   │
+│   → pickle 缓存 (outputs/cache/chunk_mmr/<fp>/)                │
+└──────────────────────────┬───────────────────────────────────┘
+                           │
+┌──────────────────────────▼───────────────────────────────────┐
+│ Phase 3: MMR + Candidate (CPU-only, 每个 λ 独立执行)          │
+├──────────────────────────────────────────────────────────────┤
+│ 对每个样本:                                                    │
+│   1. dense_scores = chunk_emb @ claim_emb                     │
+│   2. lexical_scores = F1(content_tokens(claim), chunk)        │
+│   3. bm25_scores = simplified BM25(claim, chunk)              │
 │   4. hybrid = 0.7*minmax(dense) + 0.2*minmax(lexical)         │
 │                              + 0.1*minmax(bm25)               │
-│   5. MMR select(hybrid, sent_emb, top_k=16, λ=扫描值)         │
-│   6. 去重 + Chunking(sentence)                                │
+│   5. MMR select(hybrid, chunk_emb, top_k=16, λ=扫描值)        │
+│   6. 去重 + 排序                                              │
 │   7. 构建 Chat Prompt (Qwen2.5 template)                      │
 │   8. 自动截断至 max_length=2048                               │
 │   9. target = "Label: <A-F>"                                  │
