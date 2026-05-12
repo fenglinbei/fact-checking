@@ -1,0 +1,149 @@
+# @package _global_
+# b3 semantic chunking top_k sweep, max_length=1024.
+# Full build -> train -> infer pipeline; mmr_lambda is fixed to 0.70.
+
+experiment:
+  name: b3_mmr_topk_sweep_1024
+
+baseline:
+  variant: b3_mmr_topk_sweep_1024
+  chunking_strategy: semantic
+
+build:
+  output_policy: fingerprint_cache
+  data:
+    train_path: data/raw/LIAR-RAW/train.json
+    val_path: data/raw/LIAR-RAW/val.json
+    test_path: data/raw/LIAR-RAW/test.json
+  retrieval:
+    embedder_model: /data/models/bge-base-en-v1.5/
+    device: cuda
+    max_length: 256
+    batch_size: 64
+    top_k: 16
+    alpha_dense: 0.70
+    alpha_lexical: 0.20
+    alpha_bm25: 0.10
+    mmr_lambda: 0.70
+    precision: bf16
+    num_gpus: 4
+    prefetch_size: 200
+    cpu_workers: 4
+    chunking:
+      strategy: semantic
+      context_k: 1
+      theta: 0.7
+      embedder_model: /data/models/bge-base-en-v1.5/
+      device: gpu
+      max_length: 256
+      batch_size: 64
+      precision: bf16
+  prompt:
+    model_name_or_path: /data/models/Qwen2.5-7B-Instruct
+    auto_length: true
+    max_length: 1024
+    output_mode: label_only
+    label_format: letter
+    system_prompt: null
+
+train:
+  model_name_or_path: /data/models/Qwen2.5-7B-Instruct
+  backend: accelerate_deepspeed
+  cuda_visible_devices: "0,1,2,3"
+  nproc_per_node: 4
+  num_machines: 1
+  mixed_precision: bf16
+  deepspeed_config: configs/deepspeed_zero2_bsz8_ga1.json
+  checkpoint_for_infer: best
+  run_dir: null
+
+sft_train:
+  max_new_tokens: 8
+  temperature: 0.0
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 1
+  learning_rate: 1.0e-5
+  num_train_epochs: 2
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  bf16: true
+  max_length: 1024
+  logging_steps: 2
+  save_steps: 50
+  eval_steps: 50
+  dataloader_num_workers: 4
+  gradient_checkpointing: true
+  use_flash_attention_2: true
+  lr_scheduler_type: cosine
+  max_grad_norm: 1.0
+  padding: longest
+  use_length_bucket: true
+  empty_cache_steps: 0
+  empty_cache_on_eval: true
+  empty_cache_on_save: true
+  early_stopping_patience: 3
+  logit_adjust:
+    enabled: true
+    tau: 1.0
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    modules_to_save: null
+
+infer:
+  config_path: null
+  provider: vllm_openai
+  split: test
+  checkpoint: best
+  served_model_name: fact-checking-sft
+  host: 127.0.0.1
+  port: 35001
+  base_url: null
+  wait_seconds: 180
+  request_timeout_seconds: 120
+  log_predictions: 5
+  max_new_tokens: 8
+  temperature: 0.0
+  cuda_visible_devices: "0,1,2,3"
+  tensor_parallel_size: 4
+  gpu_memory_utilization: 0.90
+  dtype: auto
+  max_model_len: null
+  top_p: 1.0
+  presence_penalty: 0.0
+  frequency_penalty: 0.0
+  repetition_penalty: 1.0
+  label_decoding:
+    enabled: true
+    prefix: "Label:"
+    guided_choice: true
+    max_tokens: 1
+  merge_lora_cache:
+    enabled: true
+    dir: outputs/cache/merged_lora
+    force_rebuild: false
+  server:
+    manage: true
+    stop_after_infer: true
+    pid_file: null
+    extra_args: []
+
+tracking:
+  enabled: true
+  backend: swanlab
+
+swanlab:
+  project: fact-checking-b3-topk-1024
+  experiment_name: b3_mmr_topk_sweep_1024
