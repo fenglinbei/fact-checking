@@ -63,6 +63,14 @@ echo "[run_mmr_topk_sweep_infer] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 
 IFS=',' read -r -a TOP_K_ARRAY <<< "${TOP_KS}"
 
+hydra_string_override() {
+  local key="$1"
+  local value="$2"
+  value="${value//\\/\\\\}"
+  value="${value//\'/\\\'}"
+  printf "%s='%s'" "${key}" "${value}"
+}
+
 find_topk_run_dir() {
   local top_k="$1"
   local pattern="build.retrieval.mmr_lambda-${MMR_LAMBDA},build.retrieval.top_k-${top_k}__*"
@@ -121,12 +129,12 @@ for raw_top_k in "${TOP_K_ARRAY[@]}"; do
   python -m fact_checking.pipeline.run \
     "experiment=${EXPERIMENT}" \
     pipeline.mode=infer \
-    "pipeline.run_dir=${TOPK_RUN_DIR}" \
+    "$(hydra_string_override pipeline.run_dir "${TOPK_RUN_DIR}")" \
     "pipeline.force.infer=${FORCE_INFER}" \
-    "train.run_dir=${BASE_TRAIN_DIR}" \
-    "infer.config_path=${REUSE_CONFIG}" \
-    "infer.split=${SPLIT}" \
-    "infer.checkpoint=${CHECKPOINT}" \
+    "$(hydra_string_override train.run_dir "${BASE_TRAIN_DIR}")" \
+    "$(hydra_string_override infer.config_path "${REUSE_CONFIG}")" \
+    "$(hydra_string_override infer.split "${SPLIT}")" \
+    "$(hydra_string_override infer.checkpoint "${CHECKPOINT}")" \
     "build.retrieval.mmr_lambda=${MMR_LAMBDA}" \
     "build.retrieval.top_k=${top_k}" \
     "$@"
