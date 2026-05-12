@@ -34,7 +34,7 @@ build:
       context_k: 1
       theta: 0.7
       embedder_model: /data/models/bge-base-en-v1.5/
-      device: gpu
+      device: cuda
       max_length: 256
       batch_size: 64
       precision: bf16
