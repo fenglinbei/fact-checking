@@ -212,10 +212,87 @@ __marimo__/
 # Dataset
 data/raw/LIAR-RAW/
 
-# models
+# Model weights and checkpoint state
 *.pt
+*.pth
+*.safetensors
+*.ckpt
+*.bin
 
-outputs/
+# Experiment caches and heavyweight checkpoint payloads stay local.
+outputs/cache/
+**/tokenized_cache/
+**/ds_checkpoint/
+outputs/runs/**/*.pt
+outputs/runs/**/*.pth
+outputs/runs/**/*.safetensors
+outputs/runs/**/*.ckpt
+outputs/runs/**/*.bin
+
+# Lightweight artifacts emitted by pipeline/trainer/infer stay visible. These
+# are root-agnostic because pipeline.run_dir and train.run_dir can be overridden.
+!**/configs/
+!**/configs/*.yaml
+!**/configs/*.yml
+!**/manifest.json
+!**/logs/
+!**/logs/*.log
+!**/train/
+!**/train/config.resolved.yaml
+!**/train/logit_adjust.json
+!**/train/train_summary.json
+!**/train/logs/
+!**/train/logs/*.log
+!**/train/prompt_stats/
+!**/train/prompt_stats/*.json
+!**/train/eval/
+!**/train/eval/**/
+!**/train/eval/**/*.json
+!**/train/eval/**/*.jsonl
+!**/train/eval/**/*.png
+!**/infer/
+!**/infer/**/
+!**/infer/**/*.json
+!**/infer/**/*.jsonl
+!**/infer/**/*.png
+!**/eval/
+!**/eval/**/
+!**/eval/**/*.json
+!**/eval/**/*.jsonl
+!**/eval/**/*.png
+
+# Default pipeline output root.
+!outputs/runs/
+!outputs/runs/**/
+!outputs/runs/**/*.json
+!outputs/runs/**/*.jsonl
+!outputs/runs/**/*.yaml
+!outputs/runs/**/*.yml
+!outputs/runs/**/*.csv
+!outputs/runs/**/*.tsv
+!outputs/runs/**/*.txt
+!outputs/runs/**/*.md
+!outputs/runs/**/*.png
+!outputs/runs/**/*.log
+
+# Keep Hydra sweep output metadata/logs visible.
+!multirun/
+!multirun/**/
+!multirun/**/*.yaml
+!multirun/**/*.yml
+!multirun/**/*.log
+
+# Keep tracker run records visible while excluding common transient W&B files.
+wandb/**/tmp/
+wandb/**/wandb-service*
+wandb/**/*.tmp
+!wandb/
+!wandb/**/
+!wandb/**/*.json
+!wandb/**/*.yaml
+!wandb/**/*.yml
+!wandb/**/*.log
+!wandb/**/*.txt
+!wandb/**/*.wandb
+
 .vscode
-wandb/
-multirun/
