@@ -8,6 +8,7 @@
 #   ORACLE_LAMBDAS=outputs/learned_lambda/oracle_lambda_train.jsonl bash scripts/learned_lambda/run_evaluate_predictor.sh
 #   PREMMR_CACHE=outputs/cache/pre_mmr/<fingerprint>/train.pkl bash scripts/learned_lambda/run_evaluate_predictor.sh
 #   PREMMR_CACHE_FINGERPRINT=68c6d9f97eee PROGRESS=false bash scripts/learned_lambda/run_evaluate_predictor.sh
+#   FIXED_LAMBDA_GRID="0.0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0" bash scripts/learned_lambda/run_evaluate_predictor.sh
 #
 # Extra CLI args are forwarded to evaluate_predictor.py, for example:
 #   bash scripts/learned_lambda/run_evaluate_predictor.sh --alpha-dense 0.75 --alpha-lexical 0.15
@@ -25,11 +26,12 @@ PREMMR_CACHE_ROOT="${PREMMR_CACHE_ROOT:-outputs/cache/pre_mmr}"
 PREMMR_CACHE_FINGERPRINT="${PREMMR_CACHE_FINGERPRINT:-68c6d9f97eee}"
 PREMMR_CACHE="${PREMMR_CACHE:-}"
 
-HIDDEN_DIM="${HIDDEN_DIM:-64}"
-DROPOUT="${DROPOUT:-0.1}"
+HIDDEN_DIM="${HIDDEN_DIM:-}"
+DROPOUT="${DROPOUT:-}"
 ALPHA_DENSE="${ALPHA_DENSE:-0.70}"
 ALPHA_LEXICAL="${ALPHA_LEXICAL:-0.20}"
 ALPHA_BM25="${ALPHA_BM25:-0.10}"
+FIXED_LAMBDA_GRID="${FIXED_LAMBDA_GRID:-auto}"
 PROGRESS="${PROGRESS:-true}"
 
 if [[ -z "${PREMMR_CACHE}" ]]; then
@@ -83,11 +85,12 @@ echo "[run_evaluate_predictor] model=${MODEL}"
 echo "[run_evaluate_predictor] feature_stats=${FEATURE_STATS}"
 echo "[run_evaluate_predictor] oracle_lambdas=${ORACLE_LAMBDAS}"
 echo "[run_evaluate_predictor] premmr_cache=${PREMMR_CACHE}"
-echo "[run_evaluate_predictor] hidden_dim=${HIDDEN_DIM}"
-echo "[run_evaluate_predictor] dropout=${DROPOUT}"
+echo "[run_evaluate_predictor] hidden_dim=${HIDDEN_DIM:-from_feature_stats}"
+echo "[run_evaluate_predictor] dropout=${DROPOUT:-from_feature_stats}"
 echo "[run_evaluate_predictor] alpha_dense=${ALPHA_DENSE}"
 echo "[run_evaluate_predictor] alpha_lexical=${ALPHA_LEXICAL}"
 echo "[run_evaluate_predictor] alpha_bm25=${ALPHA_BM25}"
+echo "[run_evaluate_predictor] fixed_lambda_grid=${FIXED_LAMBDA_GRID}"
 echo "[run_evaluate_predictor] progress=${PROGRESS}"
 
 cmd=(
@@ -96,12 +99,19 @@ cmd=(
   --feature-stats "${FEATURE_STATS}"
   --oracle-lambdas "${ORACLE_LAMBDAS}"
   --premmr-cache "${PREMMR_CACHE}"
-  --hidden-dim "${HIDDEN_DIM}"
-  --dropout "${DROPOUT}"
   --alpha-dense "${ALPHA_DENSE}"
   --alpha-lexical "${ALPHA_LEXICAL}"
   --alpha-bm25 "${ALPHA_BM25}"
+  --fixed-lambda-grid "${FIXED_LAMBDA_GRID}"
 )
+
+if [[ -n "${HIDDEN_DIM}" ]]; then
+  cmd+=(--hidden-dim "${HIDDEN_DIM}")
+fi
+
+if [[ -n "${DROPOUT}" ]]; then
+  cmd+=(--dropout "${DROPOUT}")
+fi
 
 if [[ "${PROGRESS}" == "false" ]]; then
   cmd+=(--no-progress)

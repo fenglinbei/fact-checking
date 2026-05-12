@@ -23,7 +23,7 @@ from tqdm.auto import tqdm
 
 from fact_checking.build.candidates import _load_pickle
 from fact_checking.learned_lambda.features import extract_features
-from fact_checking.learned_lambda.predictor import load_predictor
+from fact_checking.learned_lambda.predictor import load_predictor, normalize_features_for_stats
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,11 +32,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--feature-stats", type=str, required=True)
     p.add_argument("--oracle-lambdas", type=str, required=True)
     p.add_argument("--premmr-cache", type=str, required=True)
-    p.add_argument("--hidden-dim", type=int, default=64)
-    p.add_argument("--dropout", type=float, default=0.1)
+    p.add_argument("--hidden-dim", type=int, default=None)
+    p.add_argument("--dropout", type=float, default=None)
     p.add_argument("--alpha-dense", type=float, default=0.70)
     p.add_argument("--alpha-lexical", type=float, default=0.20)
     p.add_argument("--alpha-bm25", type=float, default=0.10)
+    p.add_argument(
+        "--fixed-lambda-grid",
+        type=str,
+        default="auto",
+        help="Comma-separated fixed λ values for baseline search, or 'auto'.",
+    )
     p.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars")
     return p.parse_args()
 
@@ -48,11 +54,106 @@ def _log(message: str, *, show_progress: bool) -> None:
         print(message, flush=True)
 
 
+def _safe_corr(x: np.ndarray, y: np.ndarray, kind: str) -> tuple[float, float]:
+    if len(x) < 2 or x.std() <= 1e-8 or y.std() <= 1e-8:
+        return float("nan"), float("nan")
+    if kind == "spearman":
+        return scipy_stats.spearmanr(x, y)
+    return scipy_stats.pearsonr(x, y)
+
+
+def _oracle_margin(rec: dict) -> float | None:
+    lp_by_lambda = rec.get("logprobs_by_lambda")
+    if not isinstance(lp_by_lambda, dict) or len(lp_by_lambda) < 2:
+        return None
+    values = sorted((float(v) for v in lp_by_lambda.values()), reverse=True)
+    return values[0] - values[1]
+
+
+def _parse_fixed_grid(grid_arg: str, stats: dict, oracle_arr: np.ndarray) -> np.ndarray:
+    if grid_arg.strip().lower() != "auto":
+        values = [float(x.strip()) for x in grid_arg.split(",") if x.strip()]
+        return np.array(sorted(set(values)), dtype=np.float32)
+    if stats.get("lambda_grid"):
+        return np.array(stats["lambda_grid"], dtype=np.float32)
+    values = sorted(set(np.round(oracle_arr, 2).tolist()))
+    if len(values) >= 2:
+        return np.array(values, dtype=np.float32)
+    return np.arange(0.0, 1.0 + 1e-8, 0.05, dtype=np.float32)
+
+
+def _print_baselines(pred_arr: np.ndarray, oracle_arr: np.ndarray, fixed_grid: np.ndarray) -> None:
+    mse = float(np.mean((pred_arr - oracle_arr) ** 2))
+    mean_pred = float(oracle_arr.mean())
+    mean_mse = float(np.mean((mean_pred - oracle_arr) ** 2))
+    mean_mae = float(np.mean(np.abs(mean_pred - oracle_arr)))
+
+    fixed_scores = []
+    for lam in fixed_grid:
+        lam_f = float(lam)
+        fixed_scores.append((
+            lam_f,
+            float(np.mean((lam_f - oracle_arr) ** 2)),
+            float(np.mean(np.abs(lam_f - oracle_arr))),
+        ))
+    best_lam, best_mse, best_mae = min(fixed_scores, key=lambda item: item[1])
+    r2_vs_mean = 1.0 - mse / mean_mse if mean_mse > 1e-12 else float("nan")
+    r2_vs_best_fixed = 1.0 - mse / best_mse if best_mse > 1e-12 else float("nan")
+
+    print("\nBaselines:")
+    print(f"  Mean oracle λ={mean_pred:.3f}: MAE={mean_mae:.4f}, RMSE={np.sqrt(mean_mse):.4f}, MSE={mean_mse:.5f}")
+    print(f"  Best fixed λ={best_lam:.2f}: MAE={best_mae:.4f}, RMSE={np.sqrt(best_mse):.4f}, MSE={best_mse:.5f}")
+    print(f"  Predictor R2 vs mean:       {r2_vs_mean:.4f}")
+    print(f"  Predictor R2 vs best fixed: {r2_vs_best_fixed:.4f}")
+
+
+def _print_error_by_oracle_bucket(pred_arr: np.ndarray, oracle_arr: np.ndarray) -> None:
+    print("\nError by oracle λ:")
+    rounded = np.round(oracle_arr, 2)
+    for lam in sorted(set(rounded.tolist())):
+        mask = rounded == lam
+        bucket_pred = pred_arr[mask]
+        bucket_oracle = oracle_arr[mask]
+        mae = float(np.mean(np.abs(bucket_pred - bucket_oracle)))
+        rmse = float(np.sqrt(np.mean((bucket_pred - bucket_oracle) ** 2)))
+        print(
+            f"  λ={lam:.2f}: n={int(mask.sum()):5d}  "
+            f"pred_mean={bucket_pred.mean():.3f}  MAE={mae:.4f}  RMSE={rmse:.4f}"
+        )
+
+
+def _print_margin_analysis(margins: np.ndarray, pred_arr: np.ndarray, oracle_arr: np.ndarray) -> None:
+    if len(margins) == 0:
+        return
+    print("\nOracle logprob margin:")
+    print(f"  N:      {len(margins)}")
+    print(f"  Mean:   {margins.mean():.4f}")
+    print(f"  Median: {np.median(margins):.4f}")
+    print(f"  Q25:    {np.quantile(margins, 0.25):.4f}")
+    print(f"  Q75:    {np.quantile(margins, 0.75):.4f}")
+    for threshold in (0.01, 0.05, 0.10):
+        pct = 100.0 * float((margins < threshold).mean())
+        print(f"  margin < {threshold:.2f}: {pct:5.1f}%")
+
+    print("\nError by oracle margin:")
+    bins = [0.0, 0.01, 0.05, 0.10, 0.25, float("inf")]
+    labels = ["[0,.01)", "[.01,.05)", "[.05,.10)", "[.10,.25)", "[.25,inf)"]
+    abs_err = np.abs(pred_arr - oracle_arr)
+    for lo, hi, label in zip(bins[:-1], bins[1:], labels):
+        mask = (margins >= lo) & (margins < hi)
+        if not np.any(mask):
+            continue
+        print(
+            f"  {label}: n={int(mask.sum()):5d}  "
+            f"MAE={abs_err[mask].mean():.4f}  oracle_std={oracle_arr[mask].std():.3f}"
+        )
+
+
 def main() -> None:
     args = parse_args()
     show_progress = not args.no_progress
 
-    oracle_by_eid: dict[str, float] = {}
+    oracle_by_eid: dict[str, dict] = {}
     with open(args.oracle_lambdas) as f:
         for line in tqdm(
             f,
@@ -62,7 +163,8 @@ def main() -> None:
             disable=not show_progress,
         ):
             rec = json.loads(line.strip())
-            oracle_by_eid[rec["event_id"]] = rec["oracle_lambda"]
+            rec["oracle_lambda"] = float(rec["oracle_lambda"])
+            oracle_by_eid[rec["event_id"]] = rec
     _log(f"Loaded {len(oracle_by_eid)} oracle λ values", show_progress=show_progress)
 
     pre_samples = _load_pickle(Path(args.premmr_cache))
@@ -88,6 +190,11 @@ def main() -> None:
         dropout=args.dropout,
     )
     _log(f"Loaded predictor: {args.model}", show_progress=show_progress)
+    _log(
+        f"Predictor metadata: model_type={stats.get('model_type', 'regression')} "
+        f"input_dim={stats.get('input_dim')}",
+        show_progress=show_progress,
+    )
 
     features = np.stack([
         extract_features(p, args.alpha_dense, args.alpha_lexical, args.alpha_bm25)
@@ -99,29 +206,34 @@ def main() -> None:
             disable=not show_progress,
         )
     ])
-    mean = np.array(stats["mean"], dtype=np.float32)
-    std = np.array(stats["std"], dtype=np.float32)
-    std[std < 1e-8] = 1.0
-    features_norm = (features - mean) / std
+    features_norm = normalize_features_for_stats(features, stats)
 
     with torch.no_grad():
         x = torch.from_numpy(features_norm)
         pred_arr = model(x).numpy()
-    oracle_arr = np.array([oracle_by_eid[p.event_id] for p in matched])
+    oracle_arr = np.array([oracle_by_eid[p.event_id]["oracle_lambda"] for p in matched])
+    margins_with_missing = [_oracle_margin(oracle_by_eid[p.event_id]) for p in matched]
+    has_margin = np.array([m is not None for m in margins_with_missing], dtype=bool)
+    margins = np.array([m for m in margins_with_missing if m is not None], dtype=np.float32)
 
     # Regression metrics
+    mse = float(np.mean((pred_arr - oracle_arr) ** 2))
     mae = float(np.mean(np.abs(pred_arr - oracle_arr)))
-    rmse = float(np.sqrt(np.mean((pred_arr - oracle_arr) ** 2)))
-    pearson_r, pearson_p = scipy_stats.pearsonr(oracle_arr, pred_arr)
-    spearman_r, spearman_p = scipy_stats.spearmanr(oracle_arr, pred_arr)
+    rmse = float(np.sqrt(mse))
+    pearson_r, pearson_p = _safe_corr(oracle_arr, pred_arr, "pearson")
+    spearman_r, spearman_p = _safe_corr(oracle_arr, pred_arr, "spearman")
 
     print(f"\n{'=' * 50}")
     print(f"Predictor Evaluation")
     print(f"{'=' * 50}")
     print(f"MAE:        {mae:.4f}")
     print(f"RMSE:       {rmse:.4f}")
+    print(f"MSE:        {mse:.5f}")
     print(f"Pearson r:  {pearson_r:.4f} (p={pearson_p:.2e})")
     print(f"Spearman r: {spearman_r:.4f} (p={spearman_p:.2e})")
+
+    fixed_grid = _parse_fixed_grid(args.fixed_lambda_grid, stats, oracle_arr)
+    _print_baselines(pred_arr, oracle_arr, fixed_grid)
 
     # Oracle λ distribution
     print(f"\nOracle λ distribution:")
@@ -143,6 +255,8 @@ def main() -> None:
     print(f"  Std:  {pred_arr.std():.3f}")
     print(f"  Min:  {pred_arr.min():.3f}")
     print(f"  Max:  {pred_arr.max():.3f}")
+    std_ratio = float(pred_arr.std() / oracle_arr.std()) if oracle_arr.std() > 1e-8 else float("nan")
+    print(f"  Std ratio pred/oracle: {std_ratio:.3f}")
 
     bins = np.arange(0, 1.05 + 1e-8, 0.05)
     hist, _ = np.histogram(pred_arr, bins=bins)
@@ -150,6 +264,10 @@ def main() -> None:
         pct = 100.0 * hist[i] / len(pred_arr)
         bar = "#" * int(pct / 2)
         print(f"  [{bins[i]:.2f}, {bins[i+1]:.2f}): {hist[i]:5d} ({pct:5.1f}%) {bar}")
+
+    _print_error_by_oracle_bucket(pred_arr, oracle_arr)
+    if len(margins) > 0:
+        _print_margin_analysis(margins, pred_arr[has_margin], oracle_arr[has_margin])
 
     # Quality assessment
     print(f"\n{'=' * 50}")
@@ -161,6 +279,8 @@ def main() -> None:
         print(f"  WARNING: MAE ({mae:.4f}) is high. Predictor may need more features or data.")
     if pearson_r < 0.2:
         print(f"  WARNING: Low correlation ({pearson_r:.4f}). Features may not capture oracle λ signal well.")
+    if np.isfinite(std_ratio) and std_ratio < 0.5:
+        print(f"  WARNING: Predicted λ variance is compressed (std ratio={std_ratio:.3f}).")
     if mae < 0.15 and pearson_r > 0.3:
         print("  Predictor quality looks acceptable for pipeline integration.")
 
