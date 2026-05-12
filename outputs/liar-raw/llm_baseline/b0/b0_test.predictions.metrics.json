@@ -1,0 +1,45 @@
+{
+  "num_samples": 1251,
+  "accuracy": 0.1782573940847322,
+  "macro_precision": 0.23106818371259483,
+  "macro_recall": 0.18489428669936495,
+  "macro_f1": 0.09486169948459693,
+  "per_class": {
+    "pants-fire": {
+      "precision": 1.0,
+      "recall": 0.06976744186046512,
+      "f1": 0.13043478260869565,
+      "support": 86
+    },
+    "false": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 249
+    },
+    "barely-true": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 210
+    },
+    "half-true": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 263
+    },
+    "mostly-true": {
+      "precision": 0.21705426356589147,
+      "recall": 0.11764705882352941,
+      "f1": 0.15258855585831063,
+      "support": 238
+    },
+    "true": {
+      "precision": 0.1693548387096774,
+      "recall": 0.9219512195121952,
+      "f1": 0.2861468584405753,
+      "support": 205
+    }
+  }
+}

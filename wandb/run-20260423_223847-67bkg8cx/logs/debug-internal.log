@@ -1,0 +1,47 @@
+{"time":"2026-04-23T22:38:47.573499587+08:00","level":"INFO","msg":"wandb-core"}
+{"time":"2026-04-23T22:38:47.574364633+08:00","level":"INFO","msg":"stream: starting","core version":"0.26.0"}
+{"time":"2026-04-23T22:38:48.323977021+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:38:50.442643632+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:38:55.371559809+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:39:04.14913139+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:39:20.695206225+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:39:53.561673792+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:40:53.671519718+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:41:53.884488674+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:42:54.042249854+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:43:54.218781636+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:44:54.409668098+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:45:54.589055991+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:46:54.77345401+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:47:54.969653112+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:48:55.145342787+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:49:55.333297006+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:50:55.502002347+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:51:55.670781458+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:52:55.841921306+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:53:55.991655282+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:54:56.172219386+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:54:56.172394409+08:00","level":"ERROR","msg":"featurechecker: failed to load features, all will be disabled","error":"POST https://api.wandb.ai/graphql giving up after 21 attempt(s): Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:54:56.297865493+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:54:58.690923162+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:55:03.01706017+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:55:11.840986571+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:55:31.384813212+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:56:08.158006903+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:57:08.346083134+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T22:58:08.529725644+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": EOF"}
+{"time":"2026-04-23T22:59:08.698000372+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T23:00:08.883573431+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T23:01:09.061354172+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T23:02:09.243821094+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T23:03:09.430536145+08:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/graphql\": unexpected EOF"}
+{"time":"2026-04-23T23:04:09.879949511+08:00","level":"INFO","msg":"stream: created new stream","id":"67bkg8cx"}
+{"time":"2026-04-23T23:04:09.880199474+08:00","level":"INFO","msg":"handler: started"}
+{"time":"2026-04-23T23:04:09.880966542+08:00","level":"INFO","msg":"stream: started"}
+{"time":"2026-04-23T23:04:09.880983934+08:00","level":"INFO","msg":"writer: started","stream_id":"67bkg8cx"}
+{"time":"2026-04-23T23:04:09.880987246+08:00","level":"INFO","msg":"sender: started"}
+{"time":"2026-04-23T23:04:09.881060127+08:00","level":"INFO","msg":"stream: closing"}
+{"time":"2026-04-23T23:04:11.699646741+08:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2026-04-23T23:04:11.699667393+08:00","level":"INFO","msg":"handler: closed"}
+{"time":"2026-04-23T23:04:11.70011879+08:00","level":"INFO","msg":"sender: closed"}
+{"time":"2026-04-23T23:04:11.700125286+08:00","level":"INFO","msg":"stream: closed"}

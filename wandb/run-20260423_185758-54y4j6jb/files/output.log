@@ -1,0 +1,228 @@
+2026-04-23 18:58:04 | INFO | sft.trainer | trainer.py:128 | [INFO] saved resolved config to outputs/liar-raw/llm_baseline/b0.2_20260423-185722/config.resolved.yaml
+2026-04-23 18:58:20 | INFO | sft.trainer | stats.py:59 | [PROMPT_STATS] split=train version=v2 mode=explanation_label strategy=tail_evidence pre_mean=632.52 pre_p95=854 pre_overflow=0 post_mean=632.51 post_p95=854 post_overflow=0 truncated=1 trunc_rate=0.0001
+2026-04-23 18:58:20 | INFO | sft.trainer | stats.py:59 | [PROMPT_STATS] split=val version=v2 mode=explanation_label strategy=tail_evidence pre_mean=638.21 pre_p95=859 pre_overflow=0 post_mean=638.21 post_p95=859 post_overflow=0 truncated=0 trunc_rate=0.0000
+2026-04-23 18:58:20 | INFO | sft.trainer | trainer.py:215 | [INFO] prompt statistics saved to outputs/liar-raw/llm_baseline/b0.2_20260423-185722/prompt_stats/prompt_stats.json
+`torch_dtype` is deprecated! Use `dtype` instead!
+2026-04-23 18:58:57 | INFO | sft.trainer | trainer.py:322 | [INFO] dataloader length around accelerator.prepare: before=10065, after=2516
+2026-04-23 18:58:57 | WARNING | sft.trainer | trainer.py:328 | [WARN] len(train_dl) changed after accelerator.prepare: before=10065, after=2516. This may indicate duplicated sharding/re-partitioning across distributed samplers.
+2026-04-23 18:58:57 | INFO | sft.trainer | trainer.py:345 | [INFO] train progress setup (post-prepare): num_epochs=2, len(train_dl)=2516, effective_grad_accum_steps=8, update_steps_per_epoch=315, max_train_steps=630
+  7%|████████████████▍                                                                                                                                                                                                                                      | 42/630 [26:35<6:13:22, 38.10s/it]
+[2026-04-23 18:59:36,424] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:00:15,818] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:00:52,758] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:01:30,535] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:02:12,935] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:02:49,016] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:03:28,006] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:04:06,193] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:05:19,764] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:05:57,645] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:06:34,540] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:07:13,371] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:07:51,409] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:10:26,604] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:11:41,371] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:12:59,946] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:13:36,003] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:14:13,939] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:15:27,098] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:16:44,333] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:17:19,655] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:17:58,097] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:19:13,820] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:19:52,054] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:21:06,814] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:21:41,701] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:22:19,648] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:22:57,445] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:23:35,217] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:24:57,820] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:25:32,862] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:26:10,896] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:26:49,877] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:27:27,582] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:28:44,679] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:29:18,189] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:29:56,278] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+[2026-04-23 19:30:33,354] [WARNING] [stage3.py:2497:step] 1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance. if this is happening frequently consider adjusting settings to reduce memory consumption. If you are unable to make the cache flushes go away consider adding get_accelerator().empty_cache() calls in your training loop to ensure that all ranks flush their caches at the same time
+                                                                                                                                                                                                                                                                                               The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+eval:   0%|                                                                                                                                                                                                                                                            | 0/319 [00:00<?, ?it/s]Traceback (most recent call last):
+  File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 72, in <module>                                                                                                                                                              | 25/319 [41:55<7:52:44, 96.48s/it]
+    main()
+  File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 68, in main
+    trainer.main()
+  File "/data/liaozijie/fact-checking/src/sft/trainer.py", line 391, in main
+    eval_metrics = evaluate(
+                   ^^^^^^^^^
+  File "/data/liaozijie/fact-checking/src/sft/eval.py", line 151, in evaluate
+    generated = model.generate(
+                ^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/generation/utils.py", line 2543, in generate
+    result = decoding_method(
+             ^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/generation/utils.py", line 2750, in _sample
+    outputs = model_forward(**model_inputs, return_dict=True)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+    return inner()
+           ^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+    result = forward_call(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/utils/generic.py", line 876, in wrapper
+    output = func(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 462, in forward
+    outputs: BaseModelOutputWithPast = self.model(
+                                       ^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+    return inner()
+           ^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+    result = forward_call(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/utils/generic.py", line 952, in wrapper
+    output = func(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/utils/output_capturing.py", line 248, in wrapper
+    outputs = func(self, *args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 399, in forward
+    hidden_states = decoder_layer(
+                    ^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/modeling_layers.py", line 93, in __call__
+    return super().__call__(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+    return inner()
+           ^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+    result = forward_call(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 293, in forward
+    hidden_states, _ = self.self_attn(
+                       ^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+    return inner()
+           ^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+    result = forward_call(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 231, in forward
+    attn_output, attn_weights = attention_interface(
+                                ^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/integrations/flash_attention.py", line 68, in flash_attention_forward
+    attn_output = _flash_attention_forward(
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/modeling_flash_attention_utils.py", line 803, in _flash_attention_forward
+    out = flash_fn(query_states, key_states, value_states, **flash_kwargs())
+                                                             ^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/modeling_flash_attention_utils.py", line 568, in _process_flash_attention_kwargs
+    def _process_flash_attention_kwargs(
+
+KeyboardInterrupt
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 72, in <module>
+[rank0]:     main()
+[rank0]:   File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 68, in main
+[rank0]:     trainer.main()
+[rank0]:   File "/data/liaozijie/fact-checking/src/sft/trainer.py", line 391, in main
+[rank0]:     eval_metrics = evaluate(
+[rank0]:                    ^^^^^^^^^
+[rank0]:   File "/data/liaozijie/fact-checking/src/sft/eval.py", line 151, in evaluate
+[rank0]:     generated = model.generate(
+[rank0]:                 ^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+[rank0]:     return func(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/generation/utils.py", line 2543, in generate
+[rank0]:     result = decoding_method(
+[rank0]:              ^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/generation/utils.py", line 2750, in _sample
+[rank0]:     outputs = model_forward(**model_inputs, return_dict=True)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+[rank0]:     return inner()
+[rank0]:            ^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+[rank0]:     result = forward_call(*args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/utils/generic.py", line 876, in wrapper
+[rank0]:     output = func(self, *args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 462, in forward
+[rank0]:     outputs: BaseModelOutputWithPast = self.model(
+[rank0]:                                        ^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+[rank0]:     return inner()
+[rank0]:            ^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+[rank0]:     result = forward_call(*args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/utils/generic.py", line 952, in wrapper
+[rank0]:     output = func(self, *args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/utils/output_capturing.py", line 248, in wrapper
+[rank0]:     outputs = func(self, *args, **kwargs)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 399, in forward
+[rank0]:     hidden_states = decoder_layer(
+[rank0]:                     ^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/modeling_layers.py", line 93, in __call__
+[rank0]:     return super().__call__(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+[rank0]:     return inner()
+[rank0]:            ^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+[rank0]:     result = forward_call(*args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 293, in forward
+[rank0]:     hidden_states, _ = self.self_attn(
+[rank0]:                        ^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1739, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1845, in _call_impl
+[rank0]:     return inner()
+[rank0]:            ^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1793, in inner
+[rank0]:     result = forward_call(*args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/models/qwen2/modeling_qwen2.py", line 231, in forward
+[rank0]:     attn_output, attn_weights = attention_interface(
+[rank0]:                                 ^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/integrations/flash_attention.py", line 68, in flash_attention_forward
+[rank0]:     attn_output = _flash_attention_forward(
+[rank0]:                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/modeling_flash_attention_utils.py", line 803, in _flash_attention_forward
+[rank0]:     out = flash_fn(query_states, key_states, value_states, **flash_kwargs())
+[rank0]:                                                              ^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/transformers/modeling_flash_attention_utils.py", line 568, in _process_flash_attention_kwargs
+[rank0]:     def _process_flash_attention_kwargs(
+[rank0]:
+[rank0]: KeyboardInterrupt

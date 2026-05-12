@@ -1,0 +1,59 @@
+Loading weights: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 427/427 [00:00<00:00, 12388.15it/s]
+Traceback (most recent call last):
+  File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 609, in <module>
+    main()
+  File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 501, in main
+    model, optimizer, train_dl, val_dl, val_eval_dl, scheduler = accelerator.prepare(
+                                                                 ^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/accelerate/accelerator.py", line 1548, in prepare
+    result = self._prepare_deepspeed(*args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/accelerate/accelerator.py", line 2427, in _prepare_deepspeed
+    engine, optimizer, _, lr_scheduler = ds_initialize(**kwargs)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/__init__.py", line 214, in initialize
+    engine = DeepSpeedEngine(args=args,
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 365, in __init__
+    self._configure_optimizer(optimizer, model_parameters)
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 1628, in _configure_optimizer
+    self.optimizer = self._configure_zero_optimizer(basic_optimizer)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 1935, in _configure_zero_optimizer
+    optimizer = Stage1And2ZeroOptimizer(
+                ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/stage_1_and_2.py", line 638, in __init__
+    self.initialize_optimizer_states()
+  File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/stage_1_and_2.py", line 800, in initialize_optimizer_states
+    single_grad_partition = torch.zeros(int(self.partition_size[i]),
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 16.68 GiB. GPU 0 has a total capacity of 44.39 GiB of which 10.57 GiB is free. Including non-PyTorch memory, this process has 33.97 GiB memory in use. Of the allocated memory 33.36 GiB is allocated by PyTorch, and 27.95 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 609, in <module>
+[rank0]:     main()
+[rank0]:   File "/data/liaozijie/fact-checking/scripts/train_llm_baseline_sft.py", line 501, in main
+[rank0]:     model, optimizer, train_dl, val_dl, val_eval_dl, scheduler = accelerator.prepare(
+[rank0]:                                                                  ^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/accelerate/accelerator.py", line 1548, in prepare
+[rank0]:     result = self._prepare_deepspeed(*args)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/accelerate/accelerator.py", line 2427, in _prepare_deepspeed
+[rank0]:     engine, optimizer, _, lr_scheduler = ds_initialize(**kwargs)
+[rank0]:                                          ^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/__init__.py", line 214, in initialize
+[rank0]:     engine = DeepSpeedEngine(args=args,
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 365, in __init__
+[rank0]:     self._configure_optimizer(optimizer, model_parameters)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 1628, in _configure_optimizer
+[rank0]:     self.optimizer = self._configure_zero_optimizer(basic_optimizer)
+[rank0]:                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 1935, in _configure_zero_optimizer
+[rank0]:     optimizer = Stage1And2ZeroOptimizer(
+[rank0]:                 ^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/stage_1_and_2.py", line 638, in __init__
+[rank0]:     self.initialize_optimizer_states()
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc/lib/python3.11/site-packages/deepspeed/runtime/zero/stage_1_and_2.py", line 800, in initialize_optimizer_states
+[rank0]:     single_grad_partition = torch.zeros(int(self.partition_size[i]),
+[rank0]:                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 16.68 GiB. GPU 0 has a total capacity of 44.39 GiB of which 10.57 GiB is free. Including non-PyTorch memory, this process has 33.97 GiB memory in use. Of the allocated memory 33.36 GiB is allocated by PyTorch, and 27.95 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)

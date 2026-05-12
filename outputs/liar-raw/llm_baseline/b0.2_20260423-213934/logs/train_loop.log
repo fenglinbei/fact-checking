@@ -1,0 +1,36 @@
+2026-04-23 21:40:06 | INFO | sft.trainer | trainer.py:129 | [INFO] saved resolved config to outputs/liar-raw/llm_baseline/b0.2_20260423-213934/config.resolved.yaml
+2026-04-23 21:40:21 | INFO | sft.trainer | stats.py:59 | [PROMPT_STATS] split=train version=v2 mode=explanation_label strategy=tail_evidence pre_mean=632.52 pre_p95=854 pre_overflow=18 post_mean=631.13 post_p95=852 post_overflow=0 truncated=36 trunc_rate=0.0036
+2026-04-23 21:40:21 | INFO | sft.trainer | stats.py:59 | [PROMPT_STATS] split=val version=v2 mode=explanation_label strategy=tail_evidence pre_mean=613.25 pre_p95=758 pre_overflow=0 post_mean=613.25 post_p95=758 post_overflow=0 truncated=0 trunc_rate=0.0000
+2026-04-23 21:40:21 | INFO | sft.trainer | trainer.py:216 | [INFO] prompt statistics saved to outputs/liar-raw/llm_baseline/b0.2_20260423-213934/prompt_stats/prompt_stats.json
+2026-04-23 21:40:22 | INFO | sft.trainer | adapters.py:97 | [INFO] LoRA enabled: trainable parameters=40370176 / 7655986688 (0.5273%), r=16, alpha=32
+2026-04-23 21:40:42 | INFO | sft.trainer | trainer.py:306 | [INFO] Optimizer will update LoRA/trainable parameters only.
+2026-04-23 21:40:57 | INFO | sft.trainer | trainer.py:337 | [INFO] dataloader length around accelerator.prepare: before=10065, after=2516
+2026-04-23 21:40:57 | WARNING | sft.trainer | trainer.py:343 | [WARN] len(train_dl) changed after accelerator.prepare: before=10065, after=2516. This may indicate duplicated sharding/re-partitioning across distributed samplers.
+2026-04-23 21:40:57 | INFO | sft.trainer | trainer.py:360 | [INFO] train progress setup (post-prepare): num_epochs=2, len(train_dl)=2516, effective_grad_accum_steps=8, update_steps_per_epoch=315, max_train_steps=630
+2026-04-23 22:10:06 | INFO | sft.trainer | trainer.py:405 | [rank 0] before evaluate step=200
+2026-04-23 22:12:43 | INFO | sft.trainer | eval.py:43 | [EVAL_SAMPLE] idx=0 pred=half-true gold=half-true output=Explanation: Brown said he voted for the health care law that added a new tax on Ohio manufacturers. He did not vote for the health care law. He voted against it. But he did vote for the tax extension. And he said he voted for the tax ex... explain=Dissenters say it could cost jobs and force business overseas. But portraying it broadly as "a new tax on Ohio manufacturers" over bills the scope of the tax. In Ohio, Crossroads said, about 20,000 workers are employed by makers of medic... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-04-23 22:12:44 | INFO | sft.trainer | eval.py:43 | [EVAL_SAMPLE] idx=1 pred=mostly-true gold=false output=Explanation: The national debt has risen by $5.8 trillion since Obama took office. That’s $5.8 trillion more than when he was sworn in. But the debt has also risen under every other president since World War II. And the debt has grown fa... explain=Let’s take a look back to decide. Allen’s language in the Op/Ed plainly implies the Obama administration's actions have already caused the debt to rise $6 trillion. The debt has risen by $3.1 trillion since Obama took office. prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-04-23 22:12:44 | INFO | sft.trainer | eval.py:43 | [EVAL_SAMPLE] idx=2 pred=parse_error gold=mostly-true output=Explanation: The governor's budget includes $5 billion in actions he proposes the Legislature adopt within the next few weeks. The governor says more than $3.5 billion in state revenue that is supposed to be dedicated to basic needs and ... explain="At the end of the story," Ogden said, "the obvious answer is a tax overhaul in the state of Texas. We really have a pretty rickety system right now." Bottom line: Watson accurately recaps the amount of money allocated from specific-purp... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-04-23 22:12:44 | INFO | sft.trainer | eval.py:43 | [EVAL_SAMPLE] idx=3 pred=half-true gold=half-true output=Explanation: The state's unemployment rate is at its lowest level in more than a decade. But Fisher said the state has lost 150,000 jobs since the stimulus package was signed into law. That's a bit of a stretch. The state's unemployment ... explain=Portman’s campaign later offered The Plain Dealer conflicting citations for the figures in both statements, and for the time-frame examined, making it difficult to pin down how and when they computed the figure. In the end, the number of... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-04-23 22:12:44 | INFO | sft.trainer | eval.py:43 | [EVAL_SAMPLE] idx=4 pred=half-true gold=half-true output=Explanation: The protesters were not a "mob" and they did not "bust down the door." But they did break into the Capitol and take over the floor. That's why we're calling this a "half-true."
+Label: half-true explain=So, the thrust of Fitzgerald’s statement is correct, but the rhetoric overstates some of what actually happened. Indeed, some of the fallout was a result not just of the policy changes in the bill -- which have prompted weeks of protests... prompt=<|im_start|>system
+You are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>
+<|im_start|>user
+Classify the claim into exactly one LIAR-RAW l...
+2026-04-23 22:12:44 | INFO | sft.trainer | trainer.py:416 | [rank 0] after evaluate step=200
+2026-04-23 22:12:44 | INFO | sft.trainer | trainer.py:471 | [rank 0] before save best step=200
+2026-04-23 22:12:48 | INFO | sft.trainer | trainer.py:473 | [rank 0] after save best step=200
+2026-04-23 22:12:49 | INFO | sft.trainer | trainer.py:479 | [rank 0] before save checkpoint step=200
+2026-04-23 22:12:53 | INFO | sft.trainer | trainer.py:481 | [rank 0] after save checkpoint step=200

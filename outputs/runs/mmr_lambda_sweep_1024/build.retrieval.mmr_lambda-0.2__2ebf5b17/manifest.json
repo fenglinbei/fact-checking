@@ -1,0 +1,63 @@
+{
+  "run_id": "2ebf5b1796d5",
+  "run_dir": "/data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.2__2ebf5b17",
+  "build_id": "cfa45523ec42",
+  "phases": {
+    "build": {
+      "status": "completed",
+      "updated_at": "2026-05-11 17:36:56",
+      "build_id": "cfa45523ec42",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/cache/build/cfa45523ec42",
+      "outputs": {
+        "train": "/data/liaozijie/fact-checking/outputs/cache/build/cfa45523ec42/build_train.jsonl",
+        "val": "/data/liaozijie/fact-checking/outputs/cache/build/cfa45523ec42/build_val.jsonl",
+        "test": "/data/liaozijie/fact-checking/outputs/cache/build/cfa45523ec42/build_test.jsonl"
+      },
+      "reused": false
+    },
+    "train": {
+      "status": "completed",
+      "updated_at": "2026-05-11 18:42:50",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.2__2ebf5b17/train",
+      "config_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.2__2ebf5b17/configs/train.resolved.yaml",
+      "checkpoint": "/data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.2__2ebf5b17/train/best",
+      "command": [
+        "accelerate",
+        "launch",
+        "--num_processes=4",
+        "--num_machines=1",
+        "--mixed_precision=bf16",
+        "--use_deepspeed",
+        "--deepspeed_config_file",
+        "/data/liaozijie/fact-checking/configs/deepspeed_zero2.json",
+        "-m",
+        "sft.trainer",
+        "--config",
+        "/data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.2__2ebf5b17/configs/train.resolved.yaml"
+      ],
+      "log_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.2__2ebf5b17/logs/train.log",
+      "reused": false
+    },
+    "infer": {
+      "status": "completed",
+      "updated_at": "2026-05-12 00:40:33",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.2__2ebf5b17/infer/test/best/e000877fff5b",
+      "infer_id": "e000877fff5b",
+      "artifacts": {
+        "metrics_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.2__2ebf5b17/infer/test/best/e000877fff5b/api/metrics.json",
+        "confusion_data_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.2__2ebf5b17/infer/test/best/e000877fff5b/api/confusion_matrix.json",
+        "confusion_png_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.2__2ebf5b17/infer/test/best/e000877fff5b/api/confusion_matrix.png",
+        "predictions_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep_1024/build.retrieval.mmr_lambda-0.2__2ebf5b17/infer/test/best/e000877fff5b/api/test_predictions.jsonl"
+      },
+      "reused": false
+    }
+  },
+  "config": {
+    "experiment": {
+      "name": "mmr_lambda_sweep_1024"
+    },
+    "baseline": {
+      "variant": "mmr_lambda_sweep_1024"
+    }
+  }
+}

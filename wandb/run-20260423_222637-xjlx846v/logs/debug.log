@@ -1,0 +1,13 @@
+2026-04-23 22:26:37,222 INFO    MainThread:2429101 [wandb_setup.py:_flush():81] Current SDK version is 0.26.0
+2026-04-23 22:26:37,222 INFO    MainThread:2429101 [wandb_setup.py:_flush():81] Configure stats pid to 2429101
+2026-04-23 22:26:37,222 INFO    MainThread:2429101 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-04-23 22:26:37,222 INFO    MainThread:2429101 [wandb_init.py:setup_run_log_directory():721] Logging user logs to /data/liaozijie/fact-checking/wandb/run-20260423_222637-xjlx846v/logs/debug.log
+2026-04-23 22:26:37,222 INFO    MainThread:2429101 [wandb_init.py:setup_run_log_directory():722] Logging internal logs to /data/liaozijie/fact-checking/wandb/run-20260423_222637-xjlx846v/logs/debug-internal.log
+2026-04-23 22:26:37,222 INFO    MainThread:2429101 [wandb_init.py:init():848] calling init triggers
+2026-04-23 22:26:37,222 INFO    MainThread:2429101 [wandb_init.py:init():853] wandb.init called with sweep_config: {}
+config: {'_wandb': {}}
+2026-04-23 22:26:37,222 INFO    MainThread:2429101 [wandb_init.py:init():896] starting backend
+2026-04-23 22:26:37,453 INFO    MainThread:2429101 [wandb_init.py:init():911] sending inform_init request
+2026-04-23 22:26:37,455 INFO    MainThread:2429101 [wandb_init.py:init():919] backend started and connected
+2026-04-23 22:26:37,456 INFO    MainThread:2429101 [wandb_init.py:init():989] updated telemetry
+2026-04-23 22:26:37,478 INFO    MainThread:2429101 [wandb_init.py:init():1013] communicating run to backend with 90.0 second timeout

@@ -1,0 +1,40 @@
+{
+  "run_id": "6d038eb06cad",
+  "run_dir": "/data/liaozijie/fact-checking/outputs/runs/b0/6d038eb06cad",
+  "build_id": "a4b948a49fc6",
+  "phases": {
+    "build": {
+      "status": "completed",
+      "updated_at": "2026-05-08 21:28:03",
+      "build_id": "a4b948a49fc6",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/cache/build/a4b948a49fc6",
+      "outputs": {
+        "train": "/data/liaozijie/fact-checking/outputs/cache/build/a4b948a49fc6/build_train.jsonl",
+        "val": "/data/liaozijie/fact-checking/outputs/cache/build/a4b948a49fc6/build_val.jsonl",
+        "test": "/data/liaozijie/fact-checking/outputs/cache/build/a4b948a49fc6/build_test.jsonl"
+      },
+      "reused": false
+    }
+  },
+  "config": {
+    "experiment": {
+      "name": "b0"
+    },
+    "baseline": {
+      "variant": "b0",
+      "model_name_or_path": "/data/models/Qwen2.5-7B-Instruct",
+      "top_k": 5,
+      "prompt_mode": "zero_shot",
+      "few_shot_k": 16,
+      "few_shot_mmr_lambda": 0.7,
+      "retrieval_model": "/data/models/bge-base-en-v1.5/",
+      "retrieval_batch_size": 256,
+      "retrieval_max_length": 256,
+      "max_new_tokens": 8,
+      "temperature": 0.0,
+      "do_sample": false,
+      "output_mode": "label_only",
+      "prompt_version": "v1"
+    }
+  }
+}
