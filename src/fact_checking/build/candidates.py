@@ -562,6 +562,81 @@ def _build_chat_prompt(tokenizer: AutoTokenizer, system_msg: str, user_content: 
     return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
 
+def _render_prompt(
+    *,
+    claim: str,
+    evidence_texts: list[str],
+    tokenizer: AutoTokenizer,
+    system_msg: str,
+    output_mode: str,
+    label_format: str,
+) -> tuple[str, int]:
+    user_content = _build_user_content(claim, evidence_texts, output_mode, label_format)
+    prompt = _build_chat_prompt(tokenizer, system_msg, user_content)
+    return prompt, _count_tokens(prompt, tokenizer, add_special_tokens=False)
+
+
+def _decode_token_prefix(tokenizer: AutoTokenizer, token_ids: list[int], length: int) -> str:
+    if length <= 0:
+        return ""
+    return tokenizer.decode(token_ids[:length], skip_special_tokens=True).strip()
+
+
+def _truncate_single_evidence_to_budget(
+    *,
+    claim: str,
+    evidence_text: str,
+    tokenizer: AutoTokenizer,
+    system_msg: str,
+    output_mode: str,
+    label_format: str,
+    budget: int,
+) -> tuple[list[str], str, int, bool]:
+    """Shorten one evidence item until the full chat prompt fits the prompt budget."""
+    token_ids = tokenizer(
+        evidence_text,
+        truncation=False,
+        add_special_tokens=False,
+    )["input_ids"]
+
+    best_text: str | None = None
+    best_prompt: str | None = None
+    best_tokens: int | None = None
+    left = 0
+    right = len(token_ids)
+    while left <= right:
+        mid = (left + right) // 2
+        candidate_text = _decode_token_prefix(tokenizer, token_ids, mid)
+        prompt, prompt_tokens = _render_prompt(
+            claim=claim,
+            evidence_texts=[candidate_text],
+            tokenizer=tokenizer,
+            system_msg=system_msg,
+            output_mode=output_mode,
+            label_format=label_format,
+        )
+        if prompt_tokens <= budget:
+            best_text = candidate_text
+            best_prompt = prompt
+            best_tokens = prompt_tokens
+            left = mid + 1
+        else:
+            right = mid - 1
+
+    if best_text is not None and best_prompt is not None and best_tokens is not None:
+        return [best_text], best_prompt, best_tokens, best_text.strip() != evidence_text.strip()
+
+    no_evidence_prompt, no_evidence_tokens = _render_prompt(
+        claim=claim,
+        evidence_texts=[],
+        tokenizer=tokenizer,
+        system_msg=system_msg,
+        output_mode=output_mode,
+        label_format=label_format,
+    )
+    return [], no_evidence_prompt, no_evidence_tokens, True
+
+
 def _build_target(row: dict, gold_label: str, output_mode: str, label_format: str = "name") -> str:
     target_label = LABEL_LETTERS[gold_label] if label_format == "letter" else gold_label
     if output_mode == "explanation_label":
@@ -591,18 +666,40 @@ def _auto_truncate_evidence(
     evidence_count_before = len(evidence_texts)
     kept = list(evidence_texts)
 
-    # Build prompt with all evidence
-    user_content = _build_user_content(claim, kept, output_mode, label_format)
-    prompt = _build_chat_prompt(tokenizer, system_msg, user_content)
-    prompt_tokens = _count_tokens(prompt, tokenizer, add_special_tokens=False)
+    prompt, prompt_tokens = _render_prompt(
+        claim=claim,
+        evidence_texts=kept,
+        tokenizer=tokenizer,
+        system_msg=system_msg,
+        output_mode=output_mode,
+        label_format=label_format,
+    )
 
     was_truncated = False
+    evidence_text_truncated = False
     while prompt_tokens > budget and len(kept) > 1:
         kept.pop()  # Remove last (lowest-score) evidence item
         was_truncated = True
-        user_content = _build_user_content(claim, kept, output_mode, label_format)
-        prompt = _build_chat_prompt(tokenizer, system_msg, user_content)
-        prompt_tokens = _count_tokens(prompt, tokenizer, add_special_tokens=False)
+        prompt, prompt_tokens = _render_prompt(
+            claim=claim,
+            evidence_texts=kept,
+            tokenizer=tokenizer,
+            system_msg=system_msg,
+            output_mode=output_mode,
+            label_format=label_format,
+        )
+
+    if prompt_tokens > budget and len(kept) == 1:
+        kept, prompt, prompt_tokens, evidence_text_truncated = _truncate_single_evidence_to_budget(
+            claim=claim,
+            evidence_text=kept[0],
+            tokenizer=tokenizer,
+            system_msg=system_msg,
+            output_mode=output_mode,
+            label_format=label_format,
+            budget=budget,
+        )
+        was_truncated = True
 
     return {
         "prompt": prompt,
@@ -612,6 +709,7 @@ def _auto_truncate_evidence(
         "evidence_count": len(kept),
         "evidence_count_before": evidence_count_before,
         "was_truncated": was_truncated,
+        "evidence_text_truncated": evidence_text_truncated,
         "overflow_after": prompt_tokens > budget,
     }
 
@@ -668,6 +766,7 @@ def _build_training_row(
             "evidence_count": result["evidence_count"],
             "evidence_count_before": result["evidence_count_before"],
             "was_truncated": result["was_truncated"],
+            "evidence_text_truncated": result["evidence_text_truncated"],
         }
 
     # auto_length disabled: build prompt without truncation

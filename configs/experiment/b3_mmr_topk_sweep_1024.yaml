@@ -32,7 +32,7 @@ build:
     chunking:
       strategy: semantic
       context_k: 1
-      theta: 0.7
+      theta: 0.5
       embedder_model: /data/models/bge-base-en-v1.5/
       device: cuda
       max_length: 256
