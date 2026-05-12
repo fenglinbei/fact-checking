@@ -83,7 +83,7 @@ def main() -> None:
             continue
         rows = _load_prompts_jsonl(Path(fpath))
         lambda_to_rows[lam] = rows
-        print(f"Loaded λ={lam:.1f}: {len(rows)} prompts", flush=True)
+        print(f"Loaded λ={lam:.2f}: {len(rows)} prompts", flush=True)
 
     lambda_grid = sorted(lambda_to_rows.keys())
     n_claims = len(next(iter(lambda_to_rows.values())))
@@ -208,7 +208,7 @@ def main() -> None:
                 "gold_label": event_gold.get(event_id, ""),
                 "oracle_lambda": oracle_lam,
                 "best_logprob": best_lp,
-                "logprobs_by_lambda": {f"{l:.1f}": lp for l, lp in sorted(lp_by_lam.items())},
+                "logprobs_by_lambda": {f"{l:.2f}": lp for l, lp in sorted(lp_by_lam.items())},
             }
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
@@ -217,14 +217,14 @@ def main() -> None:
     print(f"  N claims: {len(oracle_arr)}", flush=True)
     print(f"  Mean: {oracle_arr.mean():.3f}", flush=True)
     print(f"  Std:  {oracle_arr.std():.3f}", flush=True)
-    print(f"  Min:  {oracle_arr.min():.1f}", flush=True)
-    print(f"  Max:  {oracle_arr.max():.1f}", flush=True)
+    print(f"  Min:  {oracle_arr.min():.2f}", flush=True)
+    print(f"  Max:  {oracle_arr.max():.2f}", flush=True)
 
     # Distribution
     for lam in lambda_grid:
         count = int(np.sum(oracle_arr == lam))
         pct = 100.0 * count / len(oracle_arr)
-        print(f"  λ={lam:.1f}: {count:5d} ({pct:5.1f}%)", flush=True)
+        print(f"  λ={lam:.2f}: {count:5d} ({pct:5.1f}%)", flush=True)
 
     print(f"\nOutput: {output_path}", flush=True)
 

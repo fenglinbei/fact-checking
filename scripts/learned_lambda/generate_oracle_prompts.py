@@ -18,6 +18,7 @@ from typing import Any
 
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
+from tqdm.auto import tqdm
 
 from fact_checking.build.chunking import build_chunking_strategy
 from fact_checking.build.candidates import (
@@ -31,6 +32,7 @@ from fact_checking.build.candidates import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_LAMBDA_GRID = ",".join(f"{i / 20:.2f}" for i in range(21))
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,11 +78,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--alpha-lexical", type=float, default=None, help="Overrides build.retrieval.alpha_lexical.")
     p.add_argument("--alpha-bm25", type=float, default=None, help="Overrides build.retrieval.alpha_bm25.")
     p.add_argument("--cpu-workers", type=int, default=None, help="Overrides build.retrieval.cpu_workers.")
-    p.add_argument("--lambda-grid", type=str, default="0.0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0")
+    p.add_argument("--lambda-grid", type=str, default=DEFAULT_LAMBDA_GRID)
     p.add_argument("--prompt-max-length", type=int, default=None, help="Overrides build.prompt.max_length.")
     p.add_argument("--prompt-output-mode", type=str, default=None, help="Overrides build.prompt.output_mode.")
     p.add_argument("--prompt-label-format", type=str, default=None, help="Overrides build.prompt.label_format.")
     p.add_argument("--split-name", type=str, default="train", choices=["train", "val", "test"])
+    p.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars.")
     return p.parse_args()
 
 
@@ -163,7 +166,8 @@ def main() -> None:
     if args.config_overrides and not args.experiment:
         raise ValueError("--config-overrides requires --experiment.")
 
-    lambda_grid = [float(x) for x in args.lambda_grid.split(",")]
+    show_progress = not args.no_progress
+    lambda_grid = [float(x.strip()) for x in args.lambda_grid.split(",") if x.strip()]
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -232,9 +236,15 @@ def main() -> None:
 
     tokenizer = _load_prompt_tokenizer(model_name_or_path)
 
-    for lam in lambda_grid:
-        output_path = output_dir / f"lambda_{lam:.1f}_{args.split_name}.jsonl"
-        print(f"Generating prompts for λ={lam:.1f} → {output_path}", flush=True)
+    for lam in tqdm(
+        lambda_grid,
+        desc="lambda grid",
+        unit="lambda",
+        dynamic_ncols=True,
+        disable=not show_progress,
+    ):
+        output_path = output_dir / f"lambda_{lam:.2f}_{args.split_name}.jsonl"
+        print(f"Generating prompts for λ={lam:.2f} → {output_path}", flush=True)
         _mmr_phase_from_premmr(
             pre_samples=pre_samples,
             mmr_lambda=lam,
@@ -248,6 +258,8 @@ def main() -> None:
             output_path=output_path,
             cpu_workers=cpu_workers,
             reuse_chunk_embeddings=reuse_chunk_embeddings,
+            show_progress=show_progress,
+            progress_desc=f"MMR λ={lam:.2f}",
         )
         print(f"  Done: {output_path}", flush=True)
 

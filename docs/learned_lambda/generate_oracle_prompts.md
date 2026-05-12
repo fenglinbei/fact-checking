@@ -30,11 +30,12 @@ PYTHONPATH=src python scripts/learned_lambda/generate_oracle_prompts.py \
 - `--top-k`：MMR 后保留的证据数量；会覆盖 `build.retrieval.top_k`，无配置时默认 `16`。
 - `--alpha-dense`、`--alpha-lexical`、`--alpha-bm25`：dense、lexical overlap、BM25-like 三类检索分数的混合权重；会覆盖 `build.retrieval` 中的同名配置，无配置时默认分别为 `0.70`、`0.20`、`0.10`。
 - `--cpu-workers`：CPU 后处理线程数；会覆盖 `build.retrieval.cpu_workers`，无配置时默认 `1`。
-- `--lambda-grid`：需要枚举的 MMR `lambda` 网格，默认 `0.0,0.1,...,1.0`。
+- `--lambda-grid`：需要枚举的 MMR `lambda` 网格，默认 `0.00,0.05,...,1.00`。
 - `--prompt-max-length`：prompt 与 target 的总长度预算；会覆盖 `build.prompt.max_length`，无配置时默认 `1024`。
 - `--prompt-output-mode`：prompt 输出模式；会覆盖 `build.prompt.output_mode`，无配置时默认 `label_only`。
 - `--prompt-label-format`：标签格式；会覆盖 `build.prompt.label_format`，无配置时默认 `letter`，即将六分类标签映射为 `A-F`。
 - `--split-name`：输出文件名中的 split 后缀，默认 `train`，可选 `train`、`val`、`test`。
+- `--no-progress`：可选。关闭 lambda 网格和样本级 MMR/prompt 生成进度条。
 
 ## 主流程
 
@@ -49,16 +50,16 @@ PYTHONPATH=src python scripts/learned_lambda/generate_oracle_prompts.py \
 6. 如果没有显式传入 `--premmr-cache`，或传入了 `--rebuild-premmr-cache`，则根据 build 配置计算 PreMMR fingerprint，并确保 `outputs/cache/pre_mmr/<fingerprint>/<split>.pkl` 存在；`--rebuild-premmr-cache` 会先删除该 split 的旧缓存再重建。
 7. 通过 `_load_pickle()` 读取最终确定的 PreMMR cache，得到 `pre_samples`。
 8. 通过 `_load_prompt_tokenizer()` 加载 tokenizer；如果 tokenizer 没有 `pad_token`，会将其设置为 `eos_token`。
-9. 遍历每个 `lambda`，调用 `_mmr_phase_from_premmr()` 生成对应 JSONL：
+9. 遍历每个 `lambda`，显示 lambda 网格进度条，并调用 `_mmr_phase_from_premmr()` 生成对应 JSONL；每个 `lambda` 内部会显示样本级 MMR/prompt 生成进度条：
 
 ```text
-{output_dir}/lambda_{lambda:.1f}_{split_name}.jsonl
+{output_dir}/lambda_{lambda:.2f}_{split_name}.jsonl
 ```
 
 例如：
 
 ```text
-outputs/learned_lambda/prompts/lambda_0.7_train.jsonl
+outputs/learned_lambda/prompts/lambda_0.70_train.jsonl
 ```
 
 ## 单个 lambda 的处理逻辑
@@ -149,8 +150,8 @@ prompt 使用 tokenizer 的 `apply_chat_template(..., add_generation_prompt=True
 ## 当前实现注意点
 
 - 脚本可以消费显式传入的 PreMMR cache，也可以通过 `--rebuild-premmr-cache` 复用 build 配置重新生成签名化 PreMMR cache。
-- `split-name` 只影响输出文件名，不会校验 `--premmr-cache` 实际来自哪个 split。
+- 显式传入 `--premmr-cache` 时，`split-name` 只影响输出文件名，不会校验该 cache 实际来自哪个 split；自动签名缓存模式下，`split-name` 同时用于选择和构建对应 split 的 PreMMR cache。
 - 输出文件同名时会被覆盖。
-- `lambda` 文件名使用 `{lambda:.1f}`，如果传入超过一位小数的 `lambda-grid`，可能因为四舍五入产生文件名冲突。
+- `lambda` 文件名使用 `{lambda:.2f}`，可以覆盖默认 0.05 搜索粒度而不发生一位小数四舍五入冲突。
 - `--config-overrides` 只能与 `--experiment` 一起使用。
 - 如果复用 semantic chunking，建议确保 `--premmr-cache` 与该 experiment 的 `build.retrieval.embedder_model`、`build.retrieval.max_length` 一致，否则 chunking 阶段可能无法复用 PreMMR embedding。

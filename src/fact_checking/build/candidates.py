@@ -1031,6 +1031,8 @@ def _mmr_phase_from_premmr(
     cpu_workers: int = 1,
     reuse_chunk_embeddings: bool = False,
     lambda_overrides: dict[str, float] | None = None,
+    show_progress: bool = False,
+    progress_desc: str | None = None,
 ) -> None:
     """From cached PreMMRSamples, run MMR + candidates + training rows, write JSONL."""
 
@@ -1064,13 +1066,28 @@ def _mmr_phase_from_premmr(
         )
 
     with output_path.open("w", encoding="utf-8") as writer:
+        desc = progress_desc or f"MMR λ={mmr_lambda:.2f}"
         if cpu_workers > 1:
             with ThreadPoolExecutor(max_workers=cpu_workers) as pool:
-                for row in pool.map(_process_one, pre_samples):
+                rows = pool.map(_process_one, pre_samples)
+                for row in tqdm(
+                    rows,
+                    total=len(pre_samples),
+                    desc=desc,
+                    unit="sample",
+                    dynamic_ncols=True,
+                    disable=not show_progress,
+                ):
                     training_row = _build_training_row(row, tokenizer, prompt_cfg)
                     writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
         else:
-            for pre in pre_samples:
+            for pre in tqdm(
+                pre_samples,
+                desc=desc,
+                unit="sample",
+                dynamic_ncols=True,
+                disable=not show_progress,
+            ):
                 row = _process_one(pre)
                 training_row = _build_training_row(row, tokenizer, prompt_cfg)
                 writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")

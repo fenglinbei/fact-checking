@@ -78,15 +78,15 @@ def main() -> None:
     print(f"\nOracle λ distribution:")
     print(f"  Mean: {oracle_arr.mean():.3f}")
     print(f"  Std:  {oracle_arr.std():.3f}")
-    print(f"  Min:  {oracle_arr.min():.1f}")
-    print(f"  Max:  {oracle_arr.max():.1f}")
+    print(f"  Min:  {oracle_arr.min():.2f}")
+    print(f"  Max:  {oracle_arr.max():.2f}")
 
-    oracle_counts = Counter(np.round(oracle_arr, 1).tolist())
+    oracle_counts = Counter(np.round(oracle_arr, 2).tolist())
     for lam in sorted(oracle_counts.keys()):
         count = oracle_counts[lam]
         pct = 100.0 * count / len(oracle_arr)
         bar = "#" * int(pct / 2)
-        print(f"  λ={lam:.1f}: {count:5d} ({pct:5.1f}%) {bar}")
+        print(f"  λ={lam:.2f}: {count:5d} ({pct:5.1f}%) {bar}")
 
     # Predicted λ distribution
     print(f"\nPredicted λ distribution:")
@@ -95,12 +95,12 @@ def main() -> None:
     print(f"  Min:  {pred_arr.min():.3f}")
     print(f"  Max:  {pred_arr.max():.3f}")
 
-    bins = np.arange(0, 1.1, 0.1)
+    bins = np.arange(0, 1.05 + 1e-8, 0.05)
     hist, _ = np.histogram(pred_arr, bins=bins)
     for i in range(len(bins) - 1):
         pct = 100.0 * hist[i] / len(pred_arr)
         bar = "#" * int(pct / 2)
-        print(f"  [{bins[i]:.1f}, {bins[i+1]:.1f}): {hist[i]:5d} ({pct:5.1f}%) {bar}")
+        print(f"  [{bins[i]:.2f}, {bins[i+1]:.2f}): {hist[i]:5d} ({pct:5.1f}%) {bar}")
 
     # Quality assessment
     print(f"\n{'=' * 50}")

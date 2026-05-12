@@ -36,7 +36,7 @@ fi
 
 if ! compgen -G "${PROMPTS_DIR}/lambda_*_${SPLIT_NAME}.jsonl" > /dev/null; then
   echo "[run_compute_oracle_lambda] No prompt files found for split=${SPLIT_NAME} in ${PROMPTS_DIR}" >&2
-  echo "[run_compute_oracle_lambda] Expected files like: ${PROMPTS_DIR}/lambda_0.7_${SPLIT_NAME}.jsonl" >&2
+  echo "[run_compute_oracle_lambda] Expected files like: ${PROMPTS_DIR}/lambda_0.70_${SPLIT_NAME}.jsonl" >&2
   exit 1
 fi
 
