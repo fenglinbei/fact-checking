@@ -20,7 +20,7 @@ export PYTHONPATH="${PWD}/src:${PYTHONPATH:-}"
 
 SPLIT_NAME="${SPLIT_NAME:-train}"
 EXPERIMENT="${EXPERIMENT:-b3_mmr_topk_sweep_1024}"
-CONFIG_OVERRIDES="${CONFIG_OVERRIDES:-}"
+CONFIG_OVERRIDES="${CONFIG_OVERRIDES:-build.retrieval.top_k=5}"
 ORACLE_LAMBDAS="${ORACLE_LAMBDAS:-outputs/learned_lambda/oracle_lambda_${SPLIT_NAME}.jsonl}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/learned_lambda}"
 CHUNK_MMR_CACHE_ROOT="${CHUNK_MMR_CACHE_ROOT:-outputs/cache/chunk_mmr}"
