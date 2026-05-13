@@ -207,6 +207,7 @@ def save_predictor(
         "dropout": float(dropout),
         "embedding_dim": int(embedding_dim) if embedding_dim is not None else None,
         "candidate_top_k": int(candidate_top_k) if candidate_top_k is not None else None,
+        "candidate_pool": "full" if candidate_top_k is None else f"top_{int(candidate_top_k)}",
         "retrieval_config": retrieval_config or {},
     }
     with (output_dir / "feature_stats.json").open("w") as f:
@@ -282,7 +283,11 @@ def predict_lambdas_for_samples(
 
     feature_mode = str(stats.get("feature_mode") or "handcrafted").strip().lower()
     if feature_mode == CHUNK_EMBEDDING_FEATURE_MODE:
-        candidate_top_k = int(stats.get("candidate_top_k") or retrieval_cfg.get("top_k", 16))
+        candidate_top_k = (
+            int(stats["candidate_top_k"])
+            if stats.get("candidate_top_k") is not None
+            else None
+        )
         arrays = build_chunk_embedding_arrays(
             samples,  # type: ignore[arg-type]
             candidate_top_k=candidate_top_k,
