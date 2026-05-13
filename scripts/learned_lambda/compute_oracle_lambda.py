@@ -1,13 +1,20 @@
 """Step 2: Compute oracle λ per claim via vLLM batch inference.
 
-Reads per-λ prompt JSONL files (from generate_oracle_prompts.py), runs the base
-LLM (zero-shot) with logprobs, and picks the λ that maximises the log-probability
-of the correct label token.
+Reads per-λ prompt JSONL files (from generate_oracle_prompts.py), runs a vLLM
+model with optional LoRA adapter weights and logprobs, then picks the λ that
+maximises the log-probability of the correct label token.
 
 Usage:
     PYTHONPATH=src python scripts/learned_lambda/compute_oracle_lambda.py \
         --prompts-dir outputs/learned_lambda/prompts/ \
         --model /data/models/Qwen2.5-7B-Instruct \
+        --output outputs/learned_lambda/oracle_lambda_train.jsonl \
+        --split-name train
+
+    PYTHONPATH=src python scripts/learned_lambda/compute_oracle_lambda.py \
+        --prompts-dir outputs/learned_lambda/prompts/ \
+        --model /data/models/Qwen2.5-7B-Instruct \
+        --lora-adapter outputs/runs/.../train/best \
         --output outputs/learned_lambda/oracle_lambda_train.jsonl \
         --split-name train
 """
@@ -23,7 +30,7 @@ from pathlib import Path
 import numpy as np
 from tqdm.auto import tqdm
 
-from fact_checking.data.constants import LABEL_LETTERS, LABEL2ID
+from fact_checking.data.constants import LABEL_LETTERS
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,6 +42,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--tensor-parallel-size", type=int, default=1)
     p.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     p.add_argument("--max-model-len", type=int, default=2048)
+    p.add_argument("--dtype", type=str, default="auto")
+    p.add_argument("--tokenizer", type=str, default=None, help="Tokenizer path for vLLM")
+    p.add_argument("--lora-adapter", type=str, default=None, help="PEFT LoRA adapter checkpoint directory")
+    p.add_argument("--max-lora-rank", type=int, default=16)
     p.add_argument("--default-lambda", type=float, default=0.7, help="Tie-break preference")
     p.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars")
     return p.parse_args()
@@ -55,6 +66,29 @@ def _extract_lambda_from_filename(name: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
+def _validate_lora_adapter(adapter_dir: Path) -> None:
+    if not adapter_dir.exists():
+        raise FileNotFoundError(f"LoRA adapter directory does not exist: {adapter_dir}")
+    if not (adapter_dir / "adapter_config.json").exists():
+        raise FileNotFoundError(f"LoRA adapter config not found: {adapter_dir / 'adapter_config.json'}")
+    if not (adapter_dir / "adapter_model.safetensors").exists() and not (adapter_dir / "adapter_model.bin").exists():
+        raise FileNotFoundError(f"LoRA adapter weights not found in {adapter_dir}")
+
+
+def _resolve_vllm_paths(
+    *, model: str, tokenizer: str | None, lora_adapter: str | None
+) -> tuple[str, str | None]:
+    if not lora_adapter:
+        return model, tokenizer
+
+    adapter_dir = Path(lora_adapter)
+    if tokenizer:
+        return model, tokenizer
+    if (adapter_dir / "tokenizer_config.json").exists():
+        return model, str(adapter_dir)
+    return model, model
+
+
 def main() -> None:
     args = parse_args()
     show_progress = not args.no_progress
@@ -63,6 +97,19 @@ def main() -> None:
         from vllm import LLM, SamplingParams
     except ImportError as exc:
         raise RuntimeError("vLLM is not installed. Install vllm first.") from exc
+
+    lora_request = None
+    llm_kwargs = {}
+    if args.lora_adapter:
+        adapter_dir = Path(args.lora_adapter)
+        _validate_lora_adapter(adapter_dir)
+        try:
+            from vllm.lora.request import LoRARequest
+        except ImportError as exc:
+            raise RuntimeError("vLLM LoRA inference requires a vLLM build with LoRA support.") from exc
+
+        llm_kwargs.update({"enable_lora": True, "max_lora_rank": int(args.max_lora_rank)})
+        lora_request = LoRARequest("oracle-lambda-lora", 1, str(adapter_dir))
 
     prompts_dir = Path(args.prompts_dir)
     pattern = f"lambda_*_{args.split_name}.jsonl"
@@ -118,15 +165,30 @@ def main() -> None:
 
     print(f"Total prompts to process: {len(all_prompts)}", flush=True)
 
-    # Initialize vLLM
-    print(f"Loading model: {args.model}", flush=True)
-    llm = LLM(
+    # Initialize vLLM. For LoRA, args.model is the base model and args.lora_adapter is applied per request.
+    model_path, tokenizer_path = _resolve_vllm_paths(
         model=args.model,
-        tensor_parallel_size=args.tensor_parallel_size,
-        gpu_memory_utilization=args.gpu_memory_utilization,
-        max_model_len=args.max_model_len,
-        trust_remote_code=True,
+        tokenizer=args.tokenizer,
+        lora_adapter=args.lora_adapter,
     )
+    print(f"Loading model: {model_path}", flush=True)
+    if tokenizer_path:
+        print(f"Tokenizer: {tokenizer_path}", flush=True)
+    if args.lora_adapter:
+        print(f"LoRA adapter: {args.lora_adapter}", flush=True)
+
+    llm_init_kwargs = {
+        "model": model_path,
+        "tensor_parallel_size": int(args.tensor_parallel_size),
+        "gpu_memory_utilization": float(args.gpu_memory_utilization),
+        "dtype": args.dtype,
+        "max_model_len": int(args.max_model_len),
+        "trust_remote_code": True,
+        **llm_kwargs,
+    }
+    if tokenizer_path:
+        llm_init_kwargs["tokenizer"] = tokenizer_path
+    llm = LLM(**llm_init_kwargs)
     tokenizer = llm.get_tokenizer()
 
     # Map label letters to token IDs
@@ -146,10 +208,15 @@ def main() -> None:
 
     print("Running batch inference...", flush=True)
     generate_params = inspect.signature(llm.generate).parameters
+    generate_kwargs = {
+        "prompts": all_prompts,
+        "sampling_params": sampling_params,
+    }
     if "use_tqdm" in generate_params:
-        outputs = llm.generate(all_prompts, sampling_params, use_tqdm=show_progress)
-    else:
-        outputs = llm.generate(all_prompts, sampling_params)
+        generate_kwargs["use_tqdm"] = show_progress
+    if lora_request is not None:
+        generate_kwargs["lora_request"] = lora_request
+    outputs = llm.generate(**generate_kwargs)
     print(f"Inference complete: {len(outputs)} outputs", flush=True)
 
     # Extract log-probs and compute oracle λ
