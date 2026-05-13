@@ -189,6 +189,7 @@ def main() -> None:
         )
     )
     candidate_top_k = int(args.candidate_top_k) if args.candidate_top_k is not None else None
+    candidate_pool_label = "full" if candidate_top_k is None else f"top_{candidate_top_k}"
     retrieval_top_k = int(pick_retrieval_value(None, retrieval_cfg, "top_k", 16))
     alpha_dense = float(pick_retrieval_value(args.alpha_dense, retrieval_cfg, "alpha_dense", 0.70))
     alpha_lexical = float(pick_retrieval_value(args.alpha_lexical, retrieval_cfg, "alpha_lexical", 0.20))
@@ -203,7 +204,7 @@ def main() -> None:
     _log(f"Loaded build config from experiment={args.experiment}", show_progress=show_progress)
     _log(f"chunk_mmr_cache={chunk_mmr_cache}", show_progress=show_progress)
     _log(
-        f"candidate_pool={'full' if candidate_top_k is None else f'top_{candidate_top_k}'}, "
+        f"candidate_pool={candidate_pool_label}, "
         f"prompt_top_k={retrieval_top_k}, alpha_dense={alpha_dense}, "
         f"alpha_lexical={alpha_lexical}, alpha_bm25={alpha_bm25}",
         show_progress=show_progress,
@@ -457,6 +458,7 @@ def main() -> None:
         "feature_names": ["claim_emb", "candidate_emb", "candidate_mask"],
         "embedding_dim": embedding_dim,
         "candidate_top_k": candidate_top_k,
+        "candidate_pool": candidate_pool_label,
         "candidate_capacity": candidate_capacity,
         "candidate_count_mean": float(candidate_counts.mean()),
         "candidate_count_max": int(candidate_counts.max()),

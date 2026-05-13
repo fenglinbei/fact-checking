@@ -41,7 +41,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--experiment", type=str, default="b3_mmr_topk_sweep_1024")
     p.add_argument("--config-overrides", nargs="*", default=[])
     p.add_argument("--split-name", type=str, default="train", choices=["train", "val", "test"])
-    p.add_argument("--candidate-top-k", type=int, default=None)
+    p.add_argument(
+        "--candidate-top-k",
+        type=int,
+        default=None,
+        help="Number of hybrid-ranked chunk candidates to feed the predictor. Omit to use the saved setting; null saved setting means full chunk pool.",
+    )
     p.add_argument("--hidden-dim", type=int, default=None)
     p.add_argument("--dropout", type=float, default=None)
     p.add_argument("--alpha-dense", type=float, default=None)
@@ -208,14 +213,14 @@ def main() -> None:
         show_progress=show_progress,
     )
 
-    candidate_top_k = int(
-        pick_retrieval_value(
-            args.candidate_top_k,
-            retrieval_cfg,
-            "top_k",
-            stats.get("candidate_top_k") or 16,
-        )
-    )
+    if args.candidate_top_k is not None:
+        candidate_top_k = int(args.candidate_top_k)
+    elif stats.get("candidate_top_k") is not None:
+        candidate_top_k = int(stats["candidate_top_k"])
+    else:
+        candidate_top_k = None
+    candidate_pool_label = "full" if candidate_top_k is None else f"top_{candidate_top_k}"
+    retrieval_top_k = int(pick_retrieval_value(None, retrieval_cfg, "top_k", 16))
     alpha_dense = float(pick_retrieval_value(args.alpha_dense, retrieval_cfg, "alpha_dense", 0.70))
     alpha_lexical = float(pick_retrieval_value(args.alpha_lexical, retrieval_cfg, "alpha_lexical", 0.20))
     alpha_bm25 = float(pick_retrieval_value(args.alpha_bm25, retrieval_cfg, "alpha_bm25", 0.10))
@@ -223,7 +228,7 @@ def main() -> None:
     _log(f"Loaded build config from experiment={args.experiment}", show_progress=show_progress)
     _log(f"chunk_mmr_cache={chunk_mmr_cache}", show_progress=show_progress)
     _log(
-        f"candidate_top_k={candidate_top_k}, alpha_dense={alpha_dense}, "
+        f"candidate_pool={candidate_pool_label}, prompt_top_k={retrieval_top_k}, alpha_dense={alpha_dense}, "
         f"alpha_lexical={alpha_lexical}, alpha_bm25={alpha_bm25}",
         show_progress=show_progress,
     )
@@ -246,7 +251,15 @@ def main() -> None:
     )
     if skipped > 0:
         _log(f"Skipped {skipped} samples without oracle λ", show_progress=show_progress)
-    _log(f"Samples: {len(oracle_arr)} (matched with oracle λ)", show_progress=show_progress)
+    candidate_capacity = int(arrays["candidate_emb"].shape[1])
+    candidate_counts = arrays["candidate_counts"]
+    _log(
+        f"Samples: {len(oracle_arr)} (matched with oracle λ), "
+        f"candidate_capacity={candidate_capacity}, "
+        f"candidate_count_mean={candidate_counts.mean():.1f}, "
+        f"candidate_count_max={candidate_counts.max()}",
+        show_progress=show_progress,
+    )
 
     with torch.no_grad():
         pred_arr = model(

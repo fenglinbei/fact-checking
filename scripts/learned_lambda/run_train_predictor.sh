@@ -7,7 +7,7 @@
 #   ORACLE_LAMBDAS=outputs/learned_lambda/oracle_lambda_train.jsonl bash scripts/learned_lambda/run_train_predictor.sh
 #   CHUNK_MMR_CACHE=outputs/cache/chunk_mmr/<fingerprint>/train.pkl bash scripts/learned_lambda/run_train_predictor.sh
 #   EPOCHS=100 BATCH_SIZE=128 PROGRESS=false bash scripts/learned_lambda/run_train_predictor.sh
-#   CANDIDATE_TOP_K=16 bash scripts/learned_lambda/run_train_predictor.sh
+#   CANDIDATE_TOP_K=16 bash scripts/learned_lambda/run_train_predictor.sh  # optional truncation; default uses full chunk pool
 #   OBJECTIVE=classification OUTPUT_DIR=outputs/learned_lambda_cls bash scripts/learned_lambda/run_train_predictor.sh
 #
 # Extra CLI args are forwarded to train_predictor.py, for example:
@@ -69,7 +69,7 @@ echo "[run_train_predictor] oracle_lambdas=${ORACLE_LAMBDAS}"
 echo "[run_train_predictor] chunk_mmr_cache=${CHUNK_MMR_CACHE:-auto_by_experiment}"
 echo "[run_train_predictor] chunk_mmr_cache_root=${CHUNK_MMR_CACHE_ROOT}"
 echo "[run_train_predictor] output_dir=${OUTPUT_DIR}"
-echo "[run_train_predictor] candidate_top_k=${CANDIDATE_TOP_K:-from_experiment}"
+echo "[run_train_predictor] candidate_top_k=${CANDIDATE_TOP_K:-full_chunk_pool}"
 echo "[run_train_predictor] hidden_dim=${HIDDEN_DIM}"
 echo "[run_train_predictor] dropout=${DROPOUT}"
 echo "[run_train_predictor] epochs=${EPOCHS}"
