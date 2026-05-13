@@ -1,9 +1,9 @@
-"""Step 3: Train the λ predictor MLP from oracle λ labels and PreMMR features.
+"""Step 3: Train the λ predictor from oracle λ labels and chunk embeddings.
 
 Usage:
     PYTHONPATH=src python scripts/learned_lambda/train_predictor.py \
         --oracle-lambdas outputs/learned_lambda/oracle_lambda_train.jsonl \
-        --premmr-cache outputs/cache/pre_mmr/53a3588e485d/train.pkl \
+        --experiment b3_mmr_topk_sweep_1024 \
         --output-dir outputs/learned_lambda/
 """
 from __future__ import annotations
@@ -20,22 +20,35 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
 from fact_checking.build.candidates import _load_pickle
-from fact_checking.learned_lambda.features import FEATURE_NAMES, extract_features
-from fact_checking.learned_lambda.predictor import LambdaClassifier, LambdaPredictor, save_predictor
+from fact_checking.learned_lambda.cache_utils import (
+    load_experiment_build_cfg,
+    pick_retrieval_value,
+    resolve_chunk_mmr_cache_path,
+)
+from fact_checking.learned_lambda.embedding_features import (
+    CHUNK_EMBEDDING_FEATURE_MODE,
+    build_matched_chunk_embedding_arrays,
+)
+from fact_checking.learned_lambda.predictor import ChunkEmbeddingLambdaEncoder, save_predictor
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Train λ predictor MLP.")
+    p = argparse.ArgumentParser(description="Train λ predictor from chunk embeddings.")
     p.add_argument("--oracle-lambdas", type=str, required=True, help="JSONL from compute_oracle_lambda.py")
-    p.add_argument("--premmr-cache", type=str, required=True, help="PreMMR cache pickle")
+    p.add_argument("--chunk-mmr-cache", type=str, default=None, help="Chunk-MMR cache pickle")
+    p.add_argument("--chunk-mmr-cache-root", type=str, default="outputs/cache/chunk_mmr")
+    p.add_argument("--experiment", type=str, default="b3_mmr_topk_sweep_1024")
+    p.add_argument("--config-overrides", nargs="*", default=[])
+    p.add_argument("--split-name", type=str, default="train", choices=["train", "val", "test"])
     p.add_argument("--output-dir", type=str, required=True)
-    p.add_argument("--hidden-dim", type=int, default=64)
+    p.add_argument("--candidate-top-k", type=int, default=None)
+    p.add_argument("--hidden-dim", type=int, default=256)
     p.add_argument("--dropout", type=float, default=0.1)
     p.add_argument("--epochs", type=int, default=200)
-    p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--batch-size", type=int, default=256)
-    p.add_argument("--patience", type=int, default=15)
+    p.add_argument("--patience", type=int, default=30)
     p.add_argument("--val-fraction", type=float, default=0.2)
     p.add_argument(
         "--objective",
@@ -53,9 +66,9 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated λ grid for classification objectives, or 'auto' to infer from oracle records.",
     )
     p.add_argument("--softmax-temperature", type=float, default=1.0)
-    p.add_argument("--alpha-dense", type=float, default=0.70)
-    p.add_argument("--alpha-lexical", type=float, default=0.20)
-    p.add_argument("--alpha-bm25", type=float, default=0.10)
+    p.add_argument("--alpha-dense", type=float, default=None)
+    p.add_argument("--alpha-lexical", type=float, default=None)
+    p.add_argument("--alpha-bm25", type=float, default=None)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars")
     return p.parse_args()
@@ -130,8 +143,10 @@ def _soft_targets_from_oracle(
 
 
 def _compute_objective_loss(
-    model: LambdaPredictor | LambdaClassifier,
-    xb: torch.Tensor,
+    model: ChunkEmbeddingLambdaEncoder,
+    claim_emb: torch.Tensor,
+    candidate_emb: torch.Tensor,
+    candidate_mask: torch.Tensor,
     y_obj: torch.Tensor,
     y_float: torch.Tensor,
     *,
@@ -140,12 +155,12 @@ def _compute_objective_loss(
     huber_delta: float,
 ) -> torch.Tensor:
     if objective == "regression":
-        pred = model(xb)
+        pred = model(claim_emb, candidate_emb, candidate_mask)
         if regression_loss == "huber":
             return F.huber_loss(pred, y_float, delta=huber_delta)
         return F.mse_loss(pred, y_float)
 
-    logits = model.forward_logits(xb)  # type: ignore[attr-defined]
+    logits = model.forward_logits(claim_emb, candidate_emb, candidate_mask)
     if objective == "soft_classification":
         return -(y_obj * F.log_softmax(logits, dim=-1)).sum(dim=-1).mean()
     return F.cross_entropy(logits, y_obj.long())
@@ -157,6 +172,36 @@ def main() -> None:
     rng = np.random.default_rng(args.seed)
     torch.manual_seed(args.seed)
 
+    build_cfg = load_experiment_build_cfg(args.experiment, args.config_overrides)
+    retrieval_cfg = dict(build_cfg.get("retrieval", {}) or {})
+    chunk_mmr_cache = (
+        Path(args.chunk_mmr_cache)
+        if args.chunk_mmr_cache
+        else resolve_chunk_mmr_cache_path(
+            build_cfg,
+            split_name=args.split_name,
+            cache_root=args.chunk_mmr_cache_root,
+        )
+    )
+    candidate_top_k = int(pick_retrieval_value(args.candidate_top_k, retrieval_cfg, "top_k", 16))
+    alpha_dense = float(pick_retrieval_value(args.alpha_dense, retrieval_cfg, "alpha_dense", 0.70))
+    alpha_lexical = float(pick_retrieval_value(args.alpha_lexical, retrieval_cfg, "alpha_lexical", 0.20))
+    alpha_bm25 = float(pick_retrieval_value(args.alpha_bm25, retrieval_cfg, "alpha_bm25", 0.10))
+    if not chunk_mmr_cache.exists():
+        raise FileNotFoundError(
+            f"Chunk-MMR cache not found: {chunk_mmr_cache}. "
+            "Run scripts/learned_lambda/run_generate_oracle_prompts.sh first, "
+            "or pass --chunk-mmr-cache."
+        )
+
+    _log(f"Loaded build config from experiment={args.experiment}", show_progress=show_progress)
+    _log(f"chunk_mmr_cache={chunk_mmr_cache}", show_progress=show_progress)
+    _log(
+        f"candidate_top_k={candidate_top_k}, alpha_dense={alpha_dense}, "
+        f"alpha_lexical={alpha_lexical}, alpha_bm25={alpha_bm25}",
+        show_progress=show_progress,
+    )
+
     # Load oracle λ
     oracle_by_eid: dict[str, dict] = {}
     with open(args.oracle_lambdas) as f:
@@ -166,38 +211,34 @@ def main() -> None:
             oracle_by_eid[rec["event_id"]] = rec
     _log(f"Loaded {len(oracle_by_eid)} oracle λ values", show_progress=show_progress)
 
-    # Load PreMMR cache and extract features
-    pre_samples = _load_pickle(Path(args.premmr_cache))
-    _log(f"Loaded {len(pre_samples)} PreMMR samples", show_progress=show_progress)
+    # Load ChunkMMR cache and construct embedding tensors
+    chunk_samples = _load_pickle(chunk_mmr_cache)
+    _log(f"Loaded {len(chunk_samples)} ChunkMMR samples", show_progress=show_progress)
 
-    features_list: list[np.ndarray] = []
-    targets_list: list[float] = []
-    oracle_records_list: list[dict] = []
-    skipped = 0
-    for pre in tqdm(
-        pre_samples,
-        desc="extract features",
-        unit="sample",
-        dynamic_ncols=True,
-        disable=not show_progress,
-    ):
-        if pre.event_id not in oracle_by_eid:
-            skipped += 1
-            continue
-        oracle_rec = oracle_by_eid[pre.event_id]
-        feat = extract_features(pre, args.alpha_dense, args.alpha_lexical, args.alpha_bm25)
-        features_list.append(feat)
-        targets_list.append(float(oracle_rec["oracle_lambda"]))
-        oracle_records_list.append(oracle_rec)
-
+    arrays, targets, oracle_records_list, skipped = build_matched_chunk_embedding_arrays(
+        tqdm(
+            chunk_samples,
+            desc="build embedding tensors",
+            unit="sample",
+            dynamic_ncols=True,
+            disable=not show_progress,
+        ),
+        oracle_by_eid,
+        candidate_top_k=candidate_top_k,
+        alpha_dense=alpha_dense,
+        alpha_lexical=alpha_lexical,
+        alpha_bm25=alpha_bm25,
+    )
     if skipped > 0:
         _log(f"Skipped {skipped} samples without oracle λ", show_progress=show_progress)
 
-    if not features_list:
-        raise ValueError("No matched samples available for predictor training.")
-    features = np.stack(features_list)
-    targets = np.array(targets_list, dtype=np.float32)
-    _log(f"Dataset: {features.shape[0]} samples, {features.shape[1]} features", show_progress=show_progress)
+    embedding_dim = int(arrays["claim_emb"].shape[1])
+    n_nonempty = int((arrays["candidate_mask"].sum(axis=1) > 0).sum())
+    _log(
+        f"Dataset: {len(targets)} samples, embedding_dim={embedding_dim}, "
+        f"candidate_top_k={candidate_top_k}, nonempty={n_nonempty}",
+        show_progress=show_progress,
+    )
     _log(f"Target λ: mean={targets.mean():.3f}, std={targets.std():.3f}", show_progress=show_progress)
 
     lambda_grid: np.ndarray | None = None
@@ -221,49 +262,41 @@ def main() -> None:
             show_progress=show_progress,
         )
 
-    # z-score normalization
-    feat_mean = features.mean(axis=0)
-    feat_std = features.std(axis=0)
-    feat_std[feat_std < 1e-8] = 1.0
-    features_norm = (features - feat_mean) / feat_std
-
     # Train / val split
-    n = len(features_norm)
+    n = len(targets)
     indices = rng.permutation(n)
     n_val = max(1, int(n * args.val_fraction))
     val_idx = indices[:n_val]
     train_idx = indices[n_val:]
 
-    X_train = torch.from_numpy(features_norm[train_idx])
+    claim_train = torch.from_numpy(arrays["claim_emb"][train_idx])
+    cand_train = torch.from_numpy(arrays["candidate_emb"][train_idx])
+    mask_train = torch.from_numpy(arrays["candidate_mask"][train_idx])
     y_train = torch.from_numpy(objective_targets[train_idx])
     y_train_float = torch.from_numpy(targets[train_idx])
-    X_val = torch.from_numpy(features_norm[val_idx])
+    claim_val = torch.from_numpy(arrays["claim_emb"][val_idx])
+    cand_val = torch.from_numpy(arrays["candidate_emb"][val_idx])
+    mask_val = torch.from_numpy(arrays["candidate_mask"][val_idx])
     y_val = torch.from_numpy(objective_targets[val_idx])
     y_val_float = torch.from_numpy(targets[val_idx])
     _log(f"Train: {len(train_idx)}, Val: {len(val_idx)}", show_progress=show_progress)
 
     train_loader = DataLoader(
-        TensorDataset(X_train, y_train, y_train_float),
+        TensorDataset(claim_train, cand_train, mask_train, y_train, y_train_float),
         batch_size=args.batch_size,
         shuffle=True,
     )
 
     # Model
     model_type = "regression"
-    if args.objective == "regression":
-        model = LambdaPredictor(
-            input_dim=features.shape[1],
-            hidden_dim=args.hidden_dim,
-            dropout=args.dropout,
-        )
-    else:
+    if args.objective != "regression":
         model_type = "classifier"
-        model = LambdaClassifier(
-            input_dim=features.shape[1],
-            hidden_dim=args.hidden_dim,
-            dropout=args.dropout,
-            lambda_grid=lambda_grid,
-        )
+    model = ChunkEmbeddingLambdaEncoder(
+        embedding_dim=embedding_dim,
+        encoder_dim=args.hidden_dim,
+        dropout=args.dropout,
+        lambda_grid=lambda_grid if args.objective != "regression" else None,
+    )
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     mse_loss_fn = nn.MSELoss()
 
@@ -291,10 +324,12 @@ def main() -> None:
             dynamic_ncols=True,
             disable=not show_progress or len(train_loader) <= 1,
         )
-        for xb, yb, yb_float in batch_iter:
+        for claim_b, cand_b, mask_b, yb, yb_float in batch_iter:
             loss = _compute_objective_loss(
                 model,
-                xb,
+                claim_b,
+                cand_b,
+                mask_b,
                 yb,
                 yb_float,
                 objective=args.objective,
@@ -309,11 +344,13 @@ def main() -> None:
 
         model.eval()
         with torch.no_grad():
-            val_pred = model(X_val)
+            val_pred = model(claim_val, cand_val, mask_val)
             val_mse = mse_loss_fn(val_pred, y_val_float).item()
             val_objective_loss = _compute_objective_loss(
                 model,
-                X_val,
+                claim_val,
+                cand_val,
+                mask_val,
                 y_val,
                 y_val_float,
                 objective=args.objective,
@@ -358,7 +395,7 @@ def main() -> None:
     # Final evaluation on val set
     model.eval()
     with torch.no_grad():
-        val_pred = model(X_val).numpy()
+        val_pred = model(claim_val, cand_val, mask_val).numpy()
     val_targets = y_val_float.numpy()
     mae = float(np.mean(np.abs(val_pred - val_targets)))
     rmse = float(np.sqrt(np.mean((val_pred - val_targets) ** 2)))
@@ -371,13 +408,26 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     save_predictor(
         model,
-        feat_mean,
-        feat_std,
+        None,
+        None,
         output_dir,
         model_type=model_type,
         lambda_grid=lambda_grid,
         hidden_dim=args.hidden_dim,
         dropout=args.dropout,
+        feature_mode=CHUNK_EMBEDDING_FEATURE_MODE,
+        feature_names=["claim_emb", "candidate_emb", "candidate_mask"],
+        input_dim=embedding_dim,
+        embedding_dim=embedding_dim,
+        candidate_top_k=candidate_top_k,
+        retrieval_config={
+            "experiment": args.experiment,
+            "chunk_mmr_cache": str(chunk_mmr_cache),
+            "top_k": candidate_top_k,
+            "alpha_dense": alpha_dense,
+            "alpha_lexical": alpha_lexical,
+            "alpha_bm25": alpha_bm25,
+        },
     )
     _log(f"Saved predictor to {output_dir}", show_progress=show_progress)
 
@@ -391,7 +441,13 @@ def main() -> None:
         "val_rmse": rmse,
         "target_mean": float(targets.mean()),
         "target_std": float(targets.std()),
-        "feature_names": FEATURE_NAMES,
+        "feature_mode": CHUNK_EMBEDDING_FEATURE_MODE,
+        "feature_names": ["claim_emb", "candidate_emb", "candidate_mask"],
+        "embedding_dim": embedding_dim,
+        "candidate_top_k": candidate_top_k,
+        "chunk_mmr_cache": str(chunk_mmr_cache),
+        "experiment": args.experiment,
+        "config_overrides": args.config_overrides,
         "objective": args.objective,
         "model_type": model_type,
         "lambda_grid": lambda_grid.tolist() if lambda_grid is not None else None,

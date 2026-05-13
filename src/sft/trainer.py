@@ -26,6 +26,7 @@ from sft.dataset.loaders import build_dataloader, build_eval_dataloader
 from sft.eval import evaluate
 from sft.prompting.stats import (
     build_prompt_snapshots,
+    flatten_prompt_statistics,
     log_prompt_summary,
     save_prompt_statistics,
     summarize_prebuilt_prompts,
@@ -268,6 +269,12 @@ def main() -> None:
         )
         logger.info("[INFO] prompt statistics saved to %s", prompt_stats_path)
 
+    log_metrics(
+        accelerator,
+        flatten_prompt_statistics({"train": train_prompt_summary, "val": val_prompt_summary}),
+        step=0,
+        backend=tracking_setup.backend,
+    )
     accelerator.wait_for_everyone()
 
     if args.prompt_length_stats_only:

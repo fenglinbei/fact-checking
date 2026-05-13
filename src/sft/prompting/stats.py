@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from logging import Logger
+from numbers import Number
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -69,6 +71,53 @@ def log_prompt_summary(summary: dict[str, object], logger: Logger | None = None)
         trunc.get("truncated_count", 0),
         trunc.get("truncation_rate", 0.0),
     )
+
+
+def flatten_prompt_statistics(
+    stats: dict[str, object],
+    *,
+    prefix: str = "prompt_stats",
+    separator: str = "/",
+) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    normalized_prefix = prefix.strip(separator)
+    for split, summary in stats.items():
+        if not isinstance(summary, dict):
+            continue
+        split_prefix = _join_metric_key(normalized_prefix, str(split), separator=separator)
+        _flatten_numeric_metrics(summary, split_prefix, metrics, separator=separator)
+    return metrics
+
+
+def _flatten_numeric_metrics(
+    value: Any,
+    prefix: str,
+    metrics: dict[str, float],
+    *,
+    separator: str,
+) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == "split":
+                continue
+            _flatten_numeric_metrics(
+                child,
+                _join_metric_key(prefix, str(key), separator=separator),
+                metrics,
+                separator=separator,
+            )
+        return
+    if isinstance(value, bool):
+        metrics[prefix] = float(value)
+        return
+    if isinstance(value, Number) and not isinstance(value, complex):
+        metrics[prefix] = float(value)
+
+
+def _join_metric_key(prefix: str, key: str, *, separator: str) -> str:
+    if not prefix:
+        return key
+    return f"{prefix}{separator}{key}"
 
 
 def summarize_prebuilt_prompts(

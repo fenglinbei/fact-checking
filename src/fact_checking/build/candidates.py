@@ -1339,12 +1339,16 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
 
         lambda_overrides: dict[str, float] | None = None
         if use_learned_lambda:
-            pre_samples = _load_pickle(pre_mmr_split_paths[split_name])
             from fact_checking.learned_lambda.predictor import load_predictor, predict_lambdas_for_samples
             model_path = str(learned_lambda_cfg["model_path"])
             stats_path = str(learned_lambda_cfg["feature_stats_path"])
             predictor, stats = load_predictor(model_path, stats_path)
-            lambda_overrides = predict_lambdas_for_samples(pre_samples, predictor, stats, retrieval_cfg)
+            feature_mode = str(stats.get("feature_mode") or "handcrafted").strip().lower()
+            if feature_mode == "chunk_embedding":
+                lambda_overrides = predict_lambdas_for_samples(chunk_samples, predictor, stats, retrieval_cfg)
+            else:
+                pre_samples = _load_pickle(pre_mmr_split_paths[split_name])
+                lambda_overrides = predict_lambdas_for_samples(pre_samples, predictor, stats, retrieval_cfg)
             vals = list(lambda_overrides.values())
             logger.info(
                 "Learned lambda: %d overrides, mean=%.3f, std=%.3f",

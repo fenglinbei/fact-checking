@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Train the learned-lambda MLP predictor from oracle lambda labels and PreMMR features.
+# Train the learned-lambda predictor from chunk-MMR embeddings.
 #
 # Usage:
 #   bash scripts/learned_lambda/run_train_predictor.sh
 #   SPLIT_NAME=val bash scripts/learned_lambda/run_train_predictor.sh
 #   ORACLE_LAMBDAS=outputs/learned_lambda/oracle_lambda_train.jsonl bash scripts/learned_lambda/run_train_predictor.sh
-#   PREMMR_CACHE=outputs/cache/pre_mmr/<fingerprint>/train.pkl bash scripts/learned_lambda/run_train_predictor.sh
-#   PREMMR_CACHE_FINGERPRINT=68c6d9f97eee bash scripts/learned_lambda/run_train_predictor.sh
+#   CHUNK_MMR_CACHE=outputs/cache/chunk_mmr/<fingerprint>/train.pkl bash scripts/learned_lambda/run_train_predictor.sh
 #   EPOCHS=100 BATCH_SIZE=128 PROGRESS=false bash scripts/learned_lambda/run_train_predictor.sh
+#   CANDIDATE_TOP_K=16 bash scripts/learned_lambda/run_train_predictor.sh
 #   OBJECTIVE=classification OUTPUT_DIR=outputs/learned_lambda_cls bash scripts/learned_lambda/run_train_predictor.sh
 #
 # Extra CLI args are forwarded to train_predictor.py, for example:
@@ -19,11 +19,13 @@ cd "$(dirname "$0")/../.."
 export PYTHONPATH="${PWD}/src:${PYTHONPATH:-}"
 
 SPLIT_NAME="${SPLIT_NAME:-train}"
+EXPERIMENT="${EXPERIMENT:-b3_mmr_topk_sweep_1024}"
+CONFIG_OVERRIDES="${CONFIG_OVERRIDES:-}"
 ORACLE_LAMBDAS="${ORACLE_LAMBDAS:-outputs/learned_lambda/oracle_lambda_${SPLIT_NAME}.jsonl}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/learned_lambda}"
-PREMMR_CACHE_ROOT="${PREMMR_CACHE_ROOT:-outputs/cache/pre_mmr}"
-PREMMR_CACHE_FINGERPRINT="${PREMMR_CACHE_FINGERPRINT:-68c6d9f97eee}"
-PREMMR_CACHE="${PREMMR_CACHE:-}"
+CHUNK_MMR_CACHE_ROOT="${CHUNK_MMR_CACHE_ROOT:-outputs/cache/chunk_mmr}"
+CHUNK_MMR_CACHE_FINGERPRINT="${CHUNK_MMR_CACHE_FINGERPRINT:-}"
+CHUNK_MMR_CACHE="${CHUNK_MMR_CACHE:-}"
 
 HIDDEN_DIM="${HIDDEN_DIM:-256}"
 DROPOUT="${DROPOUT:-0.1}"
@@ -38,32 +40,15 @@ REGRESSION_LOSS="${REGRESSION_LOSS:-mse}"
 HUBER_DELTA="${HUBER_DELTA:-0.1}"
 LAMBDA_GRID="${LAMBDA_GRID:-auto}"
 SOFTMAX_TEMPERATURE="${SOFTMAX_TEMPERATURE:-1.0}"
-ALPHA_DENSE="${ALPHA_DENSE:-0.70}"
-ALPHA_LEXICAL="${ALPHA_LEXICAL:-0.20}"
-ALPHA_BM25="${ALPHA_BM25:-0.10}"
+CANDIDATE_TOP_K="${CANDIDATE_TOP_K:-}"
+ALPHA_DENSE="${ALPHA_DENSE:-}"
+ALPHA_LEXICAL="${ALPHA_LEXICAL:-}"
+ALPHA_BM25="${ALPHA_BM25:-}"
 SEED="${SEED:-42}"
 PROGRESS="${PROGRESS:-true}"
 
-if [[ -z "${PREMMR_CACHE}" ]]; then
-  if [[ -n "${PREMMR_CACHE_FINGERPRINT}" ]]; then
-    PREMMR_CACHE="${PREMMR_CACHE_ROOT}/${PREMMR_CACHE_FINGERPRINT}/${SPLIT_NAME}.pkl"
-  else
-    shopt -s nullglob
-    matches=("${PREMMR_CACHE_ROOT}"/*/"${SPLIT_NAME}.pkl")
-    shopt -u nullglob
-    if [[ "${#matches[@]}" -eq 1 ]]; then
-      PREMMR_CACHE="${matches[0]}"
-    elif [[ "${#matches[@]}" -eq 0 ]]; then
-      echo "[run_train_predictor] No PreMMR cache found for split=${SPLIT_NAME} under ${PREMMR_CACHE_ROOT}" >&2
-      echo "[run_train_predictor] Run scripts/learned_lambda/run_generate_oracle_prompts.sh first, or set PREMMR_CACHE." >&2
-      exit 1
-    else
-      echo "[run_train_predictor] Multiple PreMMR caches found for split=${SPLIT_NAME} under ${PREMMR_CACHE_ROOT}" >&2
-      printf '[run_train_predictor]   %s\n' "${matches[@]}" >&2
-      echo "[run_train_predictor] Set PREMMR_CACHE or PREMMR_CACHE_FINGERPRINT to choose one." >&2
-      exit 1
-    fi
-  fi
+if [[ -z "${CHUNK_MMR_CACHE}" && -n "${CHUNK_MMR_CACHE_FINGERPRINT}" ]]; then
+  CHUNK_MMR_CACHE="${CHUNK_MMR_CACHE_ROOT}/${CHUNK_MMR_CACHE_FINGERPRINT}/${SPLIT_NAME}.pkl"
 fi
 
 if [[ ! -f "${ORACLE_LAMBDAS}" ]]; then
@@ -72,16 +57,19 @@ if [[ ! -f "${ORACLE_LAMBDAS}" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${PREMMR_CACHE}" ]]; then
-  echo "[run_train_predictor] PreMMR cache not found: ${PREMMR_CACHE}" >&2
-  echo "[run_train_predictor] Set PREMMR_CACHE=/path/to/{train,val,test}.pkl and rerun." >&2
+if [[ -n "${CHUNK_MMR_CACHE}" && ! -f "${CHUNK_MMR_CACHE}" ]]; then
+  echo "[run_train_predictor] chunk-MMR cache not found: ${CHUNK_MMR_CACHE}" >&2
+  echo "[run_train_predictor] Set CHUNK_MMR_CACHE=/path/to/{train,val,test}.pkl and rerun." >&2
   exit 1
 fi
 
 echo "[run_train_predictor] split_name=${SPLIT_NAME}"
+echo "[run_train_predictor] experiment=${EXPERIMENT}"
 echo "[run_train_predictor] oracle_lambdas=${ORACLE_LAMBDAS}"
-echo "[run_train_predictor] premmr_cache=${PREMMR_CACHE}"
+echo "[run_train_predictor] chunk_mmr_cache=${CHUNK_MMR_CACHE:-auto_by_experiment}"
+echo "[run_train_predictor] chunk_mmr_cache_root=${CHUNK_MMR_CACHE_ROOT}"
 echo "[run_train_predictor] output_dir=${OUTPUT_DIR}"
+echo "[run_train_predictor] candidate_top_k=${CANDIDATE_TOP_K:-from_experiment}"
 echo "[run_train_predictor] hidden_dim=${HIDDEN_DIM}"
 echo "[run_train_predictor] dropout=${DROPOUT}"
 echo "[run_train_predictor] epochs=${EPOCHS}"
@@ -95,16 +83,21 @@ echo "[run_train_predictor] regression_loss=${REGRESSION_LOSS}"
 echo "[run_train_predictor] huber_delta=${HUBER_DELTA}"
 echo "[run_train_predictor] lambda_grid=${LAMBDA_GRID}"
 echo "[run_train_predictor] softmax_temperature=${SOFTMAX_TEMPERATURE}"
-echo "[run_train_predictor] alpha_dense=${ALPHA_DENSE}"
-echo "[run_train_predictor] alpha_lexical=${ALPHA_LEXICAL}"
-echo "[run_train_predictor] alpha_bm25=${ALPHA_BM25}"
+echo "[run_train_predictor] alpha_dense=${ALPHA_DENSE:-from_experiment}"
+echo "[run_train_predictor] alpha_lexical=${ALPHA_LEXICAL:-from_experiment}"
+echo "[run_train_predictor] alpha_bm25=${ALPHA_BM25:-from_experiment}"
 echo "[run_train_predictor] seed=${SEED}"
 echo "[run_train_predictor] progress=${PROGRESS}"
+if [[ -n "${CONFIG_OVERRIDES}" ]]; then
+  echo "[run_train_predictor] config_overrides=${CONFIG_OVERRIDES}"
+fi
 
 cmd=(
   python scripts/learned_lambda/train_predictor.py
   --oracle-lambdas "${ORACLE_LAMBDAS}"
-  --premmr-cache "${PREMMR_CACHE}"
+  --experiment "${EXPERIMENT}"
+  --split-name "${SPLIT_NAME}"
+  --chunk-mmr-cache-root "${CHUNK_MMR_CACHE_ROOT}"
   --output-dir "${OUTPUT_DIR}"
   --hidden-dim "${HIDDEN_DIM}"
   --dropout "${DROPOUT}"
@@ -119,11 +112,34 @@ cmd=(
   --huber-delta "${HUBER_DELTA}"
   --lambda-grid "${LAMBDA_GRID}"
   --softmax-temperature "${SOFTMAX_TEMPERATURE}"
-  --alpha-dense "${ALPHA_DENSE}"
-  --alpha-lexical "${ALPHA_LEXICAL}"
-  --alpha-bm25 "${ALPHA_BM25}"
   --seed "${SEED}"
 )
+
+if [[ -n "${CHUNK_MMR_CACHE}" ]]; then
+  cmd+=(--chunk-mmr-cache "${CHUNK_MMR_CACHE}")
+fi
+
+if [[ -n "${CANDIDATE_TOP_K}" ]]; then
+  cmd+=(--candidate-top-k "${CANDIDATE_TOP_K}")
+fi
+
+if [[ -n "${ALPHA_DENSE}" ]]; then
+  cmd+=(--alpha-dense "${ALPHA_DENSE}")
+fi
+
+if [[ -n "${ALPHA_LEXICAL}" ]]; then
+  cmd+=(--alpha-lexical "${ALPHA_LEXICAL}")
+fi
+
+if [[ -n "${ALPHA_BM25}" ]]; then
+  cmd+=(--alpha-bm25 "${ALPHA_BM25}")
+fi
+
+if [[ -n "${CONFIG_OVERRIDES}" ]]; then
+  # shellcheck disable=SC2206
+  overrides=(${CONFIG_OVERRIDES})
+  cmd+=(--config-overrides "${overrides[@]}")
+fi
 
 if [[ "${PROGRESS}" == "false" ]]; then
   cmd+=(--no-progress)

@@ -7,7 +7,7 @@ Usage:
         --model outputs/learned_lambda/predictor.pt \
         --feature-stats outputs/learned_lambda/feature_stats.json \
         --oracle-lambdas outputs/learned_lambda/oracle_lambda_train.jsonl \
-        --premmr-cache outputs/cache/pre_mmr/53a3588e485d/train.pkl
+        --experiment b3_mmr_topk_sweep_1024
 """
 from __future__ import annotations
 
@@ -22,8 +22,13 @@ import torch
 from tqdm.auto import tqdm
 
 from fact_checking.build.candidates import _load_pickle
-from fact_checking.learned_lambda.features import extract_features
-from fact_checking.learned_lambda.predictor import load_predictor, normalize_features_for_stats
+from fact_checking.learned_lambda.cache_utils import (
+    load_experiment_build_cfg,
+    pick_retrieval_value,
+    resolve_chunk_mmr_cache_path,
+)
+from fact_checking.learned_lambda.embedding_features import build_matched_chunk_embedding_arrays
+from fact_checking.learned_lambda.predictor import load_predictor
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,12 +36,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--model", type=str, required=True)
     p.add_argument("--feature-stats", type=str, required=True)
     p.add_argument("--oracle-lambdas", type=str, required=True)
-    p.add_argument("--premmr-cache", type=str, required=True)
+    p.add_argument("--chunk-mmr-cache", type=str, default=None)
+    p.add_argument("--chunk-mmr-cache-root", type=str, default="outputs/cache/chunk_mmr")
+    p.add_argument("--experiment", type=str, default="b3_mmr_topk_sweep_1024")
+    p.add_argument("--config-overrides", nargs="*", default=[])
+    p.add_argument("--split-name", type=str, default="train", choices=["train", "val", "test"])
+    p.add_argument("--candidate-top-k", type=int, default=None)
     p.add_argument("--hidden-dim", type=int, default=None)
     p.add_argument("--dropout", type=float, default=None)
-    p.add_argument("--alpha-dense", type=float, default=0.70)
-    p.add_argument("--alpha-lexical", type=float, default=0.20)
-    p.add_argument("--alpha-bm25", type=float, default=0.10)
+    p.add_argument("--alpha-dense", type=float, default=None)
+    p.add_argument("--alpha-lexical", type=float, default=None)
+    p.add_argument("--alpha-bm25", type=float, default=None)
     p.add_argument(
         "--fixed-lambda-grid",
         type=str,
@@ -153,6 +163,24 @@ def main() -> None:
     args = parse_args()
     show_progress = not args.no_progress
 
+    build_cfg = load_experiment_build_cfg(args.experiment, args.config_overrides)
+    retrieval_cfg = dict(build_cfg.get("retrieval", {}) or {})
+    chunk_mmr_cache = (
+        Path(args.chunk_mmr_cache)
+        if args.chunk_mmr_cache
+        else resolve_chunk_mmr_cache_path(
+            build_cfg,
+            split_name=args.split_name,
+            cache_root=args.chunk_mmr_cache_root,
+        )
+    )
+    if not chunk_mmr_cache.exists():
+        raise FileNotFoundError(
+            f"Chunk-MMR cache not found: {chunk_mmr_cache}. "
+            "Run scripts/learned_lambda/run_generate_oracle_prompts.sh first, "
+            "or pass --chunk-mmr-cache."
+        )
+
     oracle_by_eid: dict[str, dict] = {}
     with open(args.oracle_lambdas) as f:
         for line in tqdm(
@@ -167,22 +195,6 @@ def main() -> None:
             oracle_by_eid[rec["event_id"]] = rec
     _log(f"Loaded {len(oracle_by_eid)} oracle λ values", show_progress=show_progress)
 
-    pre_samples = _load_pickle(Path(args.premmr_cache))
-    _log(f"Loaded {len(pre_samples)} PreMMR samples", show_progress=show_progress)
-    matched = [
-        p for p in tqdm(
-            pre_samples,
-            desc="match samples",
-            unit="sample",
-            dynamic_ncols=True,
-            disable=not show_progress,
-        )
-        if p.event_id in oracle_by_eid
-    ]
-    _log(f"Samples: {len(matched)} (matched with oracle λ)", show_progress=show_progress)
-    if not matched:
-        raise ValueError("No PreMMR samples matched oracle λ values by event_id.")
-
     model, stats = load_predictor(
         args.model,
         args.feature_stats,
@@ -196,23 +208,53 @@ def main() -> None:
         show_progress=show_progress,
     )
 
-    features = np.stack([
-        extract_features(p, args.alpha_dense, args.alpha_lexical, args.alpha_bm25)
-        for p in tqdm(
-            matched,
-            desc="extract features",
+    candidate_top_k = int(
+        pick_retrieval_value(
+            args.candidate_top_k,
+            retrieval_cfg,
+            "top_k",
+            stats.get("candidate_top_k") or 16,
+        )
+    )
+    alpha_dense = float(pick_retrieval_value(args.alpha_dense, retrieval_cfg, "alpha_dense", 0.70))
+    alpha_lexical = float(pick_retrieval_value(args.alpha_lexical, retrieval_cfg, "alpha_lexical", 0.20))
+    alpha_bm25 = float(pick_retrieval_value(args.alpha_bm25, retrieval_cfg, "alpha_bm25", 0.10))
+
+    _log(f"Loaded build config from experiment={args.experiment}", show_progress=show_progress)
+    _log(f"chunk_mmr_cache={chunk_mmr_cache}", show_progress=show_progress)
+    _log(
+        f"candidate_top_k={candidate_top_k}, alpha_dense={alpha_dense}, "
+        f"alpha_lexical={alpha_lexical}, alpha_bm25={alpha_bm25}",
+        show_progress=show_progress,
+    )
+
+    chunk_samples = _load_pickle(chunk_mmr_cache)
+    _log(f"Loaded {len(chunk_samples)} ChunkMMR samples", show_progress=show_progress)
+    arrays, oracle_arr, oracle_records, skipped = build_matched_chunk_embedding_arrays(
+        tqdm(
+            chunk_samples,
+            desc="build embedding tensors",
             unit="sample",
             dynamic_ncols=True,
             disable=not show_progress,
-        )
-    ])
-    features_norm = normalize_features_for_stats(features, stats)
+        ),
+        oracle_by_eid,
+        candidate_top_k=candidate_top_k,
+        alpha_dense=alpha_dense,
+        alpha_lexical=alpha_lexical,
+        alpha_bm25=alpha_bm25,
+    )
+    if skipped > 0:
+        _log(f"Skipped {skipped} samples without oracle λ", show_progress=show_progress)
+    _log(f"Samples: {len(oracle_arr)} (matched with oracle λ)", show_progress=show_progress)
 
     with torch.no_grad():
-        x = torch.from_numpy(features_norm)
-        pred_arr = model(x).numpy()
-    oracle_arr = np.array([oracle_by_eid[p.event_id]["oracle_lambda"] for p in matched])
-    margins_with_missing = [_oracle_margin(oracle_by_eid[p.event_id]) for p in matched]
+        pred_arr = model(
+            torch.from_numpy(arrays["claim_emb"]),
+            torch.from_numpy(arrays["candidate_emb"]),
+            torch.from_numpy(arrays["candidate_mask"]),
+        ).numpy()
+    margins_with_missing = [_oracle_margin(rec) for rec in oracle_records]
     has_margin = np.array([m is not None for m in margins_with_missing], dtype=bool)
     margins = np.array([m for m in margins_with_missing if m is not None], dtype=np.float32)
 

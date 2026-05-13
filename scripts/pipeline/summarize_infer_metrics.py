@@ -1,0 +1,451 @@
+#!/usr/bin/env python
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import math
+import os
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+METADATA_COLUMNS = [
+    "source_root",
+    "run_name",
+    "split",
+    "checkpoint",
+    "infer_id",
+    "duplicate_rank",
+    "duplicate_count",
+    "run_dir",
+    "metrics_path",
+    "modified_time",
+]
+PREFERRED_OVERRIDE_COLUMNS = ["build.retrieval.top_k", "build.retrieval.mmr_lambda"]
+PREFERRED_METRIC_COLUMNS = [
+    "num_samples",
+    "accuracy",
+    "macro_precision",
+    "macro_recall",
+    "macro_f1",
+    "parse_error_rate",
+]
+PLOT_METRIC_COLUMNS = ["accuracy", "macro_precision", "macro_recall", "macro_f1", "parse_error_rate"]
+LABEL_ORDER = ["pants-fire", "false", "barely-true", "half-true", "mostly-true", "true"]
+PER_CLASS_METRICS = ["precision", "recall", "f1"]
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a JSON object.")
+    return data
+
+
+def _coerce_scalar(raw: str) -> int | float | bool | str:
+    value = raw.strip()
+    lower = value.lower()
+    if lower == "true":
+        return True
+    if lower == "false":
+        return False
+    if re.fullmatch(r"[+-]?\d+", value):
+        return int(value)
+    if re.fullmatch(r"[+-]?(?:\d+\.\d*|\d*\.\d+)(?:[eE][+-]?\d+)?", value) or re.fullmatch(
+        r"[+-]?\d+[eE][+-]?\d+",
+        value,
+    ):
+        return float(value)
+    return value
+
+
+def _parse_run_overrides(run_name: str) -> dict[str, int | float | bool | str]:
+    slug = run_name.rsplit("__", 1)[0]
+    overrides: dict[str, int | float | bool | str] = {}
+    for item in slug.split(","):
+        if "-" not in item:
+            continue
+        key, value = item.rsplit("-", 1)
+        if key:
+            overrides[key] = _coerce_scalar(value)
+    return overrides
+
+
+def _is_numeric(value: Any) -> bool:
+    return isinstance(value, (int, float, bool)) and not isinstance(value, complex)
+
+
+def _flatten_numeric_metrics(
+    value: Any,
+    *,
+    prefix: str,
+    out: dict[str, float],
+) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            _flatten_numeric_metrics(child, prefix=child_prefix, out=out)
+        return
+    if _is_numeric(value):
+        numeric = float(value)
+        if math.isfinite(numeric):
+            out[prefix] = numeric
+
+
+def _format_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return f"{value:.12g}"
+    return str(value)
+
+
+def _metric_sort_key(metric: str) -> tuple[int, int, str]:
+    if metric in PREFERRED_METRIC_COLUMNS:
+        return (0, PREFERRED_METRIC_COLUMNS.index(metric), metric)
+    parts = metric.split(".")
+    if len(parts) == 3 and parts[0] == "per_class":
+        label = parts[1]
+        score_name = parts[2]
+        label_order = LABEL_ORDER.index(label) if label in LABEL_ORDER else len(LABEL_ORDER)
+        score_order = PER_CLASS_METRICS.index(score_name) if score_name in PER_CLASS_METRICS else 99
+        return (1, label_order * 10 + score_order, metric)
+    return (2, 0, metric)
+
+
+def _metrics_paths(run_root: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in run_root.rglob("metrics.json")
+        if path.parent.name == "api" and "infer" in path.parts
+    )
+
+
+def _extract_path_metadata(path: Path, run_root: Path) -> dict[str, str]:
+    relative = path.relative_to(run_root)
+    parts = relative.parts
+    try:
+        infer_idx = parts.index("infer")
+    except ValueError as exc:
+        raise ValueError(f"Cannot locate infer segment in {path}") from exc
+    if infer_idx < 1 or infer_idx + 4 >= len(parts):
+        raise ValueError(f"Unexpected infer metrics path shape: {path}")
+    run_name = parts[0]
+    return {
+        "run_name": run_name,
+        "split": parts[infer_idx + 1],
+        "checkpoint": parts[infer_idx + 2],
+        "infer_id": parts[infer_idx + 3],
+        "run_dir": str(run_root / run_name),
+    }
+
+
+def collect_rows(run_roots: list[Path]) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    rows: list[dict[str, Any]] = []
+    override_keys: set[str] = set()
+    metric_keys: set[str] = set()
+    for run_root in run_roots:
+        paths = _metrics_paths(run_root)
+        if not paths:
+            raise FileNotFoundError(f"No infer api metrics.json files found under {run_root}")
+        for path in paths:
+            metadata = _extract_path_metadata(path, run_root)
+            metrics = _read_json(path)
+            flat_metrics: dict[str, float] = {}
+            _flatten_numeric_metrics(metrics, prefix="", out=flat_metrics)
+            stat = path.stat()
+            overrides = _parse_run_overrides(metadata["run_name"])
+            row: dict[str, Any] = {
+                "source_root": run_root.name,
+                **metadata,
+                "duplicate_rank": 1,
+                "duplicate_count": 1,
+                "metrics_path": str(path),
+                "modified_time": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+                "_mtime": stat.st_mtime,
+                **overrides,
+                **flat_metrics,
+            }
+            rows.append(row)
+            override_keys.update(overrides.keys())
+            metric_keys.update(flat_metrics.keys())
+
+    _annotate_duplicates(rows)
+    ordered_override_keys = [
+        key for key in PREFERRED_OVERRIDE_COLUMNS if key in override_keys
+    ] + sorted(key for key in override_keys if key not in PREFERRED_OVERRIDE_COLUMNS)
+    ordered_metric_keys = sorted(metric_keys, key=_metric_sort_key)
+    return rows, ordered_override_keys, ordered_metric_keys
+
+
+def _duplicate_group_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        row.get("source_root"),
+        row.get("build.retrieval.top_k"),
+        row.get("build.retrieval.mmr_lambda"),
+        row.get("split"),
+        row.get("checkpoint"),
+    )
+
+
+def _annotate_duplicates(rows: list[dict[str, Any]]) -> None:
+    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    for row in rows:
+        groups.setdefault(_duplicate_group_key(row), []).append(row)
+    for group_rows in groups.values():
+        ordered = sorted(group_rows, key=lambda row: (float(row.get("_mtime", 0.0)), str(row["metrics_path"])))
+        for rank, row in enumerate(ordered, start=1):
+            row["duplicate_rank"] = rank
+            row["duplicate_count"] = len(ordered)
+
+
+def _sort_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def sort_key(row: dict[str, Any]) -> tuple[str, float, str, str, int]:
+        top_k = row.get("build.retrieval.top_k")
+        numeric_top_k = float(top_k) if isinstance(top_k, (int, float)) else math.inf
+        return (
+            str(row.get("source_root", "")),
+            numeric_top_k,
+            str(row.get("split", "")),
+            str(row.get("checkpoint", "")),
+            int(row.get("duplicate_rank", 0)),
+        )
+
+    return sorted(rows, key=sort_key)
+
+
+def latest_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest_by_group: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for row in rows:
+        key = _duplicate_group_key(row)
+        current = latest_by_group.get(key)
+        if current is None or (float(row.get("_mtime", 0.0)), str(row["metrics_path"])) > (
+            float(current.get("_mtime", 0.0)),
+            str(current["metrics_path"]),
+        ):
+            latest_by_group[key] = row
+    return _sort_rows(list(latest_by_group.values()))
+
+
+def write_csv(rows: list[dict[str, Any]], columns: list[str], output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=columns)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: _format_cell(row.get(key)) for key in columns})
+
+
+def _markdown_table(headers: list[str], table_rows: list[list[str]]) -> str:
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for row in table_rows:
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
+
+
+def _duplicate_summary_rows(rows: list[dict[str, Any]]) -> list[list[str]]:
+    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    for row in rows:
+        groups.setdefault(_duplicate_group_key(row), []).append(row)
+    summary_rows: list[list[str]] = []
+    for key, group_rows in sorted(groups.items(), key=lambda item: tuple(str(part) for part in item[0])):
+        if len(group_rows) <= 1:
+            continue
+        source_root, top_k, mmr_lambda, split, checkpoint = key
+        infer_ids = ", ".join(str(row["infer_id"]) for row in _sort_rows(group_rows))
+        summary_rows.append(
+            [
+                _format_cell(source_root),
+                _format_cell(top_k),
+                _format_cell(mmr_lambda),
+                _format_cell(split),
+                _format_cell(checkpoint),
+                str(len(group_rows)),
+                infer_ids,
+            ]
+        )
+    return summary_rows
+
+
+def write_markdown_summary(
+    *,
+    all_rows: list[dict[str, Any]],
+    latest: list[dict[str, Any]],
+    output_path: Path,
+    all_csv: Path,
+    latest_csv: Path,
+    plot_path: Path,
+) -> None:
+    headers = [
+        "source_root",
+        "top_k",
+        "mmr_lambda",
+        "split",
+        "checkpoint",
+        "infer_id",
+        "num_samples",
+        "accuracy",
+        "macro_precision",
+        "macro_recall",
+        "macro_f1",
+        "parse_error_rate",
+    ]
+    table_rows = [
+        [
+            _format_cell(row.get("source_root")),
+            _format_cell(row.get("build.retrieval.top_k")),
+            _format_cell(row.get("build.retrieval.mmr_lambda")),
+            _format_cell(row.get("split")),
+            _format_cell(row.get("checkpoint")),
+            _format_cell(row.get("infer_id")),
+            _format_cell(row.get("num_samples")),
+            _format_cell(row.get("accuracy")),
+            _format_cell(row.get("macro_precision")),
+            _format_cell(row.get("macro_recall")),
+            _format_cell(row.get("macro_f1")),
+            _format_cell(row.get("parse_error_rate")),
+        ]
+        for row in latest
+    ]
+    duplicate_rows = _duplicate_summary_rows(all_rows)
+
+    lines = [
+        "# Infer Metrics Summary",
+        "",
+        f"- All API metric records: `{all_csv.name}`",
+        f"- Latest record per source/top_k/split/checkpoint: `{latest_csv.name}`",
+        f"- Line chart: `{plot_path.name}`",
+        f"- Total records: {len(all_rows)}",
+        f"- Latest rows: {len(latest)}",
+        "",
+        "## Latest Records",
+        "",
+        _markdown_table(headers, table_rows),
+    ]
+    if duplicate_rows:
+        lines.extend(
+            [
+                "",
+                "## Duplicate Groups",
+                "",
+                _markdown_table(
+                    ["source_root", "top_k", "mmr_lambda", "split", "checkpoint", "count", "infer_ids"],
+                    duplicate_rows,
+                ),
+            ]
+        )
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_line_plot(rows: list[dict[str, Any]], output_path: Path) -> None:
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-cache")
+    Path(os.environ["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        top_k = row.get("build.retrieval.top_k")
+        if not isinstance(top_k, (int, float)):
+            continue
+        by_source.setdefault(str(row.get("source_root", "")), []).append(row)
+
+    ncols = 2
+    nrows = math.ceil(len(PLOT_METRIC_COLUMNS) / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(8.2 * ncols, 3.7 * nrows), squeeze=False)
+    flat_axes = [axis for row_axes in axes for axis in row_axes]
+    for axis, metric in zip(flat_axes, PLOT_METRIC_COLUMNS):
+        for source, source_rows in sorted(by_source.items()):
+            ordered = sorted(source_rows, key=lambda row: float(row["build.retrieval.top_k"]))
+            x_values = [float(row["build.retrieval.top_k"]) for row in ordered if isinstance(row.get(metric), (int, float))]
+            y_values = [float(row[metric]) for row in ordered if isinstance(row.get(metric), (int, float))]
+            if y_values:
+                axis.plot(x_values, y_values, marker="o", linewidth=1.8, label=source)
+        axis.set_title(metric)
+        axis.set_xlabel("build.retrieval.top_k")
+        axis.grid(True, alpha=0.25)
+        axis.legend(fontsize=8)
+        all_top_k = sorted(
+            {
+                float(row["build.retrieval.top_k"])
+                for row in rows
+                if isinstance(row.get("build.retrieval.top_k"), (int, float))
+            }
+        )
+        if len(all_top_k) <= 24:
+            axis.set_xticks(all_top_k)
+            axis.set_xticklabels([_format_cell(int(x) if x.is_integer() else x) for x in all_top_k], rotation=30)
+
+    for axis in flat_axes[len(PLOT_METRIC_COLUMNS):]:
+        axis.axis("off")
+
+    fig.suptitle("Infer test metrics by top_k", fontsize=14)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Summarize infer/*/*/*/api/metrics.json files under one or more run roots.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("run_roots", nargs="+", help="Run roots containing child run directories.")
+    parser.add_argument("--output-dir", default="outputs/runs/topk_infer_metrics_summary")
+    parser.add_argument("--all-csv", default="infer_metrics_summary_all.csv")
+    parser.add_argument("--latest-csv", default="infer_metrics_summary_latest.csv")
+    parser.add_argument("--markdown", default="infer_metrics_summary.md")
+    parser.add_argument("--plot", default="infer_metrics_line_chart.png")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    run_roots = [Path(path).resolve() for path in args.run_roots]
+    output_dir = Path(args.output_dir).resolve()
+
+    rows, override_columns, metric_columns = collect_rows(run_roots)
+    rows = _sort_rows(rows)
+    latest = latest_rows(rows)
+    columns = METADATA_COLUMNS + override_columns + metric_columns
+
+    all_csv = output_dir / args.all_csv
+    latest_csv = output_dir / args.latest_csv
+    markdown = output_dir / args.markdown
+    plot_path = output_dir / args.plot
+    write_csv(rows, columns, all_csv)
+    write_csv(latest, columns, latest_csv)
+    write_line_plot(latest, plot_path)
+    write_markdown_summary(
+        all_rows=rows,
+        latest=latest,
+        output_path=markdown,
+        all_csv=all_csv,
+        latest_csv=latest_csv,
+        plot_path=plot_path,
+    )
+
+    print(f"[infer_metrics] records={len(rows)}")
+    print(f"[infer_metrics] latest_rows={len(latest)}")
+    print(f"[infer_metrics] all_csv={all_csv}")
+    print(f"[infer_metrics] latest_csv={latest_csv}")
+    print(f"[infer_metrics] markdown={markdown}")
+    print(f"[infer_metrics] plot={plot_path}")
+
+
+if __name__ == "__main__":
+    main()

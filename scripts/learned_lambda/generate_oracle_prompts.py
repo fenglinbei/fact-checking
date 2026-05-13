@@ -8,7 +8,7 @@ Usage:
         --experiment b3_mmr_topk_sweep_1024 \
         --rebuild-premmr-cache \
         --output-dir outputs/learned_lambda/prompts/ \
-        --top-k 12
+        --top-k 16
 """
 from __future__ import annotations
 
