@@ -1333,26 +1333,37 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
     # ---- Optional: learned λ predictor ----
     learned_lambda_cfg = retrieval_cfg.get("learned_lambda", {}) or {}
     use_learned_lambda = bool(learned_lambda_cfg.get("enabled", False))
+    learned_lambda_mode = str(learned_lambda_cfg.get("mode", "predictor")).strip().lower()
 
     for split_name in split_names:
         chunk_samples = _load_pickle(chunk_mmr_split_paths[split_name])
 
         lambda_overrides: dict[str, float] | None = None
         if use_learned_lambda:
-            from fact_checking.learned_lambda.predictor import load_predictor, predict_lambdas_for_samples
-            model_path = str(learned_lambda_cfg["model_path"])
-            stats_path = str(learned_lambda_cfg["feature_stats_path"])
-            predictor, stats = load_predictor(model_path, stats_path)
-            feature_mode = str(stats.get("feature_mode") or "handcrafted").strip().lower()
-            if feature_mode == "chunk_embedding":
-                lambda_overrides = predict_lambdas_for_samples(chunk_samples, predictor, stats, retrieval_cfg)
+            if learned_lambda_mode == "heuristic":
+                # Simple heuristic: λ = a * log(n_candidates) + b, clamped to [0, 1].
+                a = float(learned_lambda_cfg.get("heuristic_a", -0.0732))
+                b = float(learned_lambda_cfg.get("heuristic_b", 0.6127))
+                lambda_overrides = {}
+                for sample in chunk_samples:
+                    n = min(len(sample.candidates), int(sample.chunk_emb.shape[0]))
+                    raw = a * np.log(max(n, 1)) + b
+                    lambda_overrides[sample.event_id] = float(max(0.0, min(1.0, raw)))
             else:
-                pre_samples = _load_pickle(pre_mmr_split_paths[split_name])
-                lambda_overrides = predict_lambdas_for_samples(pre_samples, predictor, stats, retrieval_cfg)
+                from fact_checking.learned_lambda.predictor import load_predictor, predict_lambdas_for_samples
+                model_path = str(learned_lambda_cfg["model_path"])
+                stats_path = str(learned_lambda_cfg["feature_stats_path"])
+                predictor, stats = load_predictor(model_path, stats_path)
+                feature_mode = str(stats.get("feature_mode") or "handcrafted").strip().lower()
+                if feature_mode == "chunk_embedding":
+                    lambda_overrides = predict_lambdas_for_samples(chunk_samples, predictor, stats, retrieval_cfg)
+                else:
+                    pre_samples = _load_pickle(pre_mmr_split_paths[split_name])
+                    lambda_overrides = predict_lambdas_for_samples(pre_samples, predictor, stats, retrieval_cfg)
             vals = list(lambda_overrides.values())
             logger.info(
-                "Learned lambda: %d overrides, mean=%.3f, std=%.3f",
-                len(vals), np.mean(vals), np.std(vals),
+                "Learned lambda (%s): %d overrides, mean=%.3f, std=%.3f",
+                learned_lambda_mode, len(vals), np.mean(vals), np.std(vals),
             )
 
         output_path = target_dir / f"build_{split_name}.jsonl"
