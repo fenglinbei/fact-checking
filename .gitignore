@@ -242,6 +242,7 @@ outputs/runs/**
 !outputs/runs/**/infer/**/*.jsonl
 !outputs/runs/**/infer/**/*.png
 outputs/runs/**/test_predictions.jsonl
+outputs/runs/**/prompt_stats/*
 .vscode
 wandb/
 multirun/
