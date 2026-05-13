@@ -18,7 +18,7 @@ export PYTHONPATH="${PWD}/src:${PYTHONPATH:-}"
 
 SPLIT_NAME="${SPLIT_NAME:-train}"
 PROMPTS_DIR="${PROMPTS_DIR:-outputs/learned_lambda/prompts}"
-MODEL="${MODEL:-/data/models/Qwen2.5-7B-Instruct}"
+MODEL="${MODEL:-outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe/train/best}"
 OUTPUT="${OUTPUT:-outputs/learned_lambda/oracle_lambda_${SPLIT_NAME}.jsonl}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-4}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.95}"
