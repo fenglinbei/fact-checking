@@ -15,6 +15,20 @@ from fact_checking.retrieval.text_utils import (
 CHUNK_EMBEDDING_FEATURE_MODE = "chunk_embedding"
 
 
+def _candidate_count(sample: ChunkMMRSample) -> int:
+    return min(len(sample.candidates), int(sample.chunk_emb.shape[0]))
+
+
+def _resolve_candidate_capacity(samples: list[ChunkMMRSample], candidate_top_k: int | None) -> int:
+    if candidate_top_k is not None:
+        if candidate_top_k <= 0:
+            raise ValueError("candidate_top_k must be positive when provided.")
+        return int(candidate_top_k)
+
+    max_candidates = max((_candidate_count(sample) for sample in samples), default=0)
+    return max(1, max_candidates)
+
+
 def _chunk_scores(
     sample: ChunkMMRSample,
     alpha_dense: float,
@@ -75,7 +89,7 @@ def chunk_embedding_example(
 def build_chunk_embedding_arrays(
     samples: list[ChunkMMRSample],
     *,
-    candidate_top_k: int,
+    candidate_top_k: int | None,
     alpha_dense: float,
     alpha_lexical: float,
     alpha_bm25: float,
@@ -83,14 +97,16 @@ def build_chunk_embedding_arrays(
     if not samples:
         raise ValueError("No chunk-MMR samples provided.")
 
+    candidate_capacity = _resolve_candidate_capacity(samples, candidate_top_k)
     claim_list: list[np.ndarray] = []
     candidate_list: list[np.ndarray] = []
     mask_list: list[np.ndarray] = []
+    count_list: list[int] = []
     event_ids: list[str] = []
     for sample in samples:
         claim_emb, candidate_emb, candidate_mask = chunk_embedding_example(
             sample,
-            candidate_top_k=candidate_top_k,
+            candidate_top_k=candidate_capacity,
             alpha_dense=alpha_dense,
             alpha_lexical=alpha_lexical,
             alpha_bm25=alpha_bm25,
@@ -98,6 +114,7 @@ def build_chunk_embedding_arrays(
         claim_list.append(claim_emb)
         candidate_list.append(candidate_emb)
         mask_list.append(candidate_mask)
+        count_list.append(_candidate_count(sample))
         event_ids.append(sample.event_id)
 
     return {
@@ -105,6 +122,7 @@ def build_chunk_embedding_arrays(
         "claim_emb": np.stack(claim_list).astype(np.float32, copy=False),
         "candidate_emb": np.stack(candidate_list).astype(np.float32, copy=False),
         "candidate_mask": np.stack(mask_list).astype(np.float32, copy=False),
+        "candidate_counts": np.array(count_list, dtype=np.int64),
     }
 
 
@@ -112,7 +130,7 @@ def build_matched_chunk_embedding_arrays(
     samples: list[ChunkMMRSample],
     oracle_by_eid: dict[str, dict[str, Any]],
     *,
-    candidate_top_k: int,
+    candidate_top_k: int | None,
     alpha_dense: float,
     alpha_lexical: float,
     alpha_bm25: float,

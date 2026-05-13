@@ -41,7 +41,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config-overrides", nargs="*", default=[])
     p.add_argument("--split-name", type=str, default="train", choices=["train", "val", "test"])
     p.add_argument("--output-dir", type=str, required=True)
-    p.add_argument("--candidate-top-k", type=int, default=None)
+    p.add_argument(
+        "--candidate-top-k",
+        type=int,
+        default=None,
+        help="Number of hybrid-ranked chunk candidates to feed the predictor. Omit to use the full chunk pool.",
+    )
     p.add_argument("--hidden-dim", type=int, default=256)
     p.add_argument("--dropout", type=float, default=0.1)
     p.add_argument("--epochs", type=int, default=200)
@@ -183,7 +188,8 @@ def main() -> None:
             cache_root=args.chunk_mmr_cache_root,
         )
     )
-    candidate_top_k = int(pick_retrieval_value(args.candidate_top_k, retrieval_cfg, "top_k", 16))
+    candidate_top_k = int(args.candidate_top_k) if args.candidate_top_k is not None else None
+    retrieval_top_k = int(pick_retrieval_value(None, retrieval_cfg, "top_k", 16))
     alpha_dense = float(pick_retrieval_value(args.alpha_dense, retrieval_cfg, "alpha_dense", 0.70))
     alpha_lexical = float(pick_retrieval_value(args.alpha_lexical, retrieval_cfg, "alpha_lexical", 0.20))
     alpha_bm25 = float(pick_retrieval_value(args.alpha_bm25, retrieval_cfg, "alpha_bm25", 0.10))
@@ -197,7 +203,8 @@ def main() -> None:
     _log(f"Loaded build config from experiment={args.experiment}", show_progress=show_progress)
     _log(f"chunk_mmr_cache={chunk_mmr_cache}", show_progress=show_progress)
     _log(
-        f"candidate_top_k={candidate_top_k}, alpha_dense={alpha_dense}, "
+        f"candidate_pool={'full' if candidate_top_k is None else f'top_{candidate_top_k}'}, "
+        f"prompt_top_k={retrieval_top_k}, alpha_dense={alpha_dense}, "
         f"alpha_lexical={alpha_lexical}, alpha_bm25={alpha_bm25}",
         show_progress=show_progress,
     )
@@ -233,10 +240,14 @@ def main() -> None:
         _log(f"Skipped {skipped} samples without oracle λ", show_progress=show_progress)
 
     embedding_dim = int(arrays["claim_emb"].shape[1])
+    candidate_capacity = int(arrays["candidate_emb"].shape[1])
+    candidate_counts = arrays["candidate_counts"]
     n_nonempty = int((arrays["candidate_mask"].sum(axis=1) > 0).sum())
     _log(
         f"Dataset: {len(targets)} samples, embedding_dim={embedding_dim}, "
-        f"candidate_top_k={candidate_top_k}, nonempty={n_nonempty}",
+        f"candidate_capacity={candidate_capacity}, "
+        f"candidate_count_mean={candidate_counts.mean():.1f}, "
+        f"candidate_count_max={candidate_counts.max()}, nonempty={n_nonempty}",
         show_progress=show_progress,
     )
     _log(f"Target λ: mean={targets.mean():.3f}, std={targets.std():.3f}", show_progress=show_progress)
@@ -423,7 +434,8 @@ def main() -> None:
         retrieval_config={
             "experiment": args.experiment,
             "chunk_mmr_cache": str(chunk_mmr_cache),
-            "top_k": candidate_top_k,
+            "candidate_top_k": candidate_top_k,
+            "prompt_top_k": retrieval_top_k,
             "alpha_dense": alpha_dense,
             "alpha_lexical": alpha_lexical,
             "alpha_bm25": alpha_bm25,
@@ -445,6 +457,10 @@ def main() -> None:
         "feature_names": ["claim_emb", "candidate_emb", "candidate_mask"],
         "embedding_dim": embedding_dim,
         "candidate_top_k": candidate_top_k,
+        "candidate_capacity": candidate_capacity,
+        "candidate_count_mean": float(candidate_counts.mean()),
+        "candidate_count_max": int(candidate_counts.max()),
+        "prompt_top_k": retrieval_top_k,
         "chunk_mmr_cache": str(chunk_mmr_cache),
         "experiment": args.experiment,
         "config_overrides": args.config_overrides,
