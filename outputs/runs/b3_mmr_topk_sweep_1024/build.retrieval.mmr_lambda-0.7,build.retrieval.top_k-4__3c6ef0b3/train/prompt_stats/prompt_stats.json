@@ -1,0 +1,100 @@
+{
+  "train": {
+    "split": "train",
+    "max_length": 1024,
+    "prompt_token_count": {
+      "count": 10065.0,
+      "min": 217.0,
+      "p50": 750.0,
+      "p90": 956.0,
+      "p95": 987.0,
+      "p99": 1013.0,
+      "max": 1020.0,
+      "mean": 729.9660208643816,
+      "overflow_count": 0.0,
+      "overflow_rate": 0.0
+    },
+    "target_token_count": {
+      "count": 10065.0,
+      "min": 4.0,
+      "p50": 4.0,
+      "p90": 4.0,
+      "p95": 4.0,
+      "p99": 4.0,
+      "max": 4.0,
+      "mean": 4.0,
+      "overflow_count": 0.0,
+      "overflow_rate": 0.0
+    },
+    "snapshot_category_counts": {
+      "no_evidence": {
+        "count": 0.0,
+        "rate": 0.0
+      },
+      "long_claim": {
+        "count": 2.0,
+        "rate": 0.0001987083954297069
+      },
+      "was_truncated": {
+        "count": 2206.0,
+        "rate": 0.21917536015896671
+      }
+    },
+    "evidence_truncation": {
+      "truncated_count": 2206,
+      "truncation_rate": 0.21917536015896671,
+      "mean_evidence_count": 3.5230004967709885,
+      "min_evidence_count": 1,
+      "max_evidence_count": 4
+    }
+  },
+  "val": {
+    "split": "val",
+    "max_length": 1024,
+    "prompt_token_count": {
+      "count": 1274.0,
+      "min": 231.0,
+      "p50": 760.0,
+      "p90": 956.0,
+      "p95": 983.3499999999999,
+      "p99": 1008.81,
+      "max": 1019.0,
+      "mean": 741.9238618524333,
+      "overflow_count": 0.0,
+      "overflow_rate": 0.0
+    },
+    "target_token_count": {
+      "count": 1274.0,
+      "min": 4.0,
+      "p50": 4.0,
+      "p90": 4.0,
+      "p95": 4.0,
+      "p99": 4.0,
+      "max": 4.0,
+      "mean": 4.0,
+      "overflow_count": 0.0,
+      "overflow_rate": 0.0
+    },
+    "snapshot_category_counts": {
+      "no_evidence": {
+        "count": 0.0,
+        "rate": 0.0
+      },
+      "long_claim": {
+        "count": 0.0,
+        "rate": 0.0
+      },
+      "was_truncated": {
+        "count": 283.0,
+        "rate": 0.22213500784929358
+      }
+    },
+    "evidence_truncation": {
+      "truncated_count": 283,
+      "truncation_rate": 0.22213500784929358,
+      "mean_evidence_count": 3.6240188383045524,
+      "min_evidence_count": 1,
+      "max_evidence_count": 4
+    }
+  }
+}

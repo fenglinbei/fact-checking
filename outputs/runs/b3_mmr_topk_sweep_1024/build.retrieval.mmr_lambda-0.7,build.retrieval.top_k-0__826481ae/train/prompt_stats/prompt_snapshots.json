@@ -1,0 +1,119 @@
+{
+  "train": {
+    "no_evidence": [
+      {
+        "split": "train",
+        "sample_idx": 0,
+        "category": "no_evidence",
+        "gold_label": "false",
+        "prompt": "<|im_start|>system\nYou are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>\n<|im_start|>user\nClassify the claim into exactly one LIAR-RAW label.\n\nLabels:\n- A (pants-fire): completely false and implausible\n- B (false): false based on the available evidence\n- C (barely-true): mostly false, with only a small element of truth\n- D (half-true): partly true and partly false\n- E (mostly-true): mostly true, with minor missing context or caveats\n- F (true): accurate based on the available evidence\n\nRules:\n- Use the retrieved evidence as the primary source.\n- Do not invent facts not supported by the evidence.\n- Respond with exactly one line: Label: <a single letter from A-F>\n\nClaim:\nSays the Annies List political group supports third-trimester abortions on demand.\n\nEvidence:\n(no evidence available)<|im_end|>\n<|im_start|>assistant\n",
+        "target": "Label: B",
+        "prompt_was_truncated_for_snapshot": false,
+        "prompt_token_count": 209,
+        "target_token_count": 4,
+        "evidence_count": 0,
+        "was_truncated": false
+      },
+      {
+        "split": "train",
+        "sample_idx": 1,
+        "category": "no_evidence",
+        "gold_label": "half-true",
+        "prompt": "<|im_start|>system\nYou are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>\n<|im_start|>user\nClassify the claim into exactly one LIAR-RAW label.\n\nLabels:\n- A (pants-fire): completely false and implausible\n- B (false): false based on the available evidence\n- C (barely-true): mostly false, with only a small element of truth\n- D (half-true): partly true and partly false\n- E (mostly-true): mostly true, with minor missing context or caveats\n- F (true): accurate based on the available evidence\n\nRules:\n- Use the retrieved evidence as the primary source.\n- Do not invent facts not supported by the evidence.\n- Respond with exactly one line: Label: <a single letter from A-F>\n\nClaim:\nWhen did the decline of coal start? It started when natural gas took off that started to begin in (President George W.) Bushs administration.\n\nEvidence:\n(no evidence available)<|im_end|>\n<|im_start|>assistant\n",
+        "target": "Label: D",
+        "prompt_was_truncated_for_snapshot": false,
+        "prompt_token_count": 221,
+        "target_token_count": 4,
+        "evidence_count": 0,
+        "was_truncated": false
+      },
+      {
+        "split": "train",
+        "sample_idx": 2,
+        "category": "no_evidence",
+        "gold_label": "mostly-true",
+        "prompt": "<|im_start|>system\nYou are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>\n<|im_start|>user\nClassify the claim into exactly one LIAR-RAW label.\n\nLabels:\n- A (pants-fire): completely false and implausible\n- B (false): false based on the available evidence\n- C (barely-true): mostly false, with only a small element of truth\n- D (half-true): partly true and partly false\n- E (mostly-true): mostly true, with minor missing context or caveats\n- F (true): accurate based on the available evidence\n\nRules:\n- Use the retrieved evidence as the primary source.\n- Do not invent facts not supported by the evidence.\n- Respond with exactly one line: Label: <a single letter from A-F>\n\nClaim:\nHillary Clinton agrees with John McCain \"by voting to give George Bush the benefit of the doubt on Iran.\"\n\nEvidence:\n(no evidence available)<|im_end|>\n<|im_start|>assistant\n",
+        "target": "Label: E",
+        "prompt_was_truncated_for_snapshot": false,
+        "prompt_token_count": 213,
+        "target_token_count": 4,
+        "evidence_count": 0,
+        "was_truncated": false
+      }
+    ],
+    "long_claim": [
+      {
+        "split": "train",
+        "sample_idx": 4117,
+        "category": "long_claim",
+        "gold_label": "true",
+        "prompt": "<|im_start|>system\nYou are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>\n<|im_start|>user\nClassify the claim into exactly one LIAR-RAW label.\n\nLabels:\n- A (pants-fire): completely false and implausible\n- B (false): false based on the available evidence\n- C (barely-true): mostly false, with only a small element of truth\n- D (half-true): partly true and partly false\n- E (mostly-true): mostly true, with minor missing context or caveats\n- F (true): accurate based on the available evidence\n\nRules:\n- Use the retrieved evidence as the primary source.\n- Do not invent facts not supported by the evidence.\n- Respond with exactly one line: Label: <a single letter from A-F>\n\nClaim:\nLet's pay attention to kids who are not going to college, which ends up being about 60 percent of the kids... and get them trained for the jobs that are there. Because, you know, there are auto mechanic jobs paying $50,000, $60,000 that they can't get filled. There are airline mechanic jobs paying a lot of money that can't get filled. Remarks at AFSCME forum 6/19/2007\n\nEvidence:\n(no evidence available)<|im_end|>\n<|im_start|>assistant\n",
+        "target": "Label: F",
+        "prompt_was_truncated_for_snapshot": false,
+        "prompt_token_count": 295,
+        "target_token_count": 4,
+        "evidence_count": 0,
+        "was_truncated": false
+      },
+      {
+        "split": "train",
+        "sample_idx": 9788,
+        "category": "long_claim",
+        "gold_label": "mostly-true",
+        "prompt": "<|im_start|>system\nYou are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>\n<|im_start|>user\nClassify the claim into exactly one LIAR-RAW label.\n\nLabels:\n- A (pants-fire): completely false and implausible\n- B (false): false based on the available evidence\n- C (barely-true): mostly false, with only a small element of truth\n- D (half-true): partly true and partly false\n- E (mostly-true): mostly true, with minor missing context or caveats\n- F (true): accurate based on the available evidence\n\nRules:\n- Use the retrieved evidence as the primary source.\n- Do not invent facts not supported by the evidence.\n- Respond with exactly one line: Label: <a single letter from A-F>\n\nClaim:\nBarbara Buono by the numbers: As a Trenton politician, she voted to raise taxes 154 times. Under her, property taxes up 70 percent. Backed a 16 percent sales tax increase. Utilities, nursing homes, cell phones, parking lots, lottery wins, gyms She taxed them all. Architect of Corzines budget, she drove New Jersey $2 billion into debt. Barbara Buono by the numbers: taking New Jersey backwards.\n\nEvidence:\n(no evidence available)<|im_end|>\n<|im_start|>assistant\n",
+        "target": "Label: E",
+        "prompt_was_truncated_for_snapshot": false,
+        "prompt_token_count": 289,
+        "target_token_count": 4,
+        "evidence_count": 0,
+        "was_truncated": false
+      }
+    ],
+    "was_truncated": []
+  },
+  "val": {
+    "no_evidence": [
+      {
+        "split": "val",
+        "sample_idx": 0,
+        "category": "no_evidence",
+        "gold_label": "barely-true",
+        "prompt": "<|im_start|>system\nYou are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>\n<|im_start|>user\nClassify the claim into exactly one LIAR-RAW label.\n\nLabels:\n- A (pants-fire): completely false and implausible\n- B (false): false based on the available evidence\n- C (barely-true): mostly false, with only a small element of truth\n- D (half-true): partly true and partly false\n- E (mostly-true): mostly true, with minor missing context or caveats\n- F (true): accurate based on the available evidence\n\nRules:\n- Use the retrieved evidence as the primary source.\n- Do not invent facts not supported by the evidence.\n- Respond with exactly one line: Label: <a single letter from A-F>\n\nClaim:\nWe have less Americans working now than in the 70s.\n\nEvidence:\n(no evidence available)<|im_end|>\n<|im_start|>assistant\n",
+        "target": "Label: C",
+        "prompt_was_truncated_for_snapshot": false,
+        "prompt_token_count": 206,
+        "target_token_count": 4,
+        "evidence_count": 0,
+        "was_truncated": false
+      },
+      {
+        "split": "val",
+        "sample_idx": 1,
+        "category": "no_evidence",
+        "gold_label": "pants-fire",
+        "prompt": "<|im_start|>system\nYou are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>\n<|im_start|>user\nClassify the claim into exactly one LIAR-RAW label.\n\nLabels:\n- A (pants-fire): completely false and implausible\n- B (false): false based on the available evidence\n- C (barely-true): mostly false, with only a small element of truth\n- D (half-true): partly true and partly false\n- E (mostly-true): mostly true, with minor missing context or caveats\n- F (true): accurate based on the available evidence\n\nRules:\n- Use the retrieved evidence as the primary source.\n- Do not invent facts not supported by the evidence.\n- Respond with exactly one line: Label: <a single letter from A-F>\n\nClaim:\nWhen Obama was sworn into office, he DID NOT use the Holy Bible, but instead the Kuran (Their equivalency to our Bible, but very different beliefs).\n\nEvidence:\n(no evidence available)<|im_end|>\n<|im_start|>assistant\n",
+        "target": "Label: A",
+        "prompt_was_truncated_for_snapshot": false,
+        "prompt_token_count": 225,
+        "target_token_count": 4,
+        "evidence_count": 0,
+        "was_truncated": false
+      },
+      {
+        "split": "val",
+        "sample_idx": 2,
+        "category": "no_evidence",
+        "gold_label": "false",
+        "prompt": "<|im_start|>system\nYou are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>\n<|im_start|>user\nClassify the claim into exactly one LIAR-RAW label.\n\nLabels:\n- A (pants-fire): completely false and implausible\n- B (false): false based on the available evidence\n- C (barely-true): mostly false, with only a small element of truth\n- D (half-true): partly true and partly false\n- E (mostly-true): mostly true, with minor missing context or caveats\n- F (true): accurate based on the available evidence\n\nRules:\n- Use the retrieved evidence as the primary source.\n- Do not invent facts not supported by the evidence.\n- Respond with exactly one line: Label: <a single letter from A-F>\n\nClaim:\nSays Having organizations parading as being social welfare organizations and then being involved in the political combat harkens back to why the statute a hundred years ago said that they were prohibited.\n\nEvidence:\n(no evidence available)<|im_end|>\n<|im_start|>assistant\n",
+        "target": "Label: B",
+        "prompt_was_truncated_for_snapshot": false,
+        "prompt_token_count": 229,
+        "target_token_count": 4,
+        "evidence_count": 0,
+        "was_truncated": false
+      }
+    ],
+    "long_claim": [],
+    "was_truncated": []
+  }
+}
