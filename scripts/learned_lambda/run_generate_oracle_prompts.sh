@@ -23,7 +23,7 @@ export PYTHONPATH="${PWD}/src:${PYTHONPATH:-}"
 
 EXPERIMENT="${EXPERIMENT:-b3_mmr_topk_sweep_1024}"
 SPLIT_NAME="${SPLIT_NAME:-train}"
-TOP_K="${TOP_K:-}"
+TOP_K="${TOP_K:-5}"
 PREMMR_CACHE="${PREMMR_CACHE:-}"
 PREMMR_CACHE_ROOT="${PREMMR_CACHE_ROOT:-outputs/cache/pre_mmr}"
 CHUNK_MMR_CACHE="${CHUNK_MMR_CACHE:-}"
