@@ -1,0 +1,40 @@
+{
+  "run_id": "b4ea4992e29f",
+  "run_dir": "/data/liaozijie/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-32__b4ea4992",
+  "build_id": "8e1200c79ec3",
+  "phases": {
+    "build": {
+      "status": "completed",
+      "updated_at": "2026-05-12 15:25:04",
+      "build_id": "8e1200c79ec3",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/cache/build/8e1200c79ec3",
+      "outputs": {
+        "train": "/data/liaozijie/fact-checking/outputs/cache/build/8e1200c79ec3/build_train.jsonl",
+        "val": "/data/liaozijie/fact-checking/outputs/cache/build/8e1200c79ec3/build_val.jsonl",
+        "test": "/data/liaozijie/fact-checking/outputs/cache/build/8e1200c79ec3/build_test.jsonl"
+      },
+      "reused": false
+    },
+    "infer": {
+      "status": "completed",
+      "updated_at": "2026-05-12 15:25:44",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-32__b4ea4992/infer/test/best/ac476cc8ac43",
+      "infer_id": "ac476cc8ac43",
+      "artifacts": {
+        "metrics_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-32__b4ea4992/infer/test/best/ac476cc8ac43/api/metrics.json",
+        "confusion_data_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-32__b4ea4992/infer/test/best/ac476cc8ac43/api/confusion_matrix.json",
+        "confusion_png_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-32__b4ea4992/infer/test/best/ac476cc8ac43/api/confusion_matrix.png",
+        "predictions_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-32__b4ea4992/infer/test/best/ac476cc8ac43/api/test_predictions.jsonl"
+      },
+      "reused": false
+    }
+  },
+  "config": {
+    "experiment": {
+      "name": "mmr_topk_sweep_infer"
+    },
+    "baseline": {
+      "variant": "mmr_topk_sweep_infer"
+    }
+  }
+}

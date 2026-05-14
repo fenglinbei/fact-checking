@@ -236,6 +236,7 @@ outputs/runs/**
 !outputs/runs/**/infer/**/*.json
 !outputs/runs/**/infer/**/*.jsonl
 !outputs/runs/**/infer/**/*.png
+outputs/runs/**/test_predictions.jsonl
 
 # Run metadata and summaries.
 !outputs/runs/**/manifest.json

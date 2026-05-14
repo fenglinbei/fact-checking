@@ -1,0 +1,40 @@
+{
+  "run_id": "9e605e05da8a",
+  "run_dir": "/data/liaozijie/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-8__9e605e05",
+  "build_id": "b5108180b93e",
+  "phases": {
+    "build": {
+      "status": "completed",
+      "updated_at": "2026-05-12 15:00:20",
+      "build_id": "b5108180b93e",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/cache/build/b5108180b93e",
+      "outputs": {
+        "train": "/data/liaozijie/fact-checking/outputs/cache/build/b5108180b93e/build_train.jsonl",
+        "val": "/data/liaozijie/fact-checking/outputs/cache/build/b5108180b93e/build_val.jsonl",
+        "test": "/data/liaozijie/fact-checking/outputs/cache/build/b5108180b93e/build_test.jsonl"
+      },
+      "reused": true
+    },
+    "infer": {
+      "status": "completed",
+      "updated_at": "2026-05-12 15:00:49",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-8__9e605e05/infer/test/best/e7ce47ec59f2",
+      "infer_id": "e7ce47ec59f2",
+      "artifacts": {
+        "metrics_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-8__9e605e05/infer/test/best/e7ce47ec59f2/api/metrics.json",
+        "confusion_data_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-8__9e605e05/infer/test/best/e7ce47ec59f2/api/confusion_matrix.json",
+        "confusion_png_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-8__9e605e05/infer/test/best/e7ce47ec59f2/api/confusion_matrix.png",
+        "predictions_path": "/data/liaozijie/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-8__9e605e05/infer/test/best/e7ce47ec59f2/api/test_predictions.jsonl"
+      },
+      "reused": false
+    }
+  },
+  "config": {
+    "experiment": {
+      "name": "mmr_topk_sweep_infer"
+    },
+    "baseline": {
+      "variant": "mmr_topk_sweep_infer"
+    }
+  }
+}

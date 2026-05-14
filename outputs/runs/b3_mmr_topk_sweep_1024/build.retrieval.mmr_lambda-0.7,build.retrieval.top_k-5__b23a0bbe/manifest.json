@@ -1,0 +1,64 @@
+{
+  "run_id": "b23a0bbe0b7a",
+  "run_dir": "/data/liaozijie/fact-checking/outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe",
+  "build_id": "735b9f10215c",
+  "phases": {
+    "build": {
+      "status": "completed",
+      "updated_at": "2026-05-13 07:13:57",
+      "build_id": "735b9f10215c",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/cache/build/735b9f10215c",
+      "outputs": {
+        "train": "/data/liaozijie/fact-checking/outputs/cache/build/735b9f10215c/build_train.jsonl",
+        "val": "/data/liaozijie/fact-checking/outputs/cache/build/735b9f10215c/build_val.jsonl",
+        "test": "/data/liaozijie/fact-checking/outputs/cache/build/735b9f10215c/build_test.jsonl"
+      },
+      "reused": false
+    },
+    "train": {
+      "status": "completed",
+      "updated_at": "2026-05-13 08:29:03",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe/train",
+      "config_path": "/data/liaozijie/fact-checking/outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe/configs/train.resolved.yaml",
+      "checkpoint": "/data/liaozijie/fact-checking/outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe/train/best",
+      "command": [
+        "accelerate",
+        "launch",
+        "--num_processes=4",
+        "--num_machines=1",
+        "--mixed_precision=bf16",
+        "--use_deepspeed",
+        "--deepspeed_config_file",
+        "/data/liaozijie/fact-checking/configs/deepspeed_zero2_bsz8_ga1.json",
+        "-m",
+        "sft.trainer",
+        "--config",
+        "/data/liaozijie/fact-checking/outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe/configs/train.resolved.yaml"
+      ],
+      "log_path": "/data/liaozijie/fact-checking/outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe/logs/train.log",
+      "reused": false
+    },
+    "infer": {
+      "status": "completed",
+      "updated_at": "2026-05-13 15:55:34",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe/infer/val/best/b7c2d7146e8d",
+      "infer_id": "b7c2d7146e8d",
+      "artifacts": {
+        "metrics_path": "/data/liaozijie/fact-checking/outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe/infer/val/best/b7c2d7146e8d/api/metrics.json",
+        "confusion_data_path": "/data/liaozijie/fact-checking/outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe/infer/val/best/b7c2d7146e8d/api/confusion_matrix.json",
+        "confusion_png_path": "/data/liaozijie/fact-checking/outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe/infer/val/best/b7c2d7146e8d/api/confusion_matrix.png",
+        "predictions_path": "/data/liaozijie/fact-checking/outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe/infer/val/best/b7c2d7146e8d/api/val_predictions.jsonl"
+      },
+      "reused": false
+    }
+  },
+  "config": {
+    "experiment": {
+      "name": "b3_mmr_topk_sweep_1024"
+    },
+    "baseline": {
+      "variant": "b3_mmr_topk_sweep_1024",
+      "chunking_strategy": "semantic"
+    }
+  }
+}
