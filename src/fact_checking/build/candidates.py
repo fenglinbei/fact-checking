@@ -1523,6 +1523,35 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                         trace_path = target_dir / f"sensitivity_trace_{split_name}.jsonl"
                         dump_trace_rows(trace_rows, trace_path)
                         logger.info("Wrote sensitivity trace: %s", trace_path)
+                elif learned_lambda_mode == "soft_label":
+                    from fact_checking.rl_mmr.soft_label_selector import (
+                        build_lambda_overrides_from_soft_label,
+                        dump_trace_rows,
+                    )
+
+                    lambda_overrides, trace_rows, soft_summary = build_lambda_overrides_from_soft_label(
+                        chunk_samples,
+                        learned_lambda_cfg=learned_lambda_cfg,
+                        alpha_dense=run_summary["alpha_dense"],
+                        alpha_lexical=run_summary["alpha_lexical"],
+                        alpha_bm25=run_summary["alpha_bm25"],
+                        top_k=run_summary["top_k"],
+                    )
+                    logger.info(
+                        "Soft-label lambda: model=%s type=%s mode=%s overrides=%d, chosen_lambda mean=%.3f std=%.3f, entropy_mean=%.3f, argmax_counts=%s",
+                        soft_summary.get("model_path"),
+                        soft_summary.get("model_type"),
+                        soft_summary.get("inference_mode"),
+                        len(lambda_overrides),
+                        soft_summary.get("chosen_lambda_mean", 0.0),
+                        soft_summary.get("chosen_lambda_std", 0.0),
+                        soft_summary.get("prediction_entropy_mean", 0.0),
+                        soft_summary.get("argmax_counts", {}),
+                    )
+                    if soft_summary.get("config", {}).get("dump_trace", True):
+                        trace_path = target_dir / f"soft_label_trace_{split_name}.jsonl"
+                        dump_trace_rows(trace_rows, trace_path)
+                        logger.info("Wrote soft-label trace: %s", trace_path)
                 else:
                     from fact_checking.learned_lambda.predictor import load_predictor, predict_lambdas_for_samples
                     model_path = str(learned_lambda_cfg["model_path"])

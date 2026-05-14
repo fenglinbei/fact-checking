@@ -5,8 +5,8 @@
 - All API metric records: `infer_metrics_summary_all.csv`
 - Latest record per source/top_k/split/checkpoint: `infer_metrics_summary_latest.csv`
 - Line chart: `infer_metrics_line_chart.png`
-- Total records: 31
-- Latest rows: 27
+- Total records: 33
+- Latest rows: 29
 
 ## Included Artifacts
 
@@ -29,6 +29,7 @@
 | b3_mmr_topk_sweep_1024 | 7 | 0.7 | test | best | 79d8b34809bb | 1251 | 0.274980015987 | 0.291071519017 | 0.279364308594 | 0.274416498677 | 0 |
 | b3_mmr_topk_sweep_1024 | 8 | 0.7 | test | best | 79d8b34809bb | 1251 | 0.274980015987 | 0.278515433387 | 0.275364128205 | 0.267337326841 | 0 |
 | heuristic_lambda_mmr | 5 | 0.7 | test | best | 79d8b34809bb | 1251 | 0.27657873701 | 0.280514171339 | 0.292781034032 | 0.279905240209 | 0 |
+| mmr_sensitivity_gated | 5 | 0.7 | test | best | 79d8b34809bb | 1251 | 0.274180655476 | 0.291765574852 | 0.287190134297 | 0.279483490943 | 0 |
 | mmr_topk_sweep_infer | 0 | 0.7 | test | best | 9a002ceb9c81 | 1251 | 0.123101518785 | 0.166341467509 | 0.194351183815 | 0.088475236792 | 0 |
 | mmr_topk_sweep_infer | 2 | 0.7 | test | best | ba745f87dcd7 | 1251 | 0.224620303757 | 0.233711942291 | 0.225926195262 | 0.21635384472 | 0 |
 | mmr_topk_sweep_infer | 4 | 0.7 | test | best | f4015acb91b1 | 1251 | 0.238209432454 | 0.252569126852 | 0.235784839781 | 0.230595341428 | 0 |
@@ -46,6 +47,21 @@
 | mmr_topk_sweep_infer | 28 | 0.7 | test | best | 82107877f01b | 1251 | 0.266986410871 | 0.290887810066 | 0.256991489636 | 0.256897146129 | 0 |
 | mmr_topk_sweep_infer | 30 | 0.7 | test | best | 9e58df364083 | 1251 | 0.262989608313 | 0.292991672701 | 0.254903299722 | 0.255661670915 | 0 |
 | mmr_topk_sweep_infer | 32 | 0.7 | test | best | ac476cc8ac43 | 1251 | 0.264588329337 | 0.295400166791 | 0.256323217283 | 0.258026832279 | 0 |
+| reranker_only | 5 |  | test | best | 79d8b34809bb | 1251 | 0.269384492406 | 0.290776006788 | 0.276544016805 | 0.274531132653 | 0 |
+
+## Near-Best Metrics
+
+| metric | best | near records | criterion |
+| --- | --- | --- | --- |
+| accuracy | heuristic_lambda_mmr top_k=5: 0.27657873701 | mmr_topk_sweep_infer top_k=20: 0.27657873701 (delta=0.000000); b3_mmr_topk_sweep_1024 top_k=1: 0.275779376499 (delta=0.000799); b3_mmr_topk_sweep_1024 top_k=7: 0.274980015987 (delta=0.001599); b3_mmr_topk_sweep_1024 top_k=8: 0.274980015987 (delta=0.001599); mmr_sensitivity_gated/ts0p8_tr0p3_ll0p2_basic__9a7f2ee7 top_k=5: 0.274180655476 (delta=0.002398); mmr_topk_sweep_infer top_k=18: 0.274180655476 (delta=0.002398); b3_mmr_topk_sweep_1024 top_k=3: 0.270983213429 (delta=0.005596); b3_mmr_topk_sweep_1024 top_k=4: 0.270983213429 (delta=0.005596); mmr_topk_sweep_infer top_k=24: 0.270983213429 (delta=0.005596) | abs delta <= 0.006 |
+| macro_recall | heuristic_lambda_mmr top_k=5: 0.292781034032 | b3_mmr_topk_sweep_1024 top_k=2: 0.287341880373 (delta=0.005439); mmr_sensitivity_gated/ts0p8_tr0p3_ll0p2_basic__9a7f2ee7 top_k=5: 0.287190134297 (delta=0.005591) | abs delta <= 0.006 |
+| macro_f1 | heuristic_lambda_mmr top_k=5: 0.279905240209 | mmr_sensitivity_gated/ts0p8_tr0p3_ll0p2_basic__9a7f2ee7 top_k=5: 0.279483490943 (delta=0.000422); b3_mmr_topk_sweep_1024 top_k=3: 0.277109970951 (delta=0.002795); b3_mmr_topk_sweep_1024 top_k=5: 0.276910921229 (delta=0.002994); b3_mmr_topk_sweep_1024 top_k=6: 0.274636776156 (delta=0.005268); reranker_only top_k=5: 0.274531132653 (delta=0.005374); b3_mmr_topk_sweep_1024 top_k=7: 0.274416498677 (delta=0.005489) | abs delta <= 0.006 |
+
+## Sensitivity-Gated Details
+
+| source_root | run_name | top_k | mmr_lambda | theta_s | theta_r | lambda_low | gating_mode | epsilon | accuracy | macro_f1 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| mmr_sensitivity_gated | ts0p8_tr0p3_ll0p2_basic__9a7f2ee7 | 5 | 0.7 | 0.8 | 0.3 | 0.2 | basic |  | 0.274180655476 | 0.279483490943 |
 
 ## Duplicate Groups
 

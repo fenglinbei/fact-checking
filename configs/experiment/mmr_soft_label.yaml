@@ -1,0 +1,71 @@
+# @package _global_
+# Soft-label lambda policy for RL-MMR experiment 4.
+#
+# 运行前先训练 policy，例如：
+#   PYTHONPATH=src python scripts/rl_mmr/train_soft_label_policy.py \
+#     --oracle-logprobs outputs/rl_mmr/oracle_logprobs/train.jsonl \
+#     --val-oracle-logprobs outputs/rl_mmr/oracle_logprobs/val.jsonl \
+#     --model-type lightgbm \
+#     --output-dir outputs/rl_mmr/soft_label/lightgbm
+#
+# 完整 pipeline:
+#   bash scripts/rl_mmr/run_soft_label_full.sh argmax
+defaults:
+  - b3_mmr_topk_sweep_1024
+  - _self_
+
+experiment:
+  name: mmr_soft_label
+
+baseline:
+  variant: mmr_soft_label
+
+build:
+  retrieval:
+    top_k: 5
+    mmr_lambda: 0.70
+    learned_lambda:
+      enabled: true
+      mode: soft_label
+      soft_label:
+        model_path: outputs/rl_mmr/soft_label/lightgbm
+        lambda_grid: [0.1, 0.3, 0.5, 0.7, 0.9]
+        inference_mode: argmax
+        sample_temperature: 0.5
+        random_seed: 42
+        dump_trace: true
+  prompt:
+    max_length: 1024
+
+train:
+  deepspeed_config: configs/deepspeed_zero2_bsz8_ga1.json
+
+sft_train:
+  max_length: 1024
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 1
+  empty_cache_steps: 0
+  early_stopping_patience: 6
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    modules_to_save: null
+
+tracking:
+  enabled: true
+  backend: swanlab
+
+swanlab:
+  project: fact-checking-soft-label-mmr
+  experiment_name: mmr_soft_label
