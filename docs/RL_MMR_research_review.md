@@ -72,8 +72,7 @@ $$
 $$
 d_t = \arg\max_{d \in C \setminus S_{t-1}}
 \left[
-\lambda \cdot Rel(c,d)
--
+\lambda \cdot Rel(c,d) -
 (1-\lambda) \cdot \max_{s \in S_{t-1}} Sim(d,s)
 \right]
 $$
@@ -181,8 +180,7 @@ Claim = entity + event + time + quantity + causal relation
 
 $$
 Score(d) =
-\lambda Rel(c,d)
-+
+\lambda Rel(c,d) +
 (1-\lambda) AspectNovelty(d,S,c)
 $$
 
@@ -190,10 +188,8 @@ $$
 
 $$
 Score(d) =
-\lambda Rel(c,d)
--
-(1-\lambda) Red(d,S)
-+ \alpha Cov(d,S,c)
+\lambda Rel(c,d) -
+(1-\lambda) Red(d,S) + \alpha Cov(d,S,c)
 $$
 
 ### 4.5 Learning MMR Model
@@ -428,12 +424,7 @@ $$
 
 $$
 R =
-w_1 R_{evidence}
-+ w_2 R_{verdict}
-+ w_3 R_{coverage}
-+ w_4 R_{diversity}
-- w_5 R_{redundancy}
-- w_6 R_{cost}
+w_1 R_{evidence} + w_2 R_{verdict} + w_3 R_{coverage} + w_4 R_{diversity} - w_5 R_{redundancy} - w_6 R_{cost}
 $$
 
 其中：
@@ -464,12 +455,9 @@ $$
 
 $$
 r_t =
-\Delta EvidenceCoverage_t
-+
-\Delta VerifierConfidence_t
--
-\Delta Redundancy_t
--
+\Delta EvidenceCoverage_t +
+\Delta VerifierConfidence_t -
+\Delta Redundancy_t -
 \Delta Cost_t
 $$
 
@@ -592,13 +580,10 @@ $$
 DPO loss：
 
 $$
-\mathcal{L}_{DPO}
-=
--\log \sigma
+\mathcal{L}_{DPO} = -\log \sigma
 \left(
 \beta[
-\log \pi_\theta(S^+|c) - \log \pi_\theta(S^-|c)
--
+\log \pi_\theta(S^+|c) - \log \pi_\theta(S^-|c) -
 \log \pi_{ref}(S^+|c) + \log \pi_{ref}(S^-|c)
 ]
 \right)
@@ -805,8 +790,7 @@ $$
 $$
 d_t = \arg\max_d
 \left[
-\lambda_0 Rel_{base}(c,d)
--
+\lambda_0 Rel_{base}(c,d) -
 (1-\lambda_0) Red(d,S_{t-1})
 \right]
 $$
@@ -824,8 +808,7 @@ $$
 $$
 d_t = \arg\max_d
 \left[
-\hat{\lambda} Rel_{base}(c,d)
--
+\hat{\lambda} Rel_{base}(c,d) -
 (1-\hat{\lambda}) Red(d,S_{t-1})
 \right]
 $$
@@ -853,8 +836,7 @@ $$
 $$
 d_t = \arg\max_d
 \left[
-\hat{\lambda} Rel_{rerank}(c,d)
--
+\hat{\lambda} Rel_{rerank}(c,d) -
 (1-\hat{\lambda}) Red(d,S_{t-1})
 \right]
 $$
@@ -872,10 +854,8 @@ $$
 $$
 d_t = \arg\max_d
 \left[
-\lambda_t Rel_{rerank}(c,d)
--
-(1-\lambda_t) Red(d,S_{t-1})
-+ \alpha Cov(d,S_{t-1},c)
+\lambda_t Rel_{rerank}(c,d) -
+(1-\lambda_t) Red(d,S_{t-1}) + \alpha Cov(d,S_{t-1},c)
 \right]
 $$
 

@@ -1,0 +1,62 @@
+# @package _global_
+# Heuristic-λ MMR: per-claim λ from candidate-count heuristic.
+#
+# λ = max(0, min(1, -0.0732 * log(n_candidates) + 0.6127))
+#
+# 运行命令：
+#   bash scripts/pipeline/run_heuristic_lambda.sh
+
+defaults:
+  - b3_mmr_topk_sweep_1024
+  - _self_
+
+experiment:
+  name: heuristic_lambda_mmr
+
+baseline:
+  variant: heuristic_lambda_mmr
+
+build:
+  retrieval:
+    top_k: 5
+    mmr_lambda: 0.70  # fallback for edge cases
+    learned_lambda:
+      enabled: true
+      mode: heuristic
+      heuristic_a: -0.0732
+      heuristic_b: 0.6127
+  prompt:
+    max_length: 1024
+
+train:
+  deepspeed_config: configs/deepspeed_zero2_bsz8_ga1.json
+
+sft_train:
+  max_length: 1024
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 1
+  empty_cache_steps: 0
+  early_stopping_patience: 6
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    modules_to_save: null
+
+tracking:
+  enabled: true
+  backend: swanlab
+
+swanlab:
+  project: fact-checking-heuristic-lambda
+  experiment_name: heuristic_lambda_mmr

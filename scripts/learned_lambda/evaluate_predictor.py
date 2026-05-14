@@ -97,6 +97,57 @@ def _parse_fixed_grid(grid_arg: str, stats: dict, oracle_arr: np.ndarray) -> np.
     return np.arange(0.0, 1.0 + 1e-8, 0.05, dtype=np.float32)
 
 
+def _assign_bins(lambdas: np.ndarray, boundaries: list[tuple[float, float]]) -> np.ndarray:
+    bins = np.zeros(len(lambdas), dtype=int)
+    for i, (lo, hi) in enumerate(boundaries):
+        if hi >= 1.0 - 1e-8:
+            bins[(lambdas >= lo) & (lambdas <= hi)] = i
+        else:
+            bins[(lambdas >= lo) & (lambdas < hi)] = i
+    return bins
+
+
+def _print_classification_metrics(
+    pred_arr: np.ndarray, oracle_arr: np.ndarray, lambda_grid: list[float] | None
+) -> None:
+    if not lambda_grid or len(lambda_grid) != 3:
+        return
+
+    boundaries = [(0.0, 0.3), (0.3, 0.7), (0.7, 1.0)]
+    bin_names = ["diversity [0,.3]", "balanced (.3,.7)", "relevance [.7,1]"]
+    bin_centers = [float(v) for v in lambda_grid]
+
+    pred_bins = _assign_bins(pred_arr, boundaries)
+    oracle_bins = _assign_bins(oracle_arr, boundaries)
+
+    n_correct = int((oracle_bins == pred_bins).sum())
+    acc = n_correct / len(oracle_arr)
+
+    print(f"\n3-Bin Classification:")
+    print(f"  Bin centers: {', '.join(f'{c:.2f}' for c in bin_centers)}")
+    print(f"  Accuracy: {acc:.4f} (n={n_correct}/{len(oracle_arr)}, random=0.333)")
+
+    print(f"\n  Confusion matrix (rows=oracle, cols=pred):")
+    header = " " * 27 + "".join(f"{n:>8s}" for n in ["diversity", "balanced", "relevance"])
+    print(f"  {header}")
+    for i, name in enumerate(bin_names):
+        row_counts = [
+            int(((oracle_bins == i) & (pred_bins == j)).sum())
+            for j in range(3)
+        ]
+        print(f"    {name:25s} " + "".join(f"{c:>8d}" for c in row_counts))
+
+    print(f"\n  Per-bin metrics:")
+    for i, name in enumerate(bin_names):
+        tp = int(((oracle_bins == i) & (pred_bins == i)).sum())
+        n_pred = max(int((pred_bins == i).sum()), 1)
+        n_oracle = max(int((oracle_bins == i).sum()), 1)
+        prec = tp / n_pred
+        rec = tp / n_oracle
+        acc_per_bin = tp / n_oracle  # per-class accuracy
+        print(f"    {name:25s} n={n_oracle:5d}  precision={prec:.3f}  recall={rec:.3f}  per-class-acc={acc_per_bin:.3f}")
+
+
 def _print_baselines(pred_arr: np.ndarray, oracle_arr: np.ndarray, fixed_grid: np.ndarray) -> None:
     mse = float(np.mean((pred_arr - oracle_arr) ** 2))
     mean_pred = float(oracle_arr.mean())
@@ -162,6 +213,28 @@ def _print_margin_analysis(margins: np.ndarray, pred_arr: np.ndarray, oracle_arr
             f"  {label}: n={int(mask.sum()):5d}  "
             f"MAE={abs_err[mask].mean():.4f}  oracle_std={oracle_arr[mask].std():.3f}"
         )
+
+    # High-margin vs low-margin summary with fallback comparison
+    for threshold in (0.05, 0.10):
+        high_mask = margins >= threshold
+        low_mask = ~high_mask
+        if not np.any(high_mask) or not np.any(low_mask):
+            continue
+        print(f"\n  margin >= {threshold:.2f} (high, n={int(high_mask.sum())}):")
+        print(f"    oracle_mean={oracle_arr[high_mask].mean():.3f}  oracle_std={oracle_arr[high_mask].std():.3f}")
+        print(f"    MAE={abs_err[high_mask].mean():.4f}  "
+              f"RMSE={float(np.sqrt((abs_err[high_mask] ** 2).mean())):.4f}"
+              f"  Pearson_r={_safe_corr(oracle_arr[high_mask], pred_arr[high_mask], 'pearson')[0]:.4f}")
+        print(f"  margin <  {threshold:.2f} (low,  n={int(low_mask.sum())}):")
+        print(f"    oracle_mean={oracle_arr[low_mask].mean():.3f}  oracle_std={oracle_arr[low_mask].std():.3f}")
+        print(f"    MAE={abs_err[low_mask].mean():.4f}  "
+              f"RMSE={float(np.sqrt((abs_err[low_mask] ** 2).mean())):.4f}"
+              f"  Pearson_r={_safe_corr(oracle_arr[low_mask], pred_arr[low_mask], 'pearson')[0]:.4f}")
+        # Fallback comparison: how would default 0.7 do on low-margin?
+        fallback_mae = float(np.mean(np.abs(0.7 - oracle_arr[low_mask])))
+        fallback_rmse = float(np.sqrt(np.mean((0.7 - oracle_arr[low_mask]) ** 2)))
+        print(f"    Fallback (λ=0.7) MAE={fallback_mae:.4f} RMSE={fallback_rmse:.4f}")
+        break  # only show one threshold
 
 
 def main() -> None:
@@ -321,6 +394,11 @@ def main() -> None:
     _print_error_by_oracle_bucket(pred_arr, oracle_arr)
     if len(margins) > 0:
         _print_margin_analysis(margins, pred_arr[has_margin], oracle_arr[has_margin])
+
+    # Classification metrics for classifier models
+    model_type = str(stats.get("model_type") or "regression").strip().lower()
+    if model_type == "classifier":
+        _print_classification_metrics(pred_arr, oracle_arr, stats.get("lambda_grid"))
 
     # Quality assessment
     print(f"\n{'=' * 50}")
