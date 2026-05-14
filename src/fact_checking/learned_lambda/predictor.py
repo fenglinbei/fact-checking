@@ -283,11 +283,9 @@ def predict_lambdas_for_samples(
 
     feature_mode = str(stats.get("feature_mode") or "handcrafted").strip().lower()
     if feature_mode == CHUNK_EMBEDDING_FEATURE_MODE:
-        candidate_top_k = (
-            int(stats["candidate_top_k"])
-            if stats.get("candidate_top_k") is not None
-            else None
-        )
+        learned_lambda_cfg = retrieval_cfg.get("learned_lambda", {}) or {}
+        candidate_top_k = learned_lambda_cfg.get("candidate_top_k")
+        candidate_top_k = int(candidate_top_k) if candidate_top_k is not None else None
         arrays = build_chunk_embedding_arrays(
             samples,  # type: ignore[arg-type]
             candidate_top_k=candidate_top_k,

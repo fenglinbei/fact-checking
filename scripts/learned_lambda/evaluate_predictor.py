@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
         "--candidate-top-k",
         type=int,
         default=None,
-        help="Number of hybrid-ranked chunk candidates to feed the predictor. Omit to use the saved setting; null saved setting means full chunk pool.",
+        help="Number of hybrid-ranked chunk candidates to feed the predictor. Omit to use the full chunk pool.",
     )
     p.add_argument("--hidden-dim", type=int, default=None)
     p.add_argument("--dropout", type=float, default=None)
@@ -215,8 +215,6 @@ def main() -> None:
 
     if args.candidate_top_k is not None:
         candidate_top_k = int(args.candidate_top_k)
-    elif stats.get("candidate_top_k") is not None:
-        candidate_top_k = int(stats["candidate_top_k"])
     else:
         candidate_top_k = None
     candidate_pool_label = "full" if candidate_top_k is None else f"top_{candidate_top_k}"

@@ -8,7 +8,7 @@
 #   ORACLE_LAMBDAS=outputs/learned_lambda/oracle_lambda_train.jsonl bash scripts/learned_lambda/run_evaluate_predictor.sh
 #   CHUNK_MMR_CACHE=outputs/cache/chunk_mmr/<fingerprint>/train.pkl bash scripts/learned_lambda/run_evaluate_predictor.sh
 #   CHUNK_MMR_CACHE_FINGERPRINT=<fingerprint> PROGRESS=false bash scripts/learned_lambda/run_evaluate_predictor.sh
-#   CANDIDATE_TOP_K=16 bash scripts/learned_lambda/run_evaluate_predictor.sh  # optional truncation; saved null setting uses full chunk pool
+#   CANDIDATE_TOP_K=16 bash scripts/learned_lambda/run_evaluate_predictor.sh  # optional truncation; default uses full chunk pool
 #   FIXED_LAMBDA_GRID="0.0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0" bash scripts/learned_lambda/run_evaluate_predictor.sh
 #
 # Extra CLI args are forwarded to evaluate_predictor.py, for example:
@@ -73,7 +73,7 @@ echo "[run_evaluate_predictor] feature_stats=${FEATURE_STATS}"
 echo "[run_evaluate_predictor] oracle_lambdas=${ORACLE_LAMBDAS}"
 echo "[run_evaluate_predictor] chunk_mmr_cache=${CHUNK_MMR_CACHE:-auto_by_experiment}"
 echo "[run_evaluate_predictor] chunk_mmr_cache_root=${CHUNK_MMR_CACHE_ROOT}"
-echo "[run_evaluate_predictor] candidate_top_k=${CANDIDATE_TOP_K:-saved_or_full_chunk_pool}"
+echo "[run_evaluate_predictor] candidate_top_k=${CANDIDATE_TOP_K:-full_chunk_pool}"
 echo "[run_evaluate_predictor] hidden_dim=${HIDDEN_DIM:-from_feature_stats}"
 echo "[run_evaluate_predictor] dropout=${DROPOUT:-from_feature_stats}"
 echo "[run_evaluate_predictor] alpha_dense=${ALPHA_DENSE:-from_experiment}"

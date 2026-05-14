@@ -60,7 +60,7 @@ def test_chunk_embedding_arrays_explicit_top_k_still_truncates() -> None:
     assert arrays["candidate_counts"].tolist() == [3, 5]
 
 
-def test_predict_lambdas_chunk_embedding_default_ignores_retrieval_top_k() -> None:
+def test_predict_lambdas_chunk_embedding_default_ignores_saved_and_retrieval_top_k() -> None:
     class ShapeRecorder(torch.nn.Module):
         def __init__(self) -> None:
             super().__init__()
@@ -83,7 +83,7 @@ def test_predict_lambdas_chunk_embedding_default_ignores_retrieval_top_k() -> No
         model,  # type: ignore[arg-type]
         stats={
             "feature_mode": "chunk_embedding",
-            "candidate_top_k": None,
+            "candidate_top_k": 1,
         },
         retrieval_cfg={
             "top_k": 1,
@@ -95,3 +95,39 @@ def test_predict_lambdas_chunk_embedding_default_ignores_retrieval_top_k() -> No
 
     assert model.candidate_shape == (2, 5, 2)
     assert predicted == {"a": 0.0, "b": 0.0}
+
+
+def test_predict_lambdas_chunk_embedding_config_top_k_truncates() -> None:
+    class ShapeRecorder(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.candidate_shape: tuple[int, ...] | None = None
+
+        def forward(
+            self,
+            claim_emb: torch.Tensor,
+            candidate_emb: torch.Tensor,
+            candidate_mask: torch.Tensor,
+        ) -> torch.Tensor:
+            self.candidate_shape = tuple(candidate_emb.shape)
+            return torch.zeros(claim_emb.shape[0], dtype=torch.float32)
+
+    samples = [_sample("a", 3), _sample("b", 5)]
+    model = ShapeRecorder()
+
+    predict_lambdas_for_samples(
+        samples,
+        model,  # type: ignore[arg-type]
+        stats={
+            "feature_mode": "chunk_embedding",
+            "candidate_top_k": None,
+        },
+        retrieval_cfg={
+            "learned_lambda": {"candidate_top_k": 2},
+            "alpha_dense": 1.0,
+            "alpha_lexical": 0.0,
+            "alpha_bm25": 0.0,
+        },
+    )
+
+    assert model.candidate_shape == (2, 2, 2)

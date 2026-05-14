@@ -25,6 +25,7 @@ build:
       enabled: true
       model_path: outputs/learned_lambda/predictor.pt
       feature_stats_path: outputs/learned_lambda/feature_stats.json
+      candidate_top_k: null  # null means predictor sees the full chunk pool; set an int to cap it
   prompt:
     max_length: 1024
 
