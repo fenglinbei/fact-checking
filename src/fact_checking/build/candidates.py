@@ -361,22 +361,27 @@ def _compute_chunk_mmr_batch(
     return results
 
 
-def _select_candidates_from_chunk_sample(
+def compute_hybrid_scores(
     sample: ChunkMMRSample,
-    top_k: int,
     alpha_dense: float,
     alpha_lexical: float,
     alpha_bm25: float,
-    mmr_lambda: float,
 ) -> dict[str, Any]:
+    """Compute the hybrid relevance scores used by the MMR phase.
+
+    Returns a dict with ``n``, ``chunk_emb``, ``hybrid_scores``, and the three
+    raw component arrays so downstream consumers (e.g. RL-MMR experiments)
+    can reuse the exact same scoring recipe.
+    """
     n = min(len(sample.candidates), int(sample.chunk_emb.shape[0]))
     if n == 0:
         return {
-            "event_id": sample.event_id,
-            "claim": sample.claim,
-            "label": sample.label,
-            "explain": sample.explain,
-            "candidates": [],
+            "n": 0,
+            "chunk_emb": np.zeros((0, 0), dtype=np.float32),
+            "dense_scores": np.zeros((0,), dtype=np.float32),
+            "lexical_scores": np.zeros((0,), dtype=np.float32),
+            "bm25_scores": np.zeros((0,), dtype=np.float32),
+            "hybrid_scores": np.zeros((0,), dtype=np.float32),
         }
 
     chunk_emb = sample.chunk_emb[:n]
@@ -395,6 +400,41 @@ def _select_candidates_from_chunk_sample(
     lexical_scaled = minmax_scale(lexical_scores)
     bm25_scaled = minmax_scale(bm25_scores)
     hybrid_scores = alpha_dense * dense_scaled + alpha_lexical * lexical_scaled + alpha_bm25 * bm25_scaled
+
+    return {
+        "n": int(n),
+        "chunk_emb": chunk_emb,
+        "dense_scores": dense_scores.astype(np.float32, copy=False),
+        "lexical_scores": lexical_scores,
+        "bm25_scores": bm25_scores,
+        "hybrid_scores": hybrid_scores.astype(np.float32, copy=False),
+    }
+
+
+def _select_candidates_from_chunk_sample(
+    sample: ChunkMMRSample,
+    top_k: int,
+    alpha_dense: float,
+    alpha_lexical: float,
+    alpha_bm25: float,
+    mmr_lambda: float,
+) -> dict[str, Any]:
+    scored = compute_hybrid_scores(sample, alpha_dense, alpha_lexical, alpha_bm25)
+    n = int(scored["n"])
+    if n == 0:
+        return {
+            "event_id": sample.event_id,
+            "claim": sample.claim,
+            "label": sample.label,
+            "explain": sample.explain,
+            "candidates": [],
+        }
+
+    chunk_emb = scored["chunk_emb"]
+    dense_scores = scored["dense_scores"]
+    lexical_scores = scored["lexical_scores"]
+    bm25_scores = scored["bm25_scores"]
+    hybrid_scores = scored["hybrid_scores"]
 
     keep_indices = maximal_marginal_relevance(
         query_scores=hybrid_scores,
@@ -1457,6 +1497,32 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                         n = min(len(sample.candidates), int(sample.chunk_emb.shape[0]))
                         raw = a * np.log(max(n, 1)) + b
                         lambda_overrides[sample.event_id] = float(max(0.0, min(1.0, raw)))
+                elif learned_lambda_mode == "sensitivity_gated":
+                    from fact_checking.rl_mmr.gated_selector import (
+                        build_lambda_overrides_from_sensitivity,
+                        dump_trace_rows,
+                    )
+
+                    lambda_overrides, trace_rows, sens_summary = build_lambda_overrides_from_sensitivity(
+                        chunk_samples,
+                        learned_lambda_cfg=learned_lambda_cfg,
+                        alpha_dense=run_summary["alpha_dense"],
+                        alpha_lexical=run_summary["alpha_lexical"],
+                        alpha_bm25=run_summary["alpha_bm25"],
+                        top_k=run_summary["top_k"],
+                    )
+                    logger.info(
+                        "Sensitivity-gated: gates=%s, chosen_lambda mean=%.3f std=%.3f, sens_mean=%.3f, pool_red_mean=%.3f",
+                        sens_summary["gate_counts"],
+                        sens_summary["chosen_lambda_mean"],
+                        sens_summary["chosen_lambda_std"],
+                        sens_summary["sens_low_base_mean"],
+                        sens_summary["pool_redundancy_mean"],
+                    )
+                    if sens_summary["config"].get("dump_trace", True):
+                        trace_path = target_dir / f"sensitivity_trace_{split_name}.jsonl"
+                        dump_trace_rows(trace_rows, trace_path)
+                        logger.info("Wrote sensitivity trace: %s", trace_path)
                 else:
                     from fact_checking.learned_lambda.predictor import load_predictor, predict_lambdas_for_samples
                     model_path = str(learned_lambda_cfg["model_path"])
@@ -1468,11 +1534,12 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                     else:
                         pre_samples = _load_pickle(pre_mmr_split_paths[split_name])
                         lambda_overrides = predict_lambdas_for_samples(pre_samples, predictor, stats, retrieval_cfg)
-                vals = list(lambda_overrides.values())
-                logger.info(
-                    "Learned lambda (%s): %d overrides, mean=%.3f, std=%.3f",
-                    learned_lambda_mode, len(vals), np.mean(vals), np.std(vals),
-                )
+                vals = list(lambda_overrides.values()) if lambda_overrides else []
+                if vals:
+                    logger.info(
+                        "Learned lambda (%s): %d overrides, mean=%.3f, std=%.3f",
+                        learned_lambda_mode, len(vals), float(np.mean(vals)), float(np.std(vals)),
+                    )
 
             _mmr_phase_from_chunk_cache(
                 chunk_samples=chunk_samples,

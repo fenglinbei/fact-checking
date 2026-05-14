@@ -1,0 +1,78 @@
+# @package _global_
+# Sensitivity-gated MMR (RL-MMR experiment 3).
+#
+# Per-claim λ ∈ {λ_low, λ_base} chosen by:
+#   sens = 1 - Jaccard(MMR(λ_low), MMR(λ_base))
+#   if sens >= θ_s AND pool_redundancy >= θ_r AND relevance_floor_ok:
+#       λ = λ_low
+#   else:
+#       λ = λ_base
+#
+# 运行：
+#   bash scripts/rl_mmr/run_sensitivity_gated.sh
+defaults:
+  - b3_mmr_topk_sweep_1024
+  - _self_
+
+experiment:
+  name: mmr_sensitivity_gated
+
+baseline:
+  variant: mmr_sensitivity_gated
+
+build:
+  retrieval:
+    top_k: 5
+    mmr_lambda: 0.70                # fallback for samples without override
+    learned_lambda:
+      enabled: true
+      mode: sensitivity_gated
+      sensitivity:
+        lambda_low: 0.30
+        lambda_base: 0.70
+        lambda_probe: 1.00          # probe used only for sens_*_probe features
+        theta_s: 0.40
+        theta_r: 0.40
+        gating_mode: conservative   # basic | conservative
+        relevance_floor:
+          mode: mean_delta          # mean_delta | min_quantile
+          epsilon: 0.05
+          p_floor: 0.50
+        pool_redundancy_topn: 32    # cap pool used for mean pairwise sim
+        min_n_candidates_for_gate: 2
+        dump_trace: true
+  prompt:
+    max_length: 1024
+
+train:
+  deepspeed_config: configs/deepspeed_zero2_bsz8_ga1.json
+
+sft_train:
+  max_length: 1024
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 1
+  empty_cache_steps: 0
+  early_stopping_patience: 6
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    modules_to_save: null
+
+tracking:
+  enabled: true
+  backend: swanlab
+
+swanlab:
+  project: fact-checking-sensitivity-gated
+  experiment_name: mmr_sensitivity_gated
