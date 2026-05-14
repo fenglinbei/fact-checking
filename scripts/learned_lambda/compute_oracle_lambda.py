@@ -30,7 +30,7 @@ from pathlib import Path
 import numpy as np
 from tqdm.auto import tqdm
 
-from fact_checking.data.constants import LABEL_LETTERS
+from fact_checking.data.constants import LABEL_LETTERS, LETTER_ORDER
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +47,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lora-adapter", type=str, default=None, help="PEFT LoRA adapter checkpoint directory")
     p.add_argument("--max-lora-rank", type=int, default=16)
     p.add_argument("--default-lambda", type=float, default=0.7, help="Tie-break preference")
+    p.add_argument(
+        "--label-prefix",
+        type=str,
+        default="Label:",
+        help="Prefix appended before scoring the single-token label choice. "
+             "The default matches the normal label-decoding inference path.",
+    )
     p.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars")
     return p.parse_args()
 
@@ -87,6 +94,67 @@ def _resolve_vllm_paths(
     if (adapter_dir / "tokenizer_config.json").exists():
         return model, str(adapter_dir)
     return model, model
+
+
+def _label_choice_text(letter: str) -> str:
+    """Return the one-token label completion used after ``Label:``."""
+    return f" {letter}"
+
+
+def _build_label_token_ids(tokenizer) -> dict[str, int]:
+    """Map A-F label letters to their single-token completion ids.
+
+    This mirrors the normal constrained decoding path, which appends
+    ``Label:`` to the prompt and then generates one of ``" A"`` ... ``" F"``.
+    """
+    letter_token_ids: dict[str, int] = {}
+    for letter in LETTER_ORDER:
+        token_text = _label_choice_text(letter)
+        ids = tokenizer.encode(token_text, add_special_tokens=False)
+        if len(ids) != 1:
+            raise ValueError(
+                f"Label choice {token_text!r} must be exactly one token, got ids={ids}. "
+                "Oracle scoring requires single-token label choices."
+            )
+        letter_token_ids[letter] = int(ids[0])
+    return letter_token_ids
+
+
+def _append_label_prefix(prompt: str, label_prefix: str) -> str:
+    if not label_prefix:
+        return prompt
+    return prompt + label_prefix
+
+
+def _extract_logprob_value(entry) -> float:
+    if hasattr(entry, "logprob"):
+        return float(entry.logprob)
+    if isinstance(entry, dict) and "logprob" in entry:
+        return float(entry["logprob"])
+    return float(entry)
+
+
+def _extract_required_label_logprobs(
+    first_token_logprobs: dict,
+    letter_token_ids: dict[str, int],
+) -> dict[str, float]:
+    label_logprobs: dict[str, float] = {}
+    missing: list[str] = []
+    for letter, token_id in letter_token_ids.items():
+        entry = first_token_logprobs.get(token_id)
+        if entry is None:
+            entry = first_token_logprobs.get(str(token_id))
+        if entry is None:
+            missing.append(f"{letter}(token_id={token_id})")
+            continue
+        label_logprobs[letter] = _extract_logprob_value(entry)
+    if missing:
+        raise RuntimeError(
+            "vLLM did not return all required A-F label token logprobs. "
+            f"Missing: {', '.join(missing)}. "
+            "This should not happen when allowed_token_ids is set to the six label tokens."
+        )
+    return label_logprobs
 
 
 def main() -> None:
@@ -191,25 +259,30 @@ def main() -> None:
     llm = LLM(**llm_init_kwargs)
     tokenizer = llm.get_tokenizer()
 
-    # Map label letters to token IDs
-    letter_to_label = {v: k for k, v in LABEL_LETTERS.items()}
-    letter_token_ids: dict[str, int] = {}
-    for letter in LABEL_LETTERS.values():
-        ids = tokenizer.encode(letter, add_special_tokens=False)
-        if ids:
-            letter_token_ids[letter] = ids[0]
+    # Map label letters to the same one-token choices used by normal inference:
+    # prompt + "Label:" -> generate one of " A" ... " F".
+    letter_token_ids = _build_label_token_ids(tokenizer)
+    print(f"Label prefix: {args.label_prefix!r}", flush=True)
     print(f"Letter token IDs: {letter_token_ids}", flush=True)
+
+    sampling_param_names = set(inspect.signature(SamplingParams).parameters)
+    if "allowed_token_ids" not in sampling_param_names:
+        raise RuntimeError(
+            "This vLLM build does not support SamplingParams.allowed_token_ids. "
+            "Upgrade vLLM or use a version that can constrain oracle scoring to A-F label tokens."
+        )
 
     sampling_params = SamplingParams(
         max_tokens=1,
         temperature=0.0,
         logprobs=len(letter_token_ids),
+        allowed_token_ids=list(letter_token_ids.values()),
     )
 
     print("Running batch inference...", flush=True)
     generate_params = inspect.signature(llm.generate).parameters
     generate_kwargs = {
-        "prompts": all_prompts,
+        "prompts": [_append_label_prefix(prompt, args.label_prefix) for prompt in all_prompts],
         "sampling_params": sampling_params,
     }
     if "use_tqdm" in generate_params:
@@ -222,6 +295,7 @@ def main() -> None:
     # Extract log-probs and compute oracle λ
     # Structure: event_id -> {lambda_val -> logprob_of_correct_label}
     event_logprobs: dict[str, dict[float, float]] = {}
+    event_label_logprobs: dict[str, dict[float, dict[str, float]]] = {}
     event_gold: dict[str, str] = {}
 
     for output, meta in tqdm(
@@ -238,15 +312,19 @@ def main() -> None:
         event_gold[event_id] = gold_label
 
         correct_letter = LABEL_LETTERS.get(gold_label, "")
-        correct_token_id = letter_token_ids.get(correct_letter)
+        if not correct_letter:
+            raise ValueError(f"Unknown gold_label={gold_label!r} for event_id={event_id}")
+        if not output.outputs or not output.outputs[0].logprobs:
+            raise RuntimeError(f"Missing vLLM output logprobs for event_id={event_id}, lambda={lam:.2f}")
 
-        logprob = -100.0  # default: very low
-        if output.outputs and output.outputs[0].logprobs:
-            first_token_logprobs = output.outputs[0].logprobs[0]
-            if correct_token_id is not None and correct_token_id in first_token_logprobs:
-                logprob = first_token_logprobs[correct_token_id].logprob
+        first_token_logprobs = output.outputs[0].logprobs[0]
+        if not first_token_logprobs:
+            raise RuntimeError(f"Empty vLLM token logprobs for event_id={event_id}, lambda={lam:.2f}")
+        label_logprobs = _extract_required_label_logprobs(first_token_logprobs, letter_token_ids)
+        logprob = label_logprobs[correct_letter]
 
         event_logprobs.setdefault(event_id, {})[lam] = logprob
+        event_label_logprobs.setdefault(event_id, {})[lam] = label_logprobs
 
     # Select oracle λ per claim
     output_path = Path(args.output)
@@ -276,6 +354,13 @@ def main() -> None:
                 "oracle_lambda": oracle_lam,
                 "best_logprob": best_lp,
                 "logprobs_by_lambda": {f"{l:.2f}": lp for l, lp in sorted(lp_by_lam.items())},
+                "label_logprobs_by_lambda": {
+                    f"{l:.2f}": {
+                        letter: lp
+                        for letter, lp in sorted(event_label_logprobs[event_id][l].items())
+                    }
+                    for l in sorted(event_label_logprobs[event_id])
+                },
             }
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 

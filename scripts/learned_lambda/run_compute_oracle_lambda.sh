@@ -29,6 +29,7 @@ GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.95}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-1024}"
 DTYPE="${DTYPE:-auto}"
 DEFAULT_LAMBDA="${DEFAULT_LAMBDA:-0.7}"
+LABEL_PREFIX="${LABEL_PREFIX:-Label:}"
 PROGRESS="${PROGRESS:-true}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 export CUDA_VISIBLE_DEVICES
@@ -57,6 +58,7 @@ echo "[run_compute_oracle_lambda] gpu_memory_utilization=${GPU_MEMORY_UTILIZATIO
 echo "[run_compute_oracle_lambda] max_model_len=${MAX_MODEL_LEN}"
 echo "[run_compute_oracle_lambda] dtype=${DTYPE}"
 echo "[run_compute_oracle_lambda] default_lambda=${DEFAULT_LAMBDA}"
+echo "[run_compute_oracle_lambda] label_prefix=${LABEL_PREFIX}"
 echo "[run_compute_oracle_lambda] progress=${PROGRESS}"
 echo "[run_compute_oracle_lambda] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 
@@ -71,6 +73,7 @@ cmd=(
   --max-model-len "${MAX_MODEL_LEN}"
   --dtype "${DTYPE}"
   --default-lambda "${DEFAULT_LAMBDA}"
+  --label-prefix "${LABEL_PREFIX}"
 )
 
 if [[ -n "${TOKENIZER}" ]]; then
