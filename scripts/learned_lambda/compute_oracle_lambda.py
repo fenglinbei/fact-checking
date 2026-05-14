@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--score-batch-size",
         type=int,
-        default=8192,
+        default=1024,
         help="Number of label-continuation scoring requests per vLLM.generate call. "
              "Each original prompt creates six scoring requests.",
     )
