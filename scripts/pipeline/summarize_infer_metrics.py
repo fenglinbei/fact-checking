@@ -74,6 +74,31 @@ def _parse_run_overrides(run_name: str) -> dict[str, int | float | bool | str]:
     return overrides
 
 
+def _load_experiment_retrieval_defaults(source_name: str) -> dict[str, int | float | bool | str]:
+    repo_root = Path(__file__).resolve().parents[2]
+    config_path = repo_root / "configs" / "experiment" / f"{source_name}.yaml"
+    if not config_path.exists():
+        return {}
+    try:
+        import yaml
+
+        with config_path.open("r", encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+    if not isinstance(config, dict):
+        return {}
+    retrieval = config.get("build", {}).get("retrieval", {})
+    if not isinstance(retrieval, dict):
+        return {}
+    defaults: dict[str, int | float | bool | str] = {}
+    for key in ("top_k", "mmr_lambda"):
+        value = retrieval.get(key)
+        if isinstance(value, (str, int, float, bool)):
+            defaults[f"build.retrieval.{key}"] = _coerce_scalar(str(value))
+    return defaults
+
+
 def _is_numeric(value: Any) -> bool:
     return isinstance(value, (int, float, bool)) and not isinstance(value, complex)
 
@@ -147,7 +172,11 @@ def _extract_path_metadata(path: Path, run_root: Path) -> dict[str, str]:
     }
 
 
-def collect_rows(run_roots: list[Path]) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+def collect_rows(
+    run_roots: list[Path],
+    *,
+    splits: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[str], list[str]]:
     rows: list[dict[str, Any]] = []
     override_keys: set[str] = set()
     metric_keys: set[str] = set()
@@ -155,13 +184,20 @@ def collect_rows(run_roots: list[Path]) -> tuple[list[dict[str, Any]], list[str]
         paths = _metrics_paths(run_root)
         if not paths:
             raise FileNotFoundError(f"No infer api metrics.json files found under {run_root}")
+        experiment_defaults = _load_experiment_retrieval_defaults(run_root.name)
+        matched_paths = 0
         for path in paths:
             metadata = _extract_path_metadata(path, run_root)
+            if splits is not None and metadata["split"] not in splits:
+                continue
+            matched_paths += 1
             metrics = _read_json(path)
             flat_metrics: dict[str, float] = {}
             _flatten_numeric_metrics(metrics, prefix="", out=flat_metrics)
             stat = path.stat()
             overrides = _parse_run_overrides(metadata["run_name"])
+            for key, value in experiment_defaults.items():
+                overrides.setdefault(key, value)
             row: dict[str, Any] = {
                 "source_root": run_root.name,
                 **metadata,
@@ -176,6 +212,9 @@ def collect_rows(run_roots: list[Path]) -> tuple[list[dict[str, Any]], list[str]
             rows.append(row)
             override_keys.update(overrides.keys())
             metric_keys.update(flat_metrics.keys())
+        if splits is not None and matched_paths == 0:
+            split_list = ", ".join(sorted(splits))
+            raise FileNotFoundError(f"No infer api metrics.json files matching split={split_list} under {run_root}")
 
     _annotate_duplicates(rows)
     ordered_override_keys = [
@@ -320,13 +359,22 @@ def write_markdown_summary(
     duplicate_rows = _duplicate_summary_rows(all_rows)
 
     lines = [
-        "# Infer Metrics Summary",
+        "# Overall Run Analysis",
+        "",
+        "## Infer Metrics Summary",
         "",
         f"- All API metric records: `{all_csv.name}`",
         f"- Latest record per source/top_k/split/checkpoint: `{latest_csv.name}`",
         f"- Line chart: `{plot_path.name}`",
         f"- Total records: {len(all_rows)}",
         f"- Latest rows: {len(latest)}",
+        "",
+        "## Included Artifacts",
+        "",
+        "- Overall infer metrics table: `infer_metrics_summary_latest.csv`",
+        "- Overall infer metrics chart: `infer_metrics_line_chart.png`",
+        "- b3 1024 top_k=0..8 test table: `b3_mmr_topk_test_curves_1024/test_metrics_top_k_0_8.csv`",
+        "- b3 1024 top_k=0..8 test chart: `b3_mmr_topk_test_curves_1024/test_metrics_top_k_0_8.png`",
         "",
         "## Latest Records",
         "",
@@ -345,6 +393,19 @@ def write_markdown_summary(
             ]
         )
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _best_row_for_metric(rows: list[dict[str, Any]], metric: str) -> dict[str, Any] | None:
+    metric_rows = [
+        row
+        for row in rows
+        if isinstance(row.get("build.retrieval.top_k"), (int, float)) and isinstance(row.get(metric), (int, float))
+    ]
+    if not metric_rows:
+        return None
+    if metric == "parse_error_rate":
+        return min(metric_rows, key=lambda row: (float(row[metric]), float(row["build.retrieval.top_k"])))
+    return max(metric_rows, key=lambda row: (float(row[metric]), -float(row["build.retrieval.top_k"])))
 
 
 def write_line_plot(rows: list[dict[str, Any]], output_path: Path) -> None:
@@ -369,11 +430,35 @@ def write_line_plot(rows: list[dict[str, Any]], output_path: Path) -> None:
     flat_axes = [axis for row_axes in axes for axis in row_axes]
     for axis, metric in zip(flat_axes, PLOT_METRIC_COLUMNS):
         for source, source_rows in sorted(by_source.items()):
-            ordered = sorted(source_rows, key=lambda row: float(row["build.retrieval.top_k"]))
-            x_values = [float(row["build.retrieval.top_k"]) for row in ordered if isinstance(row.get(metric), (int, float))]
-            y_values = [float(row[metric]) for row in ordered if isinstance(row.get(metric), (int, float))]
-            if y_values:
-                axis.plot(x_values, y_values, marker="o", linewidth=1.8, label=source)
+            ordered = [
+                row
+                for row in sorted(source_rows, key=lambda item: float(item["build.retrieval.top_k"]))
+                if isinstance(row.get(metric), (int, float))
+            ]
+            if not ordered:
+                continue
+            x_values = [float(row["build.retrieval.top_k"]) for row in ordered]
+            y_values = [float(row[metric]) for row in ordered]
+            (line,) = axis.plot(x_values, y_values, marker="o", linewidth=1.8, label=source, zorder=2)
+
+            best = _best_row_for_metric(ordered, metric)
+            if best is None:
+                continue
+            best_x = float(best["build.retrieval.top_k"])
+            best_y = float(best[metric])
+            color = line.get_color()
+            axis.axhline(best_y, color=color, linestyle="--", linewidth=1.2, alpha=0.45, zorder=1)
+            axis.scatter(
+                [best_x],
+                [best_y],
+                marker="*",
+                s=135,
+                color=color,
+                edgecolor="black",
+                linewidth=0.6,
+                label=f"{source} best",
+                zorder=4,
+            )
         axis.set_title(metric)
         axis.set_xlabel("build.retrieval.top_k")
         axis.grid(True, alpha=0.25)
@@ -405,11 +490,12 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("run_roots", nargs="+", help="Run roots containing child run directories.")
-    parser.add_argument("--output-dir", default="outputs/runs/topk_infer_metrics_summary")
+    parser.add_argument("--output-dir", default="outputs/runs/overall_run_analysis")
     parser.add_argument("--all-csv", default="infer_metrics_summary_all.csv")
     parser.add_argument("--latest-csv", default="infer_metrics_summary_latest.csv")
     parser.add_argument("--markdown", default="infer_metrics_summary.md")
     parser.add_argument("--plot", default="infer_metrics_line_chart.png")
+    parser.add_argument("--split", action="append", help="Only include this infer split. Repeat for multiple splits.")
     return parser.parse_args()
 
 
@@ -418,7 +504,8 @@ def main() -> None:
     run_roots = [Path(path).resolve() for path in args.run_roots]
     output_dir = Path(args.output_dir).resolve()
 
-    rows, override_columns, metric_columns = collect_rows(run_roots)
+    splits = set(args.split) if args.split else None
+    rows, override_columns, metric_columns = collect_rows(run_roots, splits=splits)
     rows = _sort_rows(rows)
     latest = latest_rows(rows)
     columns = METADATA_COLUMNS + override_columns + metric_columns

@@ -1,0 +1,45 @@
+output_dir: /home/fenglin/project/fact-checking/outputs/runs/b4_mmr_lambda_sweep/build.retrieval.mmr_lambda=0.6,pipeline.mode=full__a3e3423e/train
+data:
+  train_candidates: /home/fenglin/project/fact-checking/outputs/cache/build/6a8dc9c72ae9/build_train.jsonl
+  val_candidates: /home/fenglin/project/fact-checking/outputs/cache/build/6a8dc9c72ae9/build_val.jsonl
+  test_candidates: /home/fenglin/project/fact-checking/outputs/cache/build/6a8dc9c72ae9/build_test.jsonl
+model_name_or_path: answerdotai/ModernBERT-large
+baseline:
+  variant: b4_mmr_lambda_sweep
+sft_train:
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 8
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-05
+  num_train_epochs: 3
+  weight_decay: 0.01
+  warmup_ratio: 0.06
+  bf16: true
+  max_length: 2048
+  logging_steps: 10
+  save_steps: 50
+  eval_steps: 50
+  dataloader_num_workers: 2
+  gradient_checkpointing: true
+  use_flash_attention_2: true
+  lr_scheduler_type: cosine
+  max_grad_norm: 1.0
+  padding: longest
+  use_length_bucket: true
+  empty_cache_steps: 1
+  empty_cache_on_eval: true
+  empty_cache_on_save: true
+  max_new_tokens: 8
+  temperature: 0.0
+  logit_adjust:
+    enabled: true
+    tau: 1.0
+  top_k_evidence: 16
+  seed: 42
+  resolved_output_dir: true
+tracking:
+  enabled: true
+  backend: swanlab
+swanlab:
+  project: fact-checking-build-train-infer
+  experiment_name: b4_mmr_lambda_sweep__build.retrieval.mmr_lambda=0.6,pipeline.mode=full

@@ -1,0 +1,27 @@
+{
+  "run_id": "9792fb737f6f",
+  "run_dir": "/home/fenglin/project/fact-checking/outputs/runs/b4_mmr_lambda_sweep/build.retrieval.mmr_lambda=0.9,pipeline.mode=full__9792fb73",
+  "build_id": "55e84856d5ed",
+  "phases": {
+    "build": {
+      "status": "completed",
+      "updated_at": "2026-05-10 01:31:18",
+      "build_id": "55e84856d5ed",
+      "output_dir": "/home/fenglin/project/fact-checking/outputs/cache/build/55e84856d5ed",
+      "outputs": {
+        "train": "/home/fenglin/project/fact-checking/outputs/cache/build/55e84856d5ed/build_train.jsonl",
+        "val": "/home/fenglin/project/fact-checking/outputs/cache/build/55e84856d5ed/build_val.jsonl",
+        "test": "/home/fenglin/project/fact-checking/outputs/cache/build/55e84856d5ed/build_test.jsonl"
+      },
+      "reused": false
+    }
+  },
+  "config": {
+    "experiment": {
+      "name": "b4_mmr_lambda_sweep"
+    },
+    "baseline": {
+      "variant": "b4_mmr_lambda_sweep"
+    }
+  }
+}
