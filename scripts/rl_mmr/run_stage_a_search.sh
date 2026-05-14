@@ -27,12 +27,12 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 export PYTHONPATH="${ROOT}/src:${PYTHONPATH:-}"
 
-FIXED_TRAIN_DIR="${1:?需要传入 fixed_07 训练目录（例如 outputs/runs/<exp>/<id>/train）}"
-LAMBDA_GRID="${2:-0.2 0.3 0.4 0.7}"
+FIXED_TRAIN_DIR="${1:-outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe/train}"
+LAMBDA_GRID="${2:-0.2 0.3 0.4 0.5 0.6 0.7 0.8}"
 SPLIT="${3:-val}"
 BASE_EXPERIMENT="${4:-mmr_sensitivity_gated}"
 SEARCH_OUT="${5:-outputs/rl_mmr/sensitivity_search}"
-VLLM_PORT="${6:-8000}"
+VLLM_PORT="${6:-10909}"
 
 if [ ! -d "${FIXED_TRAIN_DIR}/best" ]; then
     echo "[stage-A][fatal] best checkpoint not found at ${FIXED_TRAIN_DIR}/best" >&2
