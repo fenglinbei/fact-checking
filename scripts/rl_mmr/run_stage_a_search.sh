@@ -75,7 +75,29 @@ RUNS_FRAGMENT="${SCRATCH_ROOT}/runs_fragment.yaml"
 : > "${RUNS_FRAGMENT}"
 echo "runs:" >> "${RUNS_FRAGMENT}"
 
-CHUNK_MMR_PATH=""
+# Compute chunk_mmr cache path once via the same fingerprint helper the runner
+# uses. The fingerprint is invariant to mmr_lambda, so it holds across the
+# entire grid; it also keeps working when build is served from cache and the
+# usual log line is absent.
+CHUNK_MMR_PATH=$(python - <<PY
+import os
+from omegaconf import OmegaConf
+from hydra import compose, initialize_config_dir
+from fact_checking.build.candidates import _chunk_mmr_config_fingerprint
+
+config_dir = os.path.abspath('${ROOT}/configs')
+with initialize_config_dir(version_base=None, config_dir=config_dir, job_name='stage_a_fp'):
+    cfg = compose(
+        config_name='pipeline/default',
+        overrides=['experiment=${BASE_EXPERIMENT}'],
+    )
+build = OmegaConf.to_container(cfg.build, resolve=True)
+fp = _chunk_mmr_config_fingerprint(build)
+print(f'outputs/cache/chunk_mmr/{fp}/${SPLIT}.pkl')
+PY
+)
+echo "[stage-A] chunk_mmr_path  : ${CHUNK_MMR_PATH}"
+
 FIRST_LAMBDA=1
 
 for LAM in ${LAMBDA_GRID}; do
@@ -105,18 +127,14 @@ import json, sys
 m = json.load(open('${SCRATCH}/manifest.json'))
 print(m['phases']['build']['outputs']['${SPLIT}'])
 ")
-    if [ -z "${CHUNK_MMR_PATH}" ]; then
-        CHUNK_DIR=$(grep -oE 'Chunk-MMR cache dir: [^ ]+' "${BUILD_LOG}" | tail -1 | awk '{print $4}')
-        if [ -z "${CHUNK_DIR}" ]; then
-            echo "[stage-A][fatal] could not parse 'Chunk-MMR cache dir' from ${BUILD_LOG}" >&2
-            exit 2
-        fi
-        CHUNK_MMR_PATH="${CHUNK_DIR}/${SPLIT}.pkl"
-        echo "[stage-A]   chunk_mmr_path : ${CHUNK_MMR_PATH}"
-        if [ ! -f "${CHUNK_MMR_PATH}" ]; then
-            echo "[stage-A][fatal] chunk_mmr pickle not found: ${CHUNK_MMR_PATH}" >&2
-            exit 3
-        fi
+    if [ -z "${BUILD_VAL}" ]; then
+        echo "[stage-A][fatal] could not read phases.build.outputs.${SPLIT} from ${SCRATCH}/manifest.json" >&2
+        exit 2
+    fi
+    if [ ! -f "${CHUNK_MMR_PATH}" ]; then
+        echo "[stage-A][fatal] chunk_mmr pickle not found at expected path: ${CHUNK_MMR_PATH}" >&2
+        echo "[stage-A][fatal] (build should have produced this; check outputs/cache/chunk_mmr/ for the real fp)" >&2
+        exit 3
     fi
     echo "[stage-A]   build_val      : ${BUILD_VAL}"
 
