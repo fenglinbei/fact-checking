@@ -1,4 +1,4 @@
-output_dir: /data/liaozijie/fact-checking/outputs/runs/mmr_sensitivity_gated/build.retrieval.learned_lambda.sensitivity.theta_s-0.8,build.retrieval.learned_lambda.sensitivity.theta_r-0.3,build.retrieval.learned_lambda.sensitivity.lambda_low-0.2,build.retrieval.learned_lambda.sensitivity.gating_mode-'basic'__9a7f2ee7/train
+output_dir: /data/liaozijie/fact-checking/outputs/runs/mmr_sensitivity_gated/ts0p8_tr0p3_ll0p2_basic__9a7f2ee7/train
 data:
   train_candidates: /data/liaozijie/fact-checking/outputs/cache/build/962a2a293635/build_train.jsonl
   val_candidates: /data/liaozijie/fact-checking/outputs/cache/build/962a2a293635/build_val.jsonl
@@ -57,4 +57,4 @@ tracking:
   backend: swanlab
 swanlab:
   project: fact-checking-sensitivity-gated
-  experiment_name: mmr_sensitivity_gated__build.retrieval.learned_lambda.sensitivity.theta_s-0.8,build.retrieval.learned_lambda.sensitivity.theta_r-0.3,build.retrieval.learned_lambda.sensitivity.lambda_low-0.2,build.retrieval.learned_lambda.sensitivity.gating_mode-'basic'
+  experiment_name: mmr_sensitivity_gated__ts0p8_tr0p3_ll0p2_basic

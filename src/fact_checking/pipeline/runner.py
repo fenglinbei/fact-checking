@@ -117,6 +117,19 @@ class PipelineRunner:
             keep.append(ov.replace("=", "-"))
         return ",".join(keep)
 
+    def _configured_output_subdir(self) -> str:
+        pipeline_cfg = self.cfg.get("pipeline", {})
+        output_subdir = str(pipeline_cfg.get("output_subdir", "") or "").strip()
+        if not output_subdir:
+            return ""
+        path = Path(output_subdir)
+        if path.is_absolute() or len(path.parts) != 1 or path.parts[0] in (".", ".."):
+            raise ValueError(
+                "pipeline.output_subdir must be a single directory name. "
+                "Use pipeline.run_dir for full or nested paths."
+            )
+        return output_subdir
+
     def _build_state(self) -> PipelineState:
         build_cfg = self.cfg["build"]
         pipeline_cfg = self.cfg.get("pipeline", {})
@@ -140,8 +153,12 @@ class PipelineRunner:
             output_root = Path(str(pipeline_cfg.get("output_root", "outputs/runs")))
             if not output_root.is_absolute():
                 output_root = self.project_root / output_root
-            sweep_slug = self._compute_sweep_slug()
-            leaf = f"{sweep_slug}__{run_id[:8]}" if sweep_slug else run_id
+            output_subdir = self._configured_output_subdir()
+            if output_subdir:
+                leaf = f"{output_subdir}__{run_id[:8]}"
+            else:
+                sweep_slug = self._compute_sweep_slug()
+                leaf = f"{sweep_slug}__{run_id[:8]}" if sweep_slug else run_id
             run_dir = output_root / experiment_name / leaf
 
         cache_root = Path(str(pipeline_cfg.get("cache_root", "outputs/cache")))
@@ -395,9 +412,9 @@ class PipelineRunner:
             if key in self.cfg:
                 train_cfg[key] = self.cfg[key]
 
-        sweep_slug = self._compute_sweep_slug()
+        run_label = self._configured_output_subdir() or self._compute_sweep_slug()
         exp_name = str(self.cfg.get("experiment", {}).get("name", "default"))
-        descriptive_name = f"{exp_name}__{sweep_slug}" if sweep_slug else exp_name
+        descriptive_name = f"{exp_name}__{run_label}" if run_label else exp_name
         if isinstance(train_cfg.get("swanlab"), dict):
             sl = dict(train_cfg["swanlab"])
             sl["experiment_name"] = descriptive_name

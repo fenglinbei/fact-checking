@@ -17,6 +17,7 @@ pipeline:
   output_root: outputs/runs
   cache_root: outputs/cache
   run_dir: null
+  output_subdir: null
 
 runtime:
   env:
