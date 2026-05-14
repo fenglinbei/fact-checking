@@ -88,11 +88,14 @@ for LAM in ${LAMBDA_GRID}; do
     echo "[stage-A]   scratch run_dir : ${SCRATCH}"
 
     # ---- Build ----
+    # NOTE: paths are wrapped in single quotes inside the Hydra override value
+    # because the sweep_slug used in train.run_dir contains commas, which
+    # Hydra otherwise parses as list separators.
     echo "[stage-A]   build → ${BUILD_LOG}"
     python -m fact_checking.pipeline.run \
         "experiment=${BASE_EXPERIMENT}" \
         pipeline.mode=build \
-        "pipeline.run_dir=${SCRATCH}" \
+        "pipeline.run_dir='${SCRATCH}'" \
         "build.retrieval.mmr_lambda=${LAM}" \
         "build.retrieval.learned_lambda.enabled=false" \
         2>&1 | tee "${BUILD_LOG}"
@@ -123,13 +126,13 @@ print(m['phases']['build']['outputs']['${SPLIT}'])
         SERVER_OVERRIDES=(
             "infer.server.manage=true"
             "infer.server.stop_after_infer=false"
-            "infer.server.pid_file=${VLLM_PID_FILE}"
+            "infer.server.pid_file='${VLLM_PID_FILE}'"
             "infer.port=${VLLM_PORT}"
         )
     else
         SERVER_OVERRIDES=(
             "infer.server.manage=false"
-            "infer.base_url=${VLLM_BASE_URL}"
+            "infer.base_url='${VLLM_BASE_URL}'"
         )
     fi
 
@@ -137,8 +140,8 @@ print(m['phases']['build']['outputs']['${SPLIT}'])
     python -m fact_checking.pipeline.run \
         "experiment=${BASE_EXPERIMENT}" \
         pipeline.mode=infer \
-        "pipeline.run_dir=${SCRATCH}" \
-        "train.run_dir=${FIXED_TRAIN_DIR}" \
+        "pipeline.run_dir='${SCRATCH}'" \
+        "train.run_dir='${FIXED_TRAIN_DIR}'" \
         "build.retrieval.mmr_lambda=${LAM}" \
         "build.retrieval.learned_lambda.enabled=false" \
         "infer.split=${SPLIT}" \
