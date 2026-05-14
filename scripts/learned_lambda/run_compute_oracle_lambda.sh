@@ -30,6 +30,9 @@ MAX_MODEL_LEN="${MAX_MODEL_LEN:-1024}"
 DTYPE="${DTYPE:-auto}"
 DEFAULT_LAMBDA="${DEFAULT_LAMBDA:-0.7}"
 LABEL_PREFIX="${LABEL_PREFIX:-Label:}"
+SCORE_BATCH_SIZE="${SCORE_BATCH_SIZE:-1024}"
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-}"
 PROGRESS="${PROGRESS:-true}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 export CUDA_VISIBLE_DEVICES
@@ -59,6 +62,9 @@ echo "[run_compute_oracle_lambda] max_model_len=${MAX_MODEL_LEN}"
 echo "[run_compute_oracle_lambda] dtype=${DTYPE}"
 echo "[run_compute_oracle_lambda] default_lambda=${DEFAULT_LAMBDA}"
 echo "[run_compute_oracle_lambda] label_prefix=${LABEL_PREFIX}"
+echo "[run_compute_oracle_lambda] score_batch_size=${SCORE_BATCH_SIZE}"
+echo "[run_compute_oracle_lambda] max_num_batched_tokens=${MAX_NUM_BATCHED_TOKENS:-auto}"
+echo "[run_compute_oracle_lambda] max_num_seqs=${MAX_NUM_SEQS:-auto}"
 echo "[run_compute_oracle_lambda] progress=${PROGRESS}"
 echo "[run_compute_oracle_lambda] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 
@@ -74,6 +80,7 @@ cmd=(
   --dtype "${DTYPE}"
   --default-lambda "${DEFAULT_LAMBDA}"
   --label-prefix "${LABEL_PREFIX}"
+  --score-batch-size "${SCORE_BATCH_SIZE}"
 )
 
 if [[ -n "${TOKENIZER}" ]]; then
@@ -82,6 +89,14 @@ fi
 
 if [[ -n "${LORA_ADAPTER}" ]]; then
   cmd+=(--lora-adapter "${LORA_ADAPTER}" --max-lora-rank "${MAX_LORA_RANK}")
+fi
+
+if [[ -n "${MAX_NUM_BATCHED_TOKENS}" ]]; then
+  cmd+=(--max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}")
+fi
+
+if [[ -n "${MAX_NUM_SEQS}" ]]; then
+  cmd+=(--max-num-seqs "${MAX_NUM_SEQS}")
 fi
 
 if [[ "${PROGRESS}" == "false" ]]; then
