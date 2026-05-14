@@ -23,6 +23,7 @@ from fact_checking.data.constants import LABEL_DEFINITIONS, LABEL_LETTERS, LABEL
 from fact_checking.data.io import iter_sentences, load_split
 from fact_checking.retrieval.embedder import EmbedderConfig, TextEmbedder
 from fact_checking.retrieval.mmr import maximal_marginal_relevance
+from fact_checking.retrieval.reranker import CrossEncoderReranker, RerankerConfig
 from fact_checking.retrieval.text_utils import (
     bm25_like_score_from_counters,
     content_tokens_counter,
@@ -410,6 +411,56 @@ def _select_candidates_from_chunk_sample(
             "lexical_score": float(lexical_scores[idx]),
             "bm25_score": float(bm25_scores[idx]),
             "hybrid_score": float(hybrid_scores[idx]),
+        })
+        dedup_key = canonicalize_sentence(str(candidate.get("text", "")))
+        old_candidate = deduped_by_text.get(dedup_key)
+        if old_candidate is None or candidate["hybrid_score"] > old_candidate["hybrid_score"]:
+            deduped_by_text[dedup_key] = candidate
+
+    candidates = list(deduped_by_text.values())
+    candidates.sort(key=lambda x: x["hybrid_score"], reverse=True)
+    candidates = candidates[:top_k]
+    return {
+        "event_id": sample.event_id,
+        "claim": sample.claim,
+        "label": sample.label,
+        "explain": sample.explain,
+        "candidates": candidates,
+    }
+
+
+def _select_candidates_reranker(
+    sample: ChunkMMRSample,
+    reranker: CrossEncoderReranker,
+    top_k: int,
+) -> dict[str, Any]:
+    """Select top-K candidates using cross-encoder reranker scores only.
+
+    No lexical/BM25 scores, no MMR diversity mechanism.
+    """
+    n = min(len(sample.candidates), int(sample.chunk_emb.shape[0]))
+    if n == 0:
+        return {
+            "event_id": sample.event_id,
+            "claim": sample.claim,
+            "label": sample.label,
+            "explain": sample.explain,
+            "candidates": [],
+        }
+
+    candidate_texts = [str(c.get("text", "")) for c in sample.candidates[:n]]
+    reranker_scores = reranker.score(sample.claim, candidate_texts)
+
+    deduped_by_text: dict[str, dict[str, Any]] = {}
+    for idx in range(n):
+        candidate = dict(sample.candidates[idx])
+        score = float(reranker_scores[idx])
+        candidate.update({
+            "dense_score": 0.0,
+            "lexical_score": 0.0,
+            "bm25_score": 0.0,
+            "hybrid_score": score,
+            "reranker_score": score,
         })
         dedup_key = canonicalize_sentence(str(candidate.get("text", "")))
         old_candidate = deduped_by_text.get(dedup_key)
@@ -1227,6 +1278,32 @@ def _mmr_phase_from_chunk_cache(
                 writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
 
 
+def _reranker_phase_from_chunk_cache(
+    chunk_samples: list[ChunkMMRSample],
+    reranker: CrossEncoderReranker,
+    top_k: int,
+    tokenizer,
+    prompt_cfg: dict[str, Any],
+    output_path: Path,
+    show_progress: bool = False,
+    progress_desc: str | None = None,
+) -> None:
+    """From cached ChunkMMRSamples, run reranker selection + training-row construction, write JSONL."""
+
+    with output_path.open("w", encoding="utf-8") as writer:
+        desc = progress_desc or "Reranker"
+        for sample in tqdm(
+            chunk_samples,
+            desc=desc,
+            unit="sample",
+            dynamic_ncols=True,
+            disable=not show_progress,
+        ):
+            row = _select_candidates_reranker(sample, reranker, top_k=top_k)
+            training_row = _build_training_row(row, tokenizer, prompt_cfg)
+            writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -1257,6 +1334,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         "prefetch_size": int(retrieval_cfg.get("prefetch_size", 1)),
         "cpu_workers": int(retrieval_cfg.get("cpu_workers", 1)),
         "num_gpus": num_gpus,
+        "selection_method": str(retrieval_cfg.get("selection_method", "mmr")).strip().lower(),
         # Prompt config for workers
         "prompt_model_name_or_path": str(prompt_cfg.get("model_name_or_path", "")),
         "prompt_auto_length": bool(prompt_cfg.get("auto_length", True)),
@@ -1320,7 +1398,12 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
             num_gpus=num_gpus,
         )
 
-    # ---- Phase 3: MMR + candidate construction (CPU-only, fast) ----
+    # ---- Phase 3: candidate selection + training row construction ----
+    torch.cuda.empty_cache()
+
+    selection_method = run_summary["selection_method"]
+    logger.info("Selection method: %s", selection_method)
+
     tokenizer = _load_prompt_tokenizer(run_summary["prompt_model_name_or_path"])
     prompt_cfg_local = {
         "auto_length": run_summary["prompt_auto_length"],
@@ -1330,58 +1413,87 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         "system_prompt": run_summary.get("prompt_system_prompt"),
     }
 
-    # ---- Optional: learned λ predictor ----
+    # ---- Load reranker if needed ----
+    reranker = None
+    if selection_method == "reranker":
+        reranker_cfg = retrieval_cfg.get("reranker", {}) or {}
+        logger.info("Loading reranker: %s", reranker_cfg.get("model_name", "BAAI/bge-reranker-base"))
+        reranker = CrossEncoderReranker(RerankerConfig(
+            model_name=str(reranker_cfg.get("model_name", "BAAI/bge-reranker-base")),
+            device=str(reranker_cfg.get("device", "cuda")),
+            max_length=int(reranker_cfg.get("max_length", 512)),
+            batch_size=int(reranker_cfg.get("batch_size", 32)),
+            normalize=bool(reranker_cfg.get("normalize", True)),
+        ))
+
+    # ---- Optional: learned λ predictor (MMR path only) ----
     learned_lambda_cfg = retrieval_cfg.get("learned_lambda", {}) or {}
     use_learned_lambda = bool(learned_lambda_cfg.get("enabled", False))
     learned_lambda_mode = str(learned_lambda_cfg.get("mode", "predictor")).strip().lower()
 
     for split_name in split_names:
         chunk_samples = _load_pickle(chunk_mmr_split_paths[split_name])
+        output_path = target_dir / f"build_{split_name}.jsonl"
 
-        lambda_overrides: dict[str, float] | None = None
-        if use_learned_lambda:
-            if learned_lambda_mode == "heuristic":
-                # Simple heuristic: λ = a * log(n_candidates) + b, clamped to [0, 1].
-                a = float(learned_lambda_cfg.get("heuristic_a", -0.0732))
-                b = float(learned_lambda_cfg.get("heuristic_b", 0.6127))
-                lambda_overrides = {}
-                for sample in chunk_samples:
-                    n = min(len(sample.candidates), int(sample.chunk_emb.shape[0]))
-                    raw = a * np.log(max(n, 1)) + b
-                    lambda_overrides[sample.event_id] = float(max(0.0, min(1.0, raw)))
-            else:
-                from fact_checking.learned_lambda.predictor import load_predictor, predict_lambdas_for_samples
-                model_path = str(learned_lambda_cfg["model_path"])
-                stats_path = str(learned_lambda_cfg["feature_stats_path"])
-                predictor, stats = load_predictor(model_path, stats_path)
-                feature_mode = str(stats.get("feature_mode") or "handcrafted").strip().lower()
-                if feature_mode == "chunk_embedding":
-                    lambda_overrides = predict_lambdas_for_samples(chunk_samples, predictor, stats, retrieval_cfg)
+        if selection_method == "reranker":
+            _reranker_phase_from_chunk_cache(
+                chunk_samples=chunk_samples,
+                reranker=reranker,
+                top_k=run_summary["top_k"],
+                tokenizer=tokenizer,
+                prompt_cfg=prompt_cfg_local,
+                output_path=output_path,
+                show_progress=True,
+                progress_desc=f"Reranker [{split_name}]",
+            )
+        else:
+            lambda_overrides: dict[str, float] | None = None
+            if use_learned_lambda:
+                if learned_lambda_mode == "heuristic":
+                    a = float(learned_lambda_cfg.get("heuristic_a", -0.0732))
+                    b = float(learned_lambda_cfg.get("heuristic_b", 0.6127))
+                    lambda_overrides = {}
+                    for sample in chunk_samples:
+                        n = min(len(sample.candidates), int(sample.chunk_emb.shape[0]))
+                        raw = a * np.log(max(n, 1)) + b
+                        lambda_overrides[sample.event_id] = float(max(0.0, min(1.0, raw)))
                 else:
-                    pre_samples = _load_pickle(pre_mmr_split_paths[split_name])
-                    lambda_overrides = predict_lambdas_for_samples(pre_samples, predictor, stats, retrieval_cfg)
-            vals = list(lambda_overrides.values())
-            logger.info(
-                "Learned lambda (%s): %d overrides, mean=%.3f, std=%.3f",
-                learned_lambda_mode, len(vals), np.mean(vals), np.std(vals),
+                    from fact_checking.learned_lambda.predictor import load_predictor, predict_lambdas_for_samples
+                    model_path = str(learned_lambda_cfg["model_path"])
+                    stats_path = str(learned_lambda_cfg["feature_stats_path"])
+                    predictor, stats = load_predictor(model_path, stats_path)
+                    feature_mode = str(stats.get("feature_mode") or "handcrafted").strip().lower()
+                    if feature_mode == "chunk_embedding":
+                        lambda_overrides = predict_lambdas_for_samples(chunk_samples, predictor, stats, retrieval_cfg)
+                    else:
+                        pre_samples = _load_pickle(pre_mmr_split_paths[split_name])
+                        lambda_overrides = predict_lambdas_for_samples(pre_samples, predictor, stats, retrieval_cfg)
+                vals = list(lambda_overrides.values())
+                logger.info(
+                    "Learned lambda (%s): %d overrides, mean=%.3f, std=%.3f",
+                    learned_lambda_mode, len(vals), np.mean(vals), np.std(vals),
+                )
+
+            _mmr_phase_from_chunk_cache(
+                chunk_samples=chunk_samples,
+                mmr_lambda=run_summary["mmr_lambda"],
+                top_k=run_summary["top_k"],
+                alpha_dense=run_summary["alpha_dense"],
+                alpha_lexical=run_summary["alpha_lexical"],
+                alpha_bm25=run_summary["alpha_bm25"],
+                tokenizer=tokenizer,
+                prompt_cfg=prompt_cfg_local,
+                output_path=output_path,
+                cpu_workers=run_summary["cpu_workers"],
+                lambda_overrides=lambda_overrides,
             )
 
-        output_path = target_dir / f"build_{split_name}.jsonl"
-        _mmr_phase_from_chunk_cache(
-            chunk_samples=chunk_samples,
-            mmr_lambda=run_summary["mmr_lambda"],
-            top_k=run_summary["top_k"],
-            alpha_dense=run_summary["alpha_dense"],
-            alpha_lexical=run_summary["alpha_lexical"],
-            alpha_bm25=run_summary["alpha_bm25"],
-            tokenizer=tokenizer,
-            prompt_cfg=prompt_cfg_local,
-            output_path=output_path,
-            cpu_workers=run_summary["cpu_workers"],
-            lambda_overrides=lambda_overrides,
-        )
         split_paths[split_name] = output_path
         logger.info("Wrote build file: %s", output_path)
+
+    if reranker is not None:
+        del reranker
+        torch.cuda.empty_cache()
 
     return BuildResult(output_dir=target_dir, split_paths=split_paths)
 

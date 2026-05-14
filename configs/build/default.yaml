@@ -15,6 +15,13 @@ build:
     alpha_lexical: 0.20
     alpha_bm25: 0.10
     mmr_lambda: 0.70
+    selection_method: mmr          # mmr | reranker
+    reranker:
+      model_name: /data/models/Qwen3-Reranker-0.6B/
+      device: cuda
+      max_length: 4096
+      batch_size: 4
+      normalize: true
     # Performance optimizations
     precision: bf16              # fp32 | fp16 | bf16
     num_gpus: 4                  # 1 = serial, >1 = multi-GPU via multiprocessing

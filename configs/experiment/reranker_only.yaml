@@ -1,0 +1,41 @@
+# @package _global_
+# System 1: reranker-only — 强相关性基线
+#
+# 使用 cross-encoder reranker 对候选打分，取 top-K。
+# 不显式建模 diversity、coverage 或 redundancy。
+# 候选池（chunking/retrieval）与 MMR 系统共享。
+#
+# 继承 b3_mmr_topk_sweep_1024: semantic chunking, max_length=1024, LoRA, label_decoding
+#
+# 运行命令:
+#   PYTHONPATH=src python -m fact_checking.pipeline.run \
+#     experiment=reranker_only pipeline.mode=build
+#
+# 完整 pipeline:
+#   PYTHONPATH=src python -m fact_checking.pipeline.run \
+#     experiment=reranker_only pipeline.mode=full
+
+defaults:
+  - b3_mmr_topk_sweep_1024
+  - _self_
+
+experiment:
+  name: reranker_only
+
+baseline:
+  variant: reranker_only
+
+build:
+  retrieval:
+    top_k: 5
+    selection_method: reranker
+    reranker:
+      model_name: /data/models/Qwen3-Reranker-0.6B/
+      device: cuda
+      max_length: 4096
+      batch_size: 4
+      normalize: true
+
+swanlab:
+  project: fact-checking-reranker-only
+  experiment_name: reranker_only
