@@ -57,9 +57,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--score-batch-size",
         type=int,
-        default=8192,
+        default=1024,
         help="Number of label-continuation scoring requests per vLLM.generate call. "
              "Each original prompt creates six scoring requests.",
+    )
+    p.add_argument(
+        "--max-num-batched-tokens",
+        type=int,
+        default=None,
+        help="Optional vLLM LLM(max_num_batched_tokens=...) override for memory-constrained scoring.",
+    )
+    p.add_argument(
+        "--max-num-seqs",
+        type=int,
+        default=None,
+        help="Optional vLLM LLM(max_num_seqs=...) override for memory-constrained scoring.",
     )
     p.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars")
     return p.parse_args()
@@ -297,6 +309,10 @@ def main() -> None:
     }
     if tokenizer_path:
         llm_init_kwargs["tokenizer"] = tokenizer_path
+    if args.max_num_batched_tokens is not None:
+        llm_init_kwargs["max_num_batched_tokens"] = int(args.max_num_batched_tokens)
+    if args.max_num_seqs is not None:
+        llm_init_kwargs["max_num_seqs"] = int(args.max_num_seqs)
     llm = LLM(**llm_init_kwargs)
     tokenizer = llm.get_tokenizer()
 
