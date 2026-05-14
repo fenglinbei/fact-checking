@@ -1,0 +1,162 @@
+{
+  "candidate_count": {
+    "6<=n<=16": {
+      "n": 530,
+      "fixed_mean_utility": -3.7835798263549805,
+      "argmax_mean_utility": -7.422721862792969,
+      "argmax_delta_vs_fixed": -3.6391420364379883,
+      "expected_mean_utility": -7.571554183959961,
+      "expected_delta_vs_fixed": -3.7879743576049805,
+      "sample_mean_utility": -7.420495510101318,
+      "sample_delta_vs_fixed": -3.636915683746338
+    },
+    "n<=5": {
+      "n": 129,
+      "fixed_mean_utility": -2.386309862136841,
+      "argmax_mean_utility": -4.704348087310791,
+      "argmax_delta_vs_fixed": -2.31803822517395,
+      "expected_mean_utility": -4.714992523193359,
+      "expected_delta_vs_fixed": -2.3286826610565186,
+      "sample_mean_utility": -3.15828537940979,
+      "sample_delta_vs_fixed": -0.7719755172729492
+    },
+    "n>16": {
+      "n": 615,
+      "fixed_mean_utility": -4.155197620391846,
+      "argmax_mean_utility": -6.398233413696289,
+      "argmax_delta_vs_fixed": -2.2430357933044434,
+      "expected_mean_utility": -6.947165489196777,
+      "expected_delta_vs_fixed": -2.7919678688049316,
+      "sample_mean_utility": -6.228476524353027,
+      "sample_delta_vs_fixed": -2.0732789039611816
+    }
+  },
+  "sensitivity": {
+    "high": {
+      "n": 915,
+      "fixed_mean_utility": -4.0262861251831055,
+      "argmax_mean_utility": -6.444751262664795,
+      "argmax_delta_vs_fixed": -2.4184651374816895,
+      "expected_mean_utility": -7.32786226272583,
+      "expected_delta_vs_fixed": -3.3015761375427246,
+      "sample_mean_utility": -6.542109489440918,
+      "sample_delta_vs_fixed": -2.5158233642578125
+    },
+    "low": {
+      "n": 359,
+      "fixed_mean_utility": -3.299515724182129,
+      "argmax_mean_utility": -7.183480739593506,
+      "argmax_delta_vs_fixed": -3.883965015411377,
+      "expected_mean_utility": -6.096573829650879,
+      "expected_delta_vs_fixed": -2.79705810546875,
+      "sample_mean_utility": -6.085693359375,
+      "sample_delta_vs_fixed": -2.786177635192871
+    }
+  },
+  "pool_redundancy": {
+    "high": {
+      "n": 637,
+      "fixed_mean_utility": -3.6571319103240967,
+      "argmax_mean_utility": -6.239701747894287,
+      "argmax_delta_vs_fixed": -2.5825698375701904,
+      "expected_mean_utility": -6.3413472175598145,
+      "expected_delta_vs_fixed": -2.6842153072357178,
+      "sample_mean_utility": -5.91986608505249,
+      "sample_delta_vs_fixed": -2.2627341747283936
+    },
+    "low": {
+      "n": 637,
+      "fixed_mean_utility": -3.985846757888794,
+      "argmax_mean_utility": -7.066133499145508,
+      "argmax_delta_vs_fixed": -3.080286741256714,
+      "expected_mean_utility": -7.620450019836426,
+      "expected_delta_vs_fixed": -3.634603261947632,
+      "sample_mean_utility": -6.9071269035339355,
+      "sample_delta_vs_fixed": -2.9212801456451416
+    }
+  },
+  "oracle_margin": {
+    "0.01<=margin<0.05": {
+      "n": 263,
+      "fixed_mean_utility": -1.9867078065872192,
+      "argmax_mean_utility": -2.529963493347168,
+      "argmax_delta_vs_fixed": -0.5432556867599487,
+      "expected_mean_utility": -2.4045228958129883,
+      "expected_delta_vs_fixed": -0.41781508922576904,
+      "sample_mean_utility": -2.1448562145233154,
+      "sample_delta_vs_fixed": -0.1581484079360962
+    },
+    "0.05<=margin<0.10": {
+      "n": 183,
+      "fixed_mean_utility": -2.1544735431671143,
+      "argmax_mean_utility": -3.869990348815918,
+      "argmax_delta_vs_fixed": -1.7155168056488037,
+      "expected_mean_utility": -2.7008121013641357,
+      "expected_delta_vs_fixed": -0.5463385581970215,
+      "sample_mean_utility": -2.8300139904022217,
+      "sample_delta_vs_fixed": -0.6755404472351074
+    },
+    "margin<0.01": {
+      "n": 347,
+      "fixed_mean_utility": -2.404824733734131,
+      "argmax_mean_utility": -4.026851654052734,
+      "argmax_delta_vs_fixed": -1.6220269203186035,
+      "expected_mean_utility": -2.1747283935546875,
+      "expected_delta_vs_fixed": 0.23009634017944336,
+      "sample_mean_utility": -3.1271040439605713,
+      "sample_delta_vs_fixed": -0.7222793102264404
+    },
+    "margin>=0.10": {
+      "n": 481,
+      "fixed_mean_utility": -6.480936527252197,
+      "argmax_mean_utility": -11.86052131652832,
+      "argmax_delta_vs_fixed": -5.379584789276123,
+      "expected_mean_utility": -14.578784942626953,
+      "expected_delta_vs_fixed": -8.097848892211914,
+      "sample_mean_utility": -12.481703758239746,
+      "sample_delta_vs_fixed": -6.000767230987549
+    }
+  },
+  "sensitivity_x_redundancy": {
+    "high_sensitivity__high_redundancy": {
+      "n": 454,
+      "fixed_mean_utility": -4.023779392242432,
+      "argmax_mean_utility": -6.1151442527771,
+      "argmax_delta_vs_fixed": -2.091364860534668,
+      "expected_mean_utility": -6.690126895904541,
+      "expected_delta_vs_fixed": -2.6663475036621094,
+      "sample_mean_utility": -6.313599109649658,
+      "sample_delta_vs_fixed": -2.2898197174072266
+    },
+    "high_sensitivity__low_redundancy": {
+      "n": 461,
+      "fixed_mean_utility": -4.028754234313965,
+      "argmax_mean_utility": -6.769353866577148,
+      "argmax_delta_vs_fixed": -2.7405996322631836,
+      "expected_mean_utility": -7.955915451049805,
+      "expected_delta_vs_fixed": -3.92716121673584,
+      "sample_mean_utility": -6.767150402069092,
+      "sample_delta_vs_fixed": -2.738396167755127
+    },
+    "low_sensitivity__high_redundancy": {
+      "n": 183,
+      "fixed_mean_utility": -2.747525930404663,
+      "argmax_mean_utility": -6.548713207244873,
+      "argmax_delta_vs_fixed": -3.80118727684021,
+      "expected_mean_utility": -5.476069450378418,
+      "expected_delta_vs_fixed": -2.728543519973755,
+      "sample_mean_utility": -4.9430623054504395,
+      "sample_delta_vs_fixed": -2.1955363750457764
+    },
+    "low_sensitivity__low_redundancy": {
+      "n": 176,
+      "fixed_mean_utility": -3.873459577560425,
+      "argmax_mean_utility": -7.843494892120361,
+      "argmax_delta_vs_fixed": -3.9700353145599365,
+      "expected_mean_utility": -6.741756916046143,
+      "expected_delta_vs_fixed": -2.8682973384857178,
+      "sample_mean_utility": -7.273769855499268,
+      "sample_delta_vs_fixed": -3.4003102779388428
+    }
+  }
+}
