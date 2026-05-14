@@ -71,6 +71,9 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated λ grid for classification objectives, or 'auto' to infer from oracle records.",
     )
     p.add_argument("--softmax-temperature", type=float, default=1.0)
+    p.add_argument("--margin-threshold", type=float, default=0.0,
+                   help="Only train on claims with oracle logprob margin >= this value. "
+                        "0.0 means use all data (default). 0.05 keeps ~27%% of data.")
     p.add_argument("--alpha-dense", type=float, default=None)
     p.add_argument("--alpha-lexical", type=float, default=None)
     p.add_argument("--alpha-bm25", type=float, default=None)
@@ -218,6 +221,23 @@ def main() -> None:
             rec["oracle_lambda"] = float(rec["oracle_lambda"])
             oracle_by_eid[rec["event_id"]] = rec
     _log(f"Loaded {len(oracle_by_eid)} oracle λ values", show_progress=show_progress)
+
+    if args.margin_threshold > 0:
+        n_before = len(oracle_by_eid)
+        keep_eids = []
+        for eid, rec in oracle_by_eid.items():
+            lp = rec.get("logprobs_by_lambda", {})
+            if isinstance(lp, dict) and len(lp) >= 2:
+                vals = sorted([float(v) for v in lp.values()], reverse=True)
+                margin = vals[0] - vals[1]
+                if margin >= args.margin_threshold:
+                    keep_eids.append(eid)
+        keep_set = set(keep_eids)
+        oracle_by_eid = {eid: rec for eid, rec in oracle_by_eid.items() if eid in keep_set}
+        _log(
+            f"Margin >= {args.margin_threshold}: kept {len(oracle_by_eid)} / {n_before} records",
+            show_progress=show_progress,
+        )
 
     # Load ChunkMMR cache and construct embedding tensors
     chunk_samples = _load_pickle(chunk_mmr_cache)
