@@ -347,7 +347,7 @@ class PipelineRunner:
             if not train_config_path.is_absolute():
                 train_config_path = self.project_root / train_config_path
         else:
-            train_config_path = self.state.run_dir / "configs" / "train.resolved.yaml"
+            train_config_path = train_dir.parent / "configs" / "train.resolved.yaml"
         artifacts = run_inference(
             run_dir=train_dir,
             checkpoint=checkpoint,
