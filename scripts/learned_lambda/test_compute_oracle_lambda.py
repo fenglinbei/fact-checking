@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 MODULE_PATH = Path(__file__).with_name("compute_oracle_lambda.py")
@@ -17,7 +18,9 @@ _resolve_vllm_paths = compute_oracle_lambda._resolve_vllm_paths
 _validate_lora_adapter = compute_oracle_lambda._validate_lora_adapter
 _append_label_prefix = compute_oracle_lambda._append_label_prefix
 _build_label_token_ids = compute_oracle_lambda._build_label_token_ids
-_extract_required_label_logprobs = compute_oracle_lambda._extract_required_label_logprobs
+_build_scoring_prompt_token_ids = compute_oracle_lambda._build_scoring_prompt_token_ids
+_extract_prompt_token_logprob = compute_oracle_lambda._extract_prompt_token_logprob
+_normalize_label_logprobs = compute_oracle_lambda._normalize_label_logprobs
 
 
 class _FakeTokenizer:
@@ -119,28 +122,81 @@ def test_build_label_token_ids_rejects_multi_token_label_choice() -> None:
         _build_label_token_ids(tokenizer)
 
 
-def test_extract_required_label_logprobs_requires_every_label_token() -> None:
-    label_token_ids = {"A": 101, "B": 102, "C": 103}
-    first_token_logprobs = {
-        101: SimpleNamespace(logprob=-0.1),
-        102: SimpleNamespace(logprob=-0.2),
-        103: SimpleNamespace(logprob=-0.3),
-    }
+def test_build_scoring_prompt_token_ids_requires_final_label_token() -> None:
+    tokenizer = _FakeTokenizer({
+        "promptLabel: A": [11, 12, 101],
+        "promptLabel: B": [11, 12, 102],
+    })
 
-    assert _extract_required_label_logprobs(first_token_logprobs, label_token_ids) == {
-        "A": -0.1,
-        "B": -0.2,
-        "C": -0.3,
-    }
+    assert _build_scoring_prompt_token_ids(
+        tokenizer,
+        prompt="prompt",
+        label_prefix="Label:",
+        letter="A",
+        label_token_id=101,
+    ) == [11, 12, 101]
 
-    with pytest.raises(RuntimeError, match="Missing: C"):
-        _extract_required_label_logprobs(
-            {
-                101: SimpleNamespace(logprob=-0.1),
-                102: SimpleNamespace(logprob=-0.2),
-            },
-            label_token_ids,
+    with pytest.raises(ValueError, match="must end with token_id=102"):
+        _build_scoring_prompt_token_ids(
+            tokenizer,
+            prompt="prompt",
+            label_prefix="Label:",
+            letter="A",
+            label_token_id=102,
         )
+
+
+def test_extract_prompt_token_logprob_reads_actual_final_prompt_token() -> None:
+    output = SimpleNamespace(
+        prompt_token_ids=[11, 101],
+        prompt_logprobs=[
+            None,
+            {101: SimpleNamespace(logprob=-0.1)},
+        ],
+    )
+
+    assert _extract_prompt_token_logprob(output, 101, event_id="e1", lam=0.7, letter="A") == -0.1
+
+    output_with_string_key = SimpleNamespace(
+        prompt_token_ids=[11, 101],
+        prompt_logprobs=[
+            None,
+            {"101": {"logprob": -0.2}},
+        ],
+    )
+    assert _extract_prompt_token_logprob(output_with_string_key, 101, event_id="e1", lam=0.7, letter="A") == -0.2
+
+    with pytest.raises(RuntimeError, match="did not include the actual label token"):
+        _extract_prompt_token_logprob(
+            SimpleNamespace(
+                prompt_token_ids=[11, 101],
+                prompt_logprobs=[
+                    None,
+                    {102: SimpleNamespace(logprob=-0.3)},
+                ],
+            ),
+            101,
+            event_id="e1",
+            lam=0.7,
+            letter="A",
+        )
+
+
+def test_normalize_label_logprobs_returns_constrained_distribution() -> None:
+    label_logprobs = {
+        "A": -1.0,
+        "B": -2.0,
+        "C": -3.0,
+        "D": -4.0,
+        "E": -5.0,
+        "F": -6.0,
+    }
+
+    normalized = _normalize_label_logprobs(label_logprobs)
+
+    assert set(normalized) == {"A", "B", "C", "D", "E", "F"}
+    assert sum(np.exp(list(normalized.values()))) == pytest.approx(1.0)
+    assert normalized["A"] > normalized["B"] > normalized["C"]
 
 
 def test_append_label_prefix() -> None:

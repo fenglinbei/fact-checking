@@ -1,8 +1,8 @@
 """Step 2: Compute oracle λ per claim via vLLM batch inference.
 
 Reads per-λ prompt JSONL files (from generate_oracle_prompts.py), runs a vLLM
-model with optional LoRA adapter weights and logprobs, then picks the λ that
-maximises the log-probability of the correct label token.
+model with optional LoRA adapter weights and prompt logprobs, then picks the λ
+that maximises the log-probability of the correct label token.
 
 Usage:
     PYTHONPATH=src python scripts/learned_lambda/compute_oracle_lambda.py \
@@ -53,6 +53,13 @@ def parse_args() -> argparse.Namespace:
         default="Label:",
         help="Prefix appended before scoring the single-token label choice. "
              "The default matches the normal label-decoding inference path.",
+    )
+    p.add_argument(
+        "--score-batch-size",
+        type=int,
+        default=8192,
+        help="Number of label-continuation scoring requests per vLLM.generate call. "
+             "Each original prompt creates six scoring requests.",
     )
     p.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars")
     return p.parse_args()
@@ -126,6 +133,24 @@ def _append_label_prefix(prompt: str, label_prefix: str) -> str:
     return prompt + label_prefix
 
 
+def _build_scoring_prompt_token_ids(
+    tokenizer,
+    *,
+    prompt: str,
+    label_prefix: str,
+    letter: str,
+    label_token_id: int,
+) -> list[int]:
+    text = _append_label_prefix(prompt, label_prefix) + _label_choice_text(letter)
+    ids = tokenizer.encode(text, add_special_tokens=False)
+    if not ids or int(ids[-1]) != int(label_token_id):
+        raise ValueError(
+            f"Scoring prompt for label {letter!r} must end with token_id={label_token_id}, got ids={ids[-5:]}. "
+            "Check that --label-prefix and tokenizer match the model used for inference."
+        )
+    return [int(token_id) for token_id in ids]
+
+
 def _extract_logprob_value(entry) -> float:
     if hasattr(entry, "logprob"):
         return float(entry.logprob)
@@ -134,27 +159,43 @@ def _extract_logprob_value(entry) -> float:
     return float(entry)
 
 
-def _extract_required_label_logprobs(
-    first_token_logprobs: dict,
-    letter_token_ids: dict[str, int],
-) -> dict[str, float]:
-    label_logprobs: dict[str, float] = {}
-    missing: list[str] = []
-    for letter, token_id in letter_token_ids.items():
-        entry = first_token_logprobs.get(token_id)
-        if entry is None:
-            entry = first_token_logprobs.get(str(token_id))
-        if entry is None:
-            missing.append(f"{letter}(token_id={token_id})")
-            continue
-        label_logprobs[letter] = _extract_logprob_value(entry)
-    if missing:
+def _extract_prompt_token_logprob(output, token_id: int, *, event_id: str, lam: float, letter: str) -> float:
+    prompt_token_ids = getattr(output, "prompt_token_ids", None)
+    if not prompt_token_ids:
+        raise RuntimeError(f"Missing prompt_token_ids for event_id={event_id}, lambda={lam:.2f}, label={letter}")
+    if int(prompt_token_ids[-1]) != int(token_id):
         raise RuntimeError(
-            "vLLM did not return all required A-F label token logprobs. "
-            f"Missing: {', '.join(missing)}. "
-            "This should not happen when allowed_token_ids is set to the six label tokens."
+            f"Scoring output ended with token_id={prompt_token_ids[-1]}, expected {token_id} "
+            f"for event_id={event_id}, lambda={lam:.2f}, label={letter}"
         )
-    return label_logprobs
+
+    prompt_logprobs = getattr(output, "prompt_logprobs", None)
+    if not prompt_logprobs:
+        raise RuntimeError(f"Missing prompt_logprobs for event_id={event_id}, lambda={lam:.2f}, label={letter}")
+    last_token_logprobs = prompt_logprobs[-1]
+    if not last_token_logprobs:
+        raise RuntimeError(
+            f"Empty prompt logprobs for final label token event_id={event_id}, lambda={lam:.2f}, label={letter}"
+        )
+
+    entry = last_token_logprobs.get(token_id)
+    if entry is None:
+        entry = last_token_logprobs.get(str(token_id))
+    if entry is None:
+        keys = list(last_token_logprobs.keys())[:10]
+        raise RuntimeError(
+            f"vLLM prompt_logprobs did not include the actual label token {letter}(token_id={token_id}) "
+            f"for event_id={event_id}, lambda={lam:.2f}; returned keys sample={keys}. "
+            "This should not happen with prompt_logprobs enabled."
+        )
+    return _extract_logprob_value(entry)
+
+
+def _normalize_label_logprobs(label_logprobs: dict[str, float]) -> dict[str, float]:
+    values = np.array([float(label_logprobs[letter]) for letter in LETTER_ORDER], dtype=np.float64)
+    max_value = float(np.max(values))
+    log_z = max_value + float(np.log(np.exp(values - max_value).sum()))
+    return {letter: float(label_logprobs[letter] - log_z) for letter in LETTER_ORDER}
 
 
 def main() -> None:
@@ -266,31 +307,21 @@ def main() -> None:
     print(f"Letter token IDs: {letter_token_ids}", flush=True)
 
     sampling_param_names = set(inspect.signature(SamplingParams).parameters)
-    if "allowed_token_ids" not in sampling_param_names:
+    if "prompt_logprobs" not in sampling_param_names:
         raise RuntimeError(
-            "This vLLM build does not support SamplingParams.allowed_token_ids. "
-            "Upgrade vLLM or use a version that can constrain oracle scoring to A-F label tokens."
+            "This vLLM build does not support SamplingParams.prompt_logprobs. "
+            "Upgrade vLLM or use a version that can score prompt continuations."
         )
 
     sampling_params = SamplingParams(
         max_tokens=1,
         temperature=0.0,
-        logprobs=len(letter_token_ids),
-        allowed_token_ids=list(letter_token_ids.values()),
+        prompt_logprobs=0,
+        detokenize=False,
     )
 
-    print("Running batch inference...", flush=True)
+    print("Running label-continuation scoring...", flush=True)
     generate_params = inspect.signature(llm.generate).parameters
-    generate_kwargs = {
-        "prompts": [_append_label_prefix(prompt, args.label_prefix) for prompt in all_prompts],
-        "sampling_params": sampling_params,
-    }
-    if "use_tqdm" in generate_params:
-        generate_kwargs["use_tqdm"] = show_progress
-    if lora_request is not None:
-        generate_kwargs["lora_request"] = lora_request
-    outputs = llm.generate(**generate_kwargs)
-    print(f"Inference complete: {len(outputs)} outputs", flush=True)
 
     # Extract log-probs and compute oracle λ
     # Structure: event_id -> {lambda_val -> logprob_of_correct_label}
@@ -298,10 +329,87 @@ def main() -> None:
     event_label_logprobs: dict[str, dict[float, dict[str, float]]] = {}
     event_gold: dict[str, str] = {}
 
-    for output, meta in tqdm(
-        zip(outputs, all_meta),
+    for meta in all_meta:
+        event_gold[meta["event_id"]] = meta["gold_label"]
+
+    score_batch_size = int(args.score_batch_size)
+    if score_batch_size <= 0:
+        score_batch_size = max(1, len(all_meta) * len(letter_token_ids))
+    total_scoring_requests = len(all_meta) * len(letter_token_ids)
+
+    batch_token_ids: list[list[int]] = []
+    batch_meta: list[dict] = []
+
+    def flush_scoring_batch() -> int:
+        nonlocal batch_token_ids, batch_meta
+        if not batch_token_ids:
+            return 0
+        generate_kwargs = {
+            "prompt_token_ids": batch_token_ids,
+            "sampling_params": sampling_params,
+        }
+        if "use_tqdm" in generate_params:
+            generate_kwargs["use_tqdm"] = False
+        if lora_request is not None:
+            generate_kwargs["lora_request"] = lora_request
+
+        outputs = llm.generate(**generate_kwargs)
+        if len(outputs) != len(batch_meta):
+            raise RuntimeError(f"vLLM returned {len(outputs)} outputs for {len(batch_meta)} scoring requests")
+
+        for output, meta in zip(outputs, batch_meta):
+            event_id = meta["event_id"]
+            lam = meta["lambda_val"]
+            letter = meta["letter"]
+            token_id = meta["label_token_id"]
+            logprob = _extract_prompt_token_logprob(
+                output,
+                token_id,
+                event_id=event_id,
+                lam=lam,
+                letter=letter,
+            )
+            event_label_logprobs.setdefault(event_id, {}).setdefault(lam, {})[letter] = logprob
+
+        processed = len(batch_meta)
+        batch_token_ids = []
+        batch_meta = []
+        return processed
+
+    with tqdm(
+        total=total_scoring_requests,
+        desc="score label continuations",
+        unit="choice",
+        dynamic_ncols=True,
+        disable=not show_progress,
+    ) as score_progress:
+        for prompt, meta in zip(all_prompts, all_meta):
+            for letter, token_id in letter_token_ids.items():
+                batch_token_ids.append(
+                    _build_scoring_prompt_token_ids(
+                        tokenizer,
+                        prompt=prompt,
+                        label_prefix=args.label_prefix,
+                        letter=letter,
+                        label_token_id=token_id,
+                    )
+                )
+                batch_meta.append({
+                    "event_id": meta["event_id"],
+                    "lambda_val": meta["lambda_val"],
+                    "letter": letter,
+                    "label_token_id": token_id,
+                })
+                if len(batch_token_ids) >= score_batch_size:
+                    score_progress.update(flush_scoring_batch())
+        score_progress.update(flush_scoring_batch())
+
+    print(f"Scoring complete: {total_scoring_requests} label continuations", flush=True)
+
+    for meta in tqdm(
+        all_meta,
         total=len(all_meta),
-        desc="extract label logprobs",
+        desc="extract correct-label logprobs",
         unit="prompt",
         dynamic_ncols=True,
         disable=not show_progress,
@@ -309,22 +417,19 @@ def main() -> None:
         event_id = meta["event_id"]
         lam = meta["lambda_val"]
         gold_label = meta["gold_label"]
-        event_gold[event_id] = gold_label
-
         correct_letter = LABEL_LETTERS.get(gold_label, "")
         if not correct_letter:
             raise ValueError(f"Unknown gold_label={gold_label!r} for event_id={event_id}")
-        if not output.outputs or not output.outputs[0].logprobs:
-            raise RuntimeError(f"Missing vLLM output logprobs for event_id={event_id}, lambda={lam:.2f}")
 
-        first_token_logprobs = output.outputs[0].logprobs[0]
-        if not first_token_logprobs:
-            raise RuntimeError(f"Empty vLLM token logprobs for event_id={event_id}, lambda={lam:.2f}")
-        label_logprobs = _extract_required_label_logprobs(first_token_logprobs, letter_token_ids)
-        logprob = label_logprobs[correct_letter]
-
-        event_logprobs.setdefault(event_id, {})[lam] = logprob
-        event_label_logprobs.setdefault(event_id, {})[lam] = label_logprobs
+        label_logprobs = event_label_logprobs.get(event_id, {}).get(lam, {})
+        missing = [letter for letter in LETTER_ORDER if letter not in label_logprobs]
+        if missing:
+            raise RuntimeError(
+                f"Missing scored label logprobs for event_id={event_id}, lambda={lam:.2f}: {missing}"
+            )
+        normalized_label_logprobs = _normalize_label_logprobs(label_logprobs)
+        event_label_logprobs[event_id][lam] = normalized_label_logprobs
+        event_logprobs.setdefault(event_id, {})[lam] = normalized_label_logprobs[correct_letter]
 
     # Select oracle λ per claim
     output_path = Path(args.output)
