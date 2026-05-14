@@ -173,9 +173,121 @@ Oracle λ 相对默认 λ=0.7 的正确标签概率比：
 
 Learned lambda 试图用 **证据的文本语义** 来预测 **SFT 模型对不同证据排序的敏感度**。这是两个本质上不相关的域 — 前者是"claim 和 evidence 在讲什么"，后者是"如果证据以不同方式呈现，模型会不会改变判断"。除非这两者之间存在系统性的关联（目前数据表明不存在），否则这个方向在理论上就是困难的。
 
+## 实验验证
+
+基于上述分析，我们设计了两个实验来尝试改善预测效果：
+
+1. **实验 1：高 Margin 过滤** — 只在 margin >= 0.05 的 2761 条（27.4%）数据上训练，过滤低质量标签
+2. **实验 2：3-Bin 粗粒度分类** — 将 21 个 λ 值合并为 3 个区间（diversity/balanced/relevance），降低分类难度
+
+### 实验 1：高 Margin 过滤（margin >= 0.05）
+
+**设计思路**：只在高 margin 子集上训练预测器。低 margin claim fallback 到默认 λ=0.7。减小模型复杂度应对数据量减少（hidden_dim=128, dropout=0.2）。
+
+**训练集特征**：
+
+| 指标 | 全量 | High-margin (>=0.05) |
+|------|------|----------------------|
+| N | 10065 | 2761 |
+| Oracle mean | 0.445 | 0.282 |
+| Oracle std | 0.296 | 0.259 |
+| Oracle 在 [0, 0.3] 占比 | 36.4% | 61.8% |
+
+**结果**：
+
+```
+val MAE=0.214, val RMSE=0.270, target_std=0.259
+R² vs mean: 负值（比预测均值更差）
+```
+
+在全量数据上的最终评估：
+
+```
+MAE=0.267, RMSE=0.319
+Pearson r=0.181, Spearman r=0.178
+R² vs mean: -0.167（负值）
+Pred std/oracle std: 0.129（预测极度压缩）
+```
+
+**关键发现**：
+- 预测值坍缩到 0.30-0.32 极窄区间（std=0.038），对所有 oracle λ 值的预测几乎相同
+- `corr(pred, n_candidates) = -0.348` — 模型学到了候选数量信号，但预测范围被 sigmoid 严重压缩
+- `corr(pred, oracle) = 0.181` — 与 oracle 几乎无关
+- 预测范围：1-2 候选时 pred=0.356，31-60 候选时 pred=0.301（总跨度仅 0.055），而 oracle 在同样区间从 0.589 到 0.467（跨度 0.122）
+
+**结论**：过滤低质量数据不能让模型学到 oracle λ，因为即使在高 margin 子集中，BGE embedding 仍然不包含预测 optimal λ 所需的信息。
+
+### 实验 2：3-Bin 粗粒度分类
+
+**设计思路**：将 21 个细粒度 λ 值合并为 3 个粗粒度区间，降低分类难度：
+
+| Bin | 区间 | 代表值 | N | % | High-margin % |
+|-----|------|--------|---|-----|---------------|
+| diversity | [0.0, 0.3] | 0.15 | 3667 | 36.4% | 46.4% |
+| balanced | (0.3, 0.7) | 0.50 | 3382 | 33.6% | 22.4% |
+| relevance | [0.7, 1.0] | 0.85 | 3016 | 30.0% | 10.1% |
+
+使用 `ChunkEmbeddingLambdaEncoder` 的 classification 模式（`lambda_grid=[0.15, 0.50, 0.85]`）。
+
+**结果**：
+
+```
+val MAE=0.256, val RMSE=0.294, target_std=0.296
+R² vs mean: 0.05
+```
+
+在全量数据上的分类评估：
+
+```
+3-Bin Classification:
+  Accuracy: 0.336 (n=3382/10065, random=0.333)
+
+  Confusion matrix (rows=oracle, cols=pred):
+                             diversity balanced relevance
+    diversity [0,.3]                 0     3667        0
+    balanced (.3,.7)                 0     3382        0
+    relevance [.7,1]                 0     3016        0
+
+  Per-bin metrics:
+    diversity [0,.3]    precision=0.000 recall=0.000
+    balanced (.3,.7)    precision=0.336 recall=1.000
+    relevance [.7,1]    precision=0.000 recall=0.000
+```
+
+**所有 10065 个样本全部被预测为 "balanced" 类别。**
+
+通过 softmax 原始输出进一步分析：
+
+```
+Softmax 概率（均值）: diversity=0.457, balanced=0.287, relevance=0.256
+Per-bin 的 diversity 概率:
+  oracle=diversity:  0.482
+  oracle=balanced:   0.453
+  oracle=relevance:  0.432
+  → 跨度仅 0.05，std=0.086，三个类别的概率分布几乎完全重叠
+```
+
+- Softmax argmax 分布：88.8% diversity, 0.2% balanced, 11.0% relevance
+- 按 argmax 计算准确率：40.7%（略高于 random 33.3%，但模型严重偏向 diversity 类）
+- Per-class 概率差异远小于类间方差：模型无法通过 BGE embedding 区分这三个类别
+
+**结论**：即使将问题简化为 3 分类，BGE embedding 仍然没有包含区分最优 λ 区间所需的信息。
+
+### 实验总结
+
+| 实验 | val MAE | R² vs mean | 核心失败模式 |
+|------|---------|------------|-------------|
+| 原版 (全量回归) | 0.256 | 0.01 | 预测坍缩到均值 |
+| 实验 1 (high-margin) | 0.267 | -0.17 | 预测坍缩到 0.31 |
+| 实验 2 (3-bin 分类) | 0.250 | 0.05 | 所有样本预测同一类 |
+
+三个实验的一致失败表明：**问题不在数据质量、问题粒度或模型架构，而在于 BGE 文本 embedding 根本不编码 "什么 λ 对 MMR 最优" 这个信息。**
+
+Oracle λ 取决于 SFT 模型对证据排列顺序的内部响应。BGE embedding 编码的是文本的语义内容 — 两者之间不存在系统性关联。
+
 ## 改进方向建议
 
-### 短期：使用简单启发式
+### 短期可行：简单启发式
 
 ```python
 λ = -0.073 * log(n_candidates) + 0.613
@@ -183,19 +295,15 @@ Learned lambda 试图用 **证据的文本语义** 来预测 **SFT 模型对不�
 
 这个仅用候选数量的线性回归，表现与复杂神经网络相当（MAE=0.253 vs 0.256），零维护成本。
 
-### 中期：改进 Oracle 定义
+### 中期探索：替代 Oracle 定义
 
-1. **过滤低质量训练数据**：只保留 margin >= 0.05 的 claim（约 27% 样本），在这些"λ 有影响"的样本上训练
-2. **粗粒度分类**：将 21 个 λ 合并为 3 个区间（如 diversity / balanced / relevance），分类准确率可能更高
-3. **软标签**：用 logprob 分布作为软目标，让模型学到"多个 λ 都可以"的不确定性
+1. **直接搜索替代预测** — 推理时对每个 claim 在少量候选 λ（如 0.0, 0.5, 1.0）上分别做 MMR，用 vLLM 评估 logprob，选最优。成本 3x 但无需训练预测器。
+2. **更粗的 Oracle 网格** — 将 oracle λ 的计算从 21 个值减为 3-5 个（如 0.0, 0.5, 1.0），降低多重比较引入的噪声
+3. **端到端信号替代 logprob** — 用下游 accuracy 而非 label logprob 作为 λ 优劣的标准
 
-### 长期：先验证方向
+### 长期前提：验证 Oracle 价值
 
-在进行更多预测器优化之前，必须先在 test 集上回答这个问题：
-
-> **Oracle λ（理论最优，不可实现）相比固定 λ=0.7 能提升多少 end-to-end fact-checking 准确率？**
-
-如果 oracle λ 的准确率提升很小（例如 <1%），那么即使完美预测 oracle λ 也没有意义。如果提升显著，再考虑如何缩小预测器与 oracle 之间的差距。
+Oracle λ 在 val 集上相比固定 λ=0.7 已验证 **+3.1%** 准确率提升（33.48% vs 30.40%，2013 样本）。这确认了 adaptive λ 有理论价值。但当前基于 BGE embedding 的预测路径不可行，需要重新设计预测器使用的特征（如直接使用 MMR sensitivity 模拟结果而非文本语义），或采用不需要预测器的替代方案。
 
 ## 关键文件索引
 
@@ -212,6 +320,12 @@ Learned lambda 试图用 **证据的文本语义** 来预测 **SFT 模型对不�
 | `outputs/learned_lambda/training_meta.json` | 训练元数据与结果 |
 | `outputs/learned_lambda/predictor.pt` | 训练好的 chunk_embedding 模型 (7.3MB) |
 | `configs/experiment/learned_lambda_mmr.yaml` | learned lambda 实验配置 |
+| `scripts/learned_lambda/run_train_predictor_high_margin.sh` | 实验 1 启动脚本（高 margin 过滤训练） |
+| `scripts/learned_lambda/run_train_predictor_coarse.sh` | 实验 2 启动脚本（3-bin 粗粒度分类训练） |
+| `outputs/learned_lambda_high_margin/` | 实验 1 输出目录 |
+| `outputs/learned_lambda_coarse/` | 实验 2 输出目录 |
+| `outputs/learned_lambda/comparison/oracle_predictions.jsonl` | Oracle λ 端到端推理结果（val, N=2013） |
+| `outputs/learned_lambda/comparison/fixed_0.70_predictions.jsonl` | 固定 λ=0.7 端到端推理结果（val, N=2013） |
 
 ## 复现步骤
 
@@ -230,8 +344,19 @@ bash scripts/learned_lambda/run_train_predictor.sh
 
 # 步骤 4: 评估预测器
 bash scripts/learned_lambda/run_evaluate_predictor.sh
+
+# 实验 1: 高 margin 过滤训练
+bash scripts/learned_lambda/run_train_predictor_high_margin.sh
+
+# 实验 2: 3-bin 粗粒度分类训练
+bash scripts/learned_lambda/run_train_predictor_coarse.sh
+
+# 实验 2 评估 (含 classification accuracy 和 confusion matrix)
+MODEL=outputs/learned_lambda_coarse/predictor.pt \
+FEATURE_STATS=outputs/learned_lambda_coarse/feature_stats.json \
+bash scripts/learned_lambda/run_evaluate_predictor.sh
 ```
 
 ## 分析日期
 
-2026-05-13
+2026-05-14
