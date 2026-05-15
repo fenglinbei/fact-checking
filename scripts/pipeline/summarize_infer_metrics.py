@@ -23,6 +23,7 @@ METADATA_COLUMNS = [
     "metrics_path",
     "modified_time",
 ]
+PROMPT_METADATA_COLUMNS = ["prompt_stats_found", "prompt_stats_path"]
 PREFERRED_OVERRIDE_COLUMNS = [
     "build.retrieval.top_k",
     "build.retrieval.mmr_lambda",
@@ -44,6 +45,28 @@ PREFERRED_METRIC_COLUMNS = [
     "parse_error_rate",
 ]
 PLOT_METRIC_COLUMNS = ["accuracy", "macro_precision", "macro_recall", "macro_f1", "parse_error_rate"]
+PROMPT_MEAN_COLUMN = "prompt.train.prompt_token_count.mean"
+MAIN_PLOT_COLUMNS = PLOT_METRIC_COLUMNS + [PROMPT_MEAN_COLUMN]
+PROMPT_STAT_COLUMNS = [
+    "prompt.train.prompt_token_count.mean",
+    "prompt.train.prompt_token_count.p50",
+    "prompt.train.prompt_token_count.p90",
+    "prompt.train.prompt_token_count.p95",
+    "prompt.train.prompt_token_count.p99",
+    "prompt.train.prompt_token_count.max",
+    "prompt.train.prompt_token_count.overflow_rate",
+    "prompt.train.evidence_truncation.truncation_rate",
+    "prompt.train.evidence_truncation.mean_evidence_count",
+    "prompt.val.prompt_token_count.mean",
+    "prompt.val.prompt_token_count.p50",
+    "prompt.val.prompt_token_count.p90",
+    "prompt.val.prompt_token_count.p95",
+    "prompt.val.prompt_token_count.p99",
+    "prompt.val.prompt_token_count.max",
+    "prompt.val.prompt_token_count.overflow_rate",
+    "prompt.val.evidence_truncation.truncation_rate",
+    "prompt.val.evidence_truncation.mean_evidence_count",
+]
 CLOSE_METRIC_COLUMNS = ["accuracy", "macro_precision", "macro_recall", "macro_f1"]
 CLOSE_ABS_MARGIN = 0.006
 LABEL_ORDER = ["pants-fire", "false", "barely-true", "half-true", "mostly-true", "true"]
@@ -51,27 +74,32 @@ PER_CLASS_METRICS = ["precision", "recall", "f1"]
 SOURCE_LABELS = {
     "b3_mmr_topk_sweep_1024": "b3 top_k sweep",
     "heuristic_lambda_mmr": "heuristic lambda",
+    "heuristic_lambda_mmr_fullft": "heuristic lambda full-ft",
     "mmr_sensitivity_gated": "sensitivity gated",
     "mmr_topk_sweep_infer": "reuse top_k sweep",
     "reranker_only": "reranker only",
 }
 SINGLE_SOURCE_MARKERS = {
     "heuristic_lambda_mmr": "D",
+    "heuristic_lambda_mmr_fullft": "*",
     "mmr_sensitivity_gated": "P",
     "reranker_only": "X",
 }
 SINGLE_SOURCE_X_JITTER = {
     "heuristic_lambda_mmr": -0.24,
+    "heuristic_lambda_mmr_fullft": -0.48,
     "mmr_sensitivity_gated": 0.0,
     "reranker_only": 0.24,
 }
 SINGLE_SOURCE_LABEL_OFFSET = {
     "heuristic_lambda_mmr": (-54, 18),
+    "heuristic_lambda_mmr_fullft": (-70, 42),
     "mmr_sensitivity_gated": (10, -32),
     "reranker_only": (12, 30),
 }
 SINGLE_SOURCE_SHORT_LABELS = {
     "heuristic_lambda_mmr": "H",
+    "heuristic_lambda_mmr_fullft": "HF",
     "mmr_sensitivity_gated": "G",
     "reranker_only": "R",
 }
@@ -185,6 +213,36 @@ def _flatten_numeric_metrics(
             out[prefix] = numeric
 
 
+def _get_nested_float(data: dict[str, Any], path: tuple[str, ...]) -> float | None:
+    value: Any = data
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            return None
+        value = value[key]
+    if not _is_numeric(value):
+        return None
+    numeric = float(value)
+    return numeric if math.isfinite(numeric) else None
+
+
+def _read_prompt_stats(run_dir: Path) -> tuple[dict[str, float], Path, bool]:
+    path = run_dir / "train" / "prompt_stats" / "prompt_stats.json"
+    if not path.exists():
+        return {}, path, False
+    data = _read_json(path)
+    values: dict[str, float] = {}
+    for split in ("train", "val"):
+        for key in ("mean", "p50", "p90", "p95", "p99", "max", "overflow_rate"):
+            value = _get_nested_float(data, (split, "prompt_token_count", key))
+            if value is not None:
+                values[f"prompt.{split}.prompt_token_count.{key}"] = value
+        for key in ("truncation_rate", "mean_evidence_count"):
+            value = _get_nested_float(data, (split, "evidence_truncation", key))
+            if value is not None:
+                values[f"prompt.{split}.evidence_truncation.{key}"] = value
+    return values, path, True
+
+
 def _format_cell(value: Any) -> str:
     if value is None:
         return ""
@@ -241,10 +299,11 @@ def collect_rows(
     run_roots: list[Path],
     *,
     splits: set[str] | None = None,
-) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], list[str], list[str]]:
     rows: list[dict[str, Any]] = []
     override_keys: set[str] = set()
     metric_keys: set[str] = set()
+    prompt_keys: set[str] = set()
     for run_root in run_roots:
         paths = _metrics_paths(run_root)
         if not paths:
@@ -263,6 +322,7 @@ def collect_rows(
             overrides = _parse_run_overrides(metadata["run_name"])
             for key, value in experiment_defaults.items():
                 overrides.setdefault(key, value)
+            prompt_stats, prompt_stats_path, prompt_stats_found = _read_prompt_stats(Path(metadata["run_dir"]))
             row: dict[str, Any] = {
                 "source_root": run_root.name,
                 **metadata,
@@ -270,13 +330,17 @@ def collect_rows(
                 "duplicate_count": 1,
                 "metrics_path": str(path),
                 "modified_time": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+                "prompt_stats_path": str(prompt_stats_path),
+                "prompt_stats_found": prompt_stats_found,
                 "_mtime": stat.st_mtime,
                 **overrides,
                 **flat_metrics,
+                **prompt_stats,
             }
             rows.append(row)
             override_keys.update(overrides.keys())
             metric_keys.update(flat_metrics.keys())
+            prompt_keys.update(prompt_stats.keys())
         if splits is not None and matched_paths == 0:
             split_list = ", ".join(sorted(splits))
             raise FileNotFoundError(f"No infer api metrics.json files matching split={split_list} under {run_root}")
@@ -289,7 +353,8 @@ def collect_rows(
     ] + sorted(key for key in override_keys if key not in PREFERRED_OVERRIDE_COLUMNS)
     ordered_override_keys = list(dict.fromkeys(ordered_override_keys))
     ordered_metric_keys = sorted(metric_keys, key=_metric_sort_key)
-    return rows, ordered_override_keys, ordered_metric_keys
+    ordered_prompt_keys = [key for key in PROMPT_STAT_COLUMNS if key in prompt_keys]
+    return rows, ordered_override_keys, ordered_metric_keys, ordered_prompt_keys
 
 
 def _duplicate_group_key(row: dict[str, Any]) -> tuple[Any, ...]:
@@ -348,6 +413,23 @@ def write_csv(rows: list[dict[str, Any]], columns: list[str], output_path: Path)
         writer.writeheader()
         for row in rows:
             writer.writerow({key: _format_cell(row.get(key)) for key in columns})
+
+
+def write_prompt_csv(rows: list[dict[str, Any]], output_path: Path) -> None:
+    columns = [
+        "source_root",
+        "run_name",
+        "split",
+        "checkpoint",
+        "infer_id",
+        "build.retrieval.top_k",
+        "build.retrieval.mmr_lambda",
+        "macro_f1",
+        "prompt_stats_found",
+        "prompt_stats_path",
+        *PROMPT_STAT_COLUMNS,
+    ]
+    write_csv(rows, columns, output_path)
 
 
 def _markdown_table(headers: list[str], table_rows: list[list[str]]) -> str:
@@ -431,6 +513,42 @@ def _near_best_summary_rows(rows: list[dict[str, Any]]) -> list[list[str]]:
     return summary_rows
 
 
+def _metric_leader_rows(rows: list[dict[str, Any]]) -> list[list[str]]:
+    leader_rows: list[list[str]] = []
+    for metric in CLOSE_METRIC_COLUMNS:
+        metric_rows = [
+            row
+            for row in rows
+            if isinstance(row.get(metric), (int, float)) and isinstance(row.get("build.retrieval.top_k"), (int, float))
+        ]
+        ordered = sorted(
+            metric_rows,
+            key=lambda row: (float(row[metric]), -float(row["build.retrieval.top_k"]), _row_label(row)),
+            reverse=True,
+        )
+        if not ordered:
+            continue
+        best = ordered[0]
+        runner_up = ordered[1] if len(ordered) > 1 else None
+        best_value = float(best[metric])
+        runner_value = float(runner_up[metric]) if runner_up is not None else None
+        leader_rows.append(
+            [
+                metric,
+                f"{_row_label(best)} top_k={_format_cell(best.get('build.retrieval.top_k'))}: "
+                f"{_format_cell(best_value)}",
+                (
+                    f"{_row_label(runner_up)} top_k={_format_cell(runner_up.get('build.retrieval.top_k'))}: "
+                    f"{_format_cell(runner_value)}"
+                    if runner_up is not None and runner_value is not None
+                    else ""
+                ),
+                f"{best_value - runner_value:.6f}" if runner_value is not None else "",
+            ]
+        )
+    return leader_rows
+
+
 def _sensitivity_detail_rows(rows: list[dict[str, Any]]) -> list[list[str]]:
     detail_rows: list[list[str]] = []
     for row in rows:
@@ -454,6 +572,31 @@ def _sensitivity_detail_rows(rows: list[dict[str, Any]]) -> list[list[str]]:
     return detail_rows
 
 
+def _missing_prompt_stats_rows(rows: list[dict[str, Any]]) -> list[list[str]]:
+    seen: set[tuple[str, str, str]] = set()
+    missing_rows: list[list[str]] = []
+    for row in rows:
+        if row.get("prompt_stats_found"):
+            continue
+        key = (
+            str(row.get("source_root", "")),
+            str(row.get("run_name", "")),
+            str(row.get("prompt_stats_path", "")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        missing_rows.append(
+            [
+                _format_cell(row.get("source_root")),
+                _format_cell(row.get("run_name")),
+                _format_cell(row.get("build.retrieval.top_k")),
+                _format_cell(row.get("prompt_stats_path")),
+            ]
+        )
+    return missing_rows
+
+
 def write_markdown_summary(
     *,
     all_rows: list[dict[str, Any]],
@@ -461,7 +604,9 @@ def write_markdown_summary(
     output_path: Path,
     all_csv: Path,
     latest_csv: Path,
+    prompt_csv: Path,
     plot_path: Path,
+    prompt_plot_path: Path,
 ) -> None:
     headers = [
         "source_root",
@@ -495,8 +640,10 @@ def write_markdown_summary(
         for row in latest
     ]
     duplicate_rows = _duplicate_summary_rows(all_rows)
+    leader_rows = _metric_leader_rows(latest)
     near_best_rows = _near_best_summary_rows(latest)
     sensitivity_rows = _sensitivity_detail_rows(latest)
+    missing_prompt_rows = _missing_prompt_stats_rows(latest)
 
     lines = [
         "# Overall Run Analysis",
@@ -506,6 +653,8 @@ def write_markdown_summary(
         f"- All API metric records: `{all_csv.name}`",
         f"- Latest record per source/top_k/split/checkpoint: `{latest_csv.name}`",
         f"- Line chart: `{plot_path.name}`",
+        f"- Prompt statistics table: `{prompt_csv.name}`",
+        f"- Prompt statistics chart: `{prompt_plot_path.name}`",
         f"- Total records: {len(all_rows)}",
         f"- Latest rows: {len(latest)}",
         "",
@@ -513,6 +662,8 @@ def write_markdown_summary(
         "",
         "- Overall infer metrics table: `infer_metrics_summary_latest.csv`",
         "- Overall infer metrics chart: `infer_metrics_line_chart.png`",
+        "- Prompt statistics table: `prompt_stats_summary.csv`",
+        "- Prompt statistics chart: `prompt_stats_line_chart.png`",
         "- b3 1024 top_k=0..8 test table: `b3_mmr_topk_test_curves_1024/test_metrics_top_k_0_8.csv`",
         "- b3 1024 top_k=0..8 test chart: `b3_mmr_topk_test_curves_1024/test_metrics_top_k_0_8.png`",
         "",
@@ -520,6 +671,15 @@ def write_markdown_summary(
         "",
         _markdown_table(headers, table_rows),
     ]
+    if leader_rows:
+        lines.extend(
+            [
+                "",
+                "## Metric Leaders",
+                "",
+                _markdown_table(["metric", "best", "runner_up", "delta"], leader_rows),
+            ]
+        )
     if near_best_rows:
         lines.extend(
             [
@@ -556,6 +716,17 @@ def write_markdown_summary(
                 ),
             ]
         )
+    if missing_prompt_rows:
+        lines.extend(
+            [
+                "",
+                "## Missing Prompt Stats",
+                "",
+                "These runs are missing `train/prompt_stats/prompt_stats.json`; prompt-stat panels skip them.",
+                "",
+                _markdown_table(["source_root", "run_name", "top_k", "expected_path"], missing_prompt_rows),
+            ]
+        )
     if duplicate_rows:
         lines.extend(
             [
@@ -588,6 +759,12 @@ def _source_label(source: str) -> str:
     return SOURCE_LABELS.get(source, source)
 
 
+def _metric_title(metric: str) -> str:
+    if metric == PROMPT_MEAN_COLUMN:
+        return "avg_prompt_tokens_train"
+    return metric
+
+
 def write_line_plot(rows: list[dict[str, Any]], output_path: Path) -> None:
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-cache")
     Path(os.environ["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
@@ -605,17 +782,17 @@ def write_line_plot(rows: list[dict[str, Any]], output_path: Path) -> None:
         by_source.setdefault(str(row.get("source_root", "")), []).append(row)
 
     ncols = 2
-    nrows = math.ceil(len(PLOT_METRIC_COLUMNS) / ncols)
+    nrows = math.ceil(len(MAIN_PLOT_COLUMNS) / ncols)
     fig, axes = plt.subplots(nrows, ncols, figsize=(8.2 * ncols, 3.7 * nrows), squeeze=False)
     flat_axes = [axis for row_axes in axes for axis in row_axes]
-    for axis, metric in zip(flat_axes, PLOT_METRIC_COLUMNS):
+    for axis, metric in zip(flat_axes, MAIN_PLOT_COLUMNS):
         all_metric_rows = [
             row
             for row in rows
             if isinstance(row.get("build.retrieval.top_k"), (int, float)) and isinstance(row.get(metric), (int, float))
         ]
-        overall_best = _best_row_for_metric(all_metric_rows, metric)
-        if overall_best is not None and metric != "parse_error_rate":
+        overall_best = _best_row_for_metric(all_metric_rows, metric) if metric in CLOSE_METRIC_COLUMNS else None
+        if overall_best is not None:
             best_y = float(overall_best[metric])
             axis.axhspan(
                 best_y - CLOSE_ABS_MARGIN,
@@ -657,16 +834,17 @@ def write_line_plot(rows: list[dict[str, Any]], output_path: Path) -> None:
                 if metric != "parse_error_rate":
                     offset = SINGLE_SOURCE_LABEL_OFFSET.get(source, (6, 10))
                     short_label = SINGLE_SOURCE_SHORT_LABELS.get(source, label)
-                    axis.annotate(
-                        f"{short_label} {y_value:.4f}",
-                        xy=(visual_x, y_value),
-                        xytext=offset,
-                        textcoords="offset points",
-                        fontsize=7,
-                        bbox={"boxstyle": "round,pad=0.18", "fc": "white", "ec": color, "alpha": 0.78},
-                        arrowprops={"arrowstyle": "-", "color": color, "lw": 0.7, "alpha": 0.7},
-                        zorder=6,
-                    )
+                    if metric in CLOSE_METRIC_COLUMNS:
+                        axis.annotate(
+                            f"{short_label} {y_value:.4f}",
+                            xy=(visual_x, y_value),
+                            xytext=offset,
+                            textcoords="offset points",
+                            fontsize=7,
+                            bbox={"boxstyle": "round,pad=0.18", "fc": "white", "ec": color, "alpha": 0.78},
+                            arrowprops={"arrowstyle": "-", "color": color, "lw": 0.7, "alpha": 0.7},
+                            zorder=6,
+                        )
                     if overall_best is not None and 0 <= float(overall_best[metric]) - y_value <= CLOSE_ABS_MARGIN:
                         axis.scatter(
                             [visual_x],
@@ -687,7 +865,7 @@ def write_line_plot(rows: list[dict[str, Any]], output_path: Path) -> None:
             best_x = float(best["build.retrieval.top_k"])
             best_y = float(best[metric])
             color = line.get_color()
-            if metric != "parse_error_rate":
+            if metric in CLOSE_METRIC_COLUMNS:
                 axis.axhline(best_y, color=color, linestyle="--", linewidth=1.2, alpha=0.45, zorder=1)
                 axis.scatter(
                     [best_x],
@@ -700,7 +878,7 @@ def write_line_plot(rows: list[dict[str, Any]], output_path: Path) -> None:
                     label=f"{label} best",
                     zorder=4,
                 )
-        axis.set_title(metric)
+        axis.set_title(_metric_title(metric))
         axis.set_xlabel("build.retrieval.top_k")
         axis.grid(True, alpha=0.25)
         if metric == "parse_error_rate" and all(abs(float(row[metric])) < 1e-12 for row in all_metric_rows):
@@ -717,10 +895,83 @@ def write_line_plot(rows: list[dict[str, Any]], output_path: Path) -> None:
             axis.set_xticks(all_top_k)
             axis.set_xticklabels([_format_cell(int(x) if x.is_integer() else x) for x in all_top_k], rotation=30)
 
-    for axis in flat_axes[len(PLOT_METRIC_COLUMNS):]:
+    for axis in flat_axes[len(MAIN_PLOT_COLUMNS):]:
         axis.axis("off")
 
-    fig.suptitle(f"Infer test metrics by top_k (near-best band delta <= {CLOSE_ABS_MARGIN:g})", fontsize=14)
+    fig.suptitle(
+        f"Infer test metrics and prompt length by top_k (near-best band delta <= {CLOSE_ABS_MARGIN:g})",
+        fontsize=14,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
+def _plot_prompt_panel(axis: Any, rows: list[dict[str, Any]], metric: str, title: str) -> None:
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        top_k = row.get("build.retrieval.top_k")
+        if isinstance(top_k, (int, float)) and isinstance(row.get(metric), (int, float)):
+            by_source.setdefault(str(row.get("source_root", "")), []).append(row)
+    for source, source_rows in sorted(by_source.items()):
+        label = _source_label(source)
+        ordered = sorted(source_rows, key=lambda row: float(row["build.retrieval.top_k"]))
+        x_values = [float(row["build.retrieval.top_k"]) for row in ordered]
+        y_values = [float(row[metric]) for row in ordered]
+        if len(ordered) == 1:
+            base_x = x_values[0]
+            visual_x = base_x + SINGLE_SOURCE_X_JITTER.get(source, 0.0)
+            marker = SINGLE_SOURCE_MARKERS.get(source, "s")
+            axis.plot(
+                [visual_x],
+                y_values,
+                marker=marker,
+                markersize=8,
+                linestyle="None",
+                label=f"{label} (top_k={_format_cell(base_x)})",
+                zorder=4,
+            )
+        else:
+            axis.plot(x_values, y_values, marker="o", linewidth=1.8, label=label, zorder=2)
+    axis.set_title(title)
+    axis.set_xlabel("build.retrieval.top_k")
+    axis.grid(True, alpha=0.25)
+    axis.legend(fontsize=7.5)
+    all_top_k = sorted(
+        {
+            float(row["build.retrieval.top_k"])
+            for row in rows
+            if isinstance(row.get("build.retrieval.top_k"), (int, float))
+        }
+    )
+    if len(all_top_k) <= 24:
+        axis.set_xticks(all_top_k)
+        axis.set_xticklabels([_format_cell(int(x) if x.is_integer() else x) for x in all_top_k], rotation=30)
+
+
+def write_prompt_stats_plot(rows: list[dict[str, Any]], output_path: Path) -> None:
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-cache")
+    Path(os.environ["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    panels = [
+        ("macro_f1", "macro_f1"),
+        ("prompt.train.prompt_token_count.mean", "train avg prompt tokens"),
+        ("prompt.val.prompt_token_count.mean", "val avg prompt tokens"),
+        ("prompt.train.prompt_token_count.p90", "train p90 prompt tokens"),
+        ("prompt.train.prompt_token_count.p99", "train p99 prompt tokens"),
+        ("prompt.train.evidence_truncation.truncation_rate", "train truncation rate"),
+    ]
+    fig, axes = plt.subplots(3, 2, figsize=(16.4, 11.1), squeeze=False)
+    flat_axes = [axis for row_axes in axes for axis in row_axes]
+    for axis, (metric, title) in zip(flat_axes, panels):
+        _plot_prompt_panel(axis, rows, metric, title)
+    fig.suptitle("Prompt statistics by top_k", fontsize=14)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=180)
@@ -736,8 +987,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="outputs/runs/overall_run_analysis")
     parser.add_argument("--all-csv", default="infer_metrics_summary_all.csv")
     parser.add_argument("--latest-csv", default="infer_metrics_summary_latest.csv")
+    parser.add_argument("--prompt-csv", default="prompt_stats_summary.csv")
     parser.add_argument("--markdown", default="infer_metrics_summary.md")
     parser.add_argument("--plot", default="infer_metrics_line_chart.png")
+    parser.add_argument("--prompt-plot", default="prompt_stats_line_chart.png")
     parser.add_argument("--split", action="append", help="Only include this infer split. Repeat for multiple splits.")
     return parser.parse_args()
 
@@ -748,33 +1001,41 @@ def main() -> None:
     output_dir = Path(args.output_dir).resolve()
 
     splits = set(args.split) if args.split else None
-    rows, override_columns, metric_columns = collect_rows(run_roots, splits=splits)
+    rows, override_columns, metric_columns, prompt_columns = collect_rows(run_roots, splits=splits)
     rows = _sort_rows(rows)
     latest = latest_rows(rows)
-    columns = METADATA_COLUMNS + override_columns + metric_columns
+    columns = METADATA_COLUMNS + PROMPT_METADATA_COLUMNS + override_columns + metric_columns + prompt_columns
 
     all_csv = output_dir / args.all_csv
     latest_csv = output_dir / args.latest_csv
+    prompt_csv = output_dir / args.prompt_csv
     markdown = output_dir / args.markdown
     plot_path = output_dir / args.plot
+    prompt_plot_path = output_dir / args.prompt_plot
     write_csv(rows, columns, all_csv)
     write_csv(latest, columns, latest_csv)
+    write_prompt_csv(latest, prompt_csv)
     write_line_plot(latest, plot_path)
+    write_prompt_stats_plot(latest, prompt_plot_path)
     write_markdown_summary(
         all_rows=rows,
         latest=latest,
         output_path=markdown,
         all_csv=all_csv,
         latest_csv=latest_csv,
+        prompt_csv=prompt_csv,
         plot_path=plot_path,
+        prompt_plot_path=prompt_plot_path,
     )
 
     print(f"[infer_metrics] records={len(rows)}")
     print(f"[infer_metrics] latest_rows={len(latest)}")
     print(f"[infer_metrics] all_csv={all_csv}")
     print(f"[infer_metrics] latest_csv={latest_csv}")
+    print(f"[infer_metrics] prompt_csv={prompt_csv}")
     print(f"[infer_metrics] markdown={markdown}")
     print(f"[infer_metrics] plot={plot_path}")
+    print(f"[infer_metrics] prompt_plot={prompt_plot_path}")
 
 
 if __name__ == "__main__":

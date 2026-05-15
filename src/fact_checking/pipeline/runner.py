@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -55,6 +56,19 @@ def _run_subprocess_tee(
         return_code = process.wait()
     if return_code != 0:
         raise subprocess.CalledProcessError(return_code, command)
+
+
+def _sync_prompt_stats(build_dir: Path, run_dir: Path) -> None:
+    """Copy prompt_stats from build cache to run directory if available."""
+    prompt_stats_src = build_dir / "prompt_stats"
+    if not prompt_stats_src.is_dir():
+        return
+    train_dir = run_dir / "train"
+    train_dir.mkdir(parents=True, exist_ok=True)
+    target_dir = train_dir / "prompt_stats"
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    shutil.copytree(prompt_stats_src, target_dir)
 
 
 @dataclass(frozen=True)
@@ -240,6 +254,7 @@ class PipelineRunner:
                 },
             )
             self._save_manifest(manifest)
+            _sync_prompt_stats(self.state.build_dir, self.state.run_dir)
             return build_paths
 
         result = run_build(self.cfg["build"], output_dir=self.state.build_dir)
@@ -264,6 +279,7 @@ class PipelineRunner:
             },
         )
         self._save_manifest(manifest)
+        _sync_prompt_stats(self.state.build_dir, self.state.run_dir)
         return build_paths
 
     def _run_train(self, manifest: dict[str, Any], build_paths: dict[str, Path]) -> None:

@@ -14,6 +14,19 @@
 
 本文档不展开论文内容，只定义实验目标、实现方式、评价指标、输出文件与推进 gate。
 
+## 0. 当前实验结论快照
+
+更新时间: 2026-05-15
+
+已完成的前四个方向给出的结论比较一致: 在当前 LIAR-RAW + chunk-first MMR + Qwen2.5-7B-Instruct verifier 设置下，claim-level scalar lambda 的自适应信号较弱。fixed `lambda=0.7` 仍是稳定 baseline；`log(n_candidates)` 与 sensitivity-gated MMR 只有很小的 test 提升，幅度不足以支撑继续扩大同类手工 scalar lambda 搜索；soft-label lambda 在修复 oracle logprob 后不再受 `-100` 污染，但 utility curve 变得接近均匀，说明“哪个 lambda 更好”的监督信号本身很平。
+
+当前建议:
+
+1. 保留 fixed `lambda=0.7` 作为 locked baseline。
+2. `log(n_candidates)` 和 sensitivity-gated MMR 可作为弱 adaptive baseline 报告，但不要作为主方法继续深挖。
+3. soft-label lambda 不跑 Stage 6；它的离线 `expected` 近似退化为 fixed，`argmax/sample` 反而更差。
+4. 若继续 RL-MMR，应转向 trajectory-level preference 或 multi-weight MMR，而不是继续 claim-level scalar lambda prediction。
+
 ## 1. 总体实验目标
 
 目标不是简单证明 learned lambda 一定优于 fixed lambda，而是系统验证:
@@ -224,6 +237,22 @@ scripts/rl_mmr/run_fixed_07.sh
 outputs/rl_mmr/fixed_07/
 ```
 
+### 3.7 当前结果与结论
+
+已采用 `b3_mmr_topk_sweep_1024` 中 `top_k=5, mmr_lambda=0.7` 的 run 作为当前可比 baseline:
+
+```text
+outputs/runs/b3_mmr_topk_sweep_1024/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-5__b23a0bbe/infer/test/best/79d8b34809bb/api/metrics.json
+```
+
+test 结果:
+
+| system | n | accuracy | macro-F1 | parse error |
+|---|---:|---:|---:|---:|
+| fixed `lambda=0.7`, `top_k=5` | 1251 | 0.2702 | 0.2769 | 0.0000 |
+
+结论: 该结果作为后续 RL-MMR 的 locked baseline。后续 adaptive 方法只有在同一 candidate pool、同一 verifier 与同一推理配置下超过它，才算有效提升。
+
 ## 4. 实验 2: `log(n_candidates)` heuristic
 
 ### 4.1 目的
@@ -307,6 +336,31 @@ fixed_07 vs log_n
 ### 4.7 失败解释
 
 如果无收益，说明 candidate count 的弱相关不足以转化为下游 verifier gain。
+
+### 4.8 当前结果与结论
+
+当前可比 LoRA 版本 artifact:
+
+```text
+outputs/runs/heuristic_lambda_mmr/33088d994dd4/infer/test/best/79d8b34809bb/api/metrics.json
+```
+
+test 结果:
+
+| system | n | accuracy | macro-F1 | parse error | vs fixed acc | vs fixed macro-F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| fixed `lambda=0.7`, `top_k=5` | 1251 | 0.2702 | 0.2769 | 0.0000 | 0.0000 | 0.0000 |
+| `log(n_candidates)` heuristic | 1251 | 0.2766 | 0.2799 | 0.0000 | +0.0064 | +0.0030 |
+
+结论: `log(n_candidates)` 是一个便宜的弱 adaptive baseline，但收益很小。当前结果只能说明候选数量与最优 lambda 存在弱相关，不能说明 claim-level scalar lambda 已经提供稳定下游收益。
+
+另有 full fine-tuning 版本:
+
+```text
+outputs/runs/heuristic_lambda_mmr_fullft/484dc7dca0ad/infer/test/best/0d27dabf11a7/api/metrics.json
+```
+
+该版本 test accuracy 0.3110、macro-F1 0.3215，但它同时改变了训练方式（全参数微调、ZeRO-3、学习率等），不能用于隔离 `log(n)` lambda heuristic 的贡献；主线 RL-MMR 比较中不把它作为 lambda policy 结论。
 
 ## 5. 实验 3: sensitivity-gated MMR
 
@@ -440,6 +494,23 @@ scripts/rl_mmr/run_sensitivity_gated.sh
 ### 5.9 失败解释
 
 如果冗余下降但 accuracy 下降，说明低 lambda 引入了“不同但无用”的 evidence，需要更强 relevance floor 或 coverage-aware score。
+
+### 5.10 当前结果与结论
+
+当前 sensitivity-gated artifact:
+
+```text
+outputs/runs/mmr_sensitivity_gated/ts0p8_tr0p3_ll0p2_basic__9a7f2ee7/infer/test/best/79d8b34809bb/api/metrics.json
+```
+
+test 结果:
+
+| system | n | accuracy | macro-F1 | parse error | vs fixed acc | vs fixed macro-F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| fixed `lambda=0.7`, `top_k=5` | 1251 | 0.2702 | 0.2769 | 0.0000 | 0.0000 | 0.0000 |
+| sensitivity-gated MMR | 1251 | 0.2742 | 0.2795 | 0.0000 | +0.0040 | +0.0026 |
+
+结论: sensitivity-gated MMR 比 fixed 有轻微提升，但幅度与 `log(n)` heuristic 同一量级，尚不足以证明 sensitivity gating 是强策略。它可以保留为“可解释弱 adaptive baseline”，但不建议继续只围绕阈值做大规模搜索。后续若使用它，更适合作为 DPO/reference 或分桶分析对象，而不是主方法。
 
 ## 6. 实验 4: soft-label lambda policy
 
@@ -584,6 +655,36 @@ configs/experiment/mmr_soft_label_lambda.yaml
 ### 6.10 决策
 
 如果 soft-label 仍无收益，但 probability distribution 可作为 reference policy，则进入 DPO。若完全坍缩，则 DPO 的 reference policy 使用 fixed 0.7 或 sensitivity-gated MMR。
+
+### 6.11 当前结果与结论
+
+已修复 `compute_oracle_lambda.py` 的 label-token logprob 计算，并重跑 oracle logprobs。重跑后的训练数据不再有 `-100` sentinel:
+
+| model dir | train sentinel rows | val sentinel rows | train target entropy | val target entropy |
+|---|---:|---:|---:|---:|
+| `outputs/rl_mmr/soft_label/lightgbm_recomputed` | 0 | 0 | 1.6030 | 1.5968 |
+| `outputs/rl_mmr/soft_label/lr_recomputed` | 0 | 0 | 1.6030 | 1.5968 |
+| `outputs/rl_mmr/soft_label/mlp_recomputed` | 0 | 0 | 1.6030 | 1.5968 |
+
+注意: `log(5)=1.6094`。soft target entropy 接近均匀分布，说明修复 oracle 后 utility curve 本身非常平，监督信号弱。
+
+val 离线回顾式评估:
+
+| model | fixed utility | argmax delta | expected delta | sample delta | val KL |
+|---|---:|---:|---:|---:|---:|
+| LightGBM recomputed | -1.5518 | -0.0291 | -0.0001 | -0.0099 | 0.0157 |
+| Logistic Regression recomputed | -1.5518 | -0.0304 | -0.0001 | -0.0120 | 0.0206 |
+| MLP recomputed | -1.5518 | -0.0284 | -0.0001 | -0.0106 | 0.0150 |
+
+分桶观察:
+
+- `oracle_margin >= 0.10` 的样本中，argmax 有正收益；但低 margin 样本数量更多，整体抵消并转为负收益。
+- `expected` 基本等价于 fixed `lambda=0.7`，因为模型输出接近均匀分布，期望 lambda 约落在 0.49 到 0.50。
+- `sample` 增加随机性但不增加 utility。
+
+决策: 不跑 Stage 6。当前 soft-label policy 修复了旧 oracle 的异常值问题，但没有提供可转化为下游收益的 claim-level scalar lambda 信号。若为了补实验闭环，最多只运行 `LightGBM + expected`，但不建议投入完整 build -> train -> infer 成本。
+
+后续建议: supervised scalar lambda 路线在此停止。若继续推进 RL-MMR，应转向 trajectory-level preference learning 或 multi-weight MMR，让学习目标从“预测单个 claim-level lambda”转为“选择 evidence set/trajectory 中真正有 utility gap 的行为”。
 
 ## 7. 实验 5: PAMM-lite / DPO step-wise lambda policy
 
@@ -1107,10 +1208,10 @@ adaptive policy 是否主要在 high sensitivity 和 high redundancy bucket 中�
 
 | System | Accuracy | Macro-F1 | Correct label logprob | Utility | Redundancy | Cost | High-sensitivity Acc | High-redundancy Acc |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| fixed 0.7 | | | | | | | | |
-| log(n) heuristic | | | | | | | | |
-| sensitivity-gated | | | | | | | | |
-| soft-label lambda | | | | | | | | |
+| fixed 0.7 | 0.2702 | 0.2769 | | locked baseline | | | | |
+| log(n) heuristic | 0.2766 | 0.2799 | | weak positive, small delta | | | | |
+| sensitivity-gated | 0.2742 | 0.2795 | | weak positive, small delta | | | | |
+| soft-label lambda | Stage 6 skipped | Stage 6 skipped | | val expected delta about -0.0001; argmax/sample worse | | | | |
 | DPO step-wise lambda | | | | | | | | |
 | multi-weight MMR | | | | | | | | |
 | GRPO refine | | | | | | | | |
@@ -1173,6 +1274,8 @@ configs/experiment/mmr_grpo_refine.yaml
 ### 停止 soft-label lambda
 
 若 soft-label policy 在 dev set 上不超过 log heuristic，且预测分布坍缩，则停止 supervised lambda 路线。
+
+当前已触发停止条件的弱化版本: 重跑 oracle 后预测分布没有 hard collapse，但 target distribution 接近均匀，`expected` 退化为 fixed，`argmax/sample` 均低于 fixed。因此停止 claim-level supervised scalar lambda，不跑 Stage 6。
 
 ### 停止 DPO step-wise
 

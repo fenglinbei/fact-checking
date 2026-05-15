@@ -20,7 +20,7 @@ from transformers import AutoTokenizer
 from fact_checking.build.chunking import ChunkingStrategy, SentenceChunking, build_chunking_strategy
 from fact_checking.config import load_yaml
 from fact_checking.data.constants import LABEL_DEFINITIONS, LABEL_LETTERS, LABEL2ID
-from fact_checking.data.io import iter_sentences, load_split
+from fact_checking.data.io import iter_sentences, load_jsonl, load_split
 from fact_checking.retrieval.embedder import EmbedderConfig, TextEmbedder
 from fact_checking.retrieval.mmr import maximal_marginal_relevance
 from fact_checking.retrieval.reranker import CrossEncoderReranker, RerankerConfig
@@ -32,6 +32,13 @@ from fact_checking.retrieval.text_utils import (
 from fact_checking.utils.logging import init_logger
 from fact_checking.utils.text import robust_sentence_split
 from sft.data.labels import normalize_gold_label
+from sft.data.types import PreparedSample
+from sft.prompting.stats import (
+    build_prompt_snapshots,
+    log_prompt_summary,
+    save_prompt_statistics,
+    summarize_prebuilt_prompts,
+)
 
 
 @dataclass(frozen=True)
@@ -1591,7 +1598,76 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         del reranker
         torch.cuda.empty_cache()
 
+    if "train" in split_paths and "val" in split_paths:
+        _generate_prompt_stats(
+            train_path=split_paths["train"],
+            val_path=split_paths["val"],
+            output_dir=target_dir,
+            max_length=run_summary["prompt_max_length"],
+            logger=logger,
+        )
+
     return BuildResult(output_dir=target_dir, split_paths=split_paths)
+
+
+def _generate_prompt_stats(
+    *,
+    train_path: Path,
+    val_path: Path,
+    output_dir: Path,
+    max_length: int,
+    logger: Any,
+) -> None:
+    train_rows = load_jsonl(train_path)
+    val_rows = load_jsonl(val_path)
+
+    train_samples = _rows_to_prepared_samples(train_rows)
+    val_samples = _rows_to_prepared_samples(val_rows)
+
+    train_summary = summarize_prebuilt_prompts(train_samples, max_length=max_length, split="train")
+    val_summary = summarize_prebuilt_prompts(val_samples, max_length=max_length, split="val")
+
+    train_snapshots = build_prompt_snapshots(train_samples, split="train")
+    val_snapshots = build_prompt_snapshots(val_samples, split="val")
+
+    log_prompt_summary(train_summary, logger)
+    log_prompt_summary(val_summary, logger)
+
+    save_prompt_statistics(
+        output_dir,
+        train_summary=train_summary,
+        val_summary=val_summary,
+        train_snapshots=train_snapshots,
+        val_snapshots=val_snapshots,
+    )
+    logger.info("Saved prompt statistics to %s/prompt_stats/", output_dir)
+
+
+def _rows_to_prepared_samples(rows: list[dict]) -> list[PreparedSample]:
+    samples: list[PreparedSample] = []
+    for row in rows:
+        gold_label = str(row.get("gold_label", ""))
+        if not gold_label:
+            continue
+        samples.append(
+            PreparedSample(
+                prompt=str(row["prompt"]),
+                target=str(row["target"]),
+                prompt_add_special_tokens=bool(row.get("prompt_add_special_tokens", False)),
+                preserve_prompt_prefix=bool(row.get("preserve_prompt_prefix", True)),
+                gold_id=int(row.get("gold_id", -1)),
+                gold_label=gold_label,
+                gold_explain=str(row.get("gold_explain", "")),
+                prompt_token_count=int(row.get("prompt_token_count", 0)),
+                target_token_count=int(row.get("target_token_count", 0)),
+                evidence_count=int(row.get("evidence_count", 0)),
+                was_truncated=bool(row.get("was_truncated", False)),
+                claim=str(row.get("claim", "")),
+                no_evidence=int(row.get("evidence_count", 0)) == 0,
+                long_claim=len(str(row.get("claim", "")).split()) > 64,
+            )
+        )
+    return samples
 
 
 def main() -> None:
