@@ -1,0 +1,64 @@
+{
+  "run_id": "484dc7dca0ad",
+  "run_dir": "/data/liaozijie/fact-checking/outputs/runs/heuristic_lambda_mmr_fullft/484dc7dca0ad",
+  "build_id": "f9434059c9be",
+  "phases": {
+    "build": {
+      "status": "completed",
+      "updated_at": "2026-05-15 00:55:59",
+      "build_id": "f9434059c9be",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/cache/build/f9434059c9be",
+      "outputs": {
+        "train": "/data/liaozijie/fact-checking/outputs/cache/build/f9434059c9be/build_train.jsonl",
+        "val": "/data/liaozijie/fact-checking/outputs/cache/build/f9434059c9be/build_val.jsonl",
+        "test": "/data/liaozijie/fact-checking/outputs/cache/build/f9434059c9be/build_test.jsonl"
+      },
+      "reused": true
+    },
+    "train": {
+      "status": "completed",
+      "updated_at": "2026-05-15 03:24:53",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/heuristic_lambda_mmr_fullft/484dc7dca0ad/train",
+      "config_path": "/data/liaozijie/fact-checking/outputs/runs/heuristic_lambda_mmr_fullft/484dc7dca0ad/configs/train.resolved.yaml",
+      "checkpoint": "/data/liaozijie/fact-checking/outputs/runs/heuristic_lambda_mmr_fullft/484dc7dca0ad/train/best",
+      "command": [
+        "accelerate",
+        "launch",
+        "--num_processes=4",
+        "--num_machines=1",
+        "--mixed_precision=bf16",
+        "--use_deepspeed",
+        "--deepspeed_config_file",
+        "/data/liaozijie/fact-checking/configs/deepspeed_zero3_bsz2_ga4.json",
+        "-m",
+        "sft.trainer",
+        "--config",
+        "/data/liaozijie/fact-checking/outputs/runs/heuristic_lambda_mmr_fullft/484dc7dca0ad/configs/train.resolved.yaml"
+      ],
+      "log_path": "/data/liaozijie/fact-checking/outputs/runs/heuristic_lambda_mmr_fullft/484dc7dca0ad/logs/train.log",
+      "reused": false
+    },
+    "infer": {
+      "status": "completed",
+      "updated_at": "2026-05-15 03:29:39",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/heuristic_lambda_mmr_fullft/484dc7dca0ad/infer/test/best/0d27dabf11a7",
+      "infer_id": "0d27dabf11a7",
+      "artifacts": {
+        "metrics_path": "/data/liaozijie/fact-checking/outputs/runs/heuristic_lambda_mmr_fullft/484dc7dca0ad/infer/test/best/0d27dabf11a7/api/metrics.json",
+        "confusion_data_path": "/data/liaozijie/fact-checking/outputs/runs/heuristic_lambda_mmr_fullft/484dc7dca0ad/infer/test/best/0d27dabf11a7/api/confusion_matrix.json",
+        "confusion_png_path": "/data/liaozijie/fact-checking/outputs/runs/heuristic_lambda_mmr_fullft/484dc7dca0ad/infer/test/best/0d27dabf11a7/api/confusion_matrix.png",
+        "predictions_path": "/data/liaozijie/fact-checking/outputs/runs/heuristic_lambda_mmr_fullft/484dc7dca0ad/infer/test/best/0d27dabf11a7/api/test_predictions.jsonl"
+      },
+      "reused": false
+    }
+  },
+  "config": {
+    "experiment": {
+      "name": "heuristic_lambda_mmr_fullft"
+    },
+    "baseline": {
+      "variant": "heuristic_lambda_mmr_fullft",
+      "chunking_strategy": "semantic"
+    }
+  }
+}

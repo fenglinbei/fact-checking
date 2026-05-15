@@ -1,0 +1,63 @@
+# @package _global_
+# Heuristic-λ MMR 全参训练版本 (Full Fine-Tuning, no LoRA).
+#
+# λ = max(0, min(1, -0.0732 * log(n_candidates) + 0.6127))
+#
+# 与 heuristic_lambda_mmr 的区别：
+#   - 关闭 LoRA，进行全参数微调
+#   - 使用 ZeRO-3 代替 ZeRO-2（全参训练显存需求更大）
+#   - 减小 per_device_batch_size，增大 gradient_accumulation 补偿
+#   - 降低学习率（全参训练对 LR 更敏感）
+#   - 推理时无需 merge_lora_cache
+#
+# 运行命令：
+#   bash scripts/pipeline/run_heuristic_lambda_fullft.sh
+
+defaults:
+  - b3_mmr_topk_sweep_1024
+  - _self_
+
+experiment:
+  name: heuristic_lambda_mmr_fullft
+
+baseline:
+  variant: heuristic_lambda_mmr_fullft
+
+build:
+  retrieval:
+    top_k: 5
+    mmr_lambda: 0.70  # fallback for edge cases
+    learned_lambda:
+      enabled: true
+      mode: heuristic
+      heuristic_a: -0.0732
+      heuristic_b: 0.6127
+  prompt:
+    max_length: 1024
+
+train:
+  deepspeed_config: configs/deepspeed_zero3_bsz2_ga4.json
+
+sft_train:
+  max_length: 1024
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-6
+  empty_cache_steps: 0
+  early_stopping_patience: 6
+  save_steps: 30
+  eval_steps: 30
+  lora:
+    enabled: false
+
+infer:
+  merge_lora_cache:
+    enabled: false
+
+tracking:
+  enabled: true
+  backend: swanlab
+
+swanlab:
+  project: fact-checking-heuristic-lambda-fullft
+  experiment_name: heuristic_lambda_mmr_fullft
