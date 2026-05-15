@@ -1,4 +1,9 @@
-"""Per-step state feature extraction for DPO step-wise λ policy."""
+"""Per-step state feature extraction for DPO step-wise λ policy.
+
+Features are designed so that winner/loser trajectories for the SAME claim
+have non-zero differences. Pool-level features (identical within a claim) are
+excluded. Previous λ choice is included to give the policy memory.
+"""
 
 from __future__ import annotations
 
@@ -6,19 +11,7 @@ import numpy as np
 
 from fact_checking.rl_mmr.sensitivity import compute_pairwise_sim, mean_pairwise_sim
 
-# Pool-level feature names (same as soft_label_features POOL_FEATURE_NAMES subset)
-POOL_FEATURE_NAMES: list[str] = [
-    "n_candidates",
-    "log_n_candidates",
-    "score_mean",
-    "score_std",
-    "score_entropy",
-    "top1_top2_gap",
-    "mean_pairwise_sim",
-    "max_pairwise_sim",
-]
-
-# Step-level feature names
+# Step-level features that vary based on which items were already selected.
 STEP_FEATURE_NAMES: list[str] = [
     "step_fraction",
     "n_already_selected",
@@ -34,7 +27,8 @@ STEP_FEATURE_NAMES: list[str] = [
     "mmr_score_gap",
 ]
 
-ALL_FEATURE_NAMES: list[str] = POOL_FEATURE_NAMES + STEP_FEATURE_NAMES
+# Policy state = step features + previous λ (1 dim).
+POLICY_FEATURE_NAMES: list[str] = STEP_FEATURE_NAMES + ["prev_lambda"]
 
 
 def _entropy(scores: np.ndarray) -> float:
@@ -61,35 +55,6 @@ def _max_pairwise_sim(indices: list[int], sim: np.ndarray) -> float:
     return float(sub[iu].max())
 
 
-def extract_pool_features(
-    hybrid_scores: np.ndarray,
-    chunk_emb: np.ndarray,
-) -> np.ndarray:
-    """Extract static pool-level features (same regardless of selection step).
-
-    Returns float32 array of shape [len(POOL_FEATURE_NAMES)].
-    """
-    n = int(hybrid_scores.shape[0])
-    if n == 0:
-        return np.zeros(len(POOL_FEATURE_NAMES), dtype=np.float32)
-
-    sorted_scores = np.sort(hybrid_scores)[::-1]
-    sim = compute_pairwise_sim(chunk_emb)
-    pool_indices = list(range(n))
-
-    feats = {
-        "n_candidates": float(n),
-        "log_n_candidates": float(np.log1p(n)),
-        "score_mean": float(hybrid_scores.mean()),
-        "score_std": float(hybrid_scores.std()),
-        "score_entropy": _entropy(hybrid_scores),
-        "top1_top2_gap": float(sorted_scores[0] - sorted_scores[1]) if n >= 2 else 0.0,
-        "mean_pairwise_sim": mean_pairwise_sim(pool_indices, sim),
-        "max_pairwise_sim": _max_pairwise_sim(pool_indices, sim),
-    }
-    return np.array([feats[name] for name in POOL_FEATURE_NAMES], dtype=np.float32)
-
-
 def extract_step_features(
     hybrid_scores: np.ndarray,
     chunk_emb: np.ndarray,
@@ -100,16 +65,6 @@ def extract_step_features(
     mmr_scores_before: np.ndarray | None = None,
 ) -> np.ndarray:
     """Extract per-step state features before making the selection at step t.
-
-    Args:
-        hybrid_scores: [N] relevance scores.
-        chunk_emb: [N, D] normalized embeddings.
-        selected_indices: indices already selected before this step.
-        candidate_mask: [N] bool, True = available. None means all available.
-        step_idx: current step index (0-based).
-        total_steps: K (total selection budget).
-        mmr_scores_before: [N] MMR scores before this selection. If None,
-            computed from scratch.
 
     Returns float32 array of shape [len(STEP_FEATURE_NAMES)].
     """
@@ -194,27 +149,32 @@ def extract_step_features(
     return np.array([feats[name] for name in STEP_FEATURE_NAMES], dtype=np.float32)
 
 
-def extract_episode_features(
+def extract_policy_features(
     hybrid_scores: np.ndarray,
     chunk_emb: np.ndarray,
     step_records: list[dict],
     total_steps: int,
+    lambda_schedule: list[float],
 ) -> list[np.ndarray]:
-    """Extract full state feature vector (pool + step) for each step of an episode.
+    """Extract policy state features for each step of an episode.
+
+    Features: step features (12 dims) + prev_lambda (1 dim) = 13 dims.
+    Pool-level features are NOT included — they are identical for all
+    trajectories of the same claim and provide zero differentiation.
 
     Args:
         hybrid_scores: [N] relevance scores.
         chunk_emb: [N, D] normalized embeddings.
         step_records: list of per-step dicts from ``maximal_marginal_relevance_stepwise``.
         total_steps: K.
+        lambda_schedule: the full λ schedule for this trajectory.
 
     Returns:
-        List of [len(ALL_FEATURE_NAMES)] float32 arrays, one per step.
+        List of float32 arrays, each shape [len(POLICY_FEATURE_NAMES)].
     """
-    pool_feats = extract_pool_features(hybrid_scores, chunk_emb)
     features: list[np.ndarray] = []
-
     selected: list[int] = []
+
     for r in step_records:
         step_feats = extract_step_features(
             hybrid_scores=hybrid_scores,
@@ -225,7 +185,61 @@ def extract_episode_features(
             total_steps=total_steps,
             mmr_scores_before=r.get("mmr_scores_before"),
         )
-        features.append(np.concatenate([pool_feats, step_feats]).astype(np.float32))
+        step_idx = int(r["step_idx"])
+        if step_idx == 0:
+            prev_lambda = -1.0
+        else:
+            prev_lambda = float(lambda_schedule[step_idx - 1])
+
+        full = np.append(step_feats, prev_lambda).astype(np.float32)
+        features.append(full)
         selected.append(int(r["selected_idx"]))
 
     return features
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat aliases for code that referenced the old names
+# ---------------------------------------------------------------------------
+
+POOL_FEATURE_NAMES: list[str] = [
+    "n_candidates", "log_n_candidates", "score_mean", "score_std",
+    "score_entropy", "top1_top2_gap", "mean_pairwise_sim", "max_pairwise_sim",
+]
+ALL_FEATURE_NAMES: list[str] = POLICY_FEATURE_NAMES  # new policy features are the "all" features
+
+
+def extract_pool_features(hybrid_scores: np.ndarray, chunk_emb: np.ndarray) -> np.ndarray:
+    """Extract static pool-level features (kept for backward compat)."""
+    n = int(hybrid_scores.shape[0])
+    if n == 0:
+        return np.zeros(len(POOL_FEATURE_NAMES), dtype=np.float32)
+    sorted_scores = np.sort(hybrid_scores)[::-1]
+    sim = compute_pairwise_sim(chunk_emb)
+    pool_indices = list(range(n))
+    feats = {
+        "n_candidates": float(n),
+        "log_n_candidates": float(np.log1p(n)),
+        "score_mean": float(hybrid_scores.mean()),
+        "score_std": float(hybrid_scores.std()),
+        "score_entropy": _entropy(hybrid_scores),
+        "top1_top2_gap": float(sorted_scores[0] - sorted_scores[1]) if n >= 2 else 0.0,
+        "mean_pairwise_sim": mean_pairwise_sim(pool_indices, sim),
+        "max_pairwise_sim": _max_pairwise_sim(pool_indices, sim),
+    }
+    return np.array([feats[name] for name in POOL_FEATURE_NAMES], dtype=np.float32)
+
+
+def extract_episode_features(
+    hybrid_scores: np.ndarray,
+    chunk_emb: np.ndarray,
+    step_records: list[dict],
+    total_steps: int,
+    lambda_schedule: list[float] | None = None,
+) -> list[np.ndarray]:
+    """Backward-compat wrapper: uses new policy features.
+
+    If lambda_schedule is not provided, prev_lambda defaults to -1 for all steps.
+    """
+    sched = list(lambda_schedule) if lambda_schedule else [-1.0] * total_steps
+    return extract_policy_features(hybrid_scores, chunk_emb, step_records, total_steps, sched)

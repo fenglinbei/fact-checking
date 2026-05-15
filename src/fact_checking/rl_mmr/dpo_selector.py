@@ -114,7 +114,12 @@ def select_candidates_dpo_stepwise(
         mmr_scores[~candidate_mask] = -np.inf
         step_records_temp[0]["mmr_scores_before"] = mmr_scores.copy()
 
-        feats = extract_episode_features(hybrid_scores, chunk_emb, step_records_temp, effective_k)
+        # Build lambda schedule for prev_lambda: chosen so far + placeholder for current step
+        current_schedule = chosen_lambdas + [0.7]  # placeholder for current step
+        feats = extract_episode_features(
+            hybrid_scores, chunk_emb, step_records_temp, effective_k,
+            lambda_schedule=current_schedule,
+        )
         state = normalize_features(feats[0].reshape(1, -1), feature_stats)
 
         # Get policy prediction

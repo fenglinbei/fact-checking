@@ -170,7 +170,10 @@ def main() -> None:
                         sentence_vectors=chunk_emb,
                         lambda_weights=sched[:min(top_k, int(scored["n"]))],
                     )
-                    feats = extract_episode_features(hybrid_scores, chunk_emb, real_records, top_k)
+                    feats = extract_episode_features(
+                        hybrid_scores, chunk_emb, real_records, top_k,
+                        lambda_schedule=sched[:min(top_k, int(scored["n"]))],
+                    )
                     traj.state_features = feats
 
                 writer.write(json.dumps(_trajectory_to_dict(traj, args.include_state_features), ensure_ascii=False) + "\n")
