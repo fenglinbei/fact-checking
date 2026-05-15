@@ -23,9 +23,12 @@ from tqdm.auto import tqdm
 
 from fact_checking.build.candidates import (
     ChunkMMRSample,
-    _build_evidence_block,
-    _build_prompt_turns,
+    _build_chat_prompt,
+    _build_system_message,
+    _build_user_content,
+    _format_evidence_block,
     _load_pickle,
+    _load_prompt_tokenizer,
 )
 from fact_checking.data.constants import LABEL_LETTERS, LETTER_ORDER
 
@@ -82,25 +85,21 @@ def _build_prompt_for_evidence(
     max_length: int = 1024,
 ) -> str:
     """Build a prompt string with the given evidence selection."""
-    candidates = []
+    evidence_texts: list[str] = []
     for idx in selected_ids:
         if idx < len(sample.candidates):
-            candidates.append(dict(sample.candidates[idx]))
-    if not candidates:
-        candidates = [dict(sample.candidates[0])] if sample.candidates else [{"text": ""}]
+            evidence_texts.append(str(sample.candidates[idx].get("text", "")))
+    if not evidence_texts:
+        evidence_texts = [str(sample.candidates[0].get("text", ""))] if sample.candidates else [""]
 
-    evidence_block = _build_evidence_block(candidates)
-    turns = _build_prompt_turns(
+    user_content = _build_user_content(
         claim=sample.claim,
-        evidence_block=evidence_block,
+        evidence_texts=evidence_texts,
         output_mode="label_only",
         label_format="letter",
-        label=None,
-        explain=None,
-        system_prompt=None,
     )
-    text = tokenizer.apply_chat_template(turns, tokenize=False, add_generation_prompt=False)
-    return text
+    system_msg = _build_system_message(None)
+    return _build_chat_prompt(tokenizer, system_msg, user_content)
 
 
 def _load_oracle_reuse(path: str) -> dict[str, float]:
@@ -191,9 +190,7 @@ def main() -> None:
         except ImportError as exc:
             raise RuntimeError("vLLM is not installed.") from exc
 
-        # Load tokenizer for prompt building
-        from transformers import AutoTokenizer
-        prompt_tokenizer = AutoTokenizer.from_pretrained(args.prompt_model_name)
+        prompt_tokenizer = _load_prompt_tokenizer(args.prompt_model_name)
 
         model_path = args.model
         llm_kwargs: dict[str, Any] = {

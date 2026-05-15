@@ -289,9 +289,8 @@ outputs/rl_mmr/dpo_stepwise/trajectories/
 for split in train val test; do
     PYTHONPATH=src python scripts/rl_mmr/compute_trajectory_utility.py \
         --trajectories outputs/rl_mmr/dpo_stepwise/trajectories/trajectories_${split}.jsonl \
-        --chunk-mmr-cache outputs/cache/chunk_mmr/<fingerprint>/chunk_mmr_${split}.pkl \
+        --chunk-mmr-cache outputs/cache/chunk_mmr/e0b01520364d/chunk_mmr_${split}.pkl \
         --model /data/models/Qwen2.5-7B-Instruct \
-        --lora-adapter outputs/runs/b3_mmr_topk_sweep_1024/<run>/train/best \
         --output outputs/rl_mmr/dpo_stepwise/trajectories/trajectories_${split}_scored.jsonl \
         --reuse-oracle outputs/learned_lambda/oracle_lambda_${split}.jsonl \
         --tensor-parallel-size 4
