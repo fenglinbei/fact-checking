@@ -21,7 +21,7 @@ def maximal_marginal_relevance(
     if n_items == 0 or top_k <= 0:
         return []
     if top_k >= n_items:
-        return list(np.argsort(-query_scores))
+        return [int(i) for i in np.argsort(-query_scores)]
 
     similarity = sentence_vectors @ sentence_vectors.T
 
@@ -67,13 +67,13 @@ def maximal_marginal_relevance_stepwise(
         return [], []
 
     if top_k >= n_items:
-        order = list(np.argsort(-query_scores))
+        order = [int(i) for i in np.argsort(-query_scores)]
         records: list[dict] = []
         for t, idx in enumerate(order):
             records.append({
                 "step_idx": t,
                 "lambda_val": float(lambda_weights[t]) if t < len(lambda_weights) else 0.0,
-                "selected_idx": int(idx),
+                "selected_idx": idx,
                 "hybrid_score": float(query_scores[idx]),
                 "max_sim_to_selected": 0.0,
                 "mmr_score": float(query_scores[idx]),
