@@ -89,7 +89,7 @@ def main():
         y_train = wl[:, step]      # [N]
         # Train on 80%, test on 20%
         n_train = int(N * 0.8)
-        model = LogisticRegression(C=1.0, max_iter=500, multi_class="multinomial")
+        model = LogisticRegression(C=1.0, max_iter=500)
         model.fit(X_train[:n_train], y_train[:n_train])
         train_acc = model.score(X_train[:n_train], y_train[:n_train])
         test_acc = model.score(X_train[n_train:], y_train[n_train:])
