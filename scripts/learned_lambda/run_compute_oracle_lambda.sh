@@ -30,9 +30,12 @@ MAX_MODEL_LEN="${MAX_MODEL_LEN:-1024}"
 DTYPE="${DTYPE:-auto}"
 DEFAULT_LAMBDA="${DEFAULT_LAMBDA:-0.7}"
 LABEL_PREFIX="${LABEL_PREFIX:-Label:}"
+SCORING_BACKEND="${SCORING_BACKEND:-vllm_hybrid}"
+TOP_LOGPROBS="${TOP_LOGPROBS:-20}"
 SCORE_BATCH_SIZE="${SCORE_BATCH_SIZE:-1024}"
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-}"
+MAX_LOGPROBS="${MAX_LOGPROBS:-}"
 PROGRESS="${PROGRESS:-true}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 export CUDA_VISIBLE_DEVICES
@@ -62,9 +65,12 @@ echo "[run_compute_oracle_lambda] max_model_len=${MAX_MODEL_LEN}"
 echo "[run_compute_oracle_lambda] dtype=${DTYPE}"
 echo "[run_compute_oracle_lambda] default_lambda=${DEFAULT_LAMBDA}"
 echo "[run_compute_oracle_lambda] label_prefix=${LABEL_PREFIX}"
+echo "[run_compute_oracle_lambda] scoring_backend=${SCORING_BACKEND}"
+echo "[run_compute_oracle_lambda] top_logprobs=${TOP_LOGPROBS}"
 echo "[run_compute_oracle_lambda] score_batch_size=${SCORE_BATCH_SIZE}"
 echo "[run_compute_oracle_lambda] max_num_batched_tokens=${MAX_NUM_BATCHED_TOKENS:-auto}"
 echo "[run_compute_oracle_lambda] max_num_seqs=${MAX_NUM_SEQS:-auto}"
+echo "[run_compute_oracle_lambda] max_logprobs=${MAX_LOGPROBS:-auto}"
 echo "[run_compute_oracle_lambda] progress=${PROGRESS}"
 echo "[run_compute_oracle_lambda] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 
@@ -80,6 +86,8 @@ cmd=(
   --dtype "${DTYPE}"
   --default-lambda "${DEFAULT_LAMBDA}"
   --label-prefix "${LABEL_PREFIX}"
+  --scoring-backend "${SCORING_BACKEND}"
+  --top-logprobs "${TOP_LOGPROBS}"
   --score-batch-size "${SCORE_BATCH_SIZE}"
 )
 
@@ -97,6 +105,10 @@ fi
 
 if [[ -n "${MAX_NUM_SEQS}" ]]; then
   cmd+=(--max-num-seqs "${MAX_NUM_SEQS}")
+fi
+
+if [[ -n "${MAX_LOGPROBS}" ]]; then
+  cmd+=(--max-logprobs "${MAX_LOGPROBS}")
 fi
 
 if [[ "${PROGRESS}" == "false" ]]; then

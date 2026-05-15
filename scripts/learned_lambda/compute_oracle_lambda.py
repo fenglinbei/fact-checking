@@ -48,6 +48,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-lora-rank", type=int, default=16)
     p.add_argument("--default-lambda", type=float, default=0.7, help="Tie-break preference")
     p.add_argument(
+        "--scoring-backend",
+        type=str,
+        choices=["vllm_hybrid", "vllm_prompt"],
+        default="vllm_hybrid",
+        help="vllm_hybrid first tries one generated-token top-logprobs pass and only falls back "
+             "to prompt continuation scoring for missing A-F labels. vllm_prompt scores every "
+             "A-F label continuation explicitly.",
+    )
+    p.add_argument(
+        "--top-logprobs",
+        type=int,
+        default=20,
+        help="Top generated-token logprobs to request in vllm_hybrid prepass. "
+             "Values above vLLM's max_logprobs require --max-logprobs.",
+    )
+    p.add_argument(
         "--label-prefix",
         type=str,
         default="Label:",
@@ -72,6 +88,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Optional vLLM LLM(max_num_seqs=...) override for memory-constrained scoring.",
+    )
+    p.add_argument(
+        "--max-logprobs",
+        type=int,
+        default=None,
+        help="Optional vLLM LLM(max_logprobs=...) override when --top-logprobs is above the engine default.",
     )
     p.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars")
     return p.parse_args()
@@ -169,6 +191,23 @@ def _extract_logprob_value(entry) -> float:
     if isinstance(entry, dict) and "logprob" in entry:
         return float(entry["logprob"])
     return float(entry)
+
+
+def _extract_available_label_logprobs(
+    token_logprobs: dict,
+    letter_token_ids: dict[str, int],
+) -> tuple[dict[str, float], list[str]]:
+    label_logprobs: dict[str, float] = {}
+    missing: list[str] = []
+    for letter, token_id in letter_token_ids.items():
+        entry = token_logprobs.get(token_id)
+        if entry is None:
+            entry = token_logprobs.get(str(token_id))
+        if entry is None:
+            missing.append(letter)
+            continue
+        label_logprobs[letter] = _extract_logprob_value(entry)
+    return label_logprobs, missing
 
 
 def _extract_prompt_token_logprob(output, token_id: int, *, event_id: str, lam: float, letter: str) -> float:
@@ -313,6 +352,8 @@ def main() -> None:
         llm_init_kwargs["max_num_batched_tokens"] = int(args.max_num_batched_tokens)
     if args.max_num_seqs is not None:
         llm_init_kwargs["max_num_seqs"] = int(args.max_num_seqs)
+    if args.max_logprobs is not None:
+        llm_init_kwargs["max_logprobs"] = int(args.max_logprobs)
     llm = LLM(**llm_init_kwargs)
     tokenizer = llm.get_tokenizer()
 
@@ -328,15 +369,27 @@ def main() -> None:
             "This vLLM build does not support SamplingParams.prompt_logprobs. "
             "Upgrade vLLM or use a version that can score prompt continuations."
         )
+    if args.scoring_backend == "vllm_hybrid" and "logprobs" not in sampling_param_names:
+        raise RuntimeError(
+            "This vLLM build does not support SamplingParams.logprobs. "
+            "Use --scoring-backend vllm_prompt or upgrade vLLM."
+        )
 
-    sampling_params = SamplingParams(
+    prompt_sampling_params = SamplingParams(
         max_tokens=1,
         temperature=0.0,
         prompt_logprobs=0,
         detokenize=False,
     )
 
-    print("Running label-continuation scoring...", flush=True)
+    hybrid_sampling_params = SamplingParams(
+        max_tokens=1,
+        temperature=0.0,
+        logprobs=int(args.top_logprobs),
+        detokenize=False,
+    )
+
+    print(f"Running oracle scoring backend={args.scoring_backend}...", flush=True)
     generate_params = inspect.signature(llm.generate).parameters
 
     # Extract log-probs and compute oracle λ
@@ -351,18 +404,18 @@ def main() -> None:
     score_batch_size = int(args.score_batch_size)
     if score_batch_size <= 0:
         score_batch_size = max(1, len(all_meta) * len(letter_token_ids))
-    total_scoring_requests = len(all_meta) * len(letter_token_ids)
 
-    batch_token_ids: list[list[int]] = []
-    batch_meta: list[dict] = []
+    prompt_batch_token_ids: list[list[int]] = []
+    prompt_batch_meta: list[dict] = []
+    prompt_fallback_count = 0
 
-    def flush_scoring_batch() -> int:
-        nonlocal batch_token_ids, batch_meta
-        if not batch_token_ids:
+    def flush_prompt_scoring_batch() -> int:
+        nonlocal prompt_batch_token_ids, prompt_batch_meta, prompt_fallback_count
+        if not prompt_batch_token_ids:
             return 0
         generate_kwargs = {
-            "prompt_token_ids": batch_token_ids,
-            "sampling_params": sampling_params,
+            "prompt_token_ids": prompt_batch_token_ids,
+            "sampling_params": prompt_sampling_params,
         }
         if "use_tqdm" in generate_params:
             generate_kwargs["use_tqdm"] = False
@@ -370,10 +423,10 @@ def main() -> None:
             generate_kwargs["lora_request"] = lora_request
 
         outputs = llm.generate(**generate_kwargs)
-        if len(outputs) != len(batch_meta):
-            raise RuntimeError(f"vLLM returned {len(outputs)} outputs for {len(batch_meta)} scoring requests")
+        if len(outputs) != len(prompt_batch_meta):
+            raise RuntimeError(f"vLLM returned {len(outputs)} outputs for {len(prompt_batch_meta)} scoring requests")
 
-        for output, meta in zip(outputs, batch_meta):
+        for output, meta in zip(outputs, prompt_batch_meta):
             event_id = meta["event_id"]
             lam = meta["lambda_val"]
             letter = meta["letter"]
@@ -387,40 +440,124 @@ def main() -> None:
             )
             event_label_logprobs.setdefault(event_id, {}).setdefault(lam, {})[letter] = logprob
 
-        processed = len(batch_meta)
-        batch_token_ids = []
-        batch_meta = []
+        processed = len(prompt_batch_meta)
+        prompt_fallback_count += processed
+        prompt_batch_token_ids = []
+        prompt_batch_meta = []
         return processed
 
-    with tqdm(
-        total=total_scoring_requests,
-        desc="score label continuations",
-        unit="choice",
-        dynamic_ncols=True,
-        disable=not show_progress,
-    ) as score_progress:
-        for prompt, meta in zip(all_prompts, all_meta):
-            for letter, token_id in letter_token_ids.items():
-                batch_token_ids.append(
-                    _build_scoring_prompt_token_ids(
-                        tokenizer,
-                        prompt=prompt,
-                        label_prefix=args.label_prefix,
-                        letter=letter,
-                        label_token_id=token_id,
-                    )
-                )
-                batch_meta.append({
-                    "event_id": meta["event_id"],
-                    "lambda_val": meta["lambda_val"],
-                    "letter": letter,
-                    "label_token_id": token_id,
-                })
-                if len(batch_token_ids) >= score_batch_size:
-                    score_progress.update(flush_scoring_batch())
-        score_progress.update(flush_scoring_batch())
+    def queue_prompt_scoring(prompt: str, meta: dict, letter: str, token_id: int) -> None:
+        prompt_batch_token_ids.append(
+            _build_scoring_prompt_token_ids(
+                tokenizer,
+                prompt=prompt,
+                label_prefix=args.label_prefix,
+                letter=letter,
+                label_token_id=token_id,
+            )
+        )
+        prompt_batch_meta.append({
+            "event_id": meta["event_id"],
+            "lambda_val": meta["lambda_val"],
+            "letter": letter,
+            "label_token_id": token_id,
+        })
 
-    print(f"Scoring complete: {total_scoring_requests} label continuations", flush=True)
+    def add_hybrid_output_logprobs(output, meta: dict, prompt: str) -> int:
+        if not output.outputs or not output.outputs[0].logprobs:
+            missing = list(LETTER_ORDER)
+            available: dict[str, float] = {}
+        else:
+            first_token_logprobs = output.outputs[0].logprobs[0]
+            available, missing = _extract_available_label_logprobs(first_token_logprobs, letter_token_ids)
+
+        event_id = meta["event_id"]
+        lam = meta["lambda_val"]
+        if available:
+            event_label_logprobs.setdefault(event_id, {}).setdefault(lam, {}).update(available)
+        for letter in missing:
+            queue_prompt_scoring(prompt, meta, letter, letter_token_ids[letter])
+        return len(missing)
+
+    if args.scoring_backend == "vllm_hybrid":
+        missing_total = 0
+        prompt_batch: list[str] = []
+        meta_batch: list[dict] = []
+        raw_prompt_batch: list[str] = []
+
+        def flush_hybrid_batch() -> int:
+            nonlocal prompt_batch, meta_batch, raw_prompt_batch, missing_total
+            if not prompt_batch:
+                return 0
+            generate_kwargs = {
+                "prompts": prompt_batch,
+                "sampling_params": hybrid_sampling_params,
+            }
+            if "use_tqdm" in generate_params:
+                generate_kwargs["use_tqdm"] = False
+            if lora_request is not None:
+                generate_kwargs["lora_request"] = lora_request
+            outputs = llm.generate(**generate_kwargs)
+            if len(outputs) != len(meta_batch):
+                raise RuntimeError(f"vLLM returned {len(outputs)} outputs for {len(meta_batch)} hybrid requests")
+
+            for output, meta, raw_prompt in zip(outputs, meta_batch, raw_prompt_batch):
+                missing_total += add_hybrid_output_logprobs(output, meta, raw_prompt)
+                if len(prompt_batch_token_ids) >= score_batch_size:
+                    flush_prompt_scoring_batch()
+
+            processed = len(meta_batch)
+            prompt_batch = []
+            meta_batch = []
+            raw_prompt_batch = []
+            return processed
+
+        with tqdm(
+            total=len(all_meta),
+            desc=f"hybrid top-{int(args.top_logprobs)} label scan",
+            unit="prompt",
+            dynamic_ncols=True,
+            disable=not show_progress,
+        ) as scan_progress:
+            for prompt, meta in zip(all_prompts, all_meta):
+                raw_prompt_batch.append(prompt)
+                prompt_batch.append(_append_label_prefix(prompt, args.label_prefix))
+                meta_batch.append(meta)
+                if len(prompt_batch) >= score_batch_size:
+                    scan_progress.update(flush_hybrid_batch())
+            scan_progress.update(flush_hybrid_batch())
+        flush_prompt_scoring_batch()
+        print(
+            "Hybrid scoring complete: "
+            f"{len(all_meta)} top-logprobs prompts, {missing_total} fallback label continuations",
+            flush=True,
+        )
+    else:
+        total_scoring_requests = len(all_meta) * len(letter_token_ids)
+        with tqdm(
+            total=total_scoring_requests,
+            desc="score label continuations",
+            unit="choice",
+            dynamic_ncols=True,
+            disable=not show_progress,
+        ) as score_progress:
+            for prompt, meta in zip(all_prompts, all_meta):
+                for letter, token_id in letter_token_ids.items():
+                    queue_prompt_scoring(prompt, meta, letter, token_id)
+                    if len(prompt_batch_token_ids) >= score_batch_size:
+                        score_progress.update(flush_prompt_scoring_batch())
+            score_progress.update(flush_prompt_scoring_batch())
+        print(f"Scoring complete: {total_scoring_requests} label continuations", flush=True)
+
+    if prompt_batch_token_ids:
+        raise RuntimeError("Internal error: unflushed prompt scoring batch remains after oracle scoring.")
+
+    if args.scoring_backend == "vllm_hybrid":
+        print(
+            f"Effective scoring requests: {len(all_meta) + prompt_fallback_count} "
+            f"(vs {len(all_meta) * len(letter_token_ids)} full continuation requests)",
+            flush=True,
+        )
 
     for meta in tqdm(
         all_meta,

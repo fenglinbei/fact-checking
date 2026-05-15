@@ -19,6 +19,7 @@ _validate_lora_adapter = compute_oracle_lambda._validate_lora_adapter
 _append_label_prefix = compute_oracle_lambda._append_label_prefix
 _build_label_token_ids = compute_oracle_lambda._build_label_token_ids
 _build_scoring_prompt_token_ids = compute_oracle_lambda._build_scoring_prompt_token_ids
+_extract_available_label_logprobs = compute_oracle_lambda._extract_available_label_logprobs
 _extract_prompt_token_logprob = compute_oracle_lambda._extract_prompt_token_logprob
 _normalize_label_logprobs = compute_oracle_lambda._normalize_label_logprobs
 
@@ -180,6 +181,19 @@ def test_extract_prompt_token_logprob_reads_actual_final_prompt_token() -> None:
             lam=0.7,
             letter="A",
         )
+
+
+def test_extract_available_label_logprobs_returns_missing_letters() -> None:
+    label_token_ids = {"A": 101, "B": 102, "C": 103}
+    token_logprobs = {
+        101: SimpleNamespace(logprob=-0.1),
+        "102": {"logprob": -0.2},
+    }
+
+    available, missing = _extract_available_label_logprobs(token_logprobs, label_token_ids)
+
+    assert available == {"A": -0.1, "B": -0.2}
+    assert missing == ["C"]
 
 
 def test_normalize_label_logprobs_returns_constrained_distribution() -> None:
