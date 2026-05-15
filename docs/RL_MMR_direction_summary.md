@@ -88,15 +88,11 @@
 
 当前分析显示，候选数量是少数能解释 oracle lambda 的弱信号之一。可以先使用:
 
-```text
-lambda = clip(a * log(n_candidates) + b, lambda_min, lambda_max)
-```
+$$\lambda = \operatorname{clip}(a \cdot \log(n_{\text{candidates}}) + b,\; \lambda_{\min},\; \lambda_{\max})$$
 
 初始可用经验形式:
 
-```text
-lambda = clip(-0.073 * log(n_candidates) + 0.613, 0.0, 1.0)
-```
+$$\lambda = \operatorname{clip}(-0.073 \cdot \log(n_{\text{candidates}}) + 0.613,\; 0.0,\; 1.0)$$
 
 也可以在 dev set 上重新拟合 `a` 和 `b`。
 
@@ -114,22 +110,15 @@ lambda = clip(-0.073 * log(n_candidates) + 0.613, 0.0, 1.0)
 
 可定义:
 
-```text
-S_low  = MMR(lambda = 0.3)
-S_base = MMR(lambda = 0.7)
-Sensitivity = 1 - Jaccard(S_low, S_base)
-```
+$$S_{\text{low}} = \operatorname{MMR}(\lambda = 0.3)$$
+$$S_{\text{base}} = \operatorname{MMR}(\lambda = 0.7)$$
+$$\text{Sensitivity} = 1 - \operatorname{Jaccard}(S_{\text{low}},\; S_{\text{base}})$$
 
 也可加入 order-level 差异、pairwise redundancy、candidate score entropy、top-k score gap 等信号。
 
 简单策略:
 
-```text
-if Sensitivity >= threshold and candidate_pool_redundancy >= threshold:
-    lambda = 0.3
-else:
-    lambda = 0.7
-```
+$$\lambda = \begin{cases} 0.3 & \text{if Sensitivity} \geq \tau \text{ and candidate\_pool\_redundancy} \geq \tau \\ 0.7 & \text{otherwise} \end{cases}$$
 
 作用:
 
@@ -141,25 +130,47 @@ else:
 
 定位: 对 System 3 的合理修复。
 
-不要再把每条 claim 的目标写成单点 `lambda*`。应使用完整 utility curve 构造 soft target:
+不要再把每条 claim 的目标写成单点 $\lambda^*$。应使用完整 utility curve 构造 soft target。
 
-```text
-q_i(lambda) = softmax(U_i(lambda) / temperature)
-```
+**$U_i(\lambda)$ 的定义：** 对于 claim $i$，固定 verifier，在每个候选 $\lambda$ 值下运行 MMR 得到 evidence set，计算该 evidence set 对应的下游 utility（如 correct label logprob、verdict accuracy 等），构成 utility curve $U_i(\lambda)$。该 curve 刻画了 claim $i$ 对 lambda 变化的响应模式。
 
-训练目标:
+**为什么用 softmax：** 第 2 节的诊断表明 oracle utility 曲面高度平坦，不同 lambda 产生的 utility 差异很小。若直接取 hard argmax $\lambda^* = \arg\max_\lambda U_i(\lambda)$，该点只是平坦曲面上的一个不稳定点，包含大量噪声。通过 softmax with temperature：
 
-```text
-L = weighted_cross_entropy(q_i(lambda), p_theta(lambda | features))
-```
+$$q_i(\lambda) = \operatorname{softmax}\!\big(U_i(\lambda) / \tau\big)$$
 
-样本权重可设为:
+将 utility curve 转化为一个平滑的概率分布 $q_i(\lambda)$ 作为 soft target。效果是：
 
-```text
-w_i = max_lambda U_i(lambda) - U_i(0.7)
-```
+- 高 margin 样本（某些 lambda 明显更优）→ 概率分布尖锐，接近 one-hot，提供强监督信号。
+- 低 margin 样本（不同 lambda 效用接近）→ 概率分布平坦，接近均匀分布，自然降低该样本对训练的干扰。
 
-或使用 top1-top2 margin、sensitivity score。
+temperature $\tau$ 控制平滑程度：$\tau$ 越小分布越尖锐，$\tau$ 越大分布越平坦。
+
+**Hard label 与 soft label 的对比：** hard label 直接将 utility 最高的那个点作为"正确答案"：$\lambda^* = \arg\max_\lambda U_i(\lambda)$。这等价于一个 one-hot 向量 `{λ=0.3:0, λ=0.4:1, λ=0.5:0, ...}`，只有最大值处为 1，其余全为 0。当不同 λ 的 utility 差异很小时（如 89、90、91 分），hard label 强行把细微差异放大为"对与错"的二元判断——第二好的 λ 只差了 1 分却被标记为"错误"，丢失了 utility 曲面的大部分信息，且 argmax 本身在平坦曲面上极不稳定。
+
+soft label 则保留整条 utility curve 的相对关系：分数接近的几个 λ 获得接近的概率值，分布平坦；真正有差异时分布才尖锐。本质区别：
+
+| | Hard Label | Soft Label |
+|---|---|---|
+| 标签形式 | 单点 argmax $\lambda^*$ | 概率分布 $q(\lambda)$ |
+| 信息来源 | 只看最大值 | 保留整条 utility curve |
+| 低 margin 样本 | 强行选一个，引入噪声 | 分布平坦，自动弱化影响 |
+| 模型学到的 | "精确猜中这个点" | "哪个区间偏好、偏好多强" |
+
+在高 margin 样本上，两者趋近一致（soft label 也接近 one-hot）；在低 margin 样本上，hard label 制造虚假确信，soft label 承认"这些 λ 差不多"。System 3 的失败很大程度上正是因为在这类低 margin 样本上被迫拟合不稳定 hard label 而退化为均值预测。
+
+**为什么用 weighted cross-entropy：** 即使使用了 soft target，仍有大量 claim 的 utility curve 近乎平坦，这些样本天然缺乏对 lambda 的偏好信号。若等权训练，模型会被这些低信号样本主导，退化为均值预测。
+
+因此对每条 claim 按其对 lambda 的敏感程度加权：
+
+$$w_i = \max_\lambda U_i(\lambda) - U_i(0.7)$$
+
+即 utility 最大值与 fixed baseline 的差距。差距大 → claim 对 lambda 敏感 → 高权重；差距小 → claim 对 lambda 不敏感 → 低权重。最终的加权交叉熵损失：
+
+$$\mathcal{L} = \sum_i w_i \cdot \left( -\sum_\lambda q_i(\lambda) \log p_\theta(\lambda \mid \text{features}_i) \right)$$
+
+使得模型将容量集中在真正需要 adaptive lambda 的 claim 上，而不是在无信号样本上拟合噪声。
+
+样本权重也可替换为 top1-top2 utility margin、sensitivity score 等变体。
 
 特征不建议只用 BGE embedding。更应加入 interventional features:
 
@@ -187,43 +198,30 @@ w_i = max_lambda U_i(lambda) - U_i(0.7)
 
 Trajectory 可写为:
 
-```text
-tau = ((lambda_1, d_1), (lambda_2, d_2), ..., (lambda_K, d_K))
-```
+$$\tau = \big((\lambda_1, d_1), (\lambda_2, d_2), \ldots, (\lambda_K, d_K)\big)$$
 
 其中每一步:
 
-```text
-lambda_t ~ pi_theta(lambda | c, C, S_{t-1}, t)
-d_t = MMR_select(lambda_t, c, C, S_{t-1})
-```
+$$\lambda_t \sim \pi_\theta(\lambda \mid c, C, S_{t-1}, t)$$
+$$d_t = \operatorname{MMR\_select}(\lambda_t, c, C, S_{t-1})$$
 
 对同一 claim 生成多条 trajectory，并用 utility 打分:
 
-```text
-U(c, S_K) = w1 * VerdictUtility
-          + w2 * EvidenceUtility
-          + w3 * Coverage
-          - w4 * Redundancy
-          - w5 * Cost
-```
+$$U(c, S_K) = w_1 \cdot \text{VerdictUtility}
+            + w_2 \cdot \text{EvidenceUtility}
+            + w_3 \cdot \text{Coverage}
+            - w_4 \cdot \text{Redundancy}
+            - w_5 \cdot \text{Cost}$$
 
 构造 preference pair:
 
-```text
-tau_plus > tau_minus if U(tau_plus) - U(tau_minus) >= delta
-```
+$$\tau^+ \succ \tau^- \quad \text{if} \quad U(\tau^+) - U(\tau^-) \geq \delta$$
 
 可使用 DPO loss 或 margin loss:
 
-```text
-L_margin = max(0, DeltaU - [log pi_theta(tau_plus) - log pi_theta(tau_minus)])
-```
+$$\mathcal{L}_{\text{margin}} = \max\!\big(0,\; \Delta U - [\log \pi_\theta(\tau^+) - \log \pi_\theta(\tau^-)]\big)$$
 
-```text
-L_DPO = -log sigmoid(beta * ([log pi_theta(tau_plus) - log pi_theta(tau_minus)]
-                             - [log pi_ref(tau_plus) - log pi_ref(tau_minus)]))
-```
+$$\mathcal{L}_{\text{DPO}} = -\log \sigma\!\Big(\beta \cdot \big([\log \pi_\theta(\tau^+) - \log \pi_\theta(\tau^-)] - [\log \pi_{\text{ref}}(\tau^+) - \log \pi_{\text{ref}}(\tau^-)]\big)\Big)$$
 
 作用:
 
@@ -238,20 +236,16 @@ L_DPO = -log sigmoid(beta * ([log pi_theta(tau_plus) - log pi_theta(tau_minus)]
 
 Scalar lambda 只能表达 relevance 与 redundancy 的单轴权衡。事实核查 evidence selection 往往还涉及 coverage、source novelty、stance diversity、time、cost 等多维因素。因此可扩展为:
 
-```text
-Score(d | s_t) = w_rel,t * Rel(c,d)
-               - w_red,t * Red(d,S_{t-1})
-               + w_cov,t * Cov(d,S_{t-1},c)
-               + w_src,t * SrcNovelty(d,S_{t-1})
-               + w_stance,t * StanceNovelty(d,S_{t-1})
-               - w_cost,t * Cost(d)
-```
+$$\operatorname{Score}(d \mid s_t) = w_{\text{rel},t} \cdot \operatorname{Rel}(c, d)
+                               - w_{\text{red},t} \cdot \operatorname{Red}(d, S_{t-1})
+                               + w_{\text{cov},t} \cdot \operatorname{Cov}(d, S_{t-1}, c)
+                               + w_{\text{src},t} \cdot \operatorname{SrcNovelty}(d, S_{t-1})
+                               + w_{\text{stance},t} \cdot \operatorname{StanceNovelty}(d, S_{t-1})
+                               - w_{\text{cost},t} \cdot \operatorname{Cost}(d)$$
 
 其中:
 
-```text
-w_t = g_theta(c, C, S_{t-1}, t)
-```
+$$w_t = g_\theta(c, C, S_{t-1}, t)$$
 
 作用:
 
@@ -265,19 +259,17 @@ w_t = g_theta(c, C, S_{t-1}, t)
 
 流程:
 
-```text
-for each claim:
-    sample G trajectories from current policy
-    compute reward R_1, ..., R_G
-    normalize advantage within group
-    update policy with KL constraint to reference policy
-```
+$$\begin{aligned}
+&\text{for each claim:} \\
+&\quad \text{sample } G \text{ trajectories from current policy} \\
+&\quad \text{compute reward } R_1, \ldots, R_G \\
+&\quad \text{normalize advantage within group} \\
+&\quad \text{update policy with KL constraint to reference policy}
+\end{aligned}$$
 
 组内 advantage:
 
-```text
-A_i = (R_i - mean(R_1, ..., R_G)) / (std(R_1, ..., R_G) + epsilon)
-```
+$$A_i = \frac{R_i - \operatorname{mean}(R_1, \ldots, R_G)}{\operatorname{std}(R_1, \ldots, R_G) + \epsilon}$$
 
 作用:
 
@@ -291,14 +283,12 @@ A_i = (R_i - mean(R_1, ..., R_G)) / (std(R_1, ..., R_G) + epsilon)
 
 推荐主 utility:
 
-```text
-U = w_label * LabelCorrectOrLogprob
-  + w_ev * EvidenceOverlapOrRecall
-  + w_cov * Coverage
-  + w_div * SourceOrSemanticDiversity
-  - w_red * Redundancy
-  - w_cost * Cost
-```
+$$U = w_{\text{label}} \cdot \text{LabelCorrectOrLogprob}
+    + w_{\text{ev}} \cdot \text{EvidenceOverlapOrRecall}
+    + w_{\text{cov}} \cdot \text{Coverage}
+    + w_{\text{div}} \cdot \text{SourceOrSemanticDiversity}
+    - w_{\text{red}} \cdot \text{Redundancy}
+    - w_{\text{cost}} \cdot \text{Cost}$$
 
 若 gold evidence 不完整，可以并行记录两套 utility:
 

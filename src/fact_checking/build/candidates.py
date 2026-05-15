@@ -1559,6 +1559,74 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                         trace_path = target_dir / f"soft_label_trace_{split_name}.jsonl"
                         dump_trace_rows(trace_rows, trace_path)
                         logger.info("Wrote soft-label trace: %s", trace_path)
+                elif learned_lambda_mode == "dpo_stepwise":
+                    from fact_checking.rl_mmr.dpo_selector import (
+                        load_dpo_step_policy,
+                        select_candidates_dpo_stepwise,
+                        dump_trace_rows as dump_dpo_trace,
+                    )
+
+                    dpo_cfg = dict(learned_lambda_cfg.get("dpo_stepwise", {}) or {})
+                    dpo_model_path = str(dpo_cfg.get("model_path", "outputs/rl_mmr/dpo_stepwise/checkpoints"))
+                    lambda_grid = np.array(
+                        dpo_cfg.get("lambda_grid", [0.1, 0.3, 0.5, 0.7, 0.9]), dtype=np.float32,
+                    )
+                    dpo_inference_mode = str(dpo_cfg.get("inference_mode", "argmax")).strip().lower()
+                    dpo_sample_temp = float(dpo_cfg.get("sample_temperature", 0.5))
+
+                    policy, feature_stats = load_dpo_step_policy(dpo_model_path)
+                    logger.info(
+                        "Loaded DPO step-wise policy from %s, inference_mode=%s",
+                        dpo_model_path, dpo_inference_mode,
+                    )
+
+                    dpo_trace_rows: list[dict[str, Any]] = []
+                    with output_path.open("w", encoding="utf-8") as writer:
+                        dpo_pbar = tqdm(
+                            chunk_samples,
+                            desc=f"DPO stepwise [{split_name}]",
+                            unit="sample",
+                            dynamic_ncols=True,
+                        )
+                        for sample in dpo_pbar:
+                            row = select_candidates_dpo_stepwise(
+                                sample, policy, feature_stats, lambda_grid,
+                                top_k=run_summary["top_k"],
+                                alpha_dense=run_summary["alpha_dense"],
+                                alpha_lexical=run_summary["alpha_lexical"],
+                                alpha_bm25=run_summary["alpha_bm25"],
+                                inference_mode=dpo_inference_mode,
+                                sample_temperature=dpo_sample_temp,
+                            )
+                            chosen = row.pop("_dpo_chosen_lambdas", [])
+                            dpo_trace_rows.append({
+                                "event_id": sample.event_id,
+                                "claim": sample.claim,
+                                "label": sample.label,
+                                "chosen_lambdas": chosen,
+                                "n_candidates": len(sample.candidates),
+                                "inference_mode": dpo_inference_mode,
+                            })
+                            training_row = _build_training_row(row, tokenizer, prompt_cfg_local)
+                            writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
+                        dpo_pbar.close()
+
+                    chosen_flat = [v for tr in dpo_trace_rows for v in tr["chosen_lambdas"]]
+                    if chosen_flat:
+                        logger.info(
+                            "DPO stepwise (%s): %d samples, λ mean=%.3f std=%.3f",
+                            dpo_inference_mode,
+                            len(dpo_trace_rows),
+                            float(np.mean(chosen_flat)),
+                            float(np.std(chosen_flat)),
+                        )
+                    if dpo_cfg.get("dump_trace", True):
+                        dpo_trace_path = target_dir / f"dpo_stepwise_trace_{split_name}.jsonl"
+                        dump_dpo_trace(dpo_trace_rows, dpo_trace_path)
+                        logger.info("Wrote DPO stepwise trace: %s", dpo_trace_path)
+
+                    # DPO stepwise writes output directly; skip _mmr_phase_from_chunk_cache
+                    dpo_handled = True
                 else:
                     from fact_checking.learned_lambda.predictor import load_predictor, predict_lambdas_for_samples
                     model_path = str(learned_lambda_cfg["model_path"])
@@ -1570,26 +1638,31 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                     else:
                         pre_samples = _load_pickle(pre_mmr_split_paths[split_name])
                         lambda_overrides = predict_lambdas_for_samples(pre_samples, predictor, stats, retrieval_cfg)
-                vals = list(lambda_overrides.values()) if lambda_overrides else []
-                if vals:
-                    logger.info(
-                        "Learned lambda (%s): %d overrides, mean=%.3f, std=%.3f",
-                        learned_lambda_mode, len(vals), float(np.mean(vals)), float(np.std(vals)),
-                    )
 
-            _mmr_phase_from_chunk_cache(
-                chunk_samples=chunk_samples,
-                mmr_lambda=run_summary["mmr_lambda"],
-                top_k=run_summary["top_k"],
-                alpha_dense=run_summary["alpha_dense"],
-                alpha_lexical=run_summary["alpha_lexical"],
-                alpha_bm25=run_summary["alpha_bm25"],
-                tokenizer=tokenizer,
-                prompt_cfg=prompt_cfg_local,
-                output_path=output_path,
-                cpu_workers=run_summary["cpu_workers"],
-                lambda_overrides=lambda_overrides,
-            )
+            # Only call standard MMR phase if DPO didn't handle it directly
+            dpo_handled = use_learned_lambda and learned_lambda_mode == "dpo_stepwise"
+            if not dpo_handled:
+                if use_learned_lambda:
+                    vals = list(lambda_overrides.values()) if lambda_overrides else []
+                    if vals:
+                        logger.info(
+                            "Learned lambda (%s): %d overrides, mean=%.3f, std=%.3f",
+                            learned_lambda_mode, len(vals), float(np.mean(vals)), float(np.std(vals)),
+                        )
+
+                _mmr_phase_from_chunk_cache(
+                    chunk_samples=chunk_samples,
+                    mmr_lambda=run_summary["mmr_lambda"],
+                    top_k=run_summary["top_k"],
+                    alpha_dense=run_summary["alpha_dense"],
+                    alpha_lexical=run_summary["alpha_lexical"],
+                    alpha_bm25=run_summary["alpha_bm25"],
+                    tokenizer=tokenizer,
+                    prompt_cfg=prompt_cfg_local,
+                    output_path=output_path,
+                    cpu_workers=run_summary["cpu_workers"],
+                    lambda_overrides=lambda_overrides,
+                )
 
         split_paths[split_name] = output_path
         logger.info("Wrote build file: %s", output_path)

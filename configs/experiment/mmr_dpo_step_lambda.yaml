@@ -1,0 +1,190 @@
+# @package _global_
+# 实验 5: DPO step-wise λ policy — 完整 pipeline 配置
+# 继承自 b3_mmr_topk_sweep_1024，仅覆写 learned_lambda 相关参数
+
+# Hydra 继承链
+defaults:
+  - b3_mmr_topk_sweep_1024   # 继承完整的 b3 baseline 参数
+  - _self_
+
+# ============================================================================
+# 实验元数据（覆写）
+# ============================================================================
+experiment:
+  name: mmr_dpo_step_lambda
+
+baseline:
+  variant: mmr_dpo_step_lambda
+  chunking_strategy: semantic
+  model_name_or_path: /data/models/Qwen2.5-7B-Instruct
+  top_k: 5                     # evidence selection 数量
+
+# ============================================================================
+# Build 配置
+# ============================================================================
+build:
+  # --- 数据路径 ---
+  output_policy: fingerprint_cache
+  data:
+    train_path: data/raw/LIAR-RAW/train.json
+    val_path: data/raw/LIAR-RAW/val.json
+    test_path: data/raw/LIAR-RAW/test.json
+
+  # --- 检索配置 ---
+  retrieval:
+    embedder_model: /data/models/bge-base-en-v1.5/
+    device: cuda
+    max_length: 256
+    batch_size: 64
+    top_k: 32                   # candidate pool 大小（统一固定 32）
+    alpha_dense: 0.70
+    alpha_lexical: 0.20
+    alpha_bm25: 0.10
+    mmr_lambda: 0.70           # 默认 MMR λ（仅当 DPO policy 不可用时回退）
+    precision: bf16
+    num_gpus: 4
+    prefetch_size: 200
+    cpu_workers: 4
+    selection_method: mmr       # DPO 模式走自定义 step-wise selection
+
+    # --- Chunking 配置 ---
+    chunking:
+      strategy: semantic
+      context_k: 1
+      theta: 0.5
+      embedder_model: /data/models/bge-base-en-v1.5/
+      device: cuda
+      max_length: 256
+      batch_size: 64
+      precision: bf16
+
+    # ##### DPO step-wise λ policy 配置（实验 5 核心参数） #####
+    learned_lambda:
+      enabled: true
+      mode: dpo_stepwise
+      dpo_stepwise:
+        model_path: outputs/rl_mmr/dpo_stepwise/checkpoints
+        lambda_grid: [0.1, 0.3, 0.5, 0.7, 0.9]
+        inference_mode: argmax     # argmax | sample
+        sample_temperature: 0.5
+        dump_trace: true
+
+  # --- Prompt 配置 ---
+  prompt:
+    model_name_or_path: /data/models/Qwen2.5-7B-Instruct
+    auto_length: true
+    max_length: 1024
+    output_mode: label_only
+    label_format: letter
+    system_prompt: null
+
+# ============================================================================
+# Train 配置（与 b3 完全相同）
+# ============================================================================
+train:
+  model_name_or_path: /data/models/Qwen2.5-7B-Instruct
+  backend: accelerate_deepspeed
+  cuda_visible_devices: "0,1,2,3"
+  nproc_per_node: 4
+  num_machines: 1
+  mixed_precision: bf16
+  deepspeed_config: configs/deepspeed_zero2_bsz8_ga1.json
+  checkpoint_for_infer: best
+  run_dir: null
+
+sft_train:
+  max_new_tokens: 8
+  temperature: 0.0
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 1
+  learning_rate: 1.0e-5
+  num_train_epochs: 2
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  bf16: true
+  max_length: 1024
+  logging_steps: 2
+  save_steps: 50
+  eval_steps: 50
+  dataloader_num_workers: 4
+  gradient_checkpointing: true
+  use_flash_attention_2: true
+  lr_scheduler_type: cosine
+  max_grad_norm: 1.0
+  padding: longest
+  use_length_bucket: true
+  empty_cache_steps: 0
+  empty_cache_on_eval: true
+  empty_cache_on_save: true
+  early_stopping_patience: 3
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    modules_to_save: null
+  logit_adjust:
+    enabled: true
+    tau: 1.0
+
+# ============================================================================
+# Infer 配置（与 b3 完全相同）
+# ============================================================================
+infer:
+  config_path: null
+  provider: vllm_openai
+  split: test
+  checkpoint: best
+  served_model_name: fact-checking-sft
+  host: 127.0.0.1
+  port: 35001
+  base_url: null
+  wait_seconds: 180
+  request_timeout_seconds: 120
+  log_predictions: 5
+  max_new_tokens: 8
+  temperature: 0.0
+  cuda_visible_devices: "0,1,2,3"
+  tensor_parallel_size: 4
+  gpu_memory_utilization: 0.90
+  dtype: auto
+  max_model_len: null
+  top_p: 1.0
+  presence_penalty: 0.0
+  frequency_penalty: 0.0
+  repetition_penalty: 1.0
+  label_decoding:
+    enabled: true
+    prefix: "Label:"
+    guided_choice: true
+    max_tokens: 1
+  merge_lora_cache:
+    enabled: true
+    dir: outputs/cache/merged_lora
+    force_rebuild: false
+  server:
+    manage: true
+    stop_after_infer: true
+    pid_file: null
+    extra_args: []
+
+# ============================================================================
+# 跟踪配置（覆写实验名称）
+# ============================================================================
+tracking:
+  enabled: true
+  backend: swanlab
+
+swanlab:
+  project: fact-checking-dpo-stepwise
+  experiment_name: mmr_dpo_step_lambda

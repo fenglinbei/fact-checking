@@ -69,30 +69,6 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | mmr_sensitivity_gated | ts0p8_tr0p3_ll0p2_basic__9a7f2ee7 | 5 | 0.7 | 0.8 | 0.3 | 0.2 | basic |  | 0.274180655476 | 0.279483490943 |
 
-## Missing Prompt Stats
-
-These runs are missing `train/prompt_stats/prompt_stats.json`; prompt-stat panels skip them.
-
-| source_root | run_name | top_k | expected_path |
-| --- | --- | --- | --- |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-0__8283349c | 0 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-0__8283349c/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-2__ab9ab486 | 2 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-2__ab9ab486/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-4__21b2059b | 4 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-4__21b2059b/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-6__93d6f740 | 6 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-6__93d6f740/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-8__9e605e05 | 8 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-8__9e605e05/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-10__09382603 | 10 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-10__09382603/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-12__21d39f02 | 12 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-12__21d39f02/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-14__ab3b17c8 | 14 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-14__ab3b17c8/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-16__bdc64fdd | 16 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-16__bdc64fdd/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-18__848f6a1a | 18 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-18__848f6a1a/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-20__191bb752 | 20 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-20__191bb752/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-22__ede2b82b | 22 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-22__ede2b82b/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-24__89425e76 | 24 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-24__89425e76/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-26__8b5ae44e | 26 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-26__8b5ae44e/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-28__c696ff2c | 28 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-28__c696ff2c/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-30__86ba27ab | 30 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-30__86ba27ab/train/prompt_stats/prompt_stats.json |
-| mmr_topk_sweep_infer | build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-32__b4ea4992 | 32 | /home/fenglin/project/fact-checking/outputs/runs/mmr_topk_sweep_infer/build.retrieval.mmr_lambda-0.7,build.retrieval.top_k-32__b4ea4992/train/prompt_stats/prompt_stats.json |
-
 ## Duplicate Groups
 
 | source_root | top_k | mmr_lambda | split | checkpoint | count | infer_ids |
