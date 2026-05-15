@@ -1,0 +1,23 @@
+{
+  "n_claims_total": 1274,
+  "n_claims_with_pairs": 1103,
+  "n_claims_skipped_low_gap": 171,
+  "n_pairs_total": 11030,
+  "utility_gap_mean": 4.539021015167236,
+  "utility_gap_std": 3.5335469245910645,
+  "utility_gap_min": 0.050928909331560135,
+  "utility_gap_max": 19.749984741210938,
+  "evidence_set_diff_fraction": 1.0,
+  "delta": 0.05,
+  "max_pairs_per_claim": 10,
+  "feature_dim": 20,
+  "n_steps": 5,
+  "n_lambda": 5,
+  "lambda_grid": [
+    0.1,
+    0.3,
+    0.5,
+    0.7,
+    0.9
+  ]
+}
