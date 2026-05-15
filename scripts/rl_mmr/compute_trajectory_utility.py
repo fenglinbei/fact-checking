@@ -52,6 +52,8 @@ def parse_args() -> argparse.Namespace:
                    help="Number of scoring prompts per vLLM.generate call. Lower if OOM.")
     p.add_argument("--max-prompt-length", type=int, default=1024,
                    help="Max token length for prompts. Evidence truncated from tail if exceeded.")
+    p.add_argument("--top-logprobs", type=int, default=20,
+                   help="Top generated-token logprobs to request in hybrid prepass.")
     p.add_argument("--label-prefix", type=str, default="Label:")
     p.add_argument("--no-progress", action="store_true")
     p.add_argument("--reuse-oracle", type=str, default=None,
@@ -229,14 +231,22 @@ def main() -> None:
         llm = LLM(**llm_kwargs)
         tokenizer = llm.get_tokenizer()
         letter_token_ids = _build_label_token_ids(tokenizer)
+        # Build reverse map: token_id → letter
+        token_id_to_letter = {tid: letter for letter, tid in letter_token_ids.items()}
 
-        sampling_params = SamplingParams(
+        # Hybrid scoring: first try generated-token logprobs (lightweight),
+        # only fall back to prompt_logprobs for missing labels.
+        top_logprobs = int(args.top_logprobs)
+        hybrid_sp = SamplingParams(
+            max_tokens=1, temperature=0.0, logprobs=top_logprobs, detokenize=False,
+        )
+        fallback_sp = SamplingParams(
             max_tokens=1, temperature=0.0, prompt_logprobs=0, detokenize=False,
         )
 
-        # Build scoring prompts for each unknown pair
-        scoring_prompts: list[list[int]] = []
-        scoring_meta: list[dict] = []
+        # Build base prompts (ending with "Label:", ready for generation)
+        base_prompts: list[str] = []
+        base_meta: list[dict] = []
         n_skipped_overflow = 0
         n_skipped_no_gold = 0
         n_skipped_no_sample = 0
@@ -261,46 +271,99 @@ def main() -> None:
             if gold_letter is None:
                 n_skipped_no_gold += 1
                 continue
-            prompt_ids = _build_scoring_prompt_ids(
-                tokenizer, prompt_str, args.label_prefix,
-                gold_letter, letter_token_ids[gold_letter],
-            )
-            scoring_prompts.append(prompt_ids)
-            scoring_meta.append({"event_id": eid, "key": key, "letter": gold_letter, "token_id": letter_token_ids[gold_letter]})
+            # Append "Label:" prefix so the model generates the label token
+            base_prompts.append(prompt_str + args.label_prefix)
+            base_meta.append({
+                "event_id": eid, "key": key,
+                "gold_letter": gold_letter,
+                "gold_token_id": letter_token_ids[gold_letter],
+            })
 
         if n_skipped_overflow or n_skipped_no_gold or n_skipped_no_sample:
             print(f"Skipped: {n_skipped_overflow} overflow, {n_skipped_no_gold} no gold label, {n_skipped_no_sample} no sample")
-        print(f"Running vLLM scoring on {len(scoring_prompts)} prompts...")
+        print(f"Running vLLM hybrid scoring on {len(base_prompts)} prompts...")
 
-        # Batch scoring
+        # ---- Phase 1: lightweight generated-token logprobs ----
+        fallback_indices: list[int] = []
         score_batch_size = int(args.score_batch_size)
+
         for batch_start in tqdm(
-            range(0, len(scoring_prompts), score_batch_size),
-            desc="vllm scoring", unit="batch",
+            range(0, len(base_prompts), score_batch_size),
+            desc="hybrid scan", unit="batch",
             dynamic_ncols=True, disable=not show_progress,
         ):
-            batch_end = min(batch_start + score_batch_size, len(scoring_prompts))
-            batch_token_ids = scoring_prompts[batch_start:batch_end]
-            batch_meta = scoring_meta[batch_start:batch_end]
+            batch_end = min(batch_start + score_batch_size, len(base_prompts))
+            batch_prompts = base_prompts[batch_start:batch_end]
+            batch_meta = base_meta[batch_start:batch_end]
 
             outputs = llm.generate(
-                prompt_token_ids=batch_token_ids,
-                sampling_params=sampling_params,
+                prompts=batch_prompts,
+                sampling_params=hybrid_sp,
                 use_tqdm=False,
             )
 
-            for output, meta in zip(outputs, batch_meta):
-                prompt_token_ids_out = getattr(output, "prompt_token_ids", [])
-                prompt_logprobs = getattr(output, "prompt_logprobs", [])
-                if not prompt_logprobs or not prompt_token_ids_out:
+            for _i, (output, meta) in enumerate(zip(outputs, batch_meta)):
+                global_idx = batch_start + _i
+                if not output.outputs or not output.outputs[0].logprobs:
+                    fallback_indices.append(global_idx)
                     continue
-                if int(prompt_token_ids_out[-1]) != int(meta["token_id"]):
-                    continue
-                last_lps = prompt_logprobs[-1]
-                entry = last_lps.get(meta["token_id"]) or last_lps.get(str(meta["token_id"]))
+
+                first_token_lps = output.outputs[0].logprobs[0]
+                gold_tid = meta["gold_token_id"]
+                entry = first_token_lps.get(gold_tid) or first_token_lps.get(str(gold_tid))
                 if entry is not None:
                     lp = float(entry.logprob) if hasattr(entry, "logprob") else float(entry)
                     known_utilities[(meta["event_id"], meta["key"])] = lp
+                else:
+                    fallback_indices.append(global_idx)
+
+        print(f"Hybrid scan: {len(base_prompts) - len(fallback_indices)} scored, {len(fallback_indices)} need fallback")
+
+        # ---- Phase 2: fallback prompt_logprobs scoring ----
+        if fallback_indices:
+            fallback_prompt_ids: list[list[int]] = []
+            fallback_meta: list[dict] = []
+            for idx in fallback_indices:
+                meta = base_meta[idx]
+                prompt_str = base_prompts[idx]
+                gold_letter = meta["gold_letter"]
+                gold_tid = meta["gold_token_id"]
+                prompt_ids = _build_scoring_prompt_ids(
+                    tokenizer, prompt_str, "", gold_letter, gold_tid,
+                )
+                fallback_prompt_ids.append(prompt_ids)
+                fallback_meta.append(meta)
+
+            fb_batch_size = max(32, score_batch_size // 4)
+            print(f"Running fallback prompt_logprobs on {len(fallback_prompt_ids)} prompts (batch={fb_batch_size})...")
+            for batch_start in tqdm(
+                range(0, len(fallback_prompt_ids), fb_batch_size),
+                desc="fallback scoring", unit="batch",
+                dynamic_ncols=True, disable=not show_progress,
+            ):
+                batch_end = min(batch_start + fb_batch_size, len(fallback_prompt_ids))
+                batch_ids = fallback_prompt_ids[batch_start:batch_end]
+                batch_meta = fallback_meta[batch_start:batch_end]
+
+                outputs = llm.generate(
+                    prompt_token_ids=batch_ids,
+                    sampling_params=fallback_sp,
+                    use_tqdm=False,
+                )
+
+                for output, meta in zip(outputs, batch_meta):
+                    pts_out = getattr(output, "prompt_token_ids", [])
+                    prompt_logprobs = getattr(output, "prompt_logprobs", [])
+                    if not prompt_logprobs or not pts_out:
+                        continue
+                    gold_tid = meta["gold_token_id"]
+                    if int(pts_out[-1]) != int(gold_tid):
+                        continue
+                    last_lps = prompt_logprobs[-1]
+                    entry = last_lps.get(gold_tid) or last_lps.get(str(gold_tid))
+                    if entry is not None:
+                        lp = float(entry.logprob) if hasattr(entry, "logprob") else float(entry)
+                        known_utilities[(meta["event_id"], meta["key"])] = lp
 
         print(f"Scored {len(known_utilities)} total evidence sets")
 
