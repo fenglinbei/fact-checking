@@ -1,0 +1,39 @@
+{
+  "train": {
+    "no_evidence": [],
+    "long_claim": [
+      {
+        "split": "train",
+        "sample_idx": 4117,
+        "category": "long_claim",
+        "gold_label": "true",
+        "prompt": "<|im_start|>system\nYou are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>\n<|im_start|>user\nClassify the claim into exactly one LIAR-RAW label.\n\nLabels:\n- A (pants-fire): completely false and implausible\n- B (false): false based on the available evidence\n- C (barely-true): mostly false, with only a small element of truth\n- D (half-true): partly true and partly false\n- E (mostly-true): mostly true, with minor missing context or caveats\n- F (true): accurate based on the available evidence\n\nRules:\n- Use the retrieved evidence as the primary source.\n- Do not invent facts not supported by the evidence.\n- Respond with exactly one line: Label: <a single letter from A-F>\n\nClaim:\nLet's pay attention to kids who are not going to college, which ends up being about 60 percent of the kids... and get them trained for the jobs that are there. Because, you know, there are auto mechanic jobs paying $50,000, $60,000 that they can't get filled. There are airline mechanic jobs paying a lot of money that can't get filled. Remarks at AFSCME forum 6/19/2007\n\nEvidence:\n[1] “ You have to attend college to get a good job .\n[2] Overtime work that be mandatory be great among those who earn at least $ 22,500 but below $ 40,000 per year ; who work longer weekly hour ; who work inflexible daily schedule ( they can ’ t take time off or change their starting and end time ) ; or who report that there be often too few worker on staff to get all the work do .\n[3] 4 Jobs 's adoptive father , Paul Reinhold Jobs,7 be a Coast Guard mechanic .\n[4] Workers pay under $ 22,500 per year be more likely to work on irregular schedule than worker in the income bracket above that ( worker in the latter bracket who be salaried would be just above the current salary minimum threshold for assured FLSA overtime coverage ) .\n[5] Many current student in pursuit of an English degree find themselves commit to the major despite “ the fact that they wo n't earn any money `` and `` wo n't find a job . a decent pay job do something relate to their degree .\n[6] Because about one in six worker indicate that they be “ overemployed ” ( willing to reduce work time by one day per week and receive 20 percent less pay ) , good matching of work hour with hour preference would , on balance , likely reduce the extent and incidence of work-family conflict . labor market gradually climb out of the deep crater leave by the Great Recession , one encouraging outcome have be the increase public attention to the stubbornly high rate of underemployment , such a work part-time hour due to either shorten workweek or unavailability of suitable full-time employment , and the daily work-life challenge face by such underemployed worker .<|im_end|>\n<|im_start|>assistant\n",
+        "target": "Label: F",
+        "prompt_was_truncated_for_snapshot": false,
+        "prompt_token_count": 659,
+        "target_token_count": 4,
+        "evidence_count": 6,
+        "was_truncated": false
+      },
+      {
+        "split": "train",
+        "sample_idx": 9788,
+        "category": "long_claim",
+        "gold_label": "mostly-true",
+        "prompt": "<|im_start|>system\nYou are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>\n<|im_start|>user\nClassify the claim into exactly one LIAR-RAW label.\n\nLabels:\n- A (pants-fire): completely false and implausible\n- B (false): false based on the available evidence\n- C (barely-true): mostly false, with only a small element of truth\n- D (half-true): partly true and partly false\n- E (mostly-true): mostly true, with minor missing context or caveats\n- F (true): accurate based on the available evidence\n\nRules:\n- Use the retrieved evidence as the primary source.\n- Do not invent facts not supported by the evidence.\n- Respond with exactly one line: Label: <a single letter from A-F>\n\nClaim:\nBarbara Buono by the numbers: As a Trenton politician, she voted to raise taxes 154 times. Under her, property taxes up 70 percent. Backed a 16 percent sales tax increase. Utilities, nursing homes, cell phones, parking lots, lottery wins, gyms She taxed them all. Architect of Corzines budget, she drove New Jersey $2 billion into debt. Barbara Buono by the numbers: taking New Jersey backwards.\n\nEvidence:\n[1] The Republican Governors Association launch it first television advertisement in the New Jersey governor ’ s race highlight Democratic candidate Barbara Buono ’ s consistent record of raise tax . gl/F8wDF “ After fail to recruit any of their top choice to run , Democrats be now stick with Barbara Buono ’ s record of vote to raise tax 154 time while oversee out-of-control spending , ” say RGA Communications Director Gail Gitcho . “ Barbara Buono ’ s fail policy of high tax , increase spending and deep debt would take New Jersey backwards and erase the progress Governor Christie have accomplish .\n[2] Architect of Corzine ’ s budget , she drive New Jersey $ 2 billion into debt .\n[3] Barbara Buono by the number . take New Jersey backwards .\n[4] Under her , property tax up 70 percent .\n[5] Chris Christie for re-election claim Democratic challenger Barbara Buono vote to raise tax and fee 154 time .<|im_end|>\n<|im_start|>assistant\n",
+        "target": "Label: E",
+        "prompt_was_truncated_for_snapshot": false,
+        "prompt_token_count": 485,
+        "target_token_count": 4,
+        "evidence_count": 5,
+        "was_truncated": false
+      }
+    ],
+    "was_truncated": []
+  },
+  "val": {
+    "no_evidence": [],
+    "long_claim": [],
+    "was_truncated": []
+  }
+}
