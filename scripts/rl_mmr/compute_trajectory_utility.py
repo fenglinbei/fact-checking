@@ -48,7 +48,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     p.add_argument("--prompt-model-name", type=str,
                    default="/data/models/Qwen2.5-7B-Instruct")
-    p.add_argument("--score-batch-size", type=int, default=1024)
+    p.add_argument("--score-batch-size", type=int, default=256,
+                   help="Number of scoring prompts per vLLM.generate call. Lower if OOM.")
+    p.add_argument("--max-prompt-length", type=int, default=1024,
+                   help="Max token length for prompts. Evidence truncated from tail if exceeded.")
     p.add_argument("--label-prefix", type=str, default="Label:")
     p.add_argument("--no-progress", action="store_true")
     p.add_argument("--reuse-oracle", type=str, default=None,
@@ -83,8 +86,12 @@ def _build_prompt_for_evidence(
     tokenizer,
     prompt_model_name: str,
     max_length: int = 1024,
-) -> str:
-    """Build a prompt string with the given evidence selection."""
+) -> str | None:
+    """Build a prompt string with the given evidence selection.
+
+    Truncates evidence items from the tail if the prompt exceeds max_length.
+    Returns None if even a single evidence item doesn't fit.
+    """
     evidence_texts: list[str] = []
     for idx in selected_ids:
         if idx < len(sample.candidates):
@@ -92,14 +99,27 @@ def _build_prompt_for_evidence(
     if not evidence_texts:
         evidence_texts = [str(sample.candidates[0].get("text", ""))] if sample.candidates else [""]
 
-    user_content = _build_user_content(
-        claim=sample.claim,
-        evidence_texts=evidence_texts,
-        output_mode="label_only",
-        label_format="letter",
-    )
     system_msg = _build_system_message(None)
-    return _build_chat_prompt(tokenizer, system_msg, user_content)
+
+    # Try with all evidence, then progressively drop from tail
+    kept = list(evidence_texts)
+    while kept:
+        user_content = _build_user_content(
+            claim=sample.claim,
+            evidence_texts=kept,
+            output_mode="label_only",
+            label_format="letter",
+        )
+        prompt = _build_chat_prompt(tokenizer, system_msg, user_content)
+        n_tokens = len(tokenizer.encode(prompt, add_special_tokens=False))
+
+        if n_tokens <= max_length:
+            return prompt
+        if len(kept) == 1:
+            return None  # even a single evidence item is too long
+        kept.pop()
+
+    return None
 
 
 def _load_oracle_reuse(path: str) -> dict[str, float]:
@@ -217,20 +237,29 @@ def main() -> None:
         # Build scoring prompts for each unknown pair
         scoring_prompts: list[list[int]] = []
         scoring_meta: list[dict] = []
+        n_skipped_overflow = 0
+        n_skipped_no_gold = 0
+        n_skipped_no_sample = 0
         for eid, key in tqdm(
             unknown_pairs, desc="build prompts", unit="set",
             dynamic_ncols=True, disable=not show_progress,
         ):
             sample = sample_by_eid.get(eid)
             if sample is None:
+                n_skipped_no_sample += 1
                 continue
             selected_ids = [int(x) for x in key.split("_") if x]
             prompt_str = _build_prompt_for_evidence(
                 sample, selected_ids, prompt_tokenizer, args.prompt_model_name,
+                max_length=args.max_prompt_length,
             )
+            if prompt_str is None:
+                n_skipped_overflow += 1
+                continue
             gold_label = sample.label
             gold_letter = LABEL_LETTERS.get(gold_label)
             if gold_letter is None:
+                n_skipped_no_gold += 1
                 continue
             prompt_ids = _build_scoring_prompt_ids(
                 tokenizer, prompt_str, args.label_prefix,
@@ -239,6 +268,8 @@ def main() -> None:
             scoring_prompts.append(prompt_ids)
             scoring_meta.append({"event_id": eid, "key": key, "letter": gold_letter, "token_id": letter_token_ids[gold_letter]})
 
+        if n_skipped_overflow or n_skipped_no_gold or n_skipped_no_sample:
+            print(f"Skipped: {n_skipped_overflow} overflow, {n_skipped_no_gold} no gold label, {n_skipped_no_sample} no sample")
         print(f"Running vLLM scoring on {len(scoring_prompts)} prompts...")
 
         # Batch scoring
