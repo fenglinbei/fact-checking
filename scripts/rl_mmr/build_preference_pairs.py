@@ -48,8 +48,19 @@ def main() -> None:
         all_trajs = [json.loads(line) for line in f if line.strip()]
 
     # Filter: only trajectories with utility and state_features
-    valid_trajs = [t for t in all_trajs if t.get("utility") is not None and t.get("state_features") is not None]
-    print(f"Loaded {len(all_trajs)} trajectories, {len(valid_trajs)} with utility+features")
+    # Also exclude sentinel utilities (<= -99) that come from missing oracle logprobs
+    def _valid_utility(u):
+        return u is not None and float(u) > -99.0
+
+    valid_trajs = [
+        t for t in all_trajs
+        if _valid_utility(t.get("utility")) and t.get("state_features") is not None
+    ]
+    n_sentinel = sum(1 for t in all_trajs
+                     if t.get("utility") is not None and float(t["utility"]) <= -99.0)
+    print(f"Loaded {len(all_trajs)} trajectories, {len(valid_trajs)} with valid utility+features")
+    if n_sentinel:
+        print(f"  Filtered {n_sentinel} trajectories with sentinel utility (<= -99)")
 
     # Group by event_id
     by_event: dict[str, list[dict]] = defaultdict(list)

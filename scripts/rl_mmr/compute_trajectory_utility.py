@@ -125,8 +125,10 @@ def _build_prompt_for_evidence(
 
 
 def _load_oracle_reuse(path: str) -> dict[str, float]:
-    """Load existing oracle logprobs for reuse. Returns (event_id, evidence_set_key) -> utility."""
+    """Load existing oracle logprobs for reuse. Returns (event_id, evidence_set_key) -> utility.
+    Filters out sentinel values (<= -99) that indicate missing logprobs."""
     reuse: dict[str, float] = {}
+    n_skipped_sentinel = 0
     with Path(path).open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -139,7 +141,13 @@ def _load_oracle_reuse(path: str) -> dict[str, float]:
                 continue
             logprobs = rec.get("logprobs_by_lambda", {})
             for lam_str, lp in logprobs.items():
-                reuse[f"{eid}||{lam_str}"] = float(lp)
+                lp_f = float(lp)
+                if lp_f <= -99.0:
+                    n_skipped_sentinel += 1
+                    continue
+                reuse[f"{eid}||{lam_str}"] = lp_f
+    if n_skipped_sentinel:
+        print(f"Filtered {n_skipped_sentinel} sentinel values from oracle logprobs")
     return reuse
 
 
