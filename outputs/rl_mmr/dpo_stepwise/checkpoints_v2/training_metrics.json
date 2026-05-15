@@ -1,0 +1,31 @@
+{
+  "beta": 3.0,
+  "lr": 0.0005,
+  "n_train_pairs": 76794,
+  "n_val_pairs": 11010,
+  "K": 5,
+  "input_dim": 20,
+  "n_actions": 5,
+  "lambda_grid": [
+    0.1,
+    0.3,
+    0.5,
+    0.7,
+    0.9
+  ],
+  "best_val_loss": 0.6544919013977051,
+  "epochs_trained": 75,
+  "final_val_metrics": {
+    "dpo_loss": 0.6559721231460571,
+    "accuracy": 0.5288828611373901,
+    "entropy": 1.5674241781234741,
+    "argmax_counts": {
+      "0.10": 0,
+      "0.30": 0,
+      "0.50": 71,
+      "0.70": 54979,
+      "0.90": 0
+    },
+    "argmax_max_frac": 0.9987102746963501
+  }
+}
