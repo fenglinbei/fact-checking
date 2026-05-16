@@ -319,7 +319,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--max-exhaustive-n",
         type=int,
-        default=15,
+        default=20,
         help="Max candidate pool size for exhaustive search",
     )
     p.add_argument(
@@ -338,7 +338,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--score-batch-size",
         type=int,
-        default=512,
+        default=256,
         help="Max prompts per llm.generate call",
     )
     p.add_argument(
