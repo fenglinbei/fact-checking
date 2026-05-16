@@ -120,18 +120,29 @@ class VerifierScorer:
                 temperature=0.0,
                 detokenize=True,
             )
+        # Cache whether vLLM's generate() accepts use_tqdm
+        import inspect as _inspect
+
+        self._generate_accepts_use_tqdm = (
+            "use_tqdm" in _inspect.signature(self.llm.generate).parameters
+        )
+
+    def _run_generate(self, **generate_kwargs) -> list:
+        """Call llm.generate with tqdm suppressed when possible."""
+        if self._generate_accepts_use_tqdm:
+            generate_kwargs.setdefault("use_tqdm", False)
+        return self.llm.generate(**generate_kwargs)
 
     # ------------------------------------------------------------------
     # Prompt construction (matches b3 pipeline exactly)
     # ------------------------------------------------------------------
 
-    def _build_prompt(self, claim: str, evidence_texts: list[str]) -> str:
-        """Construct a chat prompt identical to the training pipeline.
+    # vLLM adds special tokens (BOS, assistant prefix) that the manual token
+    # count misses.  Reserve a margin to stay safely within max_model_len.
+    _TOKEN_MARGIN = 12
 
-        If the prompt exceeds *max_prompt_length* tokens, evidence items are
-        popped from the tail until it fits (matching ``_auto_truncate_evidence``
-        behaviour but without single-item binary-search truncation).
-        """
+    def _render_prompt(self, claim: str, evidence_texts: list[str]) -> tuple[str, int]:
+        """Return (chat_prompt, token_count)."""
         system_msg = _build_system_message(self.system_prompt)
         user_content = _build_user_content(
             claim=claim,
@@ -143,31 +154,69 @@ class VerifierScorer:
         token_count = len(
             self.tokenizer(prompt, truncation=False, add_special_tokens=False)["input_ids"]
         )
+        return prompt, token_count
 
-        if token_count <= self.max_prompt_length or not evidence_texts:
+    def _build_prompt(self, claim: str, evidence_texts: list[str]) -> str:
+        """Construct a chat prompt, truncating evidence when it exceeds budget.
+
+        Matches the training pipeline's ``_auto_truncate_evidence`` behaviour:
+        1. Pop evidence items from the tail until the prompt fits.
+        2. If a single remaining evidence item is still too long, binary-search
+           its token prefix to find the longest version that fits.
+        3. If even an empty evidence prompt exceeds budget, return the empty
+           evidence prompt anyway (vLLM will still fail, but the error is
+           clearer upstream).
+        """
+        budget = max(1, self.max_prompt_length - self._TOKEN_MARGIN)
+
+        prompt, token_count = self._render_prompt(claim, evidence_texts)
+        if token_count <= budget or not evidence_texts:
             return prompt
 
-        # Pop from tail until prompt fits
+        # Pop from tail until prompt fits or only 1 item remains
         kept = list(evidence_texts)
-        while token_count > self.max_prompt_length and len(kept) > 1:
+        while token_count > budget and len(kept) > 1:
             kept.pop()
-            user_content = _build_user_content(
-                claim=claim,
-                evidence_texts=kept,
-                output_mode=self.output_mode,
-                label_format=self.label_format,
-            )
-            prompt = _build_chat_prompt(self.tokenizer, system_msg, user_content)
-            token_count = len(
-                self.tokenizer(prompt, truncation=False, add_special_tokens=False)["input_ids"]
-            )
+            prompt, token_count = self._render_prompt(claim, kept)
 
-        if token_count > self.max_prompt_length:
+        if token_count <= budget:
+            return prompt
+
+        # Single evidence item still too long — binary-search its token prefix
+        assert len(kept) == 1
+        evidence_text = kept[0]
+        token_ids = self.tokenizer(
+            evidence_text, truncation=False, add_special_tokens=False
+        )["input_ids"]
+
+        if not token_ids:
+            # Empty text somehow; fall back to no evidence
+            return self._render_prompt(claim, [])[0]
+
+        best_prompt, _ = self._render_prompt(claim, [])
+        left, right = 0, len(token_ids)
+        while left <= right:
+            mid = (left + right) // 2
+            truncated = self.tokenizer.decode(
+                token_ids[:mid], skip_special_tokens=True
+            ).strip()
+            prompt, token_count = self._render_prompt(claim, [truncated])
+            if token_count <= budget:
+                best_prompt = prompt
+                left = mid + 1
+            else:
+                right = mid - 1
+
+        final_count = len(
+            self.tokenizer(best_prompt, truncation=False, add_special_tokens=False)["input_ids"]
+        )
+        if final_count > self.max_prompt_length:
             logger.warning(
-                "Prompt still over budget (%d > %d) with %d evidence items; vLLM may fail",
-                token_count, self.max_prompt_length, len(kept),
+                "Prompt may exceed vLLM max_model_len (tokens=%d budget=%d). "
+                "Increase --max-model-len or reduce evidence size.",
+                final_count, budget,
             )
-        return prompt
+        return best_prompt
 
     def _build_scoring_token_ids(
         self, prompt: str, gold_letter: str
@@ -228,8 +277,7 @@ class VerifierScorer:
                 self._build_scoring_token_ids(prompts[i], gold_label_letters[i])
             )
 
-        # Single vLLM call
-        outputs = self.llm.generate(
+        outputs = self._run_generate(
             prompt_token_ids=batch_token_ids,
             sampling_params=self.score_sampling_params,
         )
@@ -265,7 +313,7 @@ class VerifierScorer:
             self._build_scoring_token_ids(prompts[i], gold_label_letters[i])
             for i in range(n)
         ]
-        outputs = self.llm.generate(
+        outputs = self._run_generate(
             prompt_token_ids=batch_token_ids,
             sampling_params=self.score_sampling_params,
         )
@@ -287,7 +335,7 @@ class VerifierScorer:
         or -1 on parse failure."""
         from fact_checking.data.constants import LETTER2LABEL, LABEL2ID
 
-        outputs = self.llm.generate(
+        outputs = self._run_generate(
             prompts=prompts,
             sampling_params=self.gen_sampling_params,
         )
