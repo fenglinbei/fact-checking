@@ -523,6 +523,11 @@ def run_search(args: argparse.Namespace) -> None:
 
     # ---- vLLM init ---------------------------------------------------------
     logger.info("Initializing vLLM...")
+    # Suppress vLLM engine log spam during init / generate
+    for _lib in ("vllm", "vllm.engine", "vllm.executor", "vllm.worker"):
+        logging.getLogger(_lib).setLevel(logging.WARNING)
+    os.environ.setdefault("VLLM_LOGGING_LEVEL", "WARNING")
+
     try:
         from vllm import LLM, SamplingParams
     except ImportError as exc:
@@ -556,13 +561,16 @@ def run_search(args: argparse.Namespace) -> None:
     # ---- Scorer ------------------------------------------------------------
     from fact_checking.oracle_evidence.scorer import VerifierScorer
 
+    # Use the actual vLLM max_model_len (minus margin) as the prompt budget,
+    # not the training config's max_length, so truncation respects the real limit.
+    prompt_budget = args.max_model_len - 16
     scorer = VerifierScorer(
         llm=llm,
         tokenizer=tokenizer,
         system_prompt=system_prompt,
         output_mode=output_mode,
         label_format=label_format,
-        max_prompt_length=max_prompt_length,
+        max_prompt_length=min(max_prompt_length, prompt_budget),
     )
     logger.info(
         "Label token IDs: %s",
@@ -617,7 +625,23 @@ def run_search(args: argparse.Namespace) -> None:
     results: list[SearchResult] = []
     search_start = time.monotonic()
 
-    for i, task in enumerate(tasks):
+    # Progress display: tqdm when available, otherwise periodic logging
+    try:
+        from tqdm import tqdm as _tqdm
+    except ImportError:
+        _tqdm = None
+
+    task_iter = tasks
+    pbar = None
+    if not args.no_progress:
+        if _tqdm is not None:
+            pbar = _tqdm(total=len(tasks), desc="Oracle search", unit="sample",
+                         dynamic_ncols=True)
+        else:
+            logger.info("Searching %d samples (tqdm not available, logging every 100)...",
+                        len(tasks))
+
+    for i, task in enumerate(task_iter):
         candidates = task["candidates"]
         n_full = len(candidates)
 
@@ -636,7 +660,7 @@ def run_search(args: argparse.Namespace) -> None:
 
         # Force exhaustive for small pools, downgrade for large pools
         if method == "exhaustive" and n > max_exhaustive_n:
-            logger.warning(
+            logger.debug(
                 "Sample %s: N=%d > %d, falling back to greedy",
                 task["event_id"], n, max_exhaustive_n,
             )
@@ -666,7 +690,11 @@ def run_search(args: argparse.Namespace) -> None:
 
         results.append(result)
 
-        if not args.no_progress and (i + 1) % 50 == 0:
+        if pbar is not None:
+            correct = sum(1 for r in results if r.is_correct)
+            pbar.set_postfix({"acc": f"{correct / len(results):.3f}"})
+            pbar.update(1)
+        elif not args.no_progress and _tqdm is None and (i + 1) % 100 == 0:
             correct = sum(1 for r in results if r.is_correct)
             elapsed = time.monotonic() - search_start
             logger.info(
@@ -675,6 +703,9 @@ def run_search(args: argparse.Namespace) -> None:
                 correct / len(results),
                 elapsed,
             )
+
+    if pbar is not None:
+        pbar.close()
 
     search_elapsed = time.monotonic() - search_start
     logger.info("Search completed in %.0fs (%.1f min)", search_elapsed, search_elapsed / 60.0)
