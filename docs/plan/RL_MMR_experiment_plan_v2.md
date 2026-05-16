@@ -16,16 +16,30 @@
 
 ## 0. 当前实验结论快照
 
-更新时间: 2026-05-15
+更新时间: 2026-05-16
 
-已完成的前四个方向给出的结论比较一致: 在当前 LIAR-RAW + chunk-first MMR + Qwen2.5-7B-Instruct verifier 设置下，claim-level scalar $\lambda$ 的自适应信号较弱。fixed $\lambda=0.7$ 仍是稳定 baseline；$\log(n_{\mathrm{candidates}})$ 与 sensitivity-gated MMR 只有很小的 test 提升，幅度不足以支撑继续扩大同类手工 scalar $\lambda$ 搜索；soft-label $\lambda$ 在修复 oracle logprob 后不再受 `-100` 污染，但 utility curve 变得接近均匀，说明“哪个 $\lambda$ 更好”的监督信号本身很平。
+已完成的前五个方向的结论:
+
+| 实验 | 结论 | 状态 |
+|---|---|---|
+| fixed $\lambda=0.7$ | 稳定 baseline, test accuracy=0.2702 | locked |
+| $\log(n)$ heuristic | test +0.0064, 弱 adaptive baseline | 保留, 不深挖 |
+| sensitivity-gated MMR | test +0.0040, 弱 adaptive baseline | 保留, 不深挖 |
+| soft-label $\lambda$ | 修复 oracle 后 `expected` 退化, `argmax/sample` 更差 | **已停止** |
+| DPO step-wise $\lambda$ | 4 次训练全部坍缩到 λ=0.7, 无法学到自适应策略 | **已停止** |
+
+DPO step-wise 详细结论: 尽管 utility 信号存在 (63.2% 的 claim 有优于 fixed 0.7 的 λ schedule, median utility range=2.34)，但 policy 始终坍缩到 reference center。根因:
+1. 特征信息量不足 — pool features 对同 claim 的 winner/loser 完全相同 (纯噪声)，step-0 时所有 trajectory 状态一样 (无法区分)
+2. 内生性问题 — step features 的差异是 λ 选择的**结果**而非**原因**
+3. 有效 DPO 梯度太少 — reference policy (偏向 0.7) 已与多数 winner 一致，偏离 reference 的 gradient 不足以克服其吸引域
 
 当前建议:
 
 1. 保留 fixed $\lambda=0.7$ 作为 locked baseline。
-2. $\log(n_{\mathrm{candidates}})$ 和 sensitivity-gated MMR 可作为弱 adaptive baseline 报告，但不要作为主方法继续深挖。
-3. soft-label $\lambda$ 不跑 Stage 6；它的离线 `expected` 近似退化为 fixed，`argmax/sample` 反而更差。
-4. 若继续 RL-MMR，应转向 trajectory-level preference 或 multi-weight MMR，而不是继续 claim-level scalar $\lambda$ prediction。
+2. $\log(n_{\mathrm{candidates}})$ 和 sensitivity-gated MMR 可作为弱 adaptive baseline 报告。
+3. **停止所有 scalar $\lambda$ 方向** (experiments 1-5 覆盖了 claim-level 和 step-wise scalar $\lambda$ 的完整探索)。
+4. GRPO refinement (实验 7) 不跑 — 其前置条件 (DPO 有收益) 未满足。
+5. 下一步唯一有意义的方向: **实验 6: multi-weight MMR policy** — 将 scalar $\lambda$ 扩展为多维权重向量，增加 coverage、source novelty 等优化维度。
 
 ## 1. 总体实验目标
 
@@ -782,6 +796,135 @@ lambda_distribution_by_step.json
 - policy 是否坍缩到固定 $\lambda$。
 - MMR 选择是否对 $\lambda$ schedule 真的敏感。
 
+### 7.12 当前实现
+
+实现时间: 2026-05-15 ~ 2026-05-16。
+
+已实现完整的 5 阶段 pipeline:
+
+| 阶段 | 脚本 | 输出 |
+|---|---|---|
+| Trajectory 生成 | `scripts/rl_mmr/generate_trajectories.py` | `trajectories_{split}.jsonl` |
+| Utility 计算 | `scripts/rl_mmr/compute_trajectory_utility.py` | 同上 + `utility` 字段 |
+| Preference Pair 构造 | `scripts/rl_mmr/build_preference_pairs.py` | `{split}_pairs.npz` |
+| DPO 训练 | `scripts/rl_mmr/train_dpo_step_lambda.py` | `model_best.pt` |
+| 评估 | `scripts/rl_mmr/evaluate_dpo_step_lambda.py` | eval metrics |
+
+核心模块:
+
+| 模块 | 说明 |
+|---|---|
+| `src/fact_checking/retrieval/mmr.py` | 新增 `maximal_marginal_relevance_stepwise()` |
+| `src/fact_checking/rl_mmr/trajectory.py` | `Trajectory`, `MMRStep`, `PreferencePair` dataclasses |
+| `src/fact_checking/rl_mmr/step_features.py` | 每步 state 特征提取（最终版 13 维: 12 step + prev_lambda） |
+| `src/fact_checking/rl_mmr/dpo_policy.py` | `StepLambdaPolicy` (MLP), `FixedReferencePolicy`, `dpo_loss()` |
+| `src/fact_checking/rl_mmr/dpo_selector.py` | `select_candidates_dpo_stepwise()`, build pipeline 集成 |
+| `src/fact_checking/build/candidates.py` | `run_build()` 新增 `dpo_stepwise` 模式分支 |
+| `configs/experiment/mmr_dpo_step_lambda.yaml` | Hydra 实验配置（继承 b3） |
+
+### 7.13 实验数据与配置
+
+训练配置:
+
+- Chunk-MMR cache: `432dfc970e75` (b3_mmr_topk_sweep_1024, semantic chunking, top_k=32)
+- Verifier: Qwen2.5-7B-Instruct LoRA (b3 checkpoint, `79d8b34809bb`)
+- Evidence budget: `K=5`
+- λ 离散动作空间: `Λ = {0.1, 0.3, 0.5, 0.7, 0.9}`
+- Trajectory: 7 手工 schedule + 30 随机 schedule = 37 per claim
+- Train claims: ~10,000, total trajectories: ~372,000
+- Preference pairs (train): 78,510 → 76,794 (sentinel 过滤后)
+- Preference pairs (val): 11,030 → 11,010 (sentinel 过滤后)
+
+### 7.14 关键数据分析
+
+#### 7.14.1 Utility 分布
+
+```
+Utility (trajectories): mean=-7.646 std=16.968
+  min=-100.000 max=0.000
+  p1=-100.000 p5=-18.003 p50=-2.540
+  Values < -50 (sentinel): 11,111 (2.98%)
+```
+
+发现 2.98% 的 trajectory utility 为 oracle logprob 文件中的 `-100` sentinel 值。这些无效 utility 在 preference pair 中产生 >98 的巨大 gap，污染了训练数据。修复: 在 `compute_trajectory_utility.py` 和 `build_preference_pairs.py` 中过滤 `utility <= -99` 的条目。
+
+#### 7.14.2 Utility 信号质量
+
+```
+Per-claim utility range: mean=3.36 median=2.34
+  p10=0.00 p25=0.16 p75=5.08 p90=8.63
+Claims where best non-0.7 > fixed: 63.2%
+Claims where fixed λ=0.7 IS best: 36.8%
+Oracle (best) λ per claim:
+  λ≈0.3: 20.9%  λ≈0.5: 39.9%  λ≈0.7: 39.1%
+```
+
+**结论: 信号存在**。不同 λ schedule 确实导致有意义的 utility 差异，63.2% 的 claim 存在优于 fixed 0.7 的方案。
+
+#### 7.14.3 Feature 诊断
+
+20 维原始特征 (8 pool + 12 step) 的 winner/loser 差异分析:
+
+```
+Step 0 (n_diff=61243): ALL dims 0-19 have |diff| = 0.0000
+Step 1 (n_diff=64198): dims 0-17 = 0.0000, dim 18 (top_mmr_score) = 0.56, dim 19 = 0.04
+Steps 2-4: Same pattern — only dims 18-19 (top_mmr_score, mmr_score_gap) have non-zero diff
+```
+
+Pool features (8 dims) 在同一 claim 的 winner/loser 间 **完全相同**，是纯噪声。这也是为什么去掉 pool features 后仍无效——step features 中只有 2 维 (top_mmr_score, mmr_score_gap) 在 winner/loser 间有明显差异，其余 10 维差异也很小。
+
+Supervised λ prediction (Logistic Regression):
+
+```
+Step 0: train_acc=0.311 test_acc=0.305 baseline=0.296  ← 几乎不可预测
+Steps 1-4: train_acc=0.989-0.999 test_acc=0.989-0.998  ← 近乎完美
+```
+
+Steps 1-4 的 99% accuracy **不是**模型学到了"什么状态选什么 λ 更好"，而是循环论证——λ 的选择本身决定了后续 state（哪些 item 被选中），因此从 state 可以反推 λ，但这不包含 λ → utility 的因果信息。
+
+### 7.15 四次 DPO 训练尝试
+
+| 版本 | 特征维度 | β | ref temp | 关键差异 | 结果 |
+|---|---|---|---|---|---|
+| V1 | 20 dims (pool+step) | 1.0 | 0.3 | 原始实现，含 sentinel | λ=0.7: 99.97%, H=1.32 |
+| V2 | 20 dims | 3.0 | 0.8 | 过滤 sentinel | λ=0.7: 99.87%, H=1.57 |
+| V3 | 13 dims (step+prev_lambda) | 3.0 | 0.8 | 去除 pool features | λ=0.7: 99.87%, H=1.56 |
+| V4 | 13 dims, claim-level (K=1) | 3.0 | 0.8 | 只用 step-0 特征，预测 majority λ | λ=0.7: **100%** |
+
+所有版本均完全坍缩到 reference policy 中心 λ=0.7，accuracy 始终 0.52-0.53（接近随机 0.50），entropy 始终接近均匀分布上限 log(5)=1.609。
+
+### 7.16 失败根因
+
+经过 4 轮实验 + 3 轮诊断分析，确定 DPO step-wise λ 训练失败的**三个层级的根因**:
+
+**层级 1 —— 数据质量**: oracle logprob 文件中存在 `-100` sentinel 值（2.98% 的 trajectory），产生虚假的巨大 utility gap。过滤后有一定改善（val loss 从 0.72 降到 0.65），但未解决根本问题。
+
+**层级 2 —— 特征问题**: 
+- Pool features (8 dims) 对同一 claim 的 winner/loser 完全相同 → 纯噪声
+- Step features 中只有 `top_mmr_score` 和 `mmr_score_gap` 在 winner/loser 间有显著差异
+- Step 0 时任何选择尚未做出，所有 trajectory 的状态完全一样，无法区分最优 λ
+- Steps 1-4 的特征差异是 λ 选择的**结果**而非**原因**（内生性问题）
+
+**层级 3 —— 信号本质**:
+- DPO 的 reference policy 固定偏向 λ=0.7
+- 最优 λ≈0.5 (39.9%) 和 λ≈0.7 (39.1%) 几乎打平
+- Reference policy 对 winner/loser 的偏好往往与真实 utility 排序一致
+- 只有当 winner 用非 0.7、loser 用 0.7 时，DPO 才有强 gradient 推动 policy 远离 reference
+- 这种"有效训练信号"的比例太低，不足以驱动 policy 离开 reference 的吸引域
+- **核心矛盾**: 信号量级 (utility gap median=2.34) 虽然 > 0，但相对于 logprob 的自然方差 (std=16.97 → 过滤后 std 仍大)，信噪比太低
+
+### 7.17 结论与决策
+
+**DPO step-wise λ 训练在当前设置下不可行。** 这不是实现问题，而是 utility signal 相对 reference policy 的偏离太小。这个结论与实验 1-4 的结论一致: utility curve 太平，learned λ 提供的边际收益不足以超越 fixed λ=0.7。
+
+触发了实验计划 §15 的 stop criteria: "若 DPO policy 坍缩到 fixed 0.7 且无收益，则需要先重构 reward 或 trajectory generator。"
+
+具体建议:
+1. **停止 DPO step-wise λ 方向** (已触发 stop criteria)。
+2. **不跑 GRPO refinement** (实验 7，需要 DPO 已有收益作为前置条件)。
+3. **转向实验 6: multi-weight MMR policy** — 将 scalar λ 的 relevance/diversity 单轴 trade-off 扩展为多维权重向量 (relevance, redundancy, coverage, source novelty, cost)。这个方向不依赖 utility curve 的"陡峭度"，而是扩展了 selection 的优化空间本身。
+4. 若实验 6 仍无收益，建议整体结论为: 在 LIAR-RAW + chunk-first MMR + Qwen2.5-7B-Instruct verifier 的设置下，learned evidence selection 无法显著超越 fixed λ=0.7 MMR baseline。
+
 ## 8. 实验 6: multi-weight MMR policy
 
 ### 8.1 目的
@@ -1067,9 +1210,9 @@ $$ \text{gain}(\mathrm{adaptive\ policy}) \text{ 是否主要集中在 high-sens
 | $\log(n)$ heuristic | 0.2766 | 0.2799 | | weak positive, small delta | | | | |
 | sensitivity-gated | 0.2742 | 0.2795 | | weak positive, small delta | | | | |
 | soft-label $\lambda$ | Stage 6 skipped | Stage 6 skipped | | val expected delta about -0.0001; argmax/sample worse | | | | |
-| DPO step-wise $\lambda$ | | | | | | | | |
+| DPO step-wise $\lambda$ | **坍缩到 fixed** | **坍缩到 fixed** | | 4 轮训练全部坍缩到 λ=0.7; 不跑完整 build→train→infer | | | | |
 | multi-weight MMR | | | | | | | | |
-| GRPO refine | | | | | | | | |
+| GRPO refine | **不跑** (前置条件未满足) | | | | | | | |
 
 ## 14. 关键代码接入建议
 
@@ -1136,18 +1279,22 @@ configs/experiment/mmr_grpo_refine.yaml
 
 若 preference pairs 中高 gap pair 数量不足，或 DPO policy 坍缩到 fixed $0.7$ 且无收益，则需要先重构 reward 或 trajectory generator。
 
+**当前已触发停止条件:** 经过 4 轮训练 (V1-V4)，policy 在 13 维优化特征和 claim-level 简化设置下均 100% 坍缩到 λ=0.7。utility 信号存在但相对 reference policy 的偏离太小，DPO gradient 不足以驱动 policy 离开 reference 的吸引域。停止该方向，不跑完整 build→train→infer 流程。
+
 ### 停止 GRPO
 
 若 GRPO dev utility 不升、policy entropy 快速下降、或 accuracy 下降，应回退到 DPO checkpoint。
+
+**当前不跑 GRPO:** 前置条件 (DPO step-wise 或 multi-weight policy 在 dev set 上稳定超过 fixed 0.7) 未满足。
 
 ## 16. 最终建议
 
 按本计划推进时，最关键的不是让每一步都超过前一步，而是让每一步回答一个明确问题:
 
-1. $\log(n_{\mathrm{candidates}})$ 能否提供最低成本 adaptive 信号。
-2. sensitivity-gated MMR 能否利用 $\lambda$ 敏感性。
-3. soft-label $\lambda$ 能否修复 hard oracle 标签噪声。
-4. DPO step-wise policy 能否利用 trajectory preference。
+1. $\log(n_{\mathrm{candidates}})$ 能否提供最低成本 adaptive 信号。→ **能，但收益太小 (+0.0064)。**
+2. sensitivity-gated MMR 能否利用 $\lambda$ 敏感性。→ **能，但收益太小 (+0.0040)。**
+3. soft-label $\lambda$ 能否修复 hard oracle 标签噪声。→ **修复了噪声，但 utility curve 太平，预测退化。**
+4. DPO step-wise policy 能否利用 trajectory preference。→ **不能。4 轮训练全部坍缩到 fixed，信噪比太低。**
 5. multi-weight MMR 是否解决 scalar $\lambda$ 表达能力不足。
 6. GRPO 是否能在稳定 offline policy 上进一步提升。
 
