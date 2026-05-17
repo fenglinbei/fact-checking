@@ -54,6 +54,16 @@ class CandidatePool:
     pool_mode: str
 
 
+@dataclass(frozen=True)
+class PointwiseSelectorModel:
+    weights: np.ndarray
+    bias: float
+    feature_mean: np.ndarray
+    feature_std: np.ndarray
+    feature_names: list[str]
+    path: str
+
+
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with Path(path).open(encoding="utf-8") as fh:
@@ -386,6 +396,169 @@ def _pool_features(
             "oracle_pool_size": float(oracle_n),
         })
     return rows
+
+
+def load_pointwise_selector_model(path: str | Path) -> PointwiseSelectorModel:
+    model_path = Path(path)
+    if model_path.is_dir():
+        model_path = model_path / "model.npz"
+    if not model_path.exists():
+        raise FileNotFoundError(f"Pointwise selector model not found: {model_path}")
+
+    data = np.load(model_path, allow_pickle=True)
+    return PointwiseSelectorModel(
+        weights=data["weights"].astype(np.float32),
+        bias=float(data["bias"][0]),
+        feature_mean=data["feature_mean"].astype(np.float32),
+        feature_std=data["feature_std"].astype(np.float32),
+        feature_names=[str(x) for x in data["feature_names"].tolist()],
+        path=str(model_path),
+    )
+
+
+def build_pointwise_inference_pool(
+    sample: Any,
+    *,
+    alpha_dense: float,
+    alpha_lexical: float,
+    alpha_bm25: float,
+    candidate_pool_size: int | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, float]], list[int], int]:
+    scored = compute_hybrid_scores(sample, alpha_dense, alpha_lexical, alpha_bm25)
+    n = int(scored["n"])
+    if n <= 0:
+        return [], [], [], 0
+
+    source_indices = _dedup_source_indices(sample, scored["hybrid_scores"], n)
+    source_candidate_count = len(source_indices)
+    source_indices.sort(key=lambda idx: float(scored["hybrid_scores"][idx]), reverse=True)
+    if candidate_pool_size is not None and candidate_pool_size > 0:
+        source_indices = source_indices[: int(candidate_pool_size)]
+
+    features = _pool_features(sample, scored, source_indices, oracle_n=len(source_indices))
+    candidates: list[dict[str, Any]] = []
+    for pool_rank, source_idx in enumerate(source_indices):
+        candidate = dict(sample.candidates[source_idx])
+        candidate.update({
+            "source_index": int(source_idx),
+            "candidate_pool_rank": int(pool_rank),
+            "dense_score": float(scored["dense_scores"][source_idx]),
+            "lexical_score": float(scored["lexical_scores"][source_idx]),
+            "bm25_score": float(scored["bm25_scores"][source_idx]),
+            "hybrid_score": float(scored["hybrid_scores"][source_idx]),
+        })
+        candidates.append(candidate)
+    return candidates, features, source_indices, source_candidate_count
+
+
+def score_pointwise_features(
+    features: list[dict[str, float]],
+    model: PointwiseSelectorModel,
+) -> np.ndarray:
+    if not features:
+        return np.zeros((0,), dtype=np.float32)
+    rows = [{"features": item} for item in features]
+    x_raw = feature_matrix(rows, model.feature_names)
+    x = (x_raw - model.feature_mean) / model.feature_std
+    return sigmoid(x @ model.weights + model.bias).astype(np.float32, copy=False)
+
+
+def resolve_pointwise_candidate_pool_size(
+    *,
+    top_k: int,
+    candidate_pool_size: int | None = None,
+    candidate_pool_multiplier: int = 3,
+) -> int:
+    if candidate_pool_size is not None and int(candidate_pool_size) > 0:
+        return max(int(candidate_pool_size), int(top_k))
+    return max(int(top_k), int(top_k) * max(int(candidate_pool_multiplier), 1))
+
+
+def select_candidates_pointwise_oracle(
+    sample: Any,
+    model: PointwiseSelectorModel,
+    *,
+    top_k: int,
+    alpha_dense: float,
+    alpha_lexical: float,
+    alpha_bm25: float,
+    candidate_pool_size: int | None = None,
+    candidate_pool_multiplier: int = 3,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    effective_pool_size = resolve_pointwise_candidate_pool_size(
+        top_k=top_k,
+        candidate_pool_size=candidate_pool_size,
+        candidate_pool_multiplier=candidate_pool_multiplier,
+    )
+    candidates, features, _source_indices, source_candidate_count = build_pointwise_inference_pool(
+        sample,
+        alpha_dense=alpha_dense,
+        alpha_lexical=alpha_lexical,
+        alpha_bm25=alpha_bm25,
+        candidate_pool_size=effective_pool_size,
+    )
+    if not candidates:
+        row = {
+            "event_id": sample.event_id,
+            "claim": sample.claim,
+            "label": sample.label,
+            "explain": sample.explain,
+            "candidates": [],
+        }
+        trace = {
+            "event_id": sample.event_id,
+            "label": sample.label,
+            "top_k": int(top_k),
+            "candidate_pool_size": int(effective_pool_size),
+            "n_source_candidates": int(source_candidate_count),
+            "n_pool_candidates": 0,
+            "selected": [],
+        }
+        return row, trace
+
+    scores = score_pointwise_features(features, model)
+    order = np.argsort(-scores)[: min(int(top_k), len(candidates))]
+    selected: list[dict[str, Any]] = []
+    trace_selected: list[dict[str, Any]] = []
+    for rank, pool_idx in enumerate(order.tolist()):
+        candidate = dict(candidates[pool_idx])
+        pointwise_score = float(scores[pool_idx])
+        candidate.update({
+            "pointwise_score": pointwise_score,
+            "pointwise_rank": int(rank),
+            "pointwise_candidate_pool_size": int(len(candidates)),
+        })
+        selected.append(candidate)
+        trace_selected.append({
+            "rank": int(rank),
+            "candidate_pool_rank": int(candidate.get("candidate_pool_rank", pool_idx)),
+            "source_index": int(candidate.get("source_index", -1)),
+            "pointwise_score": pointwise_score,
+            "hybrid_score": float(candidate.get("hybrid_score", 0.0)),
+            "text": str(candidate.get("text", "")),
+            "report_id": str(candidate.get("report_id") or _source_report_id(candidate)),
+        })
+
+    trace = {
+        "event_id": sample.event_id,
+        "label": sample.label,
+        "top_k": int(top_k),
+        "candidate_pool_size": int(effective_pool_size),
+        "n_source_candidates": int(source_candidate_count),
+        "n_pool_candidates": int(len(candidates)),
+        "score_mean": float(scores.mean()) if scores.size else 0.0,
+        "score_max": float(scores.max()) if scores.size else 0.0,
+        "selected": trace_selected,
+        "model_path": model.path,
+        "feature_names": model.feature_names,
+    }
+    return {
+        "event_id": sample.event_id,
+        "claim": sample.claim,
+        "label": sample.label,
+        "explain": sample.explain,
+        "candidates": selected,
+    }, trace
 
 
 def _source_report_id(candidate: dict[str, Any]) -> str:

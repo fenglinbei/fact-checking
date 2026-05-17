@@ -95,9 +95,12 @@ class PipelineRunner:
         print(f"[pipeline] run_dir={self.state.run_dir}", flush=True)
         print(f"[pipeline] steps={steps}", flush=True)
         build_paths: dict[str, Path] | None = None
+        infer_config_path: Path | None = None
 
         if "build" in steps or "train" in steps:
             build_paths = self._run_build(manifest)
+            if "infer" in steps and "train" not in steps:
+                infer_config_path = self._write_train_config(build_paths, self._train_dir())
         elif "infer" in steps:
             build_paths = build_split_paths(self.state.build_dir)
 
@@ -106,7 +109,7 @@ class PipelineRunner:
             self._run_train(manifest, build_paths)
 
         if "infer" in steps:
-            self._run_infer(manifest)
+            self._run_infer(manifest, config_path=infer_config_path)
 
         self._save_manifest(manifest)
         print(f"[pipeline] DONE run_dir={self.state.run_dir}", flush=True)
@@ -328,7 +331,7 @@ class PipelineRunner:
         )
         self._save_manifest(manifest)
 
-    def _run_infer(self, manifest: dict[str, Any]) -> None:
+    def _run_infer(self, manifest: dict[str, Any], *, config_path: Path | None = None) -> None:
         train_dir = self._train_dir()
         infer_cfg = dict(self.cfg.get("infer", {}) or {})
         infer_kind = str(infer_cfg.get("kind", "generative")).strip().lower()
@@ -379,6 +382,8 @@ class PipelineRunner:
             train_config_path = Path(infer_config_override)
             if not train_config_path.is_absolute():
                 train_config_path = self.project_root / train_config_path
+        elif config_path is not None:
+            train_config_path = config_path
         else:
             train_config_path = train_dir.parent / "configs" / "train.resolved.yaml"
         artifacts = run_inference(

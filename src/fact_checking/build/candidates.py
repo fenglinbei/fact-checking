@@ -1473,6 +1473,29 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
             normalize=bool(reranker_cfg.get("normalize", True)),
         ))
 
+    # ---- Optional: pointwise oracle-supervised selector ----
+    pointwise_model = None
+    pointwise_cfg = dict(retrieval_cfg.get("pointwise_oracle", {}) or {})
+    if selection_method in {"pointwise_oracle", "oracle_pointwise", "pointwise"}:
+        from fact_checking.oracle_pointwise import load_pointwise_selector_model
+
+        pointwise_model_path = str(
+            pointwise_cfg.get("model_dir")
+            or pointwise_cfg.get("model_path")
+            or ""
+        ).strip()
+        if not pointwise_model_path:
+            raise ValueError(
+                "build.retrieval.pointwise_oracle.model_dir is required when "
+                "build.retrieval.selection_method=pointwise_oracle."
+            )
+        pointwise_model = load_pointwise_selector_model(pointwise_model_path)
+        logger.info(
+            "Loaded pointwise oracle selector: model=%s features=%d",
+            pointwise_model.path,
+            len(pointwise_model.feature_names),
+        )
+
     # ---- Optional: learned λ predictor (MMR path only) ----
     learned_lambda_cfg = retrieval_cfg.get("learned_lambda", {}) or {}
     use_learned_lambda = bool(learned_lambda_cfg.get("enabled", False))
@@ -1493,6 +1516,50 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                 show_progress=True,
                 progress_desc=f"Reranker [{split_name}]",
             )
+        elif selection_method in {"pointwise_oracle", "oracle_pointwise", "pointwise"}:
+            from fact_checking.oracle_pointwise import select_candidates_pointwise_oracle
+
+            if pointwise_model is None:
+                raise RuntimeError("Pointwise selector model was not loaded.")
+
+            raw_pool_size = pointwise_cfg.get("candidate_pool_size")
+            candidate_pool_size = None
+            if raw_pool_size not in (None, "", 0, "0"):
+                candidate_pool_size = int(raw_pool_size)
+            candidate_pool_multiplier = int(pointwise_cfg.get("candidate_pool_multiplier", 3))
+            dump_trace = bool(pointwise_cfg.get("dump_trace", True))
+            trace_rows: list[dict[str, Any]] = []
+
+            with output_path.open("w", encoding="utf-8") as writer:
+                pointwise_pbar = tqdm(
+                    chunk_samples,
+                    desc=f"Pointwise oracle selector [{split_name}]",
+                    unit="sample",
+                    dynamic_ncols=True,
+                )
+                for sample in pointwise_pbar:
+                    row, trace = select_candidates_pointwise_oracle(
+                        sample,
+                        pointwise_model,
+                        top_k=run_summary["top_k"],
+                        alpha_dense=run_summary["alpha_dense"],
+                        alpha_lexical=run_summary["alpha_lexical"],
+                        alpha_bm25=run_summary["alpha_bm25"],
+                        candidate_pool_size=candidate_pool_size,
+                        candidate_pool_multiplier=candidate_pool_multiplier,
+                    )
+                    if dump_trace:
+                        trace_rows.append(trace)
+                    training_row = _build_training_row(row, tokenizer, prompt_cfg_local)
+                    writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
+                pointwise_pbar.close()
+
+            if dump_trace:
+                trace_path = target_dir / f"pointwise_oracle_trace_{split_name}.jsonl"
+                with trace_path.open("w", encoding="utf-8") as trace_writer:
+                    for trace in trace_rows:
+                        trace_writer.write(json.dumps(trace, ensure_ascii=False) + "\n")
+                logger.info("Wrote pointwise oracle trace: %s", trace_path)
         else:
             lambda_overrides: dict[str, float] | None = None
             if use_learned_lambda:
