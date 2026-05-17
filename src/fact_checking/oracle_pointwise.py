@@ -20,6 +20,10 @@ from fact_checking.build.candidates import (
 
 RETAINED_LABELS = ("pants-fire", "false", "barely-true", "half-true")
 TRUE_SIDE_LABELS = ("mostly-true", "true")
+ANCHOR_WEIGHTS = {
+    "mostly-true": 0.25,
+    "true": 0.10,
+}
 
 DEFAULT_FEATURE_NAMES = [
     "dense_score",
@@ -206,16 +210,77 @@ def resolve_chunk_cache_path(
 
 
 def oracle_filter_passes(rec: dict[str, Any], preset: str) -> bool:
+    return supervision_policy_for_record(rec, preset).get("keep", False)
+
+
+def supervision_policy_for_record(
+    rec: dict[str, Any],
+    preset: str,
+    *,
+    fixed_correct_event_ids: set[str] | None = None,
+    true_side_anchor_weights: dict[str, float] | None = None,
+) -> dict[str, Any]:
     if preset == "all":
-        return True
-    if preset != "v1a":
+        return {
+            "keep": True,
+            "bucket": "all",
+            "supervision_weight": 1.0,
+            "anchor_source": "all",
+        }
+    if preset not in {"v1a", "v1b"}:
         raise ValueError(f"Unknown filter preset: {preset}")
-    return (
+
+    retained_keep = (
         bool(rec.get("is_correct"))
         and str(rec.get("gold_label", "")).lower() in RETAINED_LABELS
         and float(rec.get("final_logprob", -1e9)) >= -0.5
         and int(rec.get("n_candidates", 0)) > 5
     )
+    if retained_keep:
+        return {
+            "keep": True,
+            "bucket": "retained_oracle_positive",
+            "supervision_weight": 1.0,
+            "anchor_source": "oracle_correct",
+        }
+
+    if preset == "v1a":
+        return {
+            "keep": False,
+            "bucket": "filtered",
+            "supervision_weight": 0.0,
+            "anchor_source": "",
+        }
+
+    label = str(rec.get("gold_label", "")).lower()
+    if label not in TRUE_SIDE_LABELS or int(rec.get("n_candidates", 0)) <= 5:
+        return {
+            "keep": False,
+            "bucket": "filtered",
+            "supervision_weight": 0.0,
+            "anchor_source": "",
+        }
+
+    event_id = str(rec.get("event_id", ""))
+    fixed_correct = bool(fixed_correct_event_ids and event_id in fixed_correct_event_ids)
+    oracle_correct = bool(rec.get("is_correct"))
+    if not oracle_correct and not fixed_correct:
+        return {
+            "keep": False,
+            "bucket": "filtered",
+            "supervision_weight": 0.0,
+            "anchor_source": "",
+        }
+
+    weights = dict(ANCHOR_WEIGHTS)
+    if true_side_anchor_weights:
+        weights.update(true_side_anchor_weights)
+    return {
+        "keep": True,
+        "bucket": f"{label}_anchor",
+        "supervision_weight": float(weights.get(label, 0.10)),
+        "anchor_source": "oracle_correct" if oracle_correct else "fixed_mmr_correct",
+    }
 
 
 def load_chunk_samples_by_event(cache_path: str | Path) -> dict[str, Any]:
@@ -568,7 +633,14 @@ def _source_report_id(candidate: dict[str, Any]) -> str:
     return ""
 
 
-def pool_to_pointwise_rows(pool: CandidatePool, oracle_rec: dict[str, Any], filter_bucket: str) -> list[dict[str, Any]]:
+def pool_to_pointwise_rows(
+    pool: CandidatePool,
+    oracle_rec: dict[str, Any],
+    filter_bucket: str,
+    *,
+    supervision_weight: float = 1.0,
+    anchor_source: str = "",
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for i, (candidate, features) in enumerate(zip(pool.candidates, pool.features)):
         rows.append({
@@ -586,6 +658,8 @@ def pool_to_pointwise_rows(pool: CandidatePool, oracle_rec: dict[str, Any], filt
             "matched_positive_count": int(pool.matched_positive_count),
             "oracle_positive_count": int(pool.oracle_positive_count),
             "filter_bucket": filter_bucket,
+            "supervision_weight": float(supervision_weight),
+            "anchor_source": anchor_source,
             "pool_mode": pool.pool_mode,
         })
     return rows
@@ -634,10 +708,22 @@ def split_event_ids_by_label(rows: list[dict[str, Any]], val_fraction: float, se
 def compute_row_weights(rows: list[dict[str, Any]]) -> np.ndarray:
     grouped = group_rows_by_event(rows)
     label_by_event = {eid: str(rows[idxs[0]]["gold_label"]) for eid, idxs in grouped.items()}
-    label_counts = Counter(label_by_event.values())
+    weight_by_event = {
+        eid: float(rows[idxs[0]].get("supervision_weight", 1.0))
+        for eid, idxs in grouped.items()
+    }
+    balanced_events = [
+        eid
+        for eid, label in label_by_event.items()
+        if label in RETAINED_LABELS and weight_by_event.get(eid, 1.0) >= 0.999
+    ]
+    if balanced_events:
+        label_counts = Counter(label_by_event[eid] for eid in balanced_events)
+    else:
+        label_counts = Counter(label_by_event.values())
     n_labels = max(len(label_counts), 1)
     label_weights = {
-        label: len(grouped) / (n_labels * count)
+        label: len(balanced_events or grouped) / (n_labels * count)
         for label, count in label_counts.items()
     }
     weights = np.ones(len(rows), dtype=np.float32)
@@ -645,9 +731,10 @@ def compute_row_weights(rows: list[dict[str, Any]]) -> np.ndarray:
         ys = [int(rows[i].get("is_oracle_selected", 0)) for i in idxs]
         n_pos = max(sum(ys), 1)
         n_neg = max(len(ys) - sum(ys), 1)
-        lw = float(label_weights[label_by_event[eid]])
+        lw = float(label_weights.get(label_by_event[eid], 1.0))
+        sw = float(weight_by_event.get(eid, 1.0))
         for i, y in zip(idxs, ys):
-            weights[i] = lw * (0.5 / n_pos if y else 0.5 / n_neg)
+            weights[i] = sw * lw * (0.5 / n_pos if y else 0.5 / n_neg)
     mean = float(weights.mean()) if weights.size else 1.0
     if mean > 0:
         weights /= mean

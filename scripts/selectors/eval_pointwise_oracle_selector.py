@@ -16,13 +16,13 @@ from fact_checking.oracle_pointwise import (
     labels_array,
     load_build_config,
     load_chunk_samples_by_event,
-    oracle_filter_passes,
     pool_to_pointwise_rows,
     read_jsonl,
     resolve_chunk_cache_path,
     roc_auc,
     selected_evidence_rows,
     sigmoid,
+    supervision_policy_for_record,
     write_json,
     write_jsonl,
 )
@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--chunk-mmr-cache", default=None)
     p.add_argument("--chunk-mmr-cache-root", default="outputs/cache/chunk_mmr")
     p.add_argument("--output-dir", required=True)
-    p.add_argument("--filter-preset", default="v1a", choices=["v1a", "all"])
+    p.add_argument("--filter-preset", default="v1a", choices=["v1a", "v1b", "all"])
     p.add_argument("--pool-mode", default="oracle_n_top_hybrid_with_positives")
     p.add_argument("--fallback-pool-size", type=int, default=15)
     p.add_argument("--top-k", type=int, default=5)
@@ -97,7 +97,8 @@ def main() -> None:
         if sample is None:
             skipped["missing_cache_sample"] += 1
             continue
-        if not oracle_filter_passes(rec, args.filter_preset):
+        policy = supervision_policy_for_record(rec, args.filter_preset)
+        if not policy["keep"]:
             skipped["filter"] += 1
             continue
         pool = build_candidate_pool(
@@ -115,7 +116,15 @@ def main() -> None:
         if pool.matched_positive_count <= 0:
             skipped["no_positive_match"] += 1
             continue
-        rows.extend(pool_to_pointwise_rows(pool, rec, args.filter_preset))
+        rows.extend(
+            pool_to_pointwise_rows(
+                pool,
+                rec,
+                str(policy["bucket"]),
+                supervision_weight=float(policy["supervision_weight"]),
+                anchor_source=str(policy.get("anchor_source", "")),
+            )
+        )
 
     if not rows:
         raise ValueError("No evaluation rows were produced.")

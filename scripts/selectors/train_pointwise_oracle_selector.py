@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -114,6 +115,7 @@ def main() -> None:
         "n_train_claims": len(train_eids),
         "n_val_claims": len(val_eids),
         "positive_rate": float(labels_array(rows).mean()),
+        "supervision_summary": _supervision_summary(rows),
         "train": train_metrics,
         "val": val_metrics,
         "train_claim_selection": train_claim,
@@ -222,6 +224,33 @@ def _row_metrics(y: np.ndarray, scores: np.ndarray, weights: np.ndarray) -> dict
         "auprc": average_precision(y, scores),
         "auroc": roc_auc(y, scores),
         "positive_rate": float(y.mean()) if y.size else 0.0,
+    }
+
+
+def _supervision_summary(rows: list[dict]) -> dict[str, object]:
+    event_seen: set[str] = set()
+    bucket_claim_counts: Counter[str] = Counter()
+    label_claim_counts: Counter[str] = Counter()
+    bucket_weight_sums: defaultdict[str, float] = defaultdict(float)
+    for row in rows:
+        eid = str(row.get("event_id", ""))
+        if eid in event_seen:
+            continue
+        event_seen.add(eid)
+        bucket = str(row.get("filter_bucket", "unknown"))
+        label = str(row.get("gold_label", ""))
+        weight = float(row.get("supervision_weight", 1.0))
+        bucket_claim_counts[bucket] += 1
+        label_claim_counts[label] += 1
+        bucket_weight_sums[bucket] += weight
+    return {
+        "n_claims": len(event_seen),
+        "claim_counts_by_bucket": dict(bucket_claim_counts),
+        "claim_counts_by_label": dict(label_claim_counts),
+        "supervision_weight_sum_by_bucket": {
+            key: float(value)
+            for key, value in bucket_weight_sums.items()
+        },
     }
 
 

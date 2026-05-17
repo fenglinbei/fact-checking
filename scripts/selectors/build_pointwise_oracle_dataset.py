@@ -7,16 +7,18 @@ from pathlib import Path
 from tqdm.auto import tqdm
 
 from fact_checking.oracle_pointwise import (
+    ANCHOR_WEIGHTS,
     DEFAULT_FEATURE_NAMES,
+    TRUE_SIDE_LABELS,
     build_candidate_pool,
     finite_or_zero,
     load_build_config,
     load_chunk_samples_by_event,
-    oracle_filter_passes,
     pool_to_pointwise_rows,
     read_jsonl,
     resolve_chunk_cache_path,
     summarize_filtering,
+    supervision_policy_for_record,
     write_json,
     write_jsonl,
 )
@@ -33,7 +35,25 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--chunk-mmr-cache-root", default="outputs/cache/chunk_mmr")
     p.add_argument("--output-dir", required=True)
     p.add_argument("--top-k", type=int, default=5)
-    p.add_argument("--filter-preset", default="v1a", choices=["v1a", "all"])
+    p.add_argument("--filter-preset", default="v1a", choices=["v1a", "v1b", "all"])
+    p.add_argument("--mostly-true-anchor-weight", type=float, default=ANCHOR_WEIGHTS["mostly-true"])
+    p.add_argument("--true-anchor-weight", type=float, default=ANCHOR_WEIGHTS["true"])
+    p.add_argument(
+        "--max-true-side-anchors-per-label",
+        type=int,
+        default=0,
+        help="Optional cap for V1b true-side anchors per label; 0 means no cap.",
+    )
+    p.add_argument(
+        "--fixed-mmr-predictions",
+        default=None,
+        help="Optional fixed-MMR predictions JSONL. Correct true-side rows become conservative anchors.",
+    )
+    p.add_argument(
+        "--fixed-mmr-candidates",
+        default=None,
+        help="Build JSONL aligned with --fixed-mmr-predictions sample_idx; supplies fixed-MMR selected texts.",
+    )
     p.add_argument(
         "--pool-mode",
         default="oracle_n_top_hybrid_with_positives",
@@ -73,13 +93,26 @@ def main() -> None:
     oracle_records = read_jsonl(args.oracle_results)
     if args.sample_limit is not None:
         oracle_records = oracle_records[: args.sample_limit]
+    fixed_anchor_texts = _load_fixed_anchor_texts(
+        args.fixed_mmr_predictions,
+        args.fixed_mmr_candidates,
+    )
+    fixed_correct_event_ids = set(fixed_anchor_texts)
+    true_side_anchor_weights = {
+        "mostly-true": float(args.mostly_true_anchor_weight),
+        "true": float(args.true_anchor_weight),
+    }
 
     rows = []
     kept_event_ids: set[str] = set()
     matched_counts: list[tuple[int, int]] = []
+    kept_by_bucket: dict[str, int] = {}
+    kept_weight_by_bucket: dict[str, float] = {}
+    anchor_kept_by_label: dict[str, int] = {label: 0 for label in TRUE_SIDE_LABELS}
     skipped = {
         "missing_cache_sample": 0,
         "filter": 0,
+        "anchor_cap": 0,
         "no_candidates": 0,
         "no_positive_match": 0,
     }
@@ -97,13 +130,36 @@ def main() -> None:
         if sample is None:
             skipped["missing_cache_sample"] += 1
             continue
-        if not oracle_filter_passes(rec, args.filter_preset):
+        policy = supervision_policy_for_record(
+            rec,
+            args.filter_preset,
+            fixed_correct_event_ids=fixed_correct_event_ids,
+            true_side_anchor_weights=true_side_anchor_weights,
+        )
+        if not policy["keep"]:
             skipped["filter"] += 1
             continue
+        label = str(rec.get("gold_label", "")).lower()
+        if (
+            args.max_true_side_anchors_per_label > 0
+            and label in TRUE_SIDE_LABELS
+            and str(policy.get("bucket", "")).endswith("_anchor")
+            and anchor_kept_by_label[label] >= args.max_true_side_anchors_per_label
+        ):
+            skipped["anchor_cap"] += 1
+            continue
+
+        rec_for_pool = dict(rec)
+        if policy.get("anchor_source") == "fixed_mmr_correct" and eid in fixed_anchor_texts:
+            rec_for_pool["selected_texts"] = fixed_anchor_texts[eid]
+            rec_for_pool["n_candidates"] = max(
+                int(rec_for_pool.get("n_candidates") or 0),
+                int(args.fallback_pool_size),
+            )
 
         pool = build_candidate_pool(
             sample,
-            rec,
+            rec_for_pool,
             alpha_dense=alpha_dense,
             alpha_lexical=alpha_lexical,
             alpha_bm25=alpha_bm25,
@@ -118,7 +174,21 @@ def main() -> None:
             skipped["no_positive_match"] += 1
             continue
         kept_event_ids.add(eid)
-        rows.extend(pool_to_pointwise_rows(pool, rec, args.filter_preset))
+        bucket = str(policy["bucket"])
+        weight = float(policy["supervision_weight"])
+        kept_by_bucket[bucket] = kept_by_bucket.get(bucket, 0) + 1
+        kept_weight_by_bucket[bucket] = kept_weight_by_bucket.get(bucket, 0.0) + weight
+        if label in TRUE_SIDE_LABELS and bucket.endswith("_anchor"):
+            anchor_kept_by_label[label] += 1
+        rows.extend(
+            pool_to_pointwise_rows(
+                pool,
+                rec_for_pool,
+                bucket,
+                supervision_weight=weight,
+                anchor_source=str(policy.get("anchor_source", "")),
+            )
+        )
 
     train_path = output_dir / f"{args.split}_pointwise.jsonl"
     write_jsonl(train_path, rows)
@@ -127,6 +197,8 @@ def main() -> None:
         "label_name": "is_oracle_selected",
         "pool_mode": args.pool_mode,
         "filter_preset": args.filter_preset,
+        "supervision_weight_name": "supervision_weight",
+        "anchor_weights": true_side_anchor_weights,
     }
     write_json(output_dir / "feature_schema.json", schema)
 
@@ -142,6 +214,13 @@ def main() -> None:
         "split": args.split,
         "output_rows": len(rows),
         "skipped": skipped,
+        "kept_by_bucket": kept_by_bucket,
+        "kept_weight_by_bucket": {
+            key: finite_or_zero(value)
+            for key, value in kept_weight_by_bucket.items()
+        },
+        "true_side_anchor_kept_by_label": anchor_kept_by_label,
+        "fixed_mmr_anchor_events": len(fixed_correct_event_ids),
         "feature_names": DEFAULT_FEATURE_NAMES,
         "score_weights": {
             "alpha_dense": finite_or_zero(alpha_dense),
@@ -158,6 +237,42 @@ def main() -> None:
     print(f"Wrote {len(rows)} rows to {train_path}")
     print(f"Kept {len(kept_event_ids)} claims; positive match rate={report['positive_text_match']['rate']:.4f}")
     print(f"Filter report: {output_dir / 'filter_report.json'}")
+
+
+def _load_fixed_anchor_texts(
+    predictions_path: str | None,
+    candidates_path: str | None,
+) -> dict[str, list[str]]:
+    if not predictions_path and not candidates_path:
+        return {}
+    if not predictions_path or not candidates_path:
+        raise ValueError("--fixed-mmr-predictions and --fixed-mmr-candidates must be provided together.")
+
+    predictions = read_jsonl(predictions_path)
+    candidates = read_jsonl(candidates_path)
+    anchors: dict[str, list[str]] = {}
+    for pred in predictions:
+        idx = int(pred.get("sample_idx", -1))
+        if idx < 0 or idx >= len(candidates):
+            continue
+        gold_label = str(pred.get("gold_label", "")).lower()
+        if gold_label not in TRUE_SIDE_LABELS:
+            continue
+        pred_label = str(pred.get("pred_label", "")).lower()
+        pred_correct = pred_label == gold_label
+        if not pred_correct and pred.get("pred_id") is not None and pred.get("gold_id") is not None:
+            pred_correct = int(pred["pred_id"]) == int(pred["gold_id"])
+        if not pred_correct:
+            continue
+        row = candidates[idx]
+        texts = [
+            str(cand.get("text", "")).strip()
+            for cand in (row.get("candidates") or [])
+            if isinstance(cand, dict) and str(cand.get("text", "")).strip()
+        ]
+        if texts:
+            anchors[str(row.get("event_id", ""))] = texts
+    return anchors
 
 
 if __name__ == "__main__":

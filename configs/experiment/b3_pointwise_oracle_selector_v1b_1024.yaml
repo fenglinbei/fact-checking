@@ -1,0 +1,21 @@
+# @package _global_
+# b3 semantic chunking + V1b true-side-anchor pointwise evidence selector.
+
+defaults:
+  - b3_pointwise_oracle_selector_1024
+  - _self_
+
+experiment:
+  name: b3_pointwise_oracle_selector_v1b_1024
+
+baseline:
+  variant: b3_pointwise_oracle_selector_v1b_1024
+
+build:
+  retrieval:
+    pointwise_oracle:
+      model_dir: outputs/oracle_pointwise/v1b/logreg
+
+swanlab:
+  project: fact-checking-b3-pointwise-oracle-v1b-1024
+  experiment_name: b3_pointwise_oracle_selector_v1b_1024
