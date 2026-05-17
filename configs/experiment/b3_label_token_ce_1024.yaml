@@ -1,0 +1,50 @@
+# @package _global_
+# Stage 1 verifier calibration: train on fixed-MMR prompts with weighted CE over A-F label tokens.
+
+defaults:
+  - b3_mmr_topk_sweep_1024
+  - _self_
+
+experiment:
+  name: b3_label_token_ce_1024
+
+baseline:
+  variant: b3_label_token_ce_1024
+
+build:
+  retrieval:
+    top_k: 5
+    mmr_lambda: 0.70
+
+train:
+  kind: label_token_ce
+  checkpoint_for_infer: best
+
+sft_train:
+  max_new_tokens: 1
+  eval_log_predictions: 5
+  logit_adjust:
+    enabled: false
+  label_token_ce:
+    label_prefix: "Label:"
+    early_stopping_metric: macro_f1_plus_true_side
+    true_side_metric_weight: 0.5
+    class_weights:
+      pants-fire: 1.0
+      false: 1.0
+      barely-true: 1.2
+      half-true: 1.2
+      mostly-true: 2.0
+      true: 3.0
+
+infer:
+  max_new_tokens: 1
+  label_decoding:
+    enabled: true
+    prefix: "Label:"
+    guided_choice: true
+    max_tokens: 1
+
+swanlab:
+  project: fact-checking-label-token-ce
+  experiment_name: b3_label_token_ce_1024

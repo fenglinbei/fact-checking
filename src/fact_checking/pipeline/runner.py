@@ -455,8 +455,9 @@ class PipelineRunner:
         backend = str(train_cfg.get("backend", "accelerate_deepspeed")).strip().lower()
         if kind == "classifier":
             return [sys.executable, "-m", "sft.classifier_trainer", "--config", str(train_config_path)]
+        module = "sft.label_token_trainer" if kind in {"label_token", "label_token_ce"} else "sft.trainer"
         if backend == "single":
-            return [sys.executable, "-m", "sft.trainer", "--config", str(train_config_path)]
+            return [sys.executable, "-m", module, "--config", str(train_config_path)]
         if backend != "accelerate_deepspeed":
             raise ValueError("train.backend supports 'accelerate_deepspeed' or 'single'.")
 
@@ -474,7 +475,7 @@ class PipelineRunner:
             "--deepspeed_config_file",
             str(deepspeed_config),
             "-m",
-            "sft.trainer",
+            module,
             "--config",
             str(train_config_path),
         ]
