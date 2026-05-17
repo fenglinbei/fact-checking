@@ -789,6 +789,28 @@ def run_search(args: argparse.Namespace) -> None:
     logger.info("Search time: %.0fs (%.1f min)", search_elapsed, search_elapsed / 60.0)
     logger.info("Output: %s", output_dir)
 
+    # Explicit vLLM cleanup to avoid NCCL OOM errors during Python teardown.
+    # Without this, vLLM multiprocess workers may crash on exit when CUDA
+    # resources are released in an uncontrolled order.
+    logger.info("Shutting down vLLM engine...")
+    try:
+        del scorer
+        del llm
+    except Exception:
+        pass
+    import gc
+
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    logger.info("Cleanup complete.")
+
 
 if __name__ == "__main__":
     run_search(parse_args())
