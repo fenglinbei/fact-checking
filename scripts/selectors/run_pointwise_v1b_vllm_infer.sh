@@ -14,8 +14,8 @@ ORACLE_VAL="${ORACLE_VAL:-outputs/oracle_evidence/20260516_135632/oracle_results
 CONFIG="${CONFIG:-configs/experiment/b3_mmr_topk_sweep_1024.yaml}"
 PIPELINE_EXPERIMENT="${PIPELINE_EXPERIMENT:-b3_pointwise_oracle_selector_v1b_1024}"
 
-CHUNK_MMR_TRAIN="${CHUNK_MMR_TRAIN:-outputs/cache/chunk_mmr/57e1c87dcd33/train.pkl}"
-CHUNK_MMR_VAL="${CHUNK_MMR_VAL:-outputs/cache/chunk_mmr/57e1c87dcd33/val.pkl}"
+CHUNK_MMR_TRAIN="${CHUNK_MMR_TRAIN:-outputs/cache/chunk_mmr/e0b01520364d/train.pkl}"
+CHUNK_MMR_VAL="${CHUNK_MMR_VAL:-outputs/cache/chunk_mmr/e0b01520364d/val.pkl}"
 
 DATA_DIR="${DATA_DIR:-outputs/oracle_pointwise/v1b/data}"
 MODEL_DIR="${MODEL_DIR:-outputs/oracle_pointwise/v1b/logreg}"
