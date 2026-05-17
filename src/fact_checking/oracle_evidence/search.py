@@ -27,6 +27,10 @@ class SearchResult:
     is_correct: bool = False
     search_method: str = ""
     search_steps: list[dict] = field(default_factory=list)
+    candidate_pool_fingerprint: str = ""
+    candidate_pool: list[dict] = field(default_factory=list)
+    candidate_scores: list[dict] = field(default_factory=list)
+    candidate_pool_metadata: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +46,7 @@ def greedy_search(
     gold_label_letter: str,
     scorer,
     score_batch_size: int = 512,
+    record_step_scores: bool = False,
 ) -> SearchResult:
     """Greedy forward selection: at each step, pick the candidate that
     maximizes verifier log-prob of the correct label.
@@ -93,13 +98,19 @@ def greedy_search(
         selected_texts.append(batch_candidates[best_local])
         remaining_indices.pop(best_local)
 
-        search_steps.append({
+        step_record = {
             "step": step,
             "selected_idx": best_global_idx,
             "selected_text": selected_texts[-1][:200],
             "logprob": best_logprob,
             "n_evaluated": m,
-        })
+        }
+        if record_step_scores:
+            step_record["candidate_logprobs"] = [
+                {"candidate_idx": int(idx), "logprob": float(logprob)}
+                for idx, logprob in zip(remaining_indices, logprobs)
+            ]
+        search_steps.append(step_record)
 
     # Final evaluation: get the verifier's actual prediction
     prompt = scorer._build_prompt(claim, selected_texts)
@@ -138,6 +149,7 @@ def exhaustive_search(
     gold_label_letter: str,
     scorer,
     score_batch_size: int = 512,
+    record_step_scores: bool = False,
 ) -> SearchResult:
     """Enumerate all C(N, K) subsets and pick the best.
 
@@ -202,6 +214,20 @@ def exhaustive_search(
     gold_label = LETTER2LABEL.get(gold_label_letter, "")
     gold_id = LABEL2ID.get(gold_label, -1)
 
+    step_record = {
+        "step": 0,
+        "n_combinations": n_combos,
+        "best_logprob": best_logprob,
+    }
+    if record_step_scores:
+        step_record["combination_logprobs"] = [
+            {
+                "indices": [int(i) for i in combo],
+                "logprob": float(logprob),
+            }
+            for combo, logprob in zip(combos, logprobs)
+        ]
+
     return SearchResult(
         event_id="",
         claim=claim,
@@ -215,11 +241,7 @@ def exhaustive_search(
         final_prediction=pred_id,
         is_correct=(pred_id == gold_id),
         search_method="exhaustive",
-        search_steps=[{
-            "step": 0,
-            "n_combinations": n_combos,
-            "best_logprob": best_logprob,
-        }],
+        search_steps=[step_record],
     )
 
 
@@ -237,6 +259,7 @@ def beam_search(
     scorer,
     beam_width: int = 3,
     score_batch_size: int = 512,
+    record_step_scores: bool = False,
 ) -> SearchResult:
     """Beam search: keep top-B partial sets at each step.
 
@@ -286,11 +309,17 @@ def beam_search(
             float(logprobs[i]),
         ))
 
-    search_steps: list[dict] = [{
+    step0_record = {
         "step": 0,
         "beam_size": len(beam),
         "n_evaluated": m,
-    }]
+    }
+    if record_step_scores:
+        step0_record["candidate_logprobs"] = [
+            {"candidate_idx": int(i), "logprob": float(logprob)}
+            for i, logprob in enumerate(logprobs)
+        ]
+    search_steps: list[dict] = [step0_record]
 
     # Steps 1..K-1
     for step in range(1, effective_k):
@@ -330,11 +359,20 @@ def beam_search(
 
         expansions.sort(key=lambda x: x[2], reverse=True)
         beam = expansions[:beam_width]
-        search_steps.append({
+        step_record = {
             "step": step,
             "beam_size": len(beam),
             "n_expansions": len(expansions),
-        })
+        }
+        if record_step_scores:
+            step_record["top_expansions"] = [
+                {
+                    "indices": [int(i) for i in indices_tuple],
+                    "logprob": float(logprob),
+                }
+                for indices_tuple, _texts, logprob in beam
+            ]
+        search_steps.append(step_record)
 
     # Best beam entry
     best = beam[0]

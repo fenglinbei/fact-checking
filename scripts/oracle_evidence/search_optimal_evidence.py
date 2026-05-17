@@ -98,6 +98,8 @@ def load_build_config(config_path: str, config_overrides: str | None, model_base
             key_path, value = override.split("=", 1)
             # Navigate to nested key
             keys = key_path.split(".")
+            if keys and keys[0] == "build":
+                keys = keys[1:]
             target = build_cfg
             for k in keys[:-1]:
                 if k not in target:
@@ -178,6 +180,145 @@ def _chunk_mmr_config_fingerprint(cfg: dict) -> str:
         "chunking": retrieval_cfg.get("chunking", {}),
     }
     return _fingerprint(payload)
+
+
+def _candidate_uid(candidate: dict) -> str:
+    payload = {
+        "report_id": candidate.get("report_id"),
+        "sent_idx": candidate.get("sent_idx"),
+        "chunk_sent_indices": candidate.get("chunk_sent_indices"),
+        "text": " ".join(str(candidate.get("text", "")).lower().strip().split()),
+    }
+    return _fingerprint(payload)
+
+
+def _candidate_pool_fingerprint(candidates: list[dict], metadata: dict) -> str:
+    payload = {
+        "metadata": metadata,
+        "candidates": [
+            {
+                "candidate_uid": c.get("candidate_uid"),
+                "source_index": c.get("source_index"),
+                "text": c.get("text"),
+                "dense_score": c.get("dense_score"),
+                "lexical_score": c.get("lexical_score"),
+                "bm25_score": c.get("bm25_score"),
+                "hybrid_score": c.get("hybrid_score"),
+            }
+            for c in candidates
+        ],
+    }
+    return _fingerprint(payload)
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
+
+
+def _serialize_candidate_pool(candidates: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for idx, candidate in enumerate(candidates):
+        rows.append({
+            "candidate_idx": idx,
+            "candidate_uid": candidate.get("candidate_uid"),
+            "source_index": candidate.get("source_index"),
+            "report_id": candidate.get("report_id"),
+            "sent_idx": candidate.get("sent_idx"),
+            "chunk_sent_indices": _jsonable(candidate.get("chunk_sent_indices", [])),
+            "text": str(candidate.get("text", "")),
+            "source_report": _jsonable(candidate.get("source_report", {})),
+        })
+    return rows
+
+
+def _serialize_candidate_scores(candidates: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for idx, candidate in enumerate(candidates):
+        rows.append({
+            "candidate_idx": idx,
+            "candidate_uid": candidate.get("candidate_uid"),
+            "source_index": candidate.get("source_index"),
+            "hybrid_rank": idx,
+            "dense_score": float(candidate.get("dense_score", 0.0)),
+            "lexical_score": float(candidate.get("lexical_score", 0.0)),
+            "bm25_score": float(candidate.get("bm25_score", 0.0)),
+            "hybrid_score": float(candidate.get("hybrid_score", 0.0)),
+        })
+    return rows
+
+
+def _candidate_pool_metadata(
+    *,
+    task: dict,
+    candidates: list[dict],
+    build_cfg: dict,
+    chunk_fp: str,
+    pre_fp: str,
+    chunk_cache_path: Path,
+    two_stage: bool,
+    two_stage_limit: int,
+    top_k: int,
+    multiplier: int,
+) -> dict:
+    retrieval_cfg = build_cfg.get("retrieval", {})
+    return {
+        "candidate_pool_version": "oracle-search-candidate-pool-v1",
+        "chunk_mmr_fingerprint": chunk_fp,
+        "pre_mmr_fingerprint": pre_fp,
+        "chunk_mmr_cache_path": str(chunk_cache_path),
+        "n_original": int(task.get("n_original", 0)),
+        "n_scored": int(task.get("n_scored", 0)),
+        "n_dedup": int(task.get("n_dedup", 0)),
+        "n_candidates": len(candidates),
+        "two_stage": bool(two_stage),
+        "two_stage_limit": int(two_stage_limit),
+        "two_stage_multiplier": int(multiplier),
+        "top_k": int(top_k),
+        "score_config": {
+            "alpha_dense": float(retrieval_cfg.get("alpha_dense", 0.70)),
+            "alpha_lexical": float(retrieval_cfg.get("alpha_lexical", 0.20)),
+            "alpha_bm25": float(retrieval_cfg.get("alpha_bm25", 0.10)),
+        },
+        "candidate_order": "hybrid_score_desc" if two_stage else "dedup_source_order",
+    }
+
+
+def _scored_dedup_candidates(sample, retrieval_cfg: dict, canonicalize_sentence_fn) -> list[dict]:
+    from fact_checking.build.candidates import compute_hybrid_scores
+
+    alpha_dense = float(retrieval_cfg.get("alpha_dense", 0.70))
+    alpha_lexical = float(retrieval_cfg.get("alpha_lexical", 0.20))
+    alpha_bm25 = float(retrieval_cfg.get("alpha_bm25", 0.10))
+    scored = compute_hybrid_scores(sample, alpha_dense, alpha_lexical, alpha_bm25)
+    n = int(scored["n"])
+    dedup: dict[str, dict] = {}
+    for idx in range(n):
+        base = dict(sample.candidates[idx])
+        base.update({
+            "source_index": int(idx),
+            "candidate_uid": _candidate_uid(base),
+            "dense_score": float(scored["dense_scores"][idx]),
+            "lexical_score": float(scored["lexical_scores"][idx]),
+            "bm25_score": float(scored["bm25_scores"][idx]),
+            "hybrid_score": float(scored["hybrid_scores"][idx]),
+        })
+        canon = canonicalize_sentence_fn(str(base.get("text", "")))
+        if not canon:
+            continue
+        old = dedup.get(canon)
+        if old is None or base["hybrid_score"] > float(old.get("hybrid_score", 0.0)):
+            dedup[canon] = base
+    return list(dedup.values())
 
 
 def _load_pickle(path: Path) -> Any:
@@ -370,6 +511,24 @@ def parse_args() -> argparse.Namespace:
         help="Retain top (top_k * M) candidates in two-stage mode",
     )
     p.add_argument(
+        "--save-candidate-pool",
+        dest="save_candidate_pool",
+        action="store_true",
+        default=True,
+        help="Save full effective candidate_pool, candidate_scores, and candidate_pool_fingerprint in each result row.",
+    )
+    p.add_argument(
+        "--no-save-candidate-pool",
+        dest="save_candidate_pool",
+        action="store_false",
+        help="Do not save candidate_pool/candidate_scores in result rows.",
+    )
+    p.add_argument(
+        "--save-search-step-scores",
+        action="store_true",
+        help="Save per-step candidate oracle logprobs where supported. This can make JSONL much larger.",
+    )
+    p.add_argument(
         "--verify-config-only",
         action="store_true",
         help="Load config, check cache, print stats, then exit (no vLLM)",
@@ -383,6 +542,26 @@ def parse_args() -> argparse.Namespace:
 def _collect_candidate_stats(samples: list) -> dict:
     """Compute candidate pool size distribution across samples."""
     sizes = [len(s.candidates) for s in samples]
+    if not sizes:
+        return {}
+    arr = np.array(sizes, dtype=np.int32)
+    return {
+        "n_samples": int(len(arr)),
+        "min": int(arr.min()),
+        "p25": int(np.percentile(arr, 25)),
+        "median": int(np.percentile(arr, 50)),
+        "p75": int(np.percentile(arr, 75)),
+        "p90": int(np.percentile(arr, 90)),
+        "p95": int(np.percentile(arr, 95)),
+        "max": int(arr.max()),
+        "mean": float(arr.mean()),
+        "n_le_15": int((arr <= 15).sum()),
+        "n_le_20": int((arr <= 20).sum()),
+    }
+
+
+def _collect_effective_candidate_stats(results: list) -> dict:
+    sizes = [int(r.n_candidates) for r in results]
     if not sizes:
         return {}
     arr = np.array(sizes, dtype=np.int32)
@@ -513,7 +692,7 @@ def run_search(args: argparse.Namespace) -> None:
         100.0 * stats["n_le_15"] / max(1, stats["n_samples"]),
     )
 
-    # ---- Deduplicate candidates within each sample (by canonical text) -----
+    # ---- Score and deduplicate candidates within each sample ---------------
     from fact_checking.build.candidates import canonicalize_sentence
 
     top_k = args.top_k
@@ -591,14 +770,7 @@ def run_search(args: argparse.Namespace) -> None:
     for sample in chunk_samples:
         if not sample.candidates:
             continue
-        # Deduplicate by canonicalized text
-        seen: set[str] = set()
-        dedup: list[dict] = []
-        for c in sample.candidates:
-            canon = canonicalize_sentence(str(c.get("text", "")))
-            if canon not in seen:
-                seen.add(canon)
-                dedup.append(c)
+        dedup = _scored_dedup_candidates(sample, retrieval_cfg, canonicalize_sentence)
         if not dedup:
             continue
 
@@ -614,6 +786,8 @@ def run_search(args: argparse.Namespace) -> None:
             "gold_letter": gold_letter,
             "candidates": dedup,
             "n_original": len(sample.candidates),
+            "n_scored": min(len(sample.candidates), int(sample.chunk_emb.shape[0])),
+            "n_dedup": len(dedup),
         })
 
     if args.max_samples > 0:
@@ -646,8 +820,10 @@ def run_search(args: argparse.Namespace) -> None:
         n_full = len(candidates)
 
         # Two-stage pruning
+        two_stage_limit = n_full
         if two_stage:
             limit = min(n_full, top_k * multiplier)
+            two_stage_limit = limit
             if limit < n_full:
                 candidates = sorted(
                     candidates,
@@ -656,6 +832,19 @@ def run_search(args: argparse.Namespace) -> None:
                 )[:limit]
 
         n = len(candidates)
+        pool_metadata = _candidate_pool_metadata(
+            task=task,
+            candidates=candidates,
+            build_cfg=build_cfg,
+            chunk_fp=chunk_fp,
+            pre_fp=pre_fp,
+            chunk_cache_path=chunk_cache_path,
+            two_stage=two_stage,
+            two_stage_limit=two_stage_limit,
+            top_k=top_k,
+            multiplier=multiplier,
+        )
+        candidate_pool_fingerprint = _candidate_pool_fingerprint(candidates, pool_metadata)
         method = args.search_method
 
         # Force exhaustive for small pools, downgrade for large pools
@@ -673,6 +862,7 @@ def run_search(args: argparse.Namespace) -> None:
             gold_label_letter=task["gold_letter"],
             scorer=scorer,
             score_batch_size=args.score_batch_size,
+            record_step_scores=args.save_search_step_scores,
         )
 
         if method == "exhaustive":
@@ -687,6 +877,11 @@ def run_search(args: argparse.Namespace) -> None:
         from fact_checking.data.constants import LABEL2ID
         result.gold_id = LABEL2ID.get(task["gold_label"], -1)
         result.is_correct = (result.final_prediction == result.gold_id)
+        result.candidate_pool_fingerprint = candidate_pool_fingerprint
+        result.candidate_pool_metadata = pool_metadata
+        if args.save_candidate_pool:
+            result.candidate_pool = _serialize_candidate_pool(candidates)
+            result.candidate_scores = _serialize_candidate_scores(candidates)
 
         results.append(result)
 
@@ -748,7 +943,12 @@ def run_search(args: argparse.Namespace) -> None:
                 "is_correct": r.is_correct,
                 "search_method": r.search_method,
                 "search_steps": r.search_steps,
+                "candidate_pool_fingerprint": r.candidate_pool_fingerprint,
+                "candidate_pool_metadata": r.candidate_pool_metadata,
             }
+            if args.save_candidate_pool:
+                entry["candidate_pool"] = r.candidate_pool
+                entry["candidate_scores"] = r.candidate_scores
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
     logger.info("Results written to: %s", results_path)
 
@@ -771,6 +971,14 @@ def run_search(args: argparse.Namespace) -> None:
     serializable_metrics["split"] = args.split
     serializable_metrics["search_elapsed_s"] = search_elapsed
     serializable_metrics["candidate_pool_stats"] = stats
+    serializable_metrics["effective_candidate_pool_stats"] = _collect_effective_candidate_stats(results)
+    serializable_metrics["output_contract"] = {
+        "version": "oracle-results-v2",
+        "save_candidate_pool": bool(args.save_candidate_pool),
+        "save_search_step_scores": bool(args.save_search_step_scores),
+        "candidate_pool_fingerprint": "per-row fingerprint over effective candidate pool metadata, order, text, and retrieval scores",
+        "selected_indices_coordinate": "indices into per-row effective candidate_pool after deduplication and optional two-stage pruning",
+    }
 
     with open(metrics_path, "w", encoding="utf-8") as fh:
         json.dump(serializable_metrics, fh, indent=2, ensure_ascii=False)

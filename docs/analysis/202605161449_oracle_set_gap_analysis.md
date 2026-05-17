@@ -3,7 +3,7 @@
 > 最后更新：2026-05-16  
 > Oracle 实验结果：`outputs/oracle_evidence/20260516_135632/`  
 > MMR Baseline：`outputs/runs/b3_mmr_topk_sweep_1024/...top_k-5__b23a0bbe/infer/val/`  
-> 参考文档：`docs/analysis/RL_MMR_research_review.md`、`docs/analysis/RL_MMR_direction_summary.md`
+> 参考文档：`docs/analysis/202605141045_RL_MMR_research_review.md`、`docs/analysis/202605151453_RL_MMR_direction_summary.md`
 
 ---
 
@@ -413,5 +413,5 @@ Oracle 48.4% 的硬上限表明 verifier 是主要瓶颈。具体措施：
 | `outputs/runs/...b23a0bbe/.../api/metrics.json` | MMR baseline 指标 |
 | `outputs/runs/...b23a0bbe/.../api/val_predictions.jsonl` | MMR baseline 逐条预测 |
 | `scripts/oracle_evidence/search_optimal_evidence.py` | Oracle search 脚本 |
-| `docs/analysis/RL_MMR_research_review.md` | 研究综述（18 节，含文献索引） |
-| `docs/analysis/RL_MMR_direction_summary.md` | 后续方向与方法 gate 设计 |
+| `docs/analysis/202605141045_RL_MMR_research_review.md` | 研究综述（18 节，含文献索引） |
+| `docs/analysis/202605151453_RL_MMR_direction_summary.md` | 后续方向与方法 gate 设计 |

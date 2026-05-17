@@ -18,6 +18,8 @@
 #   GPU_MEMORY_UTILIZATION - GPU memory utilization (default: 0.95)
 #   MAX_MODEL_LEN       - Max model sequence length (default: 1024)
 #   SCORE_BATCH_SIZE    - Batch size for vLLM scoring calls (default: 512)
+#   SAVE_CANDIDATE_POOL - Save full candidate_pool/candidate_scores (default: true)
+#   SAVE_SEARCH_STEP_SCORES - Save per-step oracle logprobs (default: false)
 
 set -euo pipefail
 
@@ -37,6 +39,8 @@ TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-4}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-1032}"
 SCORE_BATCH_SIZE="${SCORE_BATCH_SIZE:-256}"
+SAVE_CANDIDATE_POOL="${SAVE_CANDIDATE_POOL:-true}"
+SAVE_SEARCH_STEP_SCORES="${SAVE_SEARCH_STEP_SCORES:-false}"
 
 echo "============================================"
 echo "Oracle Evidence Selection Search"
@@ -53,6 +57,8 @@ echo "GPU mem util:      $GPU_MEMORY_UTILIZATION"
 echo "Max model len:     $MAX_MODEL_LEN"
 echo "Score batch size:  $SCORE_BATCH_SIZE"
 echo "Two-stage:         $TWO_STAGE"
+echo "Save candidates:   $SAVE_CANDIDATE_POOL"
+echo "Save step scores:  $SAVE_SEARCH_STEP_SCORES"
 echo "Model base path:   ${MODEL_BASE_PATH:-auto}"
 echo "============================================"
 
@@ -72,6 +78,16 @@ if [ "$TWO_STAGE" = "false" ]; then
     TWO_STAGE_ARG=(--no-two-stage)
 fi
 
+CANDIDATE_POOL_ARG=()
+if [ "$SAVE_CANDIDATE_POOL" = "false" ]; then
+    CANDIDATE_POOL_ARG=(--no-save-candidate-pool)
+fi
+
+STEP_SCORES_ARG=()
+if [ "$SAVE_SEARCH_STEP_SCORES" = "true" ]; then
+    STEP_SCORES_ARG=(--save-search-step-scores)
+fi
+
 python scripts/oracle_evidence/search_optimal_evidence.py \
     --config "$CONFIG" \
     --verifier-model "$VERIFIER_MODEL" \
@@ -86,4 +102,6 @@ python scripts/oracle_evidence/search_optimal_evidence.py \
     --score-batch-size "$SCORE_BATCH_SIZE" \
     "${MODEL_PATH_ARG[@]}" \
     "${TWO_STAGE_ARG[@]}" \
+    "${CANDIDATE_POOL_ARG[@]}" \
+    "${STEP_SCORES_ARG[@]}" \
     "$@"

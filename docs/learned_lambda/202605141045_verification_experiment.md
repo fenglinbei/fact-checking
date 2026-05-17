@@ -71,7 +71,7 @@ Learned lambda 实验试图用神经网络预测器为每个 claim 预测最优 
 
 ### 与预测器诊断的关联
 
-之前的诊断分析（docs/learned_lambda/analysis.md）发现：
+之前的诊断分析（docs/learned_lambda/202605141052_analysis.md）发现：
 - Oracle λ 标签本身噪声很大（72.6% 的样本 margin < 0.05）
 - 但高 margin 子集（~27% 样本）上 oracle λ 偏向低值（mean=0.282），特征相关性有所提升
 
