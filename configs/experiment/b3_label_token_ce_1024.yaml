@@ -30,12 +30,12 @@ sft_train:
     early_stopping_metric: macro_f1_plus_true_side
     true_side_metric_weight: 0.5
     class_weights:
-      pants-fire: 1.0
-      false: 1.0
-      barely-true: 1.2
-      half-true: 1.2
-      mostly-true: 2.0
-      true: 3.0
+      "pants-fire": 1.0
+      "false": 1.0
+      "barely-true": 1.2
+      "half-true": 1.2
+      "mostly-true": 2.0
+      "true": 3.0
 
 infer:
   max_new_tokens: 1

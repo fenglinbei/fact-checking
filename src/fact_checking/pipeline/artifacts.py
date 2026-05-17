@@ -7,7 +7,18 @@ from pathlib import Path
 from typing import Any
 
 
+def _stringify_mapping_keys(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        return {str(key): _stringify_mapping_keys(value) for key, value in payload.items()}
+    if isinstance(payload, list):
+        return [_stringify_mapping_keys(value) for value in payload]
+    if isinstance(payload, tuple):
+        return [_stringify_mapping_keys(value) for value in payload]
+    return payload
+
+
 def stable_json(payload: Any) -> str:
+    payload = _stringify_mapping_keys(payload)
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
 

@@ -52,13 +52,15 @@ loss = WeightedCrossEntropy(label_logits, gold_label_id)
 
 ```yaml
 sft_train.label_token_ce.class_weights:
-  pants-fire: 1.0
-  false: 1.0
-  barely-true: 1.2
-  half-true: 1.2
-  mostly-true: 2.0
-  true: 3.0
+  "pants-fire": 1.0
+  "false": 1.0
+  "barely-true": 1.2
+  "half-true": 1.2
+  "mostly-true": 2.0
+  "true": 3.0
 ```
+
+这里必须给 `"false"` 和 `"true"` 加引号；否则部分 YAML 解析器会把它们当成 boolean key，进而影响 pipeline fingerprint。
 
 ## Checkpoint 选择
 
