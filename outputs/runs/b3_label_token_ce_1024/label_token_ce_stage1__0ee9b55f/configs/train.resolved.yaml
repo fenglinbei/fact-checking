@@ -1,0 +1,72 @@
+output_dir: /data/liaozijie/fact-checking/outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f/train
+data:
+  train_candidates: /data/liaozijie/fact-checking/outputs/cache/build/f67001906419/build_train.jsonl
+  val_candidates: /data/liaozijie/fact-checking/outputs/cache/build/f67001906419/build_val.jsonl
+  test_candidates: /data/liaozijie/fact-checking/outputs/cache/build/f67001906419/build_test.jsonl
+model_name_or_path: /data/models/Qwen2.5-7B-Instruct
+baseline:
+  variant: b3_label_token_ce_1024
+  chunking_strategy: semantic
+sft_train:
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 1
+  learning_rate: 1.0e-05
+  num_train_epochs: 2
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  bf16: true
+  max_length: 1024
+  logging_steps: 2
+  save_steps: 50
+  eval_steps: 50
+  dataloader_num_workers: 4
+  gradient_checkpointing: true
+  use_flash_attention_2: true
+  lr_scheduler_type: cosine
+  max_grad_norm: 1.0
+  padding: longest
+  use_length_bucket: true
+  empty_cache_steps: 0
+  empty_cache_on_eval: true
+  empty_cache_on_save: true
+  max_new_tokens: 1
+  temperature: 0.0
+  early_stopping_patience: 3
+  logit_adjust:
+    enabled: false
+    tau: 1.0
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+    modules_to_save: null
+  eval_log_predictions: 5
+  label_token_ce:
+    label_prefix: 'Label:'
+    early_stopping_metric: macro_f1_plus_true_side
+    true_side_metric_weight: 0.5
+    class_weights:
+      pants-fire: 1.0
+      'false': 1.0
+      barely-true: 1.2
+      half-true: 1.2
+      mostly-true: 2.0
+      'true': 3.0
+  resolved_output_dir: true
+tracking:
+  enabled: true
+  backend: swanlab
+swanlab:
+  project: fact-checking-label-token-ce
+  experiment_name: b3_label_token_ce_1024__label_token_ce_stage1

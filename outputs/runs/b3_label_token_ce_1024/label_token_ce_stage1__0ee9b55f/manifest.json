@@ -1,0 +1,64 @@
+{
+  "run_id": "0ee9b55f523e",
+  "run_dir": "/data/liaozijie/fact-checking/outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f",
+  "build_id": "f67001906419",
+  "phases": {
+    "build": {
+      "status": "completed",
+      "updated_at": "2026-05-18 01:36:45",
+      "build_id": "f67001906419",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/cache/build/f67001906419",
+      "outputs": {
+        "train": "/data/liaozijie/fact-checking/outputs/cache/build/f67001906419/build_train.jsonl",
+        "val": "/data/liaozijie/fact-checking/outputs/cache/build/f67001906419/build_val.jsonl",
+        "test": "/data/liaozijie/fact-checking/outputs/cache/build/f67001906419/build_test.jsonl"
+      },
+      "reused": false
+    },
+    "train": {
+      "status": "completed",
+      "updated_at": "2026-05-18 02:30:59",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f/train",
+      "config_path": "/data/liaozijie/fact-checking/outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f/configs/train.resolved.yaml",
+      "checkpoint": "/data/liaozijie/fact-checking/outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f/train/best",
+      "command": [
+        "accelerate",
+        "launch",
+        "--num_processes=4",
+        "--num_machines=1",
+        "--mixed_precision=bf16",
+        "--use_deepspeed",
+        "--deepspeed_config_file",
+        "/data/liaozijie/fact-checking/configs/deepspeed_zero2_bsz8_ga1.json",
+        "-m",
+        "sft.label_token_trainer",
+        "--config",
+        "/data/liaozijie/fact-checking/outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f/configs/train.resolved.yaml"
+      ],
+      "log_path": "/data/liaozijie/fact-checking/outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f/logs/train.log",
+      "reused": false
+    },
+    "infer": {
+      "status": "completed",
+      "updated_at": "2026-05-18 02:34:54",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f/infer/val/best/3773899c0e40",
+      "infer_id": "3773899c0e40",
+      "artifacts": {
+        "metrics_path": "/data/liaozijie/fact-checking/outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f/infer/val/best/3773899c0e40/api/metrics.json",
+        "confusion_data_path": "/data/liaozijie/fact-checking/outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f/infer/val/best/3773899c0e40/api/confusion_matrix.json",
+        "confusion_png_path": "/data/liaozijie/fact-checking/outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f/infer/val/best/3773899c0e40/api/confusion_matrix.png",
+        "predictions_path": "/data/liaozijie/fact-checking/outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f/infer/val/best/3773899c0e40/api/val_predictions.jsonl"
+      },
+      "reused": false
+    }
+  },
+  "config": {
+    "experiment": {
+      "name": "b3_label_token_ce_1024"
+    },
+    "baseline": {
+      "variant": "b3_label_token_ce_1024",
+      "chunking_strategy": "semantic"
+    }
+  }
+}
