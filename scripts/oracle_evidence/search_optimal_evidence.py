@@ -17,6 +17,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -495,6 +496,31 @@ def parse_args() -> argparse.Namespace:
         "--max-samples", type=int, default=0, help="Max samples to process (0=all)"
     )
     p.add_argument(
+        "--num-shards",
+        type=int,
+        default=1,
+        help="Number of deterministic event_id shards to split the search into.",
+    )
+    p.add_argument(
+        "--shard-index",
+        type=int,
+        default=0,
+        help="Shard index to run, in [0, num_shards).",
+    )
+    p.add_argument(
+        "--resume",
+        dest="resume",
+        action="store_true",
+        default=True,
+        help="Skip event_ids already present in this shard's result JSONL.",
+    )
+    p.add_argument(
+        "--no-resume",
+        dest="resume",
+        action="store_false",
+        help="Do not skip existing result rows; append a fresh pass to the result JSONL.",
+    )
+    p.add_argument(
         "--split", default="val", help="Data split: train / val / test"
     )
     p.add_argument(
@@ -598,8 +624,247 @@ def _compute_metrics(results: list) -> dict:
     return _compute_classification_metrics(pred_ids, gold_ids)
 
 
+def _validate_shard_args(args: argparse.Namespace) -> None:
+    if args.num_shards < 1:
+        raise ValueError(f"--num-shards must be >= 1, got {args.num_shards}")
+    if args.shard_index < 0 or args.shard_index >= args.num_shards:
+        raise ValueError(
+            f"--shard-index must be in [0, {args.num_shards}), got {args.shard_index}"
+        )
+
+
+def _event_shard(event_id: str, num_shards: int) -> int:
+    """Stable shard assignment from event_id."""
+    if num_shards <= 1:
+        return 0
+    digest = hashlib.sha1(str(event_id).encode("utf-8")).hexdigest()
+    return int(digest, 16) % num_shards
+
+
+def _shard_suffix(num_shards: int, shard_index: int) -> str:
+    if num_shards <= 1:
+        return ""
+    return f".shard-{shard_index:05d}-of-{num_shards:05d}"
+
+
+def _resolve_output_paths(
+    *,
+    project_root: Path,
+    output_dir_arg: str | None,
+    split: str,
+    num_shards: int,
+    shard_index: int,
+) -> tuple[Path, Path, Path]:
+    if output_dir_arg:
+        output_dir = Path(output_dir_arg)
+        if not output_dir.is_absolute():
+            output_dir = project_root / output_dir
+    else:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = project_root / "outputs" / "oracle_evidence" / ts
+
+    suffix = _shard_suffix(num_shards, shard_index)
+    results_path = output_dir / f"oracle_results_{split}{suffix}.jsonl"
+    metrics_path = output_dir / f"oracle_metrics_{split}{suffix}.json"
+    return output_dir, results_path, metrics_path
+
+
+def _read_result_records(path: Path, *, repair_invalid: bool = False) -> list[dict]:
+    """Read valid JSONL rows, optionally dropping invalid tail/partial rows."""
+    if not path.exists():
+        return []
+
+    records: list[dict] = []
+    valid_lines: list[str] = []
+    invalid = 0
+    with open(path, "r", encoding="utf-8") as fh:
+        for line_no, raw in enumerate(fh, start=1):
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                invalid += 1
+                logger.warning("Ignoring invalid JSONL row %s:%d", path, line_no)
+                continue
+            records.append(record)
+            valid_lines.append(raw if raw.endswith("\n") else raw + "\n")
+
+    if invalid and repair_invalid:
+        tmp = path.with_suffix(path.suffix + ".repair")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.writelines(valid_lines)
+        os.replace(tmp, path)
+        logger.warning("Repaired %s by dropping %d invalid row(s)", path, invalid)
+
+    return records
+
+
+def _dedup_records_by_event_id(records: list[dict]) -> list[dict]:
+    """Keep the last row per event_id while preserving first-seen order."""
+    order: list[str] = []
+    by_event: dict[str, dict] = {}
+    for record in records:
+        event_id = str(record.get("event_id", ""))
+        if not event_id:
+            continue
+        if event_id not in by_event:
+            order.append(event_id)
+        by_event[event_id] = record
+    return [by_event[event_id] for event_id in order]
+
+
+def _compute_metrics_from_records(records: list[dict]) -> dict:
+    from sft.metrics import _compute_classification_metrics
+
+    pred_ids = np.array(
+        [int(r.get("final_prediction", -1)) for r in records],
+        dtype=np.int32,
+    )
+    gold_ids = np.array(
+        [int(r.get("gold_id", -1)) for r in records],
+        dtype=np.int32,
+    )
+    return _compute_classification_metrics(pred_ids, gold_ids)
+
+
+def _collect_effective_candidate_stats_from_records(records: list[dict]) -> dict:
+    sizes = [int(r.get("n_candidates", 0)) for r in records if "n_candidates" in r]
+    if not sizes:
+        return {}
+    arr = np.array(sizes, dtype=np.int32)
+    return {
+        "n_samples": int(len(arr)),
+        "min": int(arr.min()),
+        "p25": int(np.percentile(arr, 25)),
+        "median": int(np.percentile(arr, 50)),
+        "p75": int(np.percentile(arr, 75)),
+        "p90": int(np.percentile(arr, 90)),
+        "p95": int(np.percentile(arr, 95)),
+        "max": int(arr.max()),
+        "mean": float(arr.mean()),
+        "n_le_15": int((arr <= 15).sum()),
+        "n_le_20": int((arr <= 20).sum()),
+    }
+
+
+def _result_to_entry(result, *, save_candidate_pool: bool, id2label: dict) -> dict:
+    entry = {
+        "event_id": result.event_id,
+        "claim": result.claim,
+        "gold_label": result.gold_label,
+        "gold_id": result.gold_id,
+        "n_candidates": result.n_candidates,
+        "top_k": result.top_k,
+        "selected_indices": result.selected_indices,
+        "selected_texts": result.selected_texts,
+        "final_logprob": result.final_logprob,
+        "final_objective": result.final_objective,
+        "gold_logprob": result.gold_logprob,
+        "best_wrong_logprob": result.best_wrong_logprob,
+        "margin": result.margin,
+        "label_logprobs": result.label_logprobs,
+        "final_prediction": int(result.final_prediction),
+        "pred_label": id2label.get(int(result.final_prediction), "parse_error"),
+        "prediction_source": result.prediction_source,
+        "is_correct": result.is_correct,
+        "search_method": result.search_method,
+        "search_objective": result.search_objective,
+        "search_steps": result.search_steps,
+        "candidate_pool_fingerprint": result.candidate_pool_fingerprint,
+        "candidate_pool_metadata": result.candidate_pool_metadata,
+    }
+    if save_candidate_pool:
+        entry["candidate_pool"] = result.candidate_pool
+        entry["candidate_scores"] = result.candidate_scores
+    return entry
+
+
+def _write_metrics_file(
+    *,
+    metrics_path: Path,
+    records: list[dict],
+    args: argparse.Namespace,
+    top_k: int,
+    search_elapsed: float,
+    candidate_pool_stats: dict,
+    total_tasks_before_shard: int,
+    shard_tasks: int,
+    completed_existing: int,
+    generated: int,
+) -> tuple[dict, float, int]:
+    if records:
+        metrics = _compute_metrics_from_records(records)
+        correct = sum(
+            1
+            for r in records
+            if int(r.get("final_prediction", -1)) == int(r.get("gold_id", -2))
+        )
+        accuracy = correct / len(records)
+    else:
+        metrics = {}
+        correct = 0
+        accuracy = 0.0
+
+    serializable_metrics: dict[str, Any] = {}
+    for k, v in metrics.items():
+        if isinstance(v, (np.integer,)):
+            serializable_metrics[k] = int(v)
+        elif isinstance(v, (np.floating,)):
+            serializable_metrics[k] = float(v)
+        elif isinstance(v, np.ndarray):
+            serializable_metrics[k] = v.tolist()
+        else:
+            serializable_metrics[k] = v
+    serializable_metrics["accuracy"] = accuracy
+    serializable_metrics["n_samples"] = len(records)
+    serializable_metrics["search_method"] = args.search_method
+    serializable_metrics["search_objective"] = args.objective
+    serializable_metrics["top_k"] = top_k
+    serializable_metrics["split"] = args.split
+    serializable_metrics["search_elapsed_s"] = search_elapsed
+    serializable_metrics["candidate_pool_stats"] = candidate_pool_stats
+    serializable_metrics["effective_candidate_pool_stats"] = (
+        _collect_effective_candidate_stats_from_records(records)
+    )
+    serializable_metrics["sharding"] = {
+        "num_shards": int(args.num_shards),
+        "shard_index": int(args.shard_index),
+        "total_tasks_before_shard": int(total_tasks_before_shard),
+        "shard_tasks": int(shard_tasks),
+        "completed_existing": int(completed_existing),
+        "generated": int(generated),
+        "assignment": "sha1(event_id) % num_shards",
+    }
+    serializable_metrics["resume"] = {
+        "enabled": bool(args.resume),
+        "mode": "skip_existing_event_ids",
+    }
+    serializable_metrics["output_contract"] = {
+        "version": "oracle-results-v3",
+        "save_candidate_pool": bool(args.save_candidate_pool),
+        "save_search_step_scores": bool(args.save_search_step_scores),
+        "search_objective": args.objective,
+        "streaming_jsonl": True,
+        "resume_supported": True,
+        "gold_logprob": "log P(gold label token | claim, selected evidence)",
+        "best_wrong_logprob": "max log P(non-gold label token | claim, selected evidence)",
+        "margin": "gold_logprob - best_wrong_logprob",
+        "final_objective": "gold_logprob for objective=gold_logprob; margin for objective=margin",
+        "candidate_pool_fingerprint": "per-row fingerprint over effective candidate pool metadata, order, text, and retrieval scores",
+        "selected_indices_coordinate": "indices into per-row effective candidate_pool after deduplication and optional two-stage pruning",
+    }
+
+    with open(metrics_path, "w", encoding="utf-8") as fh:
+        json.dump(serializable_metrics, fh, indent=2, ensure_ascii=False)
+    logger.info("Metrics written to: %s", metrics_path)
+    return metrics, accuracy, correct
+
+
 def run_search(args: argparse.Namespace) -> None:
     project_root = Path(__file__).resolve().parents[2]
+    _validate_shard_args(args)
 
     # ---- Load config -------------------------------------------------------
     logger.info("Loading config: %s", args.config)
@@ -709,6 +974,127 @@ def run_search(args: argparse.Namespace) -> None:
     multiplier = args.two_stage_multiplier
     max_exhaustive_n = args.max_exhaustive_n
 
+    # ---- Search ------------------------------------------------------------
+    from fact_checking.data.constants import ID2LABEL, LABEL2ID, LABEL_LETTERS
+    from fact_checking.oracle_evidence.search import (
+        beam_search,
+        exhaustive_search,
+        greedy_search,
+    )
+
+    output_dir, results_path, metrics_path = _resolve_output_paths(
+        project_root=project_root,
+        output_dir_arg=args.output_dir,
+        split=args.split,
+        num_shards=args.num_shards,
+        shard_index=args.shard_index,
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Output dir:   %s", output_dir)
+    logger.info("Results path: %s", results_path)
+    logger.info("Metrics path: %s", metrics_path)
+
+    # Build task list
+    all_tasks: list[dict] = []
+    for sample in chunk_samples:
+        if not sample.candidates:
+            continue
+        dedup = _scored_dedup_candidates(sample, retrieval_cfg, canonicalize_sentence)
+        if not dedup:
+            continue
+
+        gold_label = str(sample.label or "").strip().lower()
+        gold_letter = LABEL_LETTERS.get(gold_label, "")
+        if not gold_letter:
+            continue
+
+        all_tasks.append({
+            "event_id": str(sample.event_id),
+            "claim": str(sample.claim),
+            "gold_label": gold_label,
+            "gold_letter": gold_letter,
+            "candidates": dedup,
+            "n_original": len(sample.candidates),
+            "n_scored": min(len(sample.candidates), int(sample.chunk_emb.shape[0])),
+            "n_dedup": len(dedup),
+        })
+
+    total_tasks_before_shard = len(all_tasks)
+    tasks = [
+        task for task in all_tasks
+        if _event_shard(task["event_id"], args.num_shards) == args.shard_index
+    ]
+    if args.num_shards > 1:
+        logger.info(
+            "Shard %d/%d selected %d/%d task(s)",
+            args.shard_index,
+            args.num_shards,
+            len(tasks),
+            total_tasks_before_shard,
+        )
+
+    if args.max_samples > 0:
+        tasks = tasks[: args.max_samples]
+        logger.info("Applied max_samples after shard filtering: %d", len(tasks))
+
+    logger.info("Search tasks: %d", len(tasks))
+
+    existing_records: list[dict] = []
+    completed_ids: set[str] = set()
+    if args.resume:
+        existing_records = _dedup_records_by_event_id(
+            _read_result_records(results_path, repair_invalid=True)
+        )
+        task_ids = {str(task["event_id"]) for task in tasks}
+        completed_ids = {
+            str(record.get("event_id", ""))
+            for record in existing_records
+            if str(record.get("event_id", "")) in task_ids
+        }
+    pending_tasks = [
+        task for task in tasks
+        if str(task["event_id"]) not in completed_ids
+    ]
+    completed_existing = len(completed_ids)
+    completed_existing_correct = sum(
+        1
+        for record in existing_records
+        if str(record.get("event_id", "")) in completed_ids
+        and int(record.get("final_prediction", -1)) == int(record.get("gold_id", -2))
+    )
+    logger.info(
+        "Resume: enabled=%s completed=%d pending=%d",
+        args.resume,
+        completed_existing,
+        len(pending_tasks),
+    )
+
+    if not pending_tasks:
+        final_records = _dedup_records_by_event_id(
+            _read_result_records(results_path, repair_invalid=args.resume)
+        )
+        final_records = [
+            record for record in final_records
+            if str(record.get("event_id", "")) in {str(task["event_id"]) for task in tasks}
+        ]
+        metrics, accuracy, correct = _write_metrics_file(
+            metrics_path=metrics_path,
+            records=final_records,
+            args=args,
+            top_k=top_k,
+            search_elapsed=0.0,
+            candidate_pool_stats=stats,
+            total_tasks_before_shard=total_tasks_before_shard,
+            shard_tasks=len(tasks),
+            completed_existing=completed_existing,
+            generated=0,
+        )
+        logger.info("No pending tasks; skipped vLLM initialization.")
+        logger.info("Oracle Accuracy: %.4f (%d/%d)", accuracy, correct, len(final_records))
+        logger.info("Macro F1: %.4f", metrics.get("macro_f1", 0.0))
+        logger.info("Output: %s", output_dir)
+        return
+
     # ---- vLLM init ---------------------------------------------------------
     logger.info("Initializing vLLM...")
     # Suppress vLLM engine log spam during init / generate
@@ -717,7 +1103,7 @@ def run_search(args: argparse.Namespace) -> None:
     os.environ.setdefault("VLLM_LOGGING_LEVEL", "WARNING")
 
     try:
-        from vllm import LLM, SamplingParams
+        from vllm import LLM
     except ImportError as exc:
         raise RuntimeError("vLLM is not installed. Install vllm first.") from exc
 
@@ -766,47 +1152,9 @@ def run_search(args: argparse.Namespace) -> None:
         {k: v for k, v in scorer.label_token_ids.items()},
     )
 
-    # ---- Search ------------------------------------------------------------
-    from fact_checking.data.constants import ID2LABEL, LABEL2ID, LABEL_LETTERS
-    from fact_checking.oracle_evidence.search import (
-        SearchResult,
-        beam_search,
-        exhaustive_search,
-        greedy_search,
-    )
-
-    # Build task list
-    tasks: list[dict] = []
-    for sample in chunk_samples:
-        if not sample.candidates:
-            continue
-        dedup = _scored_dedup_candidates(sample, retrieval_cfg, canonicalize_sentence)
-        if not dedup:
-            continue
-
-        gold_label = str(sample.label or "").strip().lower()
-        gold_letter = LABEL_LETTERS.get(gold_label, "")
-        if not gold_letter:
-            continue
-
-        tasks.append({
-            "event_id": str(sample.event_id),
-            "claim": str(sample.claim),
-            "gold_label": gold_label,
-            "gold_letter": gold_letter,
-            "candidates": dedup,
-            "n_original": len(sample.candidates),
-            "n_scored": min(len(sample.candidates), int(sample.chunk_emb.shape[0])),
-            "n_dedup": len(dedup),
-        })
-
-    if args.max_samples > 0:
-        tasks = tasks[: args.max_samples]
-
-    logger.info("Search tasks: %d", len(tasks))
-
     # Determine per-sample search strategy
-    results: list[SearchResult] = []
+    generated = 0
+    generated_correct = 0
     search_start = time.monotonic()
 
     # Progress display: tqdm when available, otherwise periodic logging
@@ -815,98 +1163,120 @@ def run_search(args: argparse.Namespace) -> None:
     except ImportError:
         _tqdm = None
 
-    task_iter = tasks
+    task_iter = pending_tasks
     pbar = None
     if not args.no_progress:
         if _tqdm is not None:
-            pbar = _tqdm(total=len(tasks), desc="Oracle search", unit="sample",
-                         dynamic_ncols=True)
-        else:
-            logger.info("Searching %d samples (tqdm not available, logging every 100)...",
-                        len(tasks))
-
-    for i, task in enumerate(task_iter):
-        candidates = task["candidates"]
-        n_full = len(candidates)
-
-        # Two-stage pruning
-        two_stage_limit = n_full
-        if two_stage:
-            limit = min(n_full, top_k * multiplier)
-            two_stage_limit = limit
-            candidates = sorted(
-                candidates,
-                key=lambda c: float(c.get("hybrid_score", 0.0)),
-                reverse=True,
-            )[:limit]
-
-        n = len(candidates)
-        pool_metadata = _candidate_pool_metadata(
-            task=task,
-            candidates=candidates,
-            build_cfg=build_cfg,
-            chunk_fp=chunk_fp,
-            pre_fp=pre_fp,
-            chunk_cache_path=chunk_cache_path,
-            two_stage=two_stage,
-            two_stage_limit=two_stage_limit,
-            top_k=top_k,
-            multiplier=multiplier,
-        )
-        candidate_pool_fingerprint = _candidate_pool_fingerprint(candidates, pool_metadata)
-        method = args.search_method
-
-        # Force exhaustive for small pools, downgrade for large pools
-        if method == "exhaustive" and n > max_exhaustive_n:
-            logger.debug(
-                "Sample %s: N=%d > %d, falling back to greedy",
-                task["event_id"], n, max_exhaustive_n,
+            pbar = _tqdm(
+                total=len(tasks),
+                initial=completed_existing,
+                desc="Oracle search",
+                unit="sample",
+                dynamic_ncols=True,
             )
-            method = "greedy"
-
-        common = dict(
-            claim=task["claim"],
-            candidates=candidates,
-            top_k=min(top_k, n),
-            gold_label_letter=task["gold_letter"],
-            scorer=scorer,
-            score_batch_size=args.score_batch_size,
-            record_step_scores=args.save_search_step_scores,
-            objective=args.objective,
-        )
-
-        if method == "exhaustive":
-            result = exhaustive_search(**common)
-        elif method == "beam":
-            result = beam_search(beam_width=args.beam_width, **common)
         else:
-            result = greedy_search(**common)
-
-        result.event_id = task["event_id"]
-        result.gold_label = task["gold_label"]
-        result.gold_id = LABEL2ID.get(task["gold_label"], -1)
-        result.is_correct = (result.final_prediction == result.gold_id)
-        result.candidate_pool_fingerprint = candidate_pool_fingerprint
-        result.candidate_pool_metadata = pool_metadata
-        if args.save_candidate_pool:
-            result.candidate_pool = _serialize_candidate_pool(candidates)
-            result.candidate_scores = _serialize_candidate_scores(candidates)
-
-        results.append(result)
-
-        if pbar is not None:
-            correct = sum(1 for r in results if r.is_correct)
-            pbar.set_postfix({"acc": f"{correct / len(results):.3f}"})
-            pbar.update(1)
-        elif not args.no_progress and _tqdm is None and (i + 1) % 100 == 0:
-            correct = sum(1 for r in results if r.is_correct)
-            elapsed = time.monotonic() - search_start
             logger.info(
-                "Progress: %d/%d | acc=%.3f | elapsed=%.0fs",
-                i + 1, len(tasks),
-                correct / len(results),
-                elapsed,
+                "Searching %d pending sample(s), %d already complete "
+                "(tqdm not available, logging every 100)...",
+                len(pending_tasks),
+                completed_existing,
             )
+
+    with open(results_path, "a", encoding="utf-8") as results_fh:
+        for i, task in enumerate(task_iter):
+            candidates = task["candidates"]
+            n_full = len(candidates)
+
+            # Two-stage pruning
+            two_stage_limit = n_full
+            if two_stage:
+                limit = min(n_full, top_k * multiplier)
+                two_stage_limit = limit
+                candidates = sorted(
+                    candidates,
+                    key=lambda c: float(c.get("hybrid_score", 0.0)),
+                    reverse=True,
+                )[:limit]
+
+            n = len(candidates)
+            pool_metadata = _candidate_pool_metadata(
+                task=task,
+                candidates=candidates,
+                build_cfg=build_cfg,
+                chunk_fp=chunk_fp,
+                pre_fp=pre_fp,
+                chunk_cache_path=chunk_cache_path,
+                two_stage=two_stage,
+                two_stage_limit=two_stage_limit,
+                top_k=top_k,
+                multiplier=multiplier,
+            )
+            candidate_pool_fingerprint = _candidate_pool_fingerprint(candidates, pool_metadata)
+            method = args.search_method
+
+            # Force exhaustive for small pools, downgrade for large pools
+            if method == "exhaustive" and n > max_exhaustive_n:
+                logger.debug(
+                    "Sample %s: N=%d > %d, falling back to greedy",
+                    task["event_id"], n, max_exhaustive_n,
+                )
+                method = "greedy"
+
+            common = dict(
+                claim=task["claim"],
+                candidates=candidates,
+                top_k=min(top_k, n),
+                gold_label_letter=task["gold_letter"],
+                scorer=scorer,
+                score_batch_size=args.score_batch_size,
+                record_step_scores=args.save_search_step_scores,
+                objective=args.objective,
+            )
+
+            if method == "exhaustive":
+                result = exhaustive_search(**common)
+            elif method == "beam":
+                result = beam_search(beam_width=args.beam_width, **common)
+            else:
+                result = greedy_search(**common)
+
+            result.event_id = task["event_id"]
+            result.gold_label = task["gold_label"]
+            result.gold_id = LABEL2ID.get(task["gold_label"], -1)
+            result.is_correct = (result.final_prediction == result.gold_id)
+            result.candidate_pool_fingerprint = candidate_pool_fingerprint
+            result.candidate_pool_metadata = pool_metadata
+            if args.save_candidate_pool:
+                result.candidate_pool = _serialize_candidate_pool(candidates)
+                result.candidate_scores = _serialize_candidate_scores(candidates)
+
+            entry = _result_to_entry(
+                result,
+                save_candidate_pool=args.save_candidate_pool,
+                id2label=ID2LABEL,
+            )
+            results_fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            results_fh.flush()
+
+            generated += 1
+            if result.is_correct:
+                generated_correct += 1
+
+            if pbar is not None:
+                done = completed_existing + generated
+                correct = generated_correct + completed_existing_correct
+                pbar.set_postfix({"acc": f"{correct / max(1, done):.3f}"})
+                pbar.update(1)
+            elif not args.no_progress and _tqdm is None and (i + 1) % 100 == 0:
+                elapsed = time.monotonic() - search_start
+                done = completed_existing + generated
+                correct = generated_correct + completed_existing_correct
+                logger.info(
+                    "Progress: %d/%d | acc=%.3f | elapsed=%.0fs",
+                    done, len(tasks),
+                    correct / max(1, done),
+                    elapsed,
+                )
 
     if pbar is not None:
         pbar.close()
@@ -915,104 +1285,42 @@ def run_search(args: argparse.Namespace) -> None:
     logger.info("Search completed in %.0fs (%.1f min)", search_elapsed, search_elapsed / 60.0)
 
     # ---- Metrics -----------------------------------------------------------
-    if not results:
-        logger.warning("No results to evaluate.")
-        return
+    task_ids = {str(task["event_id"]) for task in tasks}
+    final_records = _dedup_records_by_event_id(
+        _read_result_records(results_path, repair_invalid=args.resume)
+    )
+    final_records = [
+        record for record in final_records
+        if str(record.get("event_id", "")) in task_ids
+    ]
+    if not final_records:
+        logger.warning("No result records to evaluate.")
 
-    metrics = _compute_metrics(results)
-    correct = sum(1 for r in results if r.is_correct)
-    accuracy = correct / len(results)
+    metrics, accuracy, correct = _write_metrics_file(
+        metrics_path=metrics_path,
+        records=final_records,
+        args=args,
+        top_k=top_k,
+        search_elapsed=search_elapsed,
+        candidate_pool_stats=stats,
+        total_tasks_before_shard=total_tasks_before_shard,
+        shard_tasks=len(tasks),
+        completed_existing=completed_existing,
+        generated=generated,
+    )
 
-    logger.info("Oracle Accuracy: %.4f (%d/%d)", accuracy, correct, len(results))
-    logger.info("Macro F1: %.4f", metrics.get("macro_f1", 0.0))
-
-    # ---- Output ------------------------------------------------------------
-    if args.output_dir:
-        output_dir = Path(args.output_dir)
-    else:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = project_root / "outputs" / "oracle_evidence" / ts
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Results JSONL
-    results_path = output_dir / f"oracle_results_{args.split}.jsonl"
-    with open(results_path, "w", encoding="utf-8") as fh:
-        for r in results:
-            entry = {
-                "event_id": r.event_id,
-                "claim": r.claim,
-                "gold_label": r.gold_label,
-                "gold_id": r.gold_id,
-                "n_candidates": r.n_candidates,
-                "top_k": r.top_k,
-                "selected_indices": r.selected_indices,
-                "selected_texts": r.selected_texts,
-                "final_logprob": r.final_logprob,
-                "final_objective": r.final_objective,
-                "gold_logprob": r.gold_logprob,
-                "best_wrong_logprob": r.best_wrong_logprob,
-                "margin": r.margin,
-                "label_logprobs": r.label_logprobs,
-                "final_prediction": int(r.final_prediction),
-                "pred_label": ID2LABEL.get(int(r.final_prediction), "parse_error"),
-                "prediction_source": r.prediction_source,
-                "is_correct": r.is_correct,
-                "search_method": r.search_method,
-                "search_objective": r.search_objective,
-                "search_steps": r.search_steps,
-                "candidate_pool_fingerprint": r.candidate_pool_fingerprint,
-                "candidate_pool_metadata": r.candidate_pool_metadata,
-            }
-            if args.save_candidate_pool:
-                entry["candidate_pool"] = r.candidate_pool
-                entry["candidate_scores"] = r.candidate_scores
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
     logger.info("Results written to: %s", results_path)
-
-    # Metrics JSON
-    metrics_path = output_dir / f"oracle_metrics_{args.split}.json"
-    serializable_metrics = {}
-    for k, v in metrics.items():
-        if isinstance(v, (np.integer,)):
-            serializable_metrics[k] = int(v)
-        elif isinstance(v, (np.floating,)):
-            serializable_metrics[k] = float(v)
-        elif isinstance(v, np.ndarray):
-            serializable_metrics[k] = v.tolist()
-        else:
-            serializable_metrics[k] = v
-    serializable_metrics["accuracy"] = accuracy
-    serializable_metrics["n_samples"] = len(results)
-    serializable_metrics["search_method"] = args.search_method
-    serializable_metrics["search_objective"] = args.objective
-    serializable_metrics["top_k"] = top_k
-    serializable_metrics["split"] = args.split
-    serializable_metrics["search_elapsed_s"] = search_elapsed
-    serializable_metrics["candidate_pool_stats"] = stats
-    serializable_metrics["effective_candidate_pool_stats"] = _collect_effective_candidate_stats(results)
-    serializable_metrics["output_contract"] = {
-        "version": "oracle-results-v3",
-        "save_candidate_pool": bool(args.save_candidate_pool),
-        "save_search_step_scores": bool(args.save_search_step_scores),
-        "search_objective": args.objective,
-        "gold_logprob": "log P(gold label token | claim, selected evidence)",
-        "best_wrong_logprob": "max log P(non-gold label token | claim, selected evidence)",
-        "margin": "gold_logprob - best_wrong_logprob",
-        "final_objective": "gold_logprob for objective=gold_logprob; margin for objective=margin",
-        "candidate_pool_fingerprint": "per-row fingerprint over effective candidate pool metadata, order, text, and retrieval scores",
-        "selected_indices_coordinate": "indices into per-row effective candidate_pool after deduplication and optional two-stage pruning",
-    }
-
-    with open(metrics_path, "w", encoding="utf-8") as fh:
-        json.dump(serializable_metrics, fh, indent=2, ensure_ascii=False)
-    logger.info("Metrics written to: %s", metrics_path)
+    logger.info("Oracle Accuracy: %.4f (%d/%d)", accuracy, correct, len(final_records))
+    logger.info("Macro F1: %.4f", metrics.get("macro_f1", 0.0))
 
     # Summary
     logger.info("=" * 60)
     logger.info("Oracle Evidence Selection Summary")
     logger.info("=" * 60)
     logger.info("Split: %s", args.split)
-    logger.info("Samples: %d", len(results))
+    logger.info("Shard: %d/%d", args.shard_index, args.num_shards)
+    logger.info("Samples: %d", len(final_records))
+    logger.info("Generated this run: %d", generated)
     logger.info("Top-K: %d", top_k)
     logger.info("Search method: %s", args.search_method)
     logger.info("Search objective: %s", args.objective)

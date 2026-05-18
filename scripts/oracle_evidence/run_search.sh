@@ -17,11 +17,14 @@
 #   MODEL_BASE_PATH     - Override /data/models/ prefix for local models
 #   TWO_STAGE           - Enable/disable two-stage pruning (default: true)
 #   TENSOR_PARALLEL_SIZE - Number of GPUs for vLLM (default: 4)
-#   GPU_MEMORY_UTILIZATION - GPU memory utilization (default: 0.95)
-#   MAX_MODEL_LEN       - Max model sequence length (default: 1024)
-#   SCORE_BATCH_SIZE    - Batch size for vLLM scoring calls (default: 512)
+#   GPU_MEMORY_UTILIZATION - GPU memory utilization (default: 0.90)
+#   MAX_MODEL_LEN       - Max model sequence length (default: 1032)
+#   SCORE_BATCH_SIZE    - Batch size for vLLM scoring calls (default: 256)
 #   SAVE_CANDIDATE_POOL - Save full candidate_pool/candidate_scores (default: true)
 #   SAVE_SEARCH_STEP_SCORES - Save per-step oracle logprobs (default: false)
+#   NUM_SHARDS          - Number of deterministic event_id shards (default: 1)
+#   SHARD_INDEX         - Shard index to run, in [0, NUM_SHARDS) (default: 0)
+#   RESUME              - Skip event_ids already present in shard JSONL (default: true)
 
 set -euo pipefail
 
@@ -45,6 +48,9 @@ MAX_MODEL_LEN="${MAX_MODEL_LEN:-1032}"
 SCORE_BATCH_SIZE="${SCORE_BATCH_SIZE:-256}"
 SAVE_CANDIDATE_POOL="${SAVE_CANDIDATE_POOL:-true}"
 SAVE_SEARCH_STEP_SCORES="${SAVE_SEARCH_STEP_SCORES:-false}"
+NUM_SHARDS="${NUM_SHARDS:-1}"
+SHARD_INDEX="${SHARD_INDEX:-0}"
+RESUME="${RESUME:-true}"
 
 echo "============================================"
 echo "Oracle Evidence Selection Search"
@@ -65,6 +71,8 @@ echo "Score batch size:  $SCORE_BATCH_SIZE"
 echo "Two-stage:         $TWO_STAGE"
 echo "Save candidates:   $SAVE_CANDIDATE_POOL"
 echo "Save step scores:  $SAVE_SEARCH_STEP_SCORES"
+echo "Shard:             $SHARD_INDEX/$NUM_SHARDS"
+echo "Resume:            $RESUME"
 echo "Model base path:   ${MODEL_BASE_PATH:-auto}"
 echo "============================================"
 
@@ -94,6 +102,11 @@ if [ "$SAVE_SEARCH_STEP_SCORES" = "true" ]; then
     STEP_SCORES_ARG=(--save-search-step-scores)
 fi
 
+RESUME_ARG=()
+if [ "$RESUME" = "false" ]; then
+    RESUME_ARG=(--no-resume)
+fi
+
 OUTPUT_DIR_ARG=()
 if [ -n "$OUTPUT_DIR" ]; then
     OUTPUT_DIR_ARG=(--output-dir "$OUTPUT_DIR")
@@ -108,6 +121,8 @@ python scripts/oracle_evidence/search_optimal_evidence.py \
     --objective "$SEARCH_OBJECTIVE" \
     --split "$SPLIT" \
     --max-samples "$MAX_SAMPLES" \
+    --num-shards "$NUM_SHARDS" \
+    --shard-index "$SHARD_INDEX" \
     --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
     --max-model-len "$MAX_MODEL_LEN" \
@@ -116,5 +131,6 @@ python scripts/oracle_evidence/search_optimal_evidence.py \
     "${TWO_STAGE_ARG[@]}" \
     "${CANDIDATE_POOL_ARG[@]}" \
     "${STEP_SCORES_ARG[@]}" \
+    "${RESUME_ARG[@]}" \
     "${OUTPUT_DIR_ARG[@]}" \
     "$@"

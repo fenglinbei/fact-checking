@@ -23,9 +23,12 @@ TWO_STAGE_MULTIPLIER="${TWO_STAGE_MULTIPLIER:-3}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-4}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-1032}"
-SCORE_BATCH_SIZE="${SCORE_BATCH_SIZE:-128}"
+SCORE_BATCH_SIZE="${SCORE_BATCH_SIZE:-256}"
 SAVE_CANDIDATE_POOL="${SAVE_CANDIDATE_POOL:-true}"
 SAVE_SEARCH_STEP_SCORES="${SAVE_SEARCH_STEP_SCORES:-true}"
+NUM_SHARDS="${NUM_SHARDS:-1}"
+SHARD_INDEX="${SHARD_INDEX:-0}"
+RESUME="${RESUME:-true}"
 MODEL_BASE_PATH="${MODEL_BASE_PATH:-/data/models/}"
 RUN_STAMP="${RUN_STAMP:-$(date +%Y%m%d_%H%M%S)}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/oracle_evidence/stage2_margin_${SPLIT}_${RUN_STAMP}}"
@@ -47,6 +50,9 @@ echo "Split:             ${SPLIT}"
 echo "Top-K:             ${TOP_K}"
 echo "Search method:     ${SEARCH_METHOD}"
 echo "Search objective:  ${SEARCH_OBJECTIVE}"
+echo "Score batch size:  ${SCORE_BATCH_SIZE}"
+echo "Shard:             ${SHARD_INDEX}/${NUM_SHARDS}"
+echo "Resume:            ${RESUME}"
 echo "Output dir:        ${OUTPUT_DIR}"
 echo "============================================"
 
@@ -65,6 +71,9 @@ MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
 SCORE_BATCH_SIZE="${SCORE_BATCH_SIZE}" \
 SAVE_CANDIDATE_POOL="${SAVE_CANDIDATE_POOL}" \
 SAVE_SEARCH_STEP_SCORES="${SAVE_SEARCH_STEP_SCORES}" \
+NUM_SHARDS="${NUM_SHARDS}" \
+SHARD_INDEX="${SHARD_INDEX}" \
+RESUME="${RESUME}" \
 MODEL_BASE_PATH="${MODEL_BASE_PATH}" \
 OUTPUT_DIR="${OUTPUT_DIR}" \
 bash scripts/oracle_evidence/run_search.sh \

@@ -26,6 +26,7 @@ margin = log P(y_gold | claim, evidence_set)
 | `scripts/oracle_evidence/search_optimal_evidence.py` | 新增 `--objective {gold_logprob,margin}`，输出 oracle-results-v3 |
 | `scripts/oracle_evidence/run_search.sh` | 新增 `SEARCH_OBJECTIVE` 和 `OUTPUT_DIR` 环境变量 |
 | `scripts/oracle_evidence/run_reoracle_stage2.sh` | Stage 2 默认运行脚本 |
+| `scripts/oracle_evidence/merge_shards.py` | 合并 sharded oracle JSONL，并重算合并指标 |
 
 默认仍保持向后兼容：
 
@@ -60,6 +61,10 @@ SEARCH_METHOD=greedy
 SEARCH_OBJECTIVE=margin
 SAVE_CANDIDATE_POOL=true
 SAVE_SEARCH_STEP_SCORES=true
+SCORE_BATCH_SIZE=256
+NUM_SHARDS=1
+SHARD_INDEX=0
+RESUME=true
 ```
 
 训练集 re-oracle：
@@ -85,6 +90,58 @@ bash scripts/oracle_evidence/run_reoracle_stage2.sh
 
 ```bash
 SAVE_SEARCH_STEP_SCORES=false bash scripts/oracle_evidence/run_reoracle_stage2.sh
+```
+
+## Sharding 与断点续跑
+
+长时间 `train` re-oracle 建议用 shard 并行。shard 由 `sha1(event_id) % NUM_SHARDS` 稳定分配，因此同一 `OUTPUT_DIR` 下重跑同一 `SHARD_INDEX` 会跳过已经写入的 `event_id`。
+
+单个 shard：
+
+```bash
+SPLIT=train \
+NUM_SHARDS=4 \
+SHARD_INDEX=0 \
+OUTPUT_DIR=outputs/oracle_evidence/stage2_margin_train_sharded \
+SAVE_SEARCH_STEP_SCORES=false \
+bash scripts/oracle_evidence/run_reoracle_stage2.sh
+```
+
+四个 shard 可分别设置 `SHARD_INDEX=0/1/2/3`，每个 shard 会写：
+
+```text
+oracle_results_train.shard-00000-of-00004.jsonl
+oracle_metrics_train.shard-00000-of-00004.json
+```
+
+断点续跑默认开启：
+
+```text
+RESUME=true
+```
+
+如果同一 shard 中断，使用相同 `OUTPUT_DIR`、`NUM_SHARDS`、`SHARD_INDEX` 重跑即可；脚本会读取已有 shard JSONL，跳过已完成 `event_id`，并继续 append。若最后一行因为异常退出损坏，resume 会丢弃该无效 JSONL 行后继续。
+
+关闭断点跳过：
+
+```bash
+RESUME=false bash scripts/oracle_evidence/run_reoracle_stage2.sh
+```
+
+合并 shard：
+
+```bash
+PYTHONPATH=src python scripts/oracle_evidence/merge_shards.py \
+  --input-dir outputs/oracle_evidence/stage2_margin_train_sharded \
+  --split train \
+  --num-shards 4
+```
+
+合并后得到下游监督构建可直接读取的：
+
+```text
+oracle_results_train.jsonl
+oracle_metrics_train.json
 ```
 
 默认输出目录：
@@ -138,4 +195,4 @@ Stage 2 是否可进入后续 filtered supervision，主要看：
 
 ## 注意事项
 
-`objective=margin` 会对每个候选 set 评分 A-F 六个 label token，因此 vLLM scoring 成本约为旧 `gold_logprob` objective 的 6 倍。建议先在 `val` 或 `MAX_SAMPLES=32/128` 上 smoke test，再跑完整 `train`。
+`objective=margin` 会对每个候选 set 评分 A-F 六个 label token，因此 vLLM scoring 成本约为旧 `gold_logprob` objective 的 6 倍。建议先在 `val` 或 `MAX_SAMPLES=32/128` 上 smoke test，再用 sharding + `SAVE_SEARCH_STEP_SCORES=false` 跑完整 `train`。
