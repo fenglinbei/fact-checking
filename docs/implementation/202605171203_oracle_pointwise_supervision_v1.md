@@ -307,28 +307,58 @@ True-side oracle-overlap:
 
 注意: 这里的 true-side overlap 只是说明模型能找回 oracle-selected texts，并不代表这些 true-side oracle sets 对 verifier 是好监督。此前 oracle 分析已经显示 true / mostly-true oracle sets 容易继承 verifier false bias。
 
-## 5. 当前结论
+## 5. 下游 vLLM Verifier 评估结果
 
-V1a 的 selection-only gate 已通过:
+Selection-only gate 通过后，接入了正式 build pipeline（`selection_method=pointwise_oracle`，新增于 `pointwise_oracle_pipeline.md`），跑了两类评估。
 
-1. 模型能明显区分 oracle-selected candidate。
-2. retained labels 上 Jaccard@5 / Recall@5 明显高于 hybrid-score baseline。
-3. 四个 retained labels 都有提升，不是只学到 `false` 类。
+### 5.1 Evaluation-only（复用旧 verifier checkpoint `79d8b34809bb`）
 
-但该结论只在重建候选池和 oracle-overlap 层面成立。下一步不能直接宣称下游 verifier 提升。
+直接使用 pointwise selector 产出的 evidence set 替换 MMR evidence，用已有 b3 verifier checkpoint 推理（不重新训练）：
 
-## 6. 下一步
+| 评估 | split | accuracy | macro_f1 | vs fixed-MMR |
+|---|---|---|---|---|
+| `pointwise_oracle_eval_val` | val (N=1274) | 0.2582 | 0.2582 | 低于 MMR val 0.2967 |
+
+### 5.2 完整 build→train→infer（新训练 verifier）
+
+用 pointwise selector 产出的 evidence set 重新 SFT 训练 Qwen2.5-7B-Instruct，完整走 build→train→infer：
+
+| 阶段 | split | accuracy | macro_f1 |
+|---|---|---|---|
+| train best val (step-300) | val (N=800) | 0.2438 | 0.2346 |
+| **test** | **test (N=1251)** | **0.2230** | **0.2059** |
+
+对比 fixed λ=0.7 baseline（test accuracy=0.2702, macro_f1=0.2769），**V1a 完整流水线在 test 集上显著劣于 fixed-MMR baseline**（accuracy -4.72pp, macro_f1 -7.10pp）。
+
+### 5.3 Per-class 对比（test 集）
+
+| label | fixed λ=0.7 F1 | V1a pointwise F1 | Δ |
+|---|---|---|---|
+| pants-fire | — | 0.2529 | — |
+| false | — | 0.2821 | — |
+| barely-true | — | 0.1622 | — |
+| half-true | — | 0.2733 | — |
+| mostly-true | — | 0.0685 | — |
+| true | — | 0.1963 | — |
+
+`mostly-true` 的 F1 仅 0.0685，说明 pointwise selector 排除 true-side 样本训练后，selector 对 true-side 证据排序信号完全缺失，verifier 在 true-side 类别上表现极差。
+
+## 6. 当前结论
+
+V1a 的 selection-only gate 虽然通过（Jaccard@5 0.75 vs hybrid 0.09），但下游 verifier 评估给出了反向结论：
+
+1. **Selection-only overlap 高 ≠ 下游 verifier 指标提升**。Pointwise selector 能找回 oracle-selected evidence，但这些 evidence 对当前 verifier 的判别效用并不优于 fixed-MMR 选出的 evidence。
+2. **排除 true-side 训练导致 mostly-true 类严重退化**（F1=0.0685），证实 V1a 过滤条件引入的 false-side skew 会在下游放大。
+3. **完整训练新 verifier 后指标进一步恶化**（test accuracy 0.2230 vs fixed 0.2702），说明 pointwise evidence order 可能与 SFT 训练所需的 evidence 呈现方式不兼容。
+
+## 7. 下一步
 
 建议顺序:
 
 1. 修改 oracle search 输出格式，保存完整 `candidate_pool`、`candidate_scores` 和候选池 fingerprint。
 2. 用保存完整候选池的新 oracle run 重新构造 pointwise 数据，消除 reconstructed negatives 的不确定性。
-3. 将 pointwise selector 输出接入 verifier evaluation，比较:
-   - fixed-MMR λ=0.7
-   - pointwise selector
-   - oracle upper bound
-4. 若 retained bucket 的 verifier metrics 仍有收益，再做 V1b true-side anchor。
-5. 若 verifier evaluation 无收益，则优先检查:
+3. 做 V1b true-side anchor（低权重加入 true/mostly-true oracle-correct 样本），检查是否能缓解 true-side 退化。
+4. 若 V1b 仍无收益，则优先检查:
    - pointwise top-K 是否破坏 evidence order。
    - oracle overlap 是否主要来自 verifier-biased artifacts。
-   - true / mostly-true 是否被进一步拉向 false-side。
+   - 是否需要转向 sequential selector 或 preference supervision 而非 pointwise independent selection。

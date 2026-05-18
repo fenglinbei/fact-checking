@@ -134,4 +134,13 @@ small-sample V1b data build
 small-sample V1b train
 ```
 
-未在本轮启动完整 vLLM infer。
+### V1b vLLM Verifier 评估结果
+
+完整 vLLM infer 已跑（manifest 时间戳 `2026-05-18 00:50:00`），产物位于 `outputs/runs/b3_pointwise_oracle_selector_v1b_1024/pointwise_oracle_v1b_eval_val__ec28d138/infer/val/best/b90f2d349927/api/`：
+
+| 指标 | V1b (val) | V1a (val, eval-only) | fixed λ=0.7 (val) |
+|---|---|---|---|
+| accuracy | 0.2630 | 0.2582 | 0.2967 |
+| macro_f1 | 0.2632 | 0.2582 | 0.3003 |
+
+V1b 相比 V1a 有微弱提升（accuracy +0.0048, macro_f1 +0.0050），但**仍显著低于 fixed λ=0.7**。true-side anchor（mostly-true weight=0.25, true weight=0.10）未能将 true-side 指标拉回 MMR baseline 水平。
