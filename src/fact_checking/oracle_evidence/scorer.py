@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -96,6 +96,7 @@ class VerifierScorer:
     output_mode: str = "label_only"
     label_format: str = "letter"
     max_prompt_length: int = 1024
+    lora_request: Any | None = None
 
     score_sampling_params: SamplingParams | None = None
     gen_sampling_params: SamplingParams | None = None
@@ -131,6 +132,8 @@ class VerifierScorer:
         """Call llm.generate with tqdm suppressed when possible."""
         if self._generate_accepts_use_tqdm:
             generate_kwargs.setdefault("use_tqdm", False)
+        if self.lora_request is not None:
+            generate_kwargs.setdefault("lora_request", self.lora_request)
         return self.llm.generate(**generate_kwargs)
 
     # ------------------------------------------------------------------
@@ -290,6 +293,29 @@ class VerifierScorer:
             logprobs[i] = _extract_prompt_token_logprob(output, token_id)
         return logprobs
 
+    def score_evidence_sets_all_labels(
+        self,
+        claims: list[str],
+        current_sets: list[list[str]],
+        candidate_texts: list[str],
+    ) -> np.ndarray:
+        """Score all label letters for many ``current_set + candidate`` pairs.
+
+        Returns an array of shape ``[N, len(LETTER_ORDER)]``. Column order is
+        exactly ``LETTER_ORDER``.
+        """
+        n = len(claims)
+        assert len(current_sets) == n
+        assert len(candidate_texts) == n
+        evidence_sets = [
+            list(current_sets[i]) + [candidate_texts[i]]
+            for i in range(n)
+        ]
+        return self.score_complete_sets_all_labels(
+            claims=claims,
+            evidence_sets=evidence_sets,
+        )
+
     def score_complete_sets(
         self,
         claims: list[str],
@@ -325,6 +351,47 @@ class VerifierScorer:
             token_id = self.label_token_ids[gold_label_letters[i]]
             logprobs[i] = _extract_prompt_token_logprob(output, token_id)
         return logprobs
+
+    def score_complete_sets_all_labels(
+        self,
+        claims: list[str],
+        evidence_sets: list[list[str]],
+    ) -> np.ndarray:
+        """Score all A-F label-token logprobs for arbitrary evidence sets.
+
+        This expands each evidence set into six scoring prompts, one per label
+        letter, and extracts the actual prompt-token logprob for that letter.
+        It is more expensive than ``score_complete_sets`` but gives exact
+        label-token margins for calibration-aware oracle search.
+        """
+        n = len(claims)
+        assert len(evidence_sets) == n
+
+        prompts = [
+            self._build_prompt(claims[i], evidence_sets[i])
+            for i in range(n)
+        ]
+        batch_token_ids: list[list[int]] = []
+        for prompt in prompts:
+            for letter in LETTER_ORDER:
+                batch_token_ids.append(self._build_scoring_token_ids(prompt, letter))
+
+        outputs = self._run_generate(
+            prompt_token_ids=batch_token_ids,
+            sampling_params=self.score_sampling_params,
+        )
+        expected = n * len(LETTER_ORDER)
+        if len(outputs) != expected:
+            raise RuntimeError(f"vLLM returned {len(outputs)} outputs, expected {expected}")
+
+        label_logprobs = np.empty((n, len(LETTER_ORDER)), dtype=np.float32)
+        for flat_idx, output in enumerate(outputs):
+            row = flat_idx // len(LETTER_ORDER)
+            col = flat_idx % len(LETTER_ORDER)
+            letter = LETTER_ORDER[col]
+            token_id = self.label_token_ids[letter]
+            label_logprobs[row, col] = _extract_prompt_token_logprob(output, token_id)
+        return label_logprobs
 
     # ------------------------------------------------------------------
     # Label prediction (for final evaluation)

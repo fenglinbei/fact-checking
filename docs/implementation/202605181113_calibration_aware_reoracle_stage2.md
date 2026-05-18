@@ -1,0 +1,141 @@
+# Stage 2 Calibration-aware Re-Oracle 实现说明
+
+## 目标
+
+Stage 2 使用 Stage 1 的 label-token weighted CE verifier 重新搜索 oracle evidence set。搜索目标从旧版：
+
+```text
+gold_logprob = log P(y_gold | claim, evidence_set)
+```
+
+扩展为 calibration-aware margin：
+
+```text
+margin = log P(y_gold | claim, evidence_set)
+       - max_{y != y_gold} log P(y | claim, evidence_set)
+```
+
+这样 oracle set 不只提高正确标签概率，还要求正确标签超过最强错误标签，避免旧 verifier 下常见的 `true` / `mostly-true` 被 false-side bias 压住。
+
+## 代码改动
+
+| 文件 | 作用 |
+|---|---|
+| `src/fact_checking/oracle_evidence/scorer.py` | 新增 all-label logprob scoring，并把 LoRARequest 传入 vLLM generate |
+| `src/fact_checking/oracle_evidence/search.py` | 新增 `objective=margin` 搜索目标，记录 `gold_logprob`、`best_wrong_logprob`、`margin` |
+| `scripts/oracle_evidence/search_optimal_evidence.py` | 新增 `--objective {gold_logprob,margin}`，输出 oracle-results-v3 |
+| `scripts/oracle_evidence/run_search.sh` | 新增 `SEARCH_OBJECTIVE` 和 `OUTPUT_DIR` 环境变量 |
+| `scripts/oracle_evidence/run_reoracle_stage2.sh` | Stage 2 默认运行脚本 |
+
+默认仍保持向后兼容：
+
+```bash
+SEARCH_OBJECTIVE=gold_logprob bash scripts/oracle_evidence/run_search.sh
+```
+
+Stage 2 使用：
+
+```bash
+SEARCH_OBJECTIVE=margin bash scripts/oracle_evidence/run_search.sh
+```
+
+## 运行方式
+
+默认使用当前 Stage 1 run：
+
+```bash
+bash scripts/oracle_evidence/run_reoracle_stage2.sh
+```
+
+默认参数：
+
+```text
+STAGE1_RUN_DIR=outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f
+VERIFIER_MODEL=/data/models/Qwen2.5-7B-Instruct/
+LORA_ADAPTER=${STAGE1_RUN_DIR}/train/best
+CONFIG=configs/experiment/b3_label_token_ce_1024.yaml
+SPLIT=val
+TOP_K=5
+SEARCH_METHOD=greedy
+SEARCH_OBJECTIVE=margin
+SAVE_CANDIDATE_POOL=true
+SAVE_SEARCH_STEP_SCORES=true
+```
+
+训练集 re-oracle：
+
+```bash
+SPLIT=train bash scripts/oracle_evidence/run_reoracle_stage2.sh
+```
+
+小样本 smoke test：
+
+```bash
+MAX_SAMPLES=32 bash scripts/oracle_evidence/run_reoracle_stage2.sh
+```
+
+指定另一个 Stage 1 run：
+
+```bash
+STAGE1_RUN_DIR=outputs/runs/b3_label_token_ce_1024/<run_leaf> \
+bash scripts/oracle_evidence/run_reoracle_stage2.sh
+```
+
+降低 JSONL 体积：
+
+```bash
+SAVE_SEARCH_STEP_SCORES=false bash scripts/oracle_evidence/run_reoracle_stage2.sh
+```
+
+默认输出目录：
+
+```text
+outputs/oracle_evidence/stage2_margin_<split>_<timestamp>/
+```
+
+## 输出字段
+
+每条 `oracle_results_<split>.jsonl` 仍保留旧字段，并新增：
+
+| 字段 | 含义 |
+|---|---|
+| `search_objective` | `gold_logprob` 或 `margin` |
+| `final_objective` | 当前 objective 下最终 set 的分数 |
+| `gold_logprob` | 最终 set 的正确标签 logprob |
+| `best_wrong_logprob` | 最终 set 的最高错误标签 logprob |
+| `margin` | `gold_logprob - best_wrong_logprob` |
+| `label_logprobs` | A-F 六个 label token 的 logprob |
+| `pred_label` | label-token argmax 预测标签 |
+| `prediction_source` | 当前为 `label_logprob_argmax` |
+
+候选池审计字段继续保存：
+
+```text
+candidate_pool
+candidate_scores
+candidate_pool_fingerprint
+candidate_pool_metadata
+```
+
+如果 `SAVE_SEARCH_STEP_SCORES=true`，每个 search step 还会保存候选 set 的：
+
+```text
+search_steps[].candidate_scores[].objective_score
+search_steps[].candidate_scores[].gold_logprob
+search_steps[].candidate_scores[].best_wrong_logprob
+search_steps[].candidate_scores[].margin
+search_steps[].candidate_scores[].label_logprobs
+```
+
+## 评估重点
+
+Stage 2 是否可进入后续 filtered supervision，主要看：
+
+1. `true` / `mostly-true` 的 oracle accuracy 是否不再低于 fixed-MMR。
+2. `margin > 0` 的样本中，`is_correct` 是否显著更稳定。
+3. `oracle only correct` 子集是否仍保留足够规模。
+4. `candidate_pool_fingerprint` 是否稳定，保证后续 selector 训练可追溯。
+
+## 注意事项
+
+`objective=margin` 会对每个候选 set 评分 A-F 六个 label token，因此 vLLM scoring 成本约为旧 `gold_logprob` objective 的 6 倍。建议先在 `val` 或 `MAX_SAMPLES=32/128` 上 smoke test，再跑完整 `train`。

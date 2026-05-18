@@ -456,6 +456,15 @@ def parse_args() -> argparse.Namespace:
         choices=["greedy", "exhaustive", "beam"],
         help="Search strategy (default: greedy)",
     )
+    p.add_argument(
+        "--objective",
+        default="gold_logprob",
+        choices=["gold_logprob", "margin"],
+        help=(
+            "Oracle search objective. gold_logprob maximizes log P(gold); "
+            "margin maximizes log P(gold) - max_y!=gold log P(y)."
+        ),
+    )
     p.add_argument("--beam-width", type=int, default=3, help="Beam width for beam search")
     p.add_argument(
         "--max-exhaustive-n",
@@ -750,6 +759,7 @@ def run_search(args: argparse.Namespace) -> None:
         output_mode=output_mode,
         label_format=label_format,
         max_prompt_length=min(max_prompt_length, prompt_budget),
+        lora_request=lora_request,
     )
     logger.info(
         "Label token IDs: %s",
@@ -757,7 +767,7 @@ def run_search(args: argparse.Namespace) -> None:
     )
 
     # ---- Search ------------------------------------------------------------
-    from fact_checking.data.constants import LABEL_LETTERS
+    from fact_checking.data.constants import ID2LABEL, LABEL2ID, LABEL_LETTERS
     from fact_checking.oracle_evidence.search import (
         SearchResult,
         beam_search,
@@ -824,12 +834,11 @@ def run_search(args: argparse.Namespace) -> None:
         if two_stage:
             limit = min(n_full, top_k * multiplier)
             two_stage_limit = limit
-            if limit < n_full:
-                candidates = sorted(
-                    candidates,
-                    key=lambda c: float(c.get("hybrid_score", 0.0)),
-                    reverse=True,
-                )[:limit]
+            candidates = sorted(
+                candidates,
+                key=lambda c: float(c.get("hybrid_score", 0.0)),
+                reverse=True,
+            )[:limit]
 
         n = len(candidates)
         pool_metadata = _candidate_pool_metadata(
@@ -863,6 +872,7 @@ def run_search(args: argparse.Namespace) -> None:
             scorer=scorer,
             score_batch_size=args.score_batch_size,
             record_step_scores=args.save_search_step_scores,
+            objective=args.objective,
         )
 
         if method == "exhaustive":
@@ -874,7 +884,6 @@ def run_search(args: argparse.Namespace) -> None:
 
         result.event_id = task["event_id"]
         result.gold_label = task["gold_label"]
-        from fact_checking.data.constants import LABEL2ID
         result.gold_id = LABEL2ID.get(task["gold_label"], -1)
         result.is_correct = (result.final_prediction == result.gold_id)
         result.candidate_pool_fingerprint = candidate_pool_fingerprint
@@ -939,9 +948,17 @@ def run_search(args: argparse.Namespace) -> None:
                 "selected_indices": r.selected_indices,
                 "selected_texts": r.selected_texts,
                 "final_logprob": r.final_logprob,
+                "final_objective": r.final_objective,
+                "gold_logprob": r.gold_logprob,
+                "best_wrong_logprob": r.best_wrong_logprob,
+                "margin": r.margin,
+                "label_logprobs": r.label_logprobs,
                 "final_prediction": int(r.final_prediction),
+                "pred_label": ID2LABEL.get(int(r.final_prediction), "parse_error"),
+                "prediction_source": r.prediction_source,
                 "is_correct": r.is_correct,
                 "search_method": r.search_method,
+                "search_objective": r.search_objective,
                 "search_steps": r.search_steps,
                 "candidate_pool_fingerprint": r.candidate_pool_fingerprint,
                 "candidate_pool_metadata": r.candidate_pool_metadata,
@@ -967,15 +984,21 @@ def run_search(args: argparse.Namespace) -> None:
     serializable_metrics["accuracy"] = accuracy
     serializable_metrics["n_samples"] = len(results)
     serializable_metrics["search_method"] = args.search_method
+    serializable_metrics["search_objective"] = args.objective
     serializable_metrics["top_k"] = top_k
     serializable_metrics["split"] = args.split
     serializable_metrics["search_elapsed_s"] = search_elapsed
     serializable_metrics["candidate_pool_stats"] = stats
     serializable_metrics["effective_candidate_pool_stats"] = _collect_effective_candidate_stats(results)
     serializable_metrics["output_contract"] = {
-        "version": "oracle-results-v2",
+        "version": "oracle-results-v3",
         "save_candidate_pool": bool(args.save_candidate_pool),
         "save_search_step_scores": bool(args.save_search_step_scores),
+        "search_objective": args.objective,
+        "gold_logprob": "log P(gold label token | claim, selected evidence)",
+        "best_wrong_logprob": "max log P(non-gold label token | claim, selected evidence)",
+        "margin": "gold_logprob - best_wrong_logprob",
+        "final_objective": "gold_logprob for objective=gold_logprob; margin for objective=margin",
         "candidate_pool_fingerprint": "per-row fingerprint over effective candidate pool metadata, order, text, and retrieval scores",
         "selected_indices_coordinate": "indices into per-row effective candidate_pool after deduplication and optional two-stage pruning",
     }
@@ -992,6 +1015,7 @@ def run_search(args: argparse.Namespace) -> None:
     logger.info("Samples: %d", len(results))
     logger.info("Top-K: %d", top_k)
     logger.info("Search method: %s", args.search_method)
+    logger.info("Search objective: %s", args.objective)
     logger.info("Oracle Accuracy: %.4f", accuracy)
     logger.info("Macro F1: %.4f", metrics.get("macro_f1", 0.0))
     logger.info("Search time: %.0fs (%.1f min)", search_elapsed, search_elapsed / 60.0)

@@ -10,8 +10,10 @@
 #   LORA_ADAPTER        - LoRA adapter path (optional)
 #   TOP_K               - Target evidence set size (default: 5)
 #   SEARCH_METHOD       - greedy | exhaustive | beam (default: greedy)
+#   SEARCH_OBJECTIVE    - gold_logprob | margin (default: gold_logprob)
 #   SPLIT               - Data split (default: val)
 #   MAX_SAMPLES         - Max samples to process (default: 0 = all)
+#   OUTPUT_DIR          - Output directory (default: timestamped under outputs/oracle_evidence)
 #   MODEL_BASE_PATH     - Override /data/models/ prefix for local models
 #   TWO_STAGE           - Enable/disable two-stage pruning (default: true)
 #   TENSOR_PARALLEL_SIZE - Number of GPUs for vLLM (default: 4)
@@ -31,8 +33,10 @@ VERIFIER_MODEL="${VERIFIER_MODEL:?VERIFIER_MODEL must be set}"
 LORA_ADAPTER="${LORA_ADAPTER:-}"
 TOP_K="${TOP_K:-5}"
 SEARCH_METHOD="${SEARCH_METHOD:-greedy}"
+SEARCH_OBJECTIVE="${SEARCH_OBJECTIVE:-gold_logprob}"
 SPLIT="${SPLIT:-val}"
 MAX_SAMPLES="${MAX_SAMPLES:-0}"
+OUTPUT_DIR="${OUTPUT_DIR:-}"
 MODEL_BASE_PATH="${MODEL_BASE_PATH:-}"
 TWO_STAGE="${TWO_STAGE:-true}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-4}"
@@ -50,8 +54,10 @@ echo "Verifier model:    $VERIFIER_MODEL"
 echo "LoRA adapter:      ${LORA_ADAPTER:-none}"
 echo "Top-K:             $TOP_K"
 echo "Search method:     $SEARCH_METHOD"
+echo "Search objective:  $SEARCH_OBJECTIVE"
 echo "Split:             $SPLIT"
 echo "Max samples:       $MAX_SAMPLES"
+echo "Output dir:        ${OUTPUT_DIR:-auto timestamp}"
 echo "Tensor parallel:   $TENSOR_PARALLEL_SIZE"
 echo "GPU mem util:      $GPU_MEMORY_UTILIZATION"
 echo "Max model len:     $MAX_MODEL_LEN"
@@ -88,12 +94,18 @@ if [ "$SAVE_SEARCH_STEP_SCORES" = "true" ]; then
     STEP_SCORES_ARG=(--save-search-step-scores)
 fi
 
+OUTPUT_DIR_ARG=()
+if [ -n "$OUTPUT_DIR" ]; then
+    OUTPUT_DIR_ARG=(--output-dir "$OUTPUT_DIR")
+fi
+
 python scripts/oracle_evidence/search_optimal_evidence.py \
     --config "$CONFIG" \
     --verifier-model "$VERIFIER_MODEL" \
     "${LORA_ARG[@]}" \
     --top-k "$TOP_K" \
     --search-method "$SEARCH_METHOD" \
+    --objective "$SEARCH_OBJECTIVE" \
     --split "$SPLIT" \
     --max-samples "$MAX_SAMPLES" \
     --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
@@ -104,4 +116,5 @@ python scripts/oracle_evidence/search_optimal_evidence.py \
     "${TWO_STAGE_ARG[@]}" \
     "${CANDIDATE_POOL_ARG[@]}" \
     "${STEP_SCORES_ARG[@]}" \
+    "${OUTPUT_DIR_ARG[@]}" \
     "$@"
