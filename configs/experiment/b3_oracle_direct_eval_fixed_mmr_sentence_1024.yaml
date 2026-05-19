@@ -1,0 +1,42 @@
+# @package _global_
+# Evaluate the oracle-direct verifier checkpoint on deployable fixed-MMR
+# sentence evidence. This is an inference-only diagnostic config; run it with
+# pipeline.steps=[build,infer] and train.run_dir pointing at the oracle-direct
+# verifier train directory.
+
+defaults:
+  - b3_label_token_ce_1024
+  - _self_
+
+experiment:
+  name: b3_oracle_direct_verifier_val_evidence_checks
+
+baseline:
+  variant: b3_oracle_direct_eval_fixed_mmr_sentence_1024
+  chunking_strategy: sentence
+
+build:
+  retrieval:
+    top_k: 5
+    mmr_lambda: 0.70
+    selection_method: mmr
+    chunking:
+      strategy: sentence
+      context_k: 1
+      theta: 0.7
+      embedder_model: null
+      device: cpu
+      max_length: 256
+      batch_size: 64
+      precision: fp32
+
+train:
+  run_dir: outputs/oracle_direct_verifier/stage2_sentence/train/b3_oracle_sentence_direct_verifier_1024_20260519-200709
+
+infer:
+  split: val
+  checkpoint: best
+
+swanlab:
+  project: fact-checking-oracle-direct-verifier
+  experiment_name: b3_oracle_direct_eval_fixed_mmr_sentence_1024

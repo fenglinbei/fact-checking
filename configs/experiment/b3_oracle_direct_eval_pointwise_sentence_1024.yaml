@@ -1,0 +1,27 @@
+# @package _global_
+# Evaluate the oracle-direct verifier checkpoint on the current Stage2
+# sentence pointwise selector evidence. This is an inference-only diagnostic
+# config; run it with pipeline.steps=[build,infer] and train.run_dir pointing
+# at the oracle-direct verifier train directory.
+
+defaults:
+  - b3_pointwise_stage2_sentence_1024
+  - _self_
+
+experiment:
+  name: b3_oracle_direct_verifier_val_evidence_checks
+
+baseline:
+  variant: b3_oracle_direct_eval_pointwise_sentence_1024
+  chunking_strategy: sentence
+
+train:
+  run_dir: outputs/oracle_direct_verifier/stage2_sentence/train/b3_oracle_sentence_direct_verifier_1024_20260519-200709
+
+infer:
+  split: val
+  checkpoint: best
+
+swanlab:
+  project: fact-checking-oracle-direct-verifier
+  experiment_name: b3_oracle_direct_eval_pointwise_sentence_1024
