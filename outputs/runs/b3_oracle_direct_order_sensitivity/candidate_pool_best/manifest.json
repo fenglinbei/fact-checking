@@ -5,7 +5,7 @@
   "phases": {
     "infer": {
       "status": "completed",
-      "updated_at": "2026-05-19 22:12:12",
+      "updated_at": "2026-05-19 23:11:21",
       "output_dir": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/candidate_pool_best/infer/val/best/a3d79ec6423a",
       "infer_id": "a3d79ec6423a",
       "artifacts": {
