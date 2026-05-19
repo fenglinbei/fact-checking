@@ -1,6 +1,6 @@
 # Oracle Direct Verifier Evidence Order Sensitivity
 
-更新时间：2026-05-19 23:36
+更新时间：2026-05-20 00:04
 
 ## 背景
 
@@ -157,6 +157,73 @@ pipeline API infer:
 
 2026-05-19 追加实现：pipeline API 推理默认已切换为 `infer.label_decoding.mode=prompt_logprobs`。当前默认行为是对每条样本展开 A-F 六个 scoring prompt，读取最后一个 prompt label token 的 `prompt_logprobs`，再对六个 label logprob 取 argmax。旧的 `guided_choice` 生成路径保留为显式 fallback，可通过 `infer.label_decoding.mode=guided_choice` 使用。
 
+## 2026-05-20 prompt_logprobs 重跑结果
+
+目标服务器上传了新一版 `oracle_best` 结果：
+
+```text
+outputs/runs/b3_oracle_direct_order_sensitivity/oracle_best/infer/val/best/393161cb0a90
+```
+
+该结果已经确认走到新 scoring path：
+
+| Check | Result |
+|---|---:|
+| `label_decoding_mode=prompt_logprobs` | 1274 / 1274 |
+| 每条 `label_logprobs` 包含 A-F 6 个分数 | 1274 / 1274 |
+| parse error | 0 |
+
+但指标仍未复现 train-time label-token eval：
+
+| Eval path | n | accuracy | macro-F1 |
+|---|---:|---:|---:|
+| train-time label-token eval, unique sample_idx | 1274 | 0.711146 | 0.7169 |
+| vLLM prompt_logprobs API, `393161cb0a90` | 1274 | 0.628728 | 0.638976 |
+| previous vLLM guided-choice API, `7bc680045c2c` | 1274 | 0.632653 | 0.643008 |
+
+与 train-time prediction 的逐样本对比：
+
+| Comparison | n |
+|---|---:|
+| common sample_idx | 1274 |
+| prediction disagreement | 346 |
+| disagreement rate | 0.271586 |
+| both correct | 725 |
+| train eval only correct | 181 |
+| vLLM prompt_logprobs only correct | 76 |
+| both wrong | 292 |
+
+补充核查：
+
+1. API prediction 中的 prompt / target / gold label 与 `build_val.jsonl` 完全一致。
+2. train-time unique prediction 中的 prompt / target / gold label 与 `build_val.jsonl` 完全一致。
+3. 完整 scoring prompt 的分词也一致：
+
+```text
+tokenizer(prompt.rstrip()) + tokenizer("Label:") + tokenizer(" A")
+==
+tokenizer(prompt.rstrip() + "Label: A")
+```
+
+A-F 六个 label token 都满足该条件。
+
+因此，当前 gap 已不能再归因于 prompt suffix、target/gold 错位、样本顺序、evidence order、或 tokenizer 拼接边界。更准确的结论是：
+
+> vLLM prompt_logprobs 路径下加载/执行的模型 logits，与训练时 `label_token_trainer` 的 torch-forward logits 仍不一致。
+
+剩余最可疑的两类原因：
+
+1. **vLLM / merged-LoRA 路径与训练时 PEFT torch-forward 不等价**：包括 merged LoRA cache、dtype、vLLM kernel、或 server 复用旧模型。
+2. **saved adapter 与训练时内存权重不完全等价**：train-time eval 用的是当时内存里的模型；API infer 用的是保存后的 adapter/merged model。需要单独用 HF/PEFT 从磁盘加载 `best` 或 `checkpoint-600`，跑一次 torch-forward label-token eval 来区分。
+
+下一步最小判别实验：
+
+```text
+HF/PEFT torch-forward label-token eval on saved best/checkpoint-600
+```
+
+如果该结果接近 `0.7111`，说明 checkpoint 保存没问题，gap 在 vLLM merged inference。若该结果也只有 `~0.63`，说明此前 `0.7111` 是训练时内存模型评估结果，保存后的 checkpoint 没有完全复现该状态。
+
 相关代码：
 
 | 文件 | 作用 |
@@ -173,7 +240,7 @@ pipeline API infer:
 5. `order=random` 对每个 `event_id` 使用 `sha1(order_seed:event_id)` 派生随机种子打乱。
 6. `expected_chunk_mmr_fingerprint=432dfc970e75` 不匹配会直接抛异常。
 
-因此，在当前 API infer 口径内部，不同 order case 之间的相对指标变化可以归因于 evidence 顺序变化，而不是 evidence 集合变化。但 `oracle_best=0.6327` 与此前 `0.7111` 的绝对差异应归因于 train-time label-token scoring 与 vLLM guided generation 仍不是同一评估路径。
+因此，在当前 API infer 口径内部，不同 order case 之间的相对指标变化可以归因于 evidence 顺序变化，而不是 evidence 集合变化。但 `oracle_best=0.6287` 与此前 `0.7111` 的绝对差异应归因于 train-time torch-forward label-token scoring 与 vLLM prompt_logprobs scoring 的模型执行路径仍不一致。
 
 ## 指标总表
 
@@ -293,4 +360,4 @@ random order mean over seed0..4:
 
 因此，后续方向不能把 oracle evidence set 简化成无序集合。当前 verifier 明显依赖 oracle greedy order；selector 需要同时学习“选哪些 evidence”和“以什么顺序给 verifier”。
 
-同时需要补充：当前 `oracle_best=0.6327` 不能推翻此前 train-time label-token eval 的 `0.7111`。已将 pipeline API infer / vLLM infer / online vLLM eval 的 label prompt 拼接改为与 label-token eval 一致的 `sample.prompt.rstrip() + label_prefix` 口径；重跑后剩余 gap 仍然存在，主因应是 train-time label-token scoring 与 vLLM guided generation 不等价。若要给出最终可比数，需要改用 label-token scoring inference，例如 torch forward parity eval，或用 vLLM `prompt_logprobs` 分别评分 A-F label tokens 后取 argmax。
+同时需要补充：当前 `oracle_best=0.6287` 不能推翻此前 train-time label-token eval 的 `0.7111`。已将 pipeline API infer / vLLM infer / online vLLM eval 的 label prompt 拼接改为与 label-token eval 一致的 `sample.prompt.rstrip() + label_prefix` 口径，并改用 vLLM `prompt_logprobs` 对 A-F label tokens 打分；重跑后剩余 gap 仍然存在，主因应是 vLLM/merged-LoRA scoring 与训练时 torch-forward scoring 不等价。若要给出最终可比数，需要先跑 saved checkpoint 的 HF/PEFT torch-forward parity eval。
