@@ -1,0 +1,29 @@
+{
+  "run_id": "1ad2d31b6203",
+  "run_dir": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/random_seed2_best",
+  "build_id": "f67001906419",
+  "phases": {
+    "infer": {
+      "status": "completed",
+      "updated_at": "2026-05-19 22:19:23",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/random_seed2_best/infer/val/best/361f1f4f4e81",
+      "infer_id": "361f1f4f4e81",
+      "artifacts": {
+        "metrics_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/random_seed2_best/infer/val/best/361f1f4f4e81/api/metrics.json",
+        "confusion_data_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/random_seed2_best/infer/val/best/361f1f4f4e81/api/confusion_matrix.json",
+        "confusion_png_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/random_seed2_best/infer/val/best/361f1f4f4e81/api/confusion_matrix.png",
+        "predictions_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/random_seed2_best/infer/val/best/361f1f4f4e81/api/val_predictions.jsonl"
+      },
+      "reused": false
+    }
+  },
+  "config": {
+    "experiment": {
+      "name": "b3_oracle_sentence_direct_verifier_1024"
+    },
+    "baseline": {
+      "variant": "b3_oracle_sentence_direct_verifier_1024",
+      "chunking_strategy": "sentence_oracle_direct"
+    }
+  }
+}
