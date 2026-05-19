@@ -1,0 +1,18 @@
+# @package _global_
+# Direct verifier diagnostic: train on sentence-level Stage2 oracle-selected
+# evidence, without learning or applying a selector.
+
+defaults:
+  - b3_label_token_ce_1024
+  - _self_
+
+experiment:
+  name: b3_oracle_sentence_direct_verifier_1024
+
+baseline:
+  variant: b3_oracle_sentence_direct_verifier_1024
+  chunking_strategy: sentence_oracle_direct
+
+swanlab:
+  project: fact-checking-oracle-direct-verifier
+  experiment_name: b3_oracle_sentence_direct_verifier_1024

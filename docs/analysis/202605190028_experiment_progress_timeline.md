@@ -526,7 +526,37 @@ $$\text{margin} = \log P(y_{\text{gold}} \mid c, S_K) - \max_{y \neq y_{\text{go
 
 **成本注意**：`objective=margin` 需对每个候选 set 评分 A-F 六个 label token，vLLM scoring 成本约为旧 `gold_logprob` 的 6 倍。
 
-**当前状态（2026-05-19）**：Stage 2 正在 train set 上跑 margin re-oracle。使用 Stage 1 checkpoint `label_token_ce_stage1__0ee9b55f/train/best` 作为 verifier，`objective=margin`，`search_method=greedy`，`top_k=5`。train set 约 10,065 条 claim，shard 并行，预计耗时较长（每样本约 235 次 vLLM 评分，每次评分 6 个 label token）。
+**当前状态（2026-05-19）**：Stage 2 sentence-level train re-oracle 已完成，产物为 `outputs/oracle_evidence/stage2_margin_train_sharded`。该产物来自修正前的 sentence cache `432dfc970e75`，候选池语义为 `dedup -> hybrid top15 -> greedy oracle top5`，train accuracy=0.6188、macro-F1=0.6207。随后启动 semantic cache `e0b01520364d` 对照 run，paired subset 显示 semantic oracle 明显低于 sentence oracle，因此主线决策转回 sentence-level oracle evidence supervision。
+
+### 2026-05-19：Sentence vs Semantic Stage2 Oracle 粒度对比
+
+[`202605191945_sentence_vs_semantic_stage2_oracle_decision.md`](202605191945_sentence_vs_semantic_stage2_oracle_decision.md) 记录了 semantic partial run 与 sentence-level train oracle 的 paired 对比。
+
+Semantic partial：
+
+```text
+n = 1709
+accuracy = 0.5395
+chunk_mmr_fingerprint = e0b01520364d
+n_candidates median = 10
+```
+
+同一批 `event_id` paired 对比：
+
+| 指标 | sentence-level | semantic-level |
+|---|---:|---:|
+| paired accuracy | 0.6192 | 0.5407 |
+
+转移矩阵：
+
+| bucket | count |
+|---|---:|
+| both_correct | 818 |
+| sentence_only | 247 |
+| semantic_only | 112 |
+| both_wrong | 543 |
+
+结论：sentence-level 在同一批样本上高出 +7.85 pp，且 `sentence_only - semantic_only = +135`。这说明当前 Stage2 margin oracle 更受益于细粒度 sentence evidence，而 semantic chunking 因候选更少、更粗、噪声更高，反而降低 gold-conditioned oracle 上界。后续 oracle supervision 主线转回 sentence-level；semantic run 保留为 diagnostic / chunk granularity 对照。
 
 ## 4. 当前总体结论
 
@@ -536,9 +566,9 @@ $$\text{margin} = \log P(y_{\text{gold}} \mid c, S_K) - \max_{y \neq y_{\text{go
 4. Scalar λ 路线已经足够充分地探索并阶段性停止；`log(n)`（test +0.0064）和 sensitivity-gated（test +0.0040）只作为弱 adaptive baseline 保留。
 5. Oracle evidence set 的上界 gap（accuracy +18.76 pp, macro-F1 +13.00 pp）远大于 oracle λ（~3 pp），说明后续更应学习 evidence set / selector / utility，而不是继续精确预测单一 λ。
 6. Pointwise V1 旧 selection-only overlap 指标已判定为无效强 gate：它混用了非正式 cache，并在候选池中注入 oracle positives。下游 vLLM verifier evaluation 给出了反向结论：V1a test accuracy 0.2230、macro-F1 0.2059，均显著低于 fixed-MMR（0.2702/0.2769）；V1b 加入 true-side anchor 后 val 仅微升至 0.2630/0.2632，仍低于 fixed-MMR。
-7. 当前最合理主线是先校准 verifier（label-token weighted CE + margin objective），再用 calibration-aware objective 重跑 oracle，最后基于可追溯 candidate pool 构造 filtered supervision。
+7. 当前最合理主线是先校准 verifier（label-token weighted CE + margin objective），再用 calibration-aware objective 重跑 oracle，最后基于可追溯 candidate pool 构造 filtered supervision。粒度选择上，paired 对比后主线应使用 sentence-level Stage2 oracle，而不是 semantic-level oracle。
 8. **Stage 1 已完成**：Label-token weighted CE verifier 在 val 上整体指标与旧 verifier 持平（accuracy 0.3006 vs 0.2967），但 true-side 未退化（mostly-true F1=0.3419, true F1=0.3298，为全部 6 类最高），说明加权有效防止了 false-side bias。中间类（half-true/barely-true）仍是难点。
-9. **Stage 2 正在进行**：用 Stage 1 verifier + margin objective 在 train set 上重跑 oracle search。
+9. **Stage 2 粒度决策已更新**：sentence-level train oracle 已完成并显著强于 semantic paired subset；semantic 保留为对照，sentence-level oracle supervision 进入下一阶段。
 
 ## 5. 当前 Stop / Go 状态
 
@@ -554,17 +584,18 @@ $$\text{margin} = \log P(y_{\text{gold}} \mid c, S_K) - \max_{y \neq y_{\text{go
 | multi-weight MMR | 待定 | 仍可能解决 scalar λ 表达能力不足，但应在 re-oracle 后再决定。 |
 | Pointwise oracle selector (V1a) | 停止 | 旧 selection-only gate 无效，只能作弱参考；下游 test accuracy 0.2230 显著低于 fixed 0.2702。 |
 | Pointwise oracle selector (V1b) | 停止 | True-side anchor 仅微升（val +0.005），仍低于 fixed-MMR；旧 gate 口径不能支撑继续放大。 |
-| Oracle-set supervision | 继续 | 上界 gap 大（+13 pp macro-F1），但需要先修 verifier false bias + 换用 preference/sequential 范式。 |
-| Label-token CE verifier + margin re-oracle | 当前主线 | Stage 1 完成（val 持平旧 verifier，true-side 未退化）；Stage 2 train set re-oracle 进行中。 |
+| Oracle-set supervision | 继续，sentence-level 为主 | sentence-level Stage2 oracle paired accuracy 0.6192，高于 semantic 0.5407；先验证 oracle evidence direct verifier。 |
+| Semantic-level oracle supervision | 诊断保留 | paired subset 低于 sentence-level +7.85 pp；不建议等权推进或继续大量消耗 GPU。 |
+| Label-token CE verifier + margin re-oracle | 完成 Stage1，Stage2 转向 sentence 主线 | Stage 1 完成；Stage2 sentence train oracle 完成，semantic 对照弱于 sentence。 |
 
 ## 6. 建议下一步
 
 1. ~~先完成 Stage 1 label-token CE verifier 的 val/test 指标确认~~ → **已完成**。Val 上 accuracy 0.3006, macro_f1 0.3015，true-side 未退化。待补 test infer。
-2. **Stage 2 进行中**：用 Stage 1 verifier + margin objective 在 train set 上跑 re-oracle shard。完成后先 val smoke 确认 true/mostly-true 的 oracle accuracy 是否不再系统性低于 fixed-MMR，再合并 train shard 产出完整 `oracle_results_train.jsonl`。
-3. 对比旧 oracle（gold_logprob objective, 旧 verifier）与 margin re-oracle（Stage 1 verifier）：按 label 看 oracle accuracy、margin-positive 占比、oracle-only-correct 规模，确认 true-side 不再系统性低于 fixed-MMR。
-4. 用 re-oracle 的完整候选池重建 pointwise / preference supervision，避免继续依赖 reconstructed negatives。鉴于 V1a/V1b pointwise 在下游 verifier evaluation 上均低于 fixed-MMR，建议优先使用 preference 或 sequential 范式替代 pointwise independent selection。
-5. 先做 evaluation-only：同一个 Stage 1 verifier checkpoint + fixed-MMR vs calibrated selector；val 过 gate 后再跑 test。重点确认 calibrated oracle 的 true-side 不再继承旧 false bias。
-6. 若 calibrated pointwise overlap 高但 verifier 指标仍低，再检查 evidence order、prompt truncation、candidate fingerprint、infer decoding；之后再决定是否推进 sequential selector 或 multi-weight MMR。
+2. **Stage 2 粒度决策已完成**：sentence-level oracle 明显强于 semantic paired subset；后续主线使用 `outputs/oracle_evidence/stage2_margin_train_sharded`。
+3. 优先做 `oracle sentence evidence direct verifier`：直接用 sentence-level oracle selected evidence 构造 train/val build JSONL，训练 label-token CE verifier，验证 oracle evidence supervision 是否能转化为下游泛化。
+4. 若 direct verifier 有收益，再推进更强 selector；鉴于 pointwise logreg 只学到弱 oracle pattern，建议优先 preference / reranker / sequential selector，而不是继续放大当前 pointwise。
+5. Semantic-level oracle 只保留 paired diagnostic 或报告对照；不建议等权推进完整 train oracle。
+6. 如果后续 selector overlap 高但 verifier 指标仍低，再检查 evidence order、prompt truncation、candidate fingerprint、infer decoding；之后再决定是否推进 sequential selector 或 multi-weight MMR。
 
 ## 7. 关键文件索引
 

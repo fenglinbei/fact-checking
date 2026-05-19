@@ -46,6 +46,21 @@ e0b01520364d
 
 因此它只能用于当前 sentence-cache pointwise 试验，不能和后续 semantic re-oracle 混用。
 
+2026-05-19 后续决策更新：semantic partial run 与 sentence-level train oracle 做 paired 对比后，semantic oracle 明显弱于 sentence oracle。因此 `run_reoracle_stage2.sh` 的 semantic 默认只表示配置加载漏洞已修复，不再表示后续监督主线必须使用 semantic。当前主线转回 sentence-level Stage2 oracle supervision，semantic 保留作诊断对照。
+
+关键 paired 结果：
+
+| 指标 | sentence-level | semantic-level |
+|---|---:|---:|
+| paired accuracy | 0.6192 | 0.5407 |
+
+| bucket | count |
+|---|---:|
+| both_correct | 818 |
+| sentence_only | 247 |
+| semantic_only | 112 |
+| both_wrong | 543 |
+
 ## 当前 Pointwise 试验
 
 使用当前 re-oracle train 结果：

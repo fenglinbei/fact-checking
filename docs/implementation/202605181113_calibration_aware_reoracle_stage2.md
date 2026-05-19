@@ -34,6 +34,12 @@ margin = log P(y_gold | claim, evidence_set)
 - `run_reoracle_stage2.sh` 默认 `CONFIG` 改为 `configs/experiment/b3_mmr_topk_sweep_1024.yaml`，使后续 re-oracle 默认回到 b3 semantic chunk pipeline，Chunk-MMR fingerprint 应为 `e0b01520364d`。
 - 既有 `outputs/oracle_evidence/stage2_margin_train_sharded` 是修正前产物，里面保存的 `candidate_pool_metadata.chunk_mmr_fingerprint` 为 `432dfc970e75`，属于 sentence-cache 结果。它可以用于当前 sentence-cache pointwise 试验，但不应与后续 semantic re-oracle 结果混用。
 
+2026-05-19 粒度决策更新：
+
+- semantic partial run 已确认 fingerprint 为 `e0b01520364d`，不是继续误用 sentence cache。
+- paired subset 上 sentence-level oracle 明显强于 semantic-level oracle：sentence accuracy 0.6192 vs semantic accuracy 0.5407，`sentence_only=247`、`semantic_only=112`。
+- 因此实验主线转回 sentence-level Stage2 oracle supervision；semantic run 保留为 diagnostic / chunk granularity 对照，不再作为等权主线。
+
 默认仍保持向后兼容：
 
 ```bash
@@ -206,6 +212,43 @@ Stage 2 是否可进入后续 filtered supervision，主要看：
 2. `margin > 0` 的样本中，`is_correct` 是否显著更稳定。
 3. `oracle only correct` 子集是否仍保留足够规模。
 4. `candidate_pool_fingerprint` 是否稳定，保证后续 selector 训练可追溯。
+
+## 当前决策：sentence-level 为主线
+
+当前关键 paired 结果：
+
+```text
+paired_n = 1720
+semantic_acc = 0.5406976744
+sentence_acc = 0.6191860465
+both_correct = 818
+sentence_only = 247
+semantic_only = 112
+both_wrong = 543
+```
+
+解释：
+
+1. 差距来自同一批 `event_id`，不是 shard label 分布差异。
+2. semantic 候选池 `median n_candidates = 10`，可搜索空间小于 sentence-level top15。
+3. sentence-level evidence 更原子，margin oracle 更容易组合出能触发正确 label-token 的 top5。
+4. semantic chunks 更粗，容易混入无关内容，导致 gold-conditioned oracle 上界反而下降。
+
+因此：
+
+| 方向 | 决策 |
+|---|---|
+| sentence-level Stage2 oracle (`432dfc970e75`) | 主线继续 |
+| semantic-level Stage2 oracle (`e0b01520364d`) | 诊断/对照保留 |
+| full semantic train oracle | 低优先级，除非需要完整报告对照 |
+
+后续优先使用：
+
+```text
+outputs/oracle_evidence/stage2_margin_train_sharded/oracle_results_train.jsonl
+```
+
+作为 oracle supervision 源，先做 oracle selected evidence direct verifier，再决定 selector 范式。
 
 ## 注意事项
 
