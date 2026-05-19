@@ -24,9 +24,12 @@ infer:
   repetition_penalty: 1.0
   label_decoding:
     enabled: true
+    mode: prompt_logprobs
     prefix: "Label:"
     guided_choice: true
     max_tokens: 1
+    scoring_max_tokens: 1
+    prompt_logprobs: 0
   merge_lora_cache:
     enabled: true
     dir: outputs/cache/merged_lora

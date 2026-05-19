@@ -21,7 +21,12 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from fact_checking.data.constants import LABELS, LETTER_ORDER
-from sft.infer_common import build_inference_context, build_label_decoding_prompt
+from sft.infer_common import (
+    build_inference_context,
+    build_label_decoding_prompt,
+    build_label_scoring_prompt,
+    label_choice_text,
+)
 from sft.logit_adjust import build_logit_bias, build_logit_adjust_cfg_from_train_config, load_logit_adjust_cfg
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
 from sft.parser import _parse_label_id
@@ -69,14 +74,14 @@ class OpenAICompletionsClient:
         self.timeout = float(timeout)
         self.logit_bias = logit_bias
 
-    def generate(
+    def complete(
         self,
-        prompt: str,
+        prompt: str | list[str],
         *,
         max_tokens: int,
         temperature: float,
         extra_body: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         payload: dict = {
             "model": self.model,
             "prompt": prompt,
@@ -94,11 +99,148 @@ class OpenAICompletionsClient:
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=self.timeout) as response:
-            data = json.loads(response.read().decode("utf-8"))
+            return json.loads(response.read().decode("utf-8"))
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int,
+        temperature: float,
+        extra_body: dict[str, Any] | None = None,
+    ) -> str:
+        data = self.complete(
+            prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            extra_body=extra_body,
+        )
         choices = data.get("choices", [])
         if not choices:
             return ""
         return str(choices[0].get("text", ""))
+
+
+def _extract_logprob_value(entry: Any) -> float:
+    if hasattr(entry, "logprob"):
+        return float(entry.logprob)
+    if isinstance(entry, dict):
+        for key in ("logprob", "token_logprob"):
+            if key in entry:
+                return float(entry[key])
+    return float(entry)
+
+
+def _extract_final_prompt_logprob(prompt_logprobs: Any, token_id: int) -> float:
+    if not prompt_logprobs:
+        raise RuntimeError("vLLM response did not include prompt_logprobs.")
+    if not isinstance(prompt_logprobs, list):
+        raise RuntimeError(f"Expected prompt_logprobs to be a list, got {type(prompt_logprobs).__name__}.")
+
+    final = None
+    for item in reversed(prompt_logprobs):
+        if item:
+            final = item
+            break
+    if final is None:
+        raise RuntimeError("vLLM response included empty prompt_logprobs.")
+
+    if isinstance(final, dict):
+        for key in (token_id, str(token_id)):
+            if key in final:
+                return _extract_logprob_value(final[key])
+        if "logprob" in final or "token_logprob" in final:
+            return _extract_logprob_value(final)
+        sample_keys = list(final.keys())[:10]
+        raise RuntimeError(
+            f"Final prompt_logprobs did not contain label token_id={token_id}; "
+            f"available keys sample={sample_keys}."
+        )
+
+    if isinstance(final, list):
+        for entry in final:
+            if isinstance(entry, dict):
+                entry_token_id = entry.get("token_id", entry.get("id"))
+                if entry_token_id is not None and int(entry_token_id) == int(token_id):
+                    return _extract_logprob_value(entry)
+        if len(final) == 1:
+            return _extract_logprob_value(final[0])
+        raise RuntimeError(f"Could not find label token_id={token_id} in final prompt_logprobs list.")
+
+    return _extract_logprob_value(final)
+
+
+def _choice_payload_prompt_logprobs(choice: dict[str, Any]) -> Any:
+    if "prompt_logprobs" in choice:
+        return choice["prompt_logprobs"]
+    logprobs = choice.get("logprobs")
+    if isinstance(logprobs, dict) and "prompt_logprobs" in logprobs:
+        return logprobs["prompt_logprobs"]
+    return None
+
+
+def _build_label_token_ids(tokenizer, label_prefix: str) -> dict[str, int]:
+    token_ids: dict[str, int] = {}
+    for letter in LETTER_ORDER:
+        text = label_choice_text(label_prefix, letter)
+        ids = tokenizer(text, add_special_tokens=False, truncation=False)["input_ids"]
+        if len(ids) != 1:
+            raise RuntimeError(
+                f"Label scoring requires {text!r} to be one tokenizer token for letter={letter!r}; got {ids}."
+            )
+        token_ids[letter] = int(ids[0])
+    return token_ids
+
+
+def _score_label_logprobs(
+    *,
+    client: OpenAICompletionsClient,
+    sample,
+    tokenizer,
+    label_prefix: str,
+    max_tokens: int,
+    temperature: float,
+    extra_body: dict[str, Any] | None,
+) -> dict[str, float]:
+    label_token_ids = _build_label_token_ids(tokenizer, label_prefix)
+    prompts = [
+        build_label_scoring_prompt(sample, label_prefix, letter)
+        for letter in LETTER_ORDER
+    ]
+    request_extra = dict(extra_body or {})
+    request_extra["prompt_logprobs"] = int(request_extra.get("prompt_logprobs", 0))
+    data = client.complete(
+        prompts,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        extra_body=request_extra,
+    )
+    choices = data.get("choices", [])
+    if len(choices) != len(LETTER_ORDER):
+        raise RuntimeError(f"vLLM returned {len(choices)} choices for {len(LETTER_ORDER)} label scoring prompts.")
+    choices_by_index = {
+        int(choice.get("index", idx)): choice
+        for idx, choice in enumerate(choices)
+    }
+    scores: dict[str, float] = {}
+    for idx, letter in enumerate(LETTER_ORDER):
+        choice = choices_by_index.get(idx)
+        if choice is None:
+            raise RuntimeError(f"vLLM response is missing choice index={idx} for label={letter}.")
+        prompt_logprobs = _choice_payload_prompt_logprobs(choice)
+        scores[letter] = _extract_final_prompt_logprob(prompt_logprobs, label_token_ids[letter])
+    return scores
+
+
+def _argmax_label_logprobs(scores: dict[str, float]) -> int:
+    best_idx = 0
+    best_score = float("-inf")
+    for idx, letter in enumerate(LETTER_ORDER):
+        score = float(scores[letter])
+        if score > best_score:
+            best_idx = idx
+            best_score = score
+    return best_idx
 
 
 def run_api_inference(
@@ -165,19 +307,38 @@ def run_api_inference(
             context.samples
         )
         label_prefix = str(label_decoding_cfg.get("prefix", "Label:"))
+        label_mode = str(label_decoding_cfg.get("mode", "prompt_logprobs")).strip().lower()
+        if label_mode not in {"prompt_logprobs", "guided_choice", "generate"}:
+            raise ValueError(
+                "infer.label_decoding.mode must be one of "
+                "'prompt_logprobs', 'guided_choice', or 'generate'."
+            )
+        use_label_scoring = use_label_decoding and label_mode == "prompt_logprobs"
         label_choices = [f" {letter}" for letter in LETTER_ORDER]
         label_extra_body: dict[str, Any] | None = dict(decoding_extra_body) if decoding_extra_body else None
-        use_guided_choice = use_label_decoding and bool(label_decoding_cfg.get("guided_choice", True))
+        use_guided_choice = (
+            use_label_decoding
+            and not use_label_scoring
+            and label_mode == "guided_choice"
+            and bool(label_decoding_cfg.get("guided_choice", True))
+        )
         if use_guided_choice:
             label_extra_body = dict(label_extra_body or {})
             label_extra_body["guided_choice"] = label_choices
         label_max_tokens = int(label_decoding_cfg.get("max_tokens", 1))
+        label_score_max_tokens = int(label_decoding_cfg.get("scoring_max_tokens", label_max_tokens))
+        label_scoring_extra_body = dict(decoding_extra_body) if decoding_extra_body else {}
+        label_scoring_extra_body["prompt_logprobs"] = int(label_decoding_cfg.get("prompt_logprobs", 0))
         logger.info(
-            "API inference decoding: label_decoding=%s guided_choice=%s max_tokens=%d logit_bias_tokens=%d "
+            "API inference decoding: label_decoding=%s mode=%s guided_choice=%s max_tokens=%d "
+            "scoring_max_tokens=%d prompt_logprobs=%d logit_bias_tokens=%d "
             "top_p=%s presence_penalty=%s frequency_penalty=%s repetition_penalty=%s",
             use_label_decoding,
+            label_mode if use_label_decoding else "none",
             use_guided_choice,
             label_max_tokens if use_label_decoding else max_tokens,
+            label_score_max_tokens,
+            int(label_scoring_extra_body["prompt_logprobs"]),
             len(logit_bias or {}),
             top_p,
             presence_penalty,
@@ -199,18 +360,33 @@ def run_api_inference(
             request_prompt = sample.prompt
             request_max_tokens = max_tokens
             extra_body = dict(decoding_extra_body) if decoding_extra_body else None
-            if use_label_decoding:
-                request_prompt = build_label_decoding_prompt(sample, label_prefix)
-                request_max_tokens = label_max_tokens
-                extra_body = label_extra_body
-            raw_completion = client.generate(
-                request_prompt,
-                max_tokens=request_max_tokens,
-                temperature=temperature,
-                extra_body=extra_body,
-            )
-            raw_output = f"{label_prefix}{raw_completion}" if use_label_decoding else raw_completion
-            pred_id = _parse_label_id(raw_output)
+            label_logprobs: dict[str, float] | None = None
+            if use_label_scoring:
+                label_logprobs = _score_label_logprobs(
+                    client=client,
+                    sample=sample,
+                    tokenizer=context.tokenizer,
+                    label_prefix=label_prefix,
+                    max_tokens=label_score_max_tokens,
+                    temperature=temperature,
+                    extra_body=label_scoring_extra_body,
+                )
+                pred_id = _argmax_label_logprobs(label_logprobs)
+                raw_completion = label_choice_text(label_prefix, LETTER_ORDER[pred_id])
+                raw_output = f"{label_prefix}{raw_completion}"
+            else:
+                if use_label_decoding:
+                    request_prompt = build_label_decoding_prompt(sample, label_prefix)
+                    request_max_tokens = label_max_tokens
+                    extra_body = label_extra_body
+                raw_completion = client.generate(
+                    request_prompt,
+                    max_tokens=request_max_tokens,
+                    temperature=temperature,
+                    extra_body=extra_body,
+                )
+                raw_output = f"{label_prefix}{raw_completion}" if use_label_decoding else raw_completion
+                pred_id = _parse_label_id(raw_output)
             if pred_id == int(sample.gold_id):
                 correct += 1
             if pred_id < 0:
@@ -232,6 +408,8 @@ def run_api_inference(
                     "gold_id": int(sample.gold_id),
                     "gold_label": sample.gold_label,
                     "gold_explain": sample.gold_explain,
+                    "label_decoding_mode": label_mode if use_label_decoding else "generate",
+                    "label_logprobs": label_logprobs or {},
                 }
             )
         progress.close()

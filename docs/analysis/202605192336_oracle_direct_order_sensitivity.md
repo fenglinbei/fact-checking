@@ -1,6 +1,6 @@
 # Oracle Direct Verifier Evidence Order Sensitivity
 
-更新时间：2026-05-19 22:43
+更新时间：2026-05-19 23:36
 
 ## 背景
 
@@ -25,7 +25,7 @@ outputs/runs/b3_oracle_direct_order_sensitivity
 
 当前本地同步到的是 infer run 产物；`outputs/oracle_direct_verifier/stage2_sentence_order_sensitivity` 这类 build 中间目录未同步到当前工作区。但 wrapper 与构造脚本的代码口径可确认：实验固定使用 oracle-selected evidence set，只改变 evidence order。
 
-## 2026-05-19 口径修正：0.7111 与 0.6099 不是同一 eval path
+## 2026-05-19 口径修正：0.7111 与 API gap 不是同一 eval path
 
 此前 `oracle sentence direct verifier` 记录的 val oracle evidence 指标是：
 
@@ -95,8 +95,67 @@ Label:
 本页后续 order-sensitivity 结论应按以下方式理解：
 
 1. **相对顺序效应仍成立**：在同一个 API infer 口径下，oracle / hybrid / candidate_pool / random 只改变 evidence order，oracle order 明显更好。
-2. **绝对 oracle upper-bound 暂不应从 0.7111 改写为 0.6099**：已在代码中对齐 label-token eval 与 API infer 的 prompt suffix；需要重跑 order-sensitivity 后再更新最终可比数。
+2. **绝对 oracle upper-bound 暂不应从 0.7111 改写为 0.6099**：已在代码中对齐 label-token eval 与 API infer 的 prompt suffix；重跑后 oracle API 指标升至 0.6327，但仍不能替代 train-time label-token eval 的 0.7111。
 3. **当前文档中的 order 表格是 API-infer 口径表格**，可用于判断 API 口径下顺序敏感，但不能替代此前 train-time eval 的 0.7111 upper-bound 结论。
+
+## 2026-05-19 23:36 重跑后追加诊断
+
+修正 prompt suffix 后，`outputs/runs/b3_oracle_direct_order_sensitivity` 已更新。`oracle_best` 从旧 API 口径的 `0.609890 / 0.620744` 提升到：
+
+```text
+oracle_best after prompt suffix alignment:
+  n = 1274
+  accuracy = 0.632653
+  macro-F1 = 0.643008
+```
+
+但它仍低于 train-time label-token eval 的 `0.711146 / 0.7169`。进一步核查结果：
+
+| Check | Result |
+|---|---:|
+| API prompt vs `build_val.jsonl` prompt | 1274 / 1274 identical |
+| API target vs `build_val.jsonl` target | 1274 / 1274 identical |
+| API gold label vs `build_val.jsonl` gold label | 1274 / 1274 identical |
+| train unique prompt vs `build_val.jsonl` prompt | 1274 / 1274 identical |
+| train unique target vs `build_val.jsonl` target | 1274 / 1274 identical |
+| train unique gold label vs `build_val.jsonl` gold label | 1274 / 1274 identical |
+| train eval vs API common sample_idx | 1274 |
+| train/API prediction disagreement | 345 |
+| disagreement rate | 0.270801 |
+| both correct | 729 |
+| train eval only correct | 177 |
+| API infer only correct | 77 |
+| both wrong | 291 |
+
+还核查了 Qwen tokenizer 在 label boundary 上的分词。对当前样例：
+
+```text
+tokenizer(prompt.rstrip()) + tokenizer("Label:")
+==
+tokenizer(prompt.rstrip() + "Label:")
+```
+
+两者 token ids 完全一致；`" A"` ... `" F"` 也都是单 token。因此，剩余 gap 不是 prompt 文本、target/gold、样本顺序、候选证据或 tokenizer 边界问题。
+
+当前最可能的问题是 **评估路径本身不等价**：
+
+```text
+train-time label-token eval:
+  torch forward
+  input_ids = prompt_ids + label_prefix_ids
+  直接取下一 token 在 A-F label token 上的 logits argmax
+
+pipeline API infer:
+  vLLM OpenAI completions
+  prompt text = prompt.rstrip() + label_prefix
+  max_tokens=1
+  guided_choice=[" A", ..., " F"]
+  通过生成路径返回一个 constrained completion
+```
+
+前者是判别式 label scoring；后者是 constrained generation。即使 prompt 和 label tokens 已经对齐，二者也不应再被默认视为严格相同的评估口径。仓库里的 oracle scorer / learned-lambda 工具已经使用过更接近 label scoring 的做法：展开 A-F 六个 scoring prompt，用 vLLM `prompt_logprobs` 抽取各 label token 的 logprob，再取 argmax。后续如果要复现 `0.7111` 口径，应优先使用这种 label-token scoring eval，而不是继续用 `guided_choice` 生成结果作为严格 parity 指标。
+
+2026-05-19 追加实现：pipeline API 推理默认已切换为 `infer.label_decoding.mode=prompt_logprobs`。当前默认行为是对每条样本展开 A-F 六个 scoring prompt，读取最后一个 prompt label token 的 `prompt_logprobs`，再对六个 label logprob 取 argmax。旧的 `guided_choice` 生成路径保留为显式 fallback，可通过 `infer.label_decoding.mode=guided_choice` 使用。
 
 相关代码：
 
@@ -114,7 +173,7 @@ Label:
 5. `order=random` 对每个 `event_id` 使用 `sha1(order_seed:event_id)` 派生随机种子打乱。
 6. `expected_chunk_mmr_fingerprint=432dfc970e75` 不匹配会直接抛异常。
 
-因此，在当前 API infer 口径内部，不同 order case 之间的相对指标变化可以归因于 evidence 顺序变化，而不是 evidence 集合变化。但 `oracle_best=0.6099` 与此前 `0.7111` 的绝对差异应归因于 eval/infer prompt suffix 口径不一致。
+因此，在当前 API infer 口径内部，不同 order case 之间的相对指标变化可以归因于 evidence 顺序变化，而不是 evidence 集合变化。但 `oracle_best=0.6327` 与此前 `0.7111` 的绝对差异应归因于 train-time label-token scoring 与 vLLM guided generation 仍不是同一评估路径。
 
 ## 指标总表
 
@@ -122,23 +181,23 @@ Label:
 
 | Order case | Accuracy | Macro-F1 | Macro-P | Macro-R | vs oracle Acc | vs oracle Macro-F1 |
 |---|---:|---:|---:|---:|---:|---:|
-| oracle | 0.609890 | 0.620744 | 0.661009 | 0.608002 | +0.000000 | +0.000000 |
-| hybrid | 0.453689 | 0.465368 | 0.499727 | 0.451126 | -0.156201 | -0.155376 |
-| candidate_pool | 0.453689 | 0.465368 | 0.499727 | 0.451126 | -0.156201 | -0.155376 |
-| random_seed0 | 0.469388 | 0.477067 | 0.509457 | 0.463833 | -0.140502 | -0.143678 |
-| random_seed1 | 0.465463 | 0.473041 | 0.509745 | 0.458837 | -0.144427 | -0.147703 |
-| random_seed2 | 0.474097 | 0.481870 | 0.512859 | 0.469208 | -0.135793 | -0.138875 |
-| random_seed3 | 0.459969 | 0.469291 | 0.498080 | 0.456798 | -0.149922 | -0.151454 |
-| random_seed4 | 0.468603 | 0.480254 | 0.513878 | 0.466544 | -0.141287 | -0.140491 |
+| oracle | 0.632653 | 0.643008 | 0.678933 | 0.627515 | +0.000000 | +0.000000 |
+| hybrid | 0.463893 | 0.472120 | 0.508007 | 0.457475 | -0.168760 | -0.170889 |
+| candidate_pool | 0.463893 | 0.472120 | 0.508007 | 0.457475 | -0.168760 | -0.170889 |
+| random_seed0 | 0.478022 | 0.485622 | 0.518017 | 0.471499 | -0.154631 | -0.157386 |
+| random_seed1 | 0.476452 | 0.483863 | 0.519181 | 0.469519 | -0.156201 | -0.159145 |
+| random_seed2 | 0.482732 | 0.493705 | 0.526932 | 0.478129 | -0.149922 | -0.149303 |
+| random_seed3 | 0.463893 | 0.472080 | 0.502093 | 0.458538 | -0.168760 | -0.170928 |
+| random_seed4 | 0.468603 | 0.479239 | 0.507370 | 0.466417 | -0.164050 | -0.163769 |
 
 随机顺序汇总：
 
 | Metric | Mean | Std | Min | Max |
 |---|---:|---:|---:|---:|
-| Accuracy | 0.467504 | 0.004673 | 0.459969 | 0.474097 |
-| Macro-F1 | 0.476304 | 0.004626 | 0.469291 | 0.481870 |
+| Accuracy | 0.473940 | 0.006778 | 0.463893 | 0.482732 |
+| Macro-F1 | 0.482902 | 0.007149 | 0.472080 | 0.493705 |
 
-API infer 口径下，结论很直接：与 oracle greedy order 相比，hybrid / candidate_pool 顺序下降约 **15.6 pp accuracy** 和 **15.5 pp macro-F1**；随机顺序平均下降约 **14.2 pp accuracy** 和 **14.4 pp macro-F1**。这已经不是轻微噪声，而是明显的顺序敏感性。
+API infer 口径下，结论很直接：与 oracle greedy order 相比，hybrid / candidate_pool 顺序下降约 **16.9 pp accuracy** 和 **17.1 pp macro-F1**；随机顺序平均下降约 **15.9 pp accuracy** 和 **16.0 pp macro-F1**。这已经不是轻微噪声，而是明显的顺序敏感性。
 
 ## Paired Prediction 对比
 
@@ -146,32 +205,32 @@ API infer 口径下，结论很直接：与 oracle greedy order 相比，hybrid 
 
 | Order case | Prediction disagreement | Disagreement rate | Both correct | Oracle only correct | Case only correct | Both wrong |
 |---|---:|---:|---:|---:|---:|---:|
-| candidate_pool | 470 | 0.368917 | 513 | 264 | 65 | 432 |
-| hybrid | 470 | 0.368917 | 513 | 264 | 65 | 432 |
-| random_seed0 | 482 | 0.378336 | 516 | 261 | 82 | 415 |
-| random_seed1 | 483 | 0.379121 | 515 | 262 | 78 | 419 |
-| random_seed2 | 469 | 0.368132 | 528 | 249 | 76 | 421 |
-| random_seed3 | 471 | 0.369702 | 516 | 261 | 70 | 427 |
-| random_seed4 | 469 | 0.368132 | 527 | 250 | 70 | 427 |
+| candidate_pool | 482 | 0.378336 | 530 | 276 | 61 | 407 |
+| hybrid | 482 | 0.378336 | 530 | 276 | 61 | 407 |
+| random_seed0 | 488 | 0.383046 | 539 | 267 | 70 | 398 |
+| random_seed1 | 482 | 0.378336 | 535 | 271 | 72 | 396 |
+| random_seed2 | 494 | 0.387755 | 533 | 273 | 82 | 386 |
+| random_seed3 | 492 | 0.386185 | 531 | 275 | 60 | 408 |
+| random_seed4 | 487 | 0.382261 | 532 | 274 | 65 | 403 |
 
 这里的关键信号是：
 
-1. 非 oracle 顺序会让约 **36.8% - 37.9%** 的样本预测标签发生变化。
-2. `oracle_only_correct` 明显大于 `case_only_correct`：例如 hybrid / candidate_pool 中，oracle 顺序独有正确 264 条，替代顺序独有正确只有 65 条。
+1. 非 oracle 顺序会让约 **37.8% - 38.8%** 的样本预测标签发生变化。
+2. `oracle_only_correct` 明显大于 `case_only_correct`：例如 hybrid / candidate_pool 中，oracle 顺序独有正确 276 条，替代顺序独有正确只有 61 条。
 3. 这说明顺序变化不只是随机改变预测，而是系统性破坏了当前 verifier 已学到的 oracle-order prompt 分布。
 
 ## Per-class F1
 
 | Order case | pants-fire | false | barely-true | half-true | mostly-true | true |
 |---|---:|---:|---:|---:|---:|---:|
-| oracle | 0.676056 | 0.655052 | 0.567986 | 0.497778 | 0.638950 | 0.688645 |
-| hybrid | 0.537313 | 0.459649 | 0.408759 | 0.355649 | 0.538302 | 0.492537 |
-| candidate_pool | 0.537313 | 0.459649 | 0.408759 | 0.355649 | 0.538302 | 0.492537 |
-| random_seed0 | 0.507463 | 0.484642 | 0.428835 | 0.405010 | 0.518201 | 0.518248 |
-| random_seed1 | 0.502513 | 0.463333 | 0.428305 | 0.422833 | 0.513800 | 0.507463 |
-| random_seed2 | 0.517413 | 0.505300 | 0.458716 | 0.376518 | 0.509636 | 0.523636 |
-| random_seed3 | 0.507463 | 0.469595 | 0.439394 | 0.383333 | 0.489270 | 0.526690 |
-| random_seed4 | 0.544554 | 0.479310 | 0.441606 | 0.390144 | 0.507659 | 0.518248 |
+| oracle | 0.682692 | 0.669027 | 0.592030 | 0.540434 | 0.670968 | 0.702899 |
+| hybrid | 0.522613 | 0.469751 | 0.417495 | 0.377649 | 0.556660 | 0.488550 |
+| candidate_pool | 0.522613 | 0.469751 | 0.417495 | 0.377649 | 0.556660 | 0.488550 |
+| random_seed0 | 0.510000 | 0.487719 | 0.430020 | 0.436229 | 0.522293 | 0.527473 |
+| random_seed1 | 0.510000 | 0.470588 | 0.454361 | 0.438662 | 0.512712 | 0.516854 |
+| random_seed2 | 0.522613 | 0.488971 | 0.442191 | 0.422182 | 0.528302 | 0.557971 |
+| random_seed3 | 0.500000 | 0.472028 | 0.454545 | 0.405157 | 0.486258 | 0.514493 |
+| random_seed4 | 0.528846 | 0.480000 | 0.425703 | 0.413793 | 0.510730 | 0.516364 |
 
 各类标签基本都受影响，不是某一个类别单独拖累。`false`、`true`、`barely-true`、`half-true` 的掉幅尤其明显。
 
@@ -218,20 +277,20 @@ selected evidence set + oracle-like order
 
 ```text
 oracle order:
-  accuracy  = 0.609890
-  macro-F1  = 0.620744
+  accuracy  = 0.632653
+  macro-F1  = 0.643008
 
 hybrid / candidate_pool order:
-  accuracy  = 0.453689
-  macro-F1  = 0.465368
-  drop      = about -15.6 pp accuracy / -15.5 pp macro-F1
+  accuracy  = 0.463893
+  macro-F1  = 0.472120
+  drop      = about -16.9 pp accuracy / -17.1 pp macro-F1
 
 random order mean over seed0..4:
-  accuracy  = 0.467504
-  macro-F1  = 0.476304
-  drop      = about -14.2 pp accuracy / -14.4 pp macro-F1
+  accuracy  = 0.473940
+  macro-F1  = 0.482902
+  drop      = about -15.9 pp accuracy / -16.0 pp macro-F1
 ```
 
 因此，后续方向不能把 oracle evidence set 简化成无序集合。当前 verifier 明显依赖 oracle greedy order；selector 需要同时学习“选哪些 evidence”和“以什么顺序给 verifier”。
 
-同时需要补充：当前 `oracle_best=0.6099` 不能推翻此前 train-time label-token eval 的 `0.7111`。已将 pipeline API infer / vLLM infer / online vLLM eval 的 label prompt 拼接改为与 label-token eval 一致的 `sample.prompt.rstrip() + label_prefix` 口径；若要给出最终可比数，需要基于修正后的代码重跑该实验。
+同时需要补充：当前 `oracle_best=0.6327` 不能推翻此前 train-time label-token eval 的 `0.7111`。已将 pipeline API infer / vLLM infer / online vLLM eval 的 label prompt 拼接改为与 label-token eval 一致的 `sample.prompt.rstrip() + label_prefix` 口径；重跑后剩余 gap 仍然存在，主因应是 train-time label-token scoring 与 vLLM guided generation 不等价。若要给出最终可比数，需要改用 label-token scoring inference，例如 torch forward parity eval，或用 vLLM `prompt_logprobs` 分别评分 A-F label tokens 后取 argmax。

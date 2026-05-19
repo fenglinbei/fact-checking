@@ -37,6 +37,14 @@ def build_label_decoding_prompt(sample: PreparedSample, label_prefix: str) -> st
     return prompt_text + label_prefix
 
 
+def label_choice_text(label_prefix: str, letter: str) -> str:
+    return letter if label_prefix.endswith((" ", "\n", "\t")) else " " + letter
+
+
+def build_label_scoring_prompt(sample: PreparedSample, label_prefix: str, letter: str) -> str:
+    return build_label_decoding_prompt(sample, label_prefix) + label_choice_text(label_prefix, letter)
+
+
 def load_inference_config(run_dir: Path, config_path: str | None = None) -> dict[str, Any]:
     resolved_path = Path(config_path) if config_path else run_dir / "config.resolved.yaml"
     if not resolved_path.exists():

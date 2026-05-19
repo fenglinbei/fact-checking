@@ -4,7 +4,9 @@ from pathlib import Path
 
 from fact_checking.infer.api import (
     _VLLMServerHandle,
+    _argmax_label_logprobs,
     _cleanup_vllm_server,
+    _extract_final_prompt_logprob,
     _merged_lora_cache_complete,
     _merged_lora_cache_key,
     _merge_lora_to_cache,
@@ -94,3 +96,26 @@ def test_cleanup_keeps_temporary_merge_when_server_is_left_running(tmp_path: Pat
     _cleanup_vllm_server(handle, {"server": {"stop_after_infer": False}})
 
     assert merged_dir.exists()
+
+
+def test_extract_final_prompt_logprob_reads_token_id_mapping() -> None:
+    prompt_logprobs = [
+        None,
+        {"2476": {"logprob": -0.1}},
+        {"362": {"logprob": -0.25}},
+    ]
+
+    assert _extract_final_prompt_logprob(prompt_logprobs, 362) == -0.25
+
+
+def test_argmax_label_logprobs_uses_label_order() -> None:
+    scores = {
+        "A": -5.0,
+        "B": -3.0,
+        "C": -0.2,
+        "D": -4.0,
+        "E": -2.0,
+        "F": -1.0,
+    }
+
+    assert _argmax_label_logprobs(scores) == 2

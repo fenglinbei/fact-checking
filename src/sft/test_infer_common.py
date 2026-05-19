@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sft.data.types import PreparedSample
-from sft.infer_common import build_label_decoding_prompt
+from sft.infer_common import build_label_decoding_prompt, build_label_scoring_prompt
 
 
 def _sample(prompt: str, *, prompt_add_special_tokens: bool = False) -> PreparedSample:
@@ -26,3 +26,9 @@ def test_build_label_decoding_prompt_preserves_special_token_spacing() -> None:
     sample = _sample("Plain prompt\n", prompt_add_special_tokens=True)
 
     assert build_label_decoding_prompt(sample, "Label:") == "Plain prompt Label:"
+
+
+def test_build_label_scoring_prompt_appends_space_prefixed_choice() -> None:
+    sample = _sample("<|im_start|>assistant\n")
+
+    assert build_label_scoring_prompt(sample, "Label:", "C") == "<|im_start|>assistantLabel: C"
