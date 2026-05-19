@@ -1,0 +1,39 @@
+{
+  "train": {
+    "no_evidence": [],
+    "long_claim": [
+      {
+        "split": "train",
+        "sample_idx": 4117,
+        "category": "long_claim",
+        "gold_label": "true",
+        "prompt": "<|im_start|>system\nYou are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>\n<|im_start|>user\nClassify the claim into exactly one LIAR-RAW label.\n\nLabels:\n- A (pants-fire): completely false and implausible\n- B (false): false based on the available evidence\n- C (barely-true): mostly false, with only a small element of truth\n- D (half-true): partly true and partly false\n- E (mostly-true): mostly true, with minor missing context or caveats\n- F (true): accurate based on the available evidence\n\nRules:\n- Use the retrieved evidence as the primary source.\n- Do not invent facts not supported by the evidence.\n- Respond with exactly one line: Label: <a single letter from A-F>\n\nClaim:\nLet's pay attention to kids who are not going to college, which ends up being about 60 percent of the kids... and get them trained for the jobs that are there. Because, you know, there are auto mechanic jobs paying $50,000, $60,000 that they can't get filled. There are airline mechanic jobs paying a lot of money that can't get filled. Remarks at AFSCME forum 6/19/2007\n\nEvidence:\n[1] Healthcare , retirement contribution , opportunity to teach summer class for extra pay $ 39,000 salary / Content Marketing Strategist - Digital MarketingBachelor of Arts in EnglishExperience .\n[2] When you 're offer a job , ask for more money ( yes , really ) .\n[3] Developing the technician of tomorrow The Mopar® Career Automotive Program ( CAP ) be partner with 100 college and technical school nationwide .\n[4] To keep up with the shift nature of the industry , he recently spend his own money to go to school and study at an advanced electrical program for two year .\n[5] 31 When he be 13 in 1968 , Jobs be give a summer job by Bill Hewlett ( of Hewlett-Packard ) after Jobs cold-called him to ask for part for an electronics project .<|im_end|>\n<|im_start|>assistant\n",
+        "target": "Label: F",
+        "prompt_was_truncated_for_snapshot": false,
+        "prompt_token_count": 469,
+        "target_token_count": 4,
+        "evidence_count": 5,
+        "was_truncated": false
+      },
+      {
+        "split": "train",
+        "sample_idx": 9788,
+        "category": "long_claim",
+        "gold_label": "mostly-true",
+        "prompt": "<|im_start|>system\nYou are a careful fact-checking assistant for LIAR-RAW claims. Classify claims using only the claim and retrieved evidence supplied by the user.<|im_end|>\n<|im_start|>user\nClassify the claim into exactly one LIAR-RAW label.\n\nLabels:\n- A (pants-fire): completely false and implausible\n- B (false): false based on the available evidence\n- C (barely-true): mostly false, with only a small element of truth\n- D (half-true): partly true and partly false\n- E (mostly-true): mostly true, with minor missing context or caveats\n- F (true): accurate based on the available evidence\n\nRules:\n- Use the retrieved evidence as the primary source.\n- Do not invent facts not supported by the evidence.\n- Respond with exactly one line: Label: <a single letter from A-F>\n\nClaim:\nBarbara Buono by the numbers: As a Trenton politician, she voted to raise taxes 154 times. Under her, property taxes up 70 percent. Backed a 16 percent sales tax increase. Utilities, nursing homes, cell phones, parking lots, lottery wins, gyms She taxed them all. Architect of Corzines budget, she drove New Jersey $2 billion into debt. Barbara Buono by the numbers: taking New Jersey backwards.\n\nEvidence:\n[1] Learn more about bidirectional Unicode character Today , home sale be up nearly 50 percent from where they be in the bad of the crisis .\n[2] 0 Says at the state level be spend more on tax expenditure than we be on public safety , health care and education combine .\n[3] Backed a 16 percent sale tax increase .\n[4] Under her , property tax up 70 percent .\n[5] The narrator also ( fairly ) accuse Buono of be the architect of Jon Corzines budget .<|im_end|>\n<|im_start|>assistant\n",
+        "target": "Label: E",
+        "prompt_was_truncated_for_snapshot": false,
+        "prompt_token_count": 397,
+        "target_token_count": 4,
+        "evidence_count": 5,
+        "was_truncated": false
+      }
+    ],
+    "was_truncated": []
+  },
+  "val": {
+    "no_evidence": [],
+    "long_claim": [],
+    "was_truncated": []
+  }
+}

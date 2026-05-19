@@ -1,0 +1,41 @@
+{
+  "run_id": "0516df1336b6",
+  "run_dir": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_verifier_val_evidence_checks/oracle_direct_val_pointwise_sentence_best__0516df13",
+  "build_id": "0bb9343d53e7",
+  "phases": {
+    "build": {
+      "status": "completed",
+      "updated_at": "2026-05-19 21:33:17",
+      "build_id": "0bb9343d53e7",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/cache/build/0bb9343d53e7",
+      "outputs": {
+        "train": "/data/liaozijie/fact-checking/outputs/cache/build/0bb9343d53e7/build_train.jsonl",
+        "val": "/data/liaozijie/fact-checking/outputs/cache/build/0bb9343d53e7/build_val.jsonl",
+        "test": "/data/liaozijie/fact-checking/outputs/cache/build/0bb9343d53e7/build_test.jsonl"
+      },
+      "reused": true
+    },
+    "infer": {
+      "status": "completed",
+      "updated_at": "2026-05-19 21:35:06",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_verifier_val_evidence_checks/oracle_direct_val_pointwise_sentence_best__0516df13/infer/val/best/dd5a0f1a634f",
+      "infer_id": "dd5a0f1a634f",
+      "artifacts": {
+        "metrics_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_verifier_val_evidence_checks/oracle_direct_val_pointwise_sentence_best__0516df13/infer/val/best/dd5a0f1a634f/api/metrics.json",
+        "confusion_data_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_verifier_val_evidence_checks/oracle_direct_val_pointwise_sentence_best__0516df13/infer/val/best/dd5a0f1a634f/api/confusion_matrix.json",
+        "confusion_png_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_verifier_val_evidence_checks/oracle_direct_val_pointwise_sentence_best__0516df13/infer/val/best/dd5a0f1a634f/api/confusion_matrix.png",
+        "predictions_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_verifier_val_evidence_checks/oracle_direct_val_pointwise_sentence_best__0516df13/infer/val/best/dd5a0f1a634f/api/val_predictions.jsonl"
+      },
+      "reused": false
+    }
+  },
+  "config": {
+    "experiment": {
+      "name": "b3_oracle_direct_verifier_val_evidence_checks"
+    },
+    "baseline": {
+      "variant": "b3_oracle_direct_eval_pointwise_sentence_1024",
+      "chunking_strategy": "sentence"
+    }
+  }
+}
