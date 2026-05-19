@@ -328,6 +328,8 @@ pants-fire 和 false 的 oracle 召回率接近 90%（候选池中存在强力�
 
 ### 2026-05-17：Pointwise selector V1 — selection-only gate 通过，但下游 verifier 评估反而低于 fixed-MMR
 
+> 2026-05-19 复盘修正：这里的 “selection-only gate 通过” 已判定为无效强信号，只能作为历史弱参考。V1 gate 使用了与正式 b3 semantic pipeline 不一致的 Chunk-MMR cache，并且候选池构造会先注入 oracle positives 再补 negatives；它没有评估正式 pipeline 的 `dedup -> hybrid top candidate_pool_size -> selector topK` 候选空间。
+
 **Selection-only 评估指标说明**：Recall@5 和 Jaccard@5 是衡量 selector 选出的 top-5 evidence set（$S_{\text{pred}}$）与 oracle evidence set（$S_{\text{oracle}}$）之间重叠度的指标，定义如下：
 
 $$\text{Recall@}K = \frac{|S_{\text{pred}} \cap S_{\text{oracle}}|}{|S_{\text{oracle}}|}$$
@@ -366,7 +368,7 @@ Recall@5 衡量"oracle 选的 K 个 evidence 中有多少被找回"（越高越�
 | val (full) | pointwise logreg | 0.8495 | 0.7706 |
 | val (full) | hybrid_score | 0.2622 | 0.2070 |
 
-Candidate-level AUPRC=0.8971, AUROC=0.8908。Per-label Jaccard@5 在 four retained labels 上均衡（0.72-0.81）。Selection-only gate 通过——pointwise logreg 在 overlap 指标上远超 hybrid_score baseline（Jaccard@5 0.75 vs 0.09 on retained val），说明模型能明显区分 oracle-selected candidate。
+Candidate-level AUPRC=0.8971, AUROC=0.8908。Per-label Jaccard@5 在 four retained labels 上均衡（0.72-0.81）。当时记录为 selection-only gate 通过；2026-05-19 复盘后，该结论降级为无效强 gate，因为它来自 reconstructed / positive-injected pool，不代表正式 build pipeline 的候选池。
 
 **但下游 vLLM verifier 评估显示指标反而低于 fixed-MMR baseline**。产物位于 `outputs/runs/b3_pointwise_oracle_selector_1024/`，共三个 run：
 
@@ -379,9 +381,11 @@ Candidate-level AUPRC=0.8971, AUROC=0.8908。Per-label Jaccard@5 在 four retain
 对比 fixed λ=0.7 baseline（test accuracy=0.2702, macro_f1=0.2769）：**V1a 完整流水线在 test 集上显著劣于 fixed-MMR**（accuracy -4.72 pp, macro_f1 -7.10 pp）。`mostly-true` 的 per-class F1 仅 0.0685，说明排除 true-side 训练后 selector 对 true-side 证据排序信号完全缺失。
 
 **Selection-only overlap 高但下游 verifier 差的原因**：
-1. Oracle set 继承了旧 verifier 的 false-side bias——oracle-selected evidence 对 false-side labels 的区分力强但对 true-side 无效。
-2. Pointwise independent selection 不考虑 evidence 间的交互（coverage/redundancy/order），选出的 top-5 可能信息高度重叠。
-3. Evidence order 效应：pointwise 按 score 降序排列，而 MMR 按逐步选择排列——SFT 模型对 evidence 顺序敏感。
+1. V1 gate 的 cache / chunking 与正式 b3 semantic pipeline 不一致，selection-only overlap 被 sentence-level 重建候选池抬高。
+2. V1 gate 先把 oracle positives 注入候选池再评估 selector，隐藏了正式 pipeline 中 positives 可能不在 hybrid top candidate_pool_size 内的问题。
+3. Oracle set 继承了旧 verifier 的 false-side bias——oracle-selected evidence 对 false-side labels 的区分力强但对 true-side 无效。
+4. Pointwise independent selection 不考虑 evidence 间的交互（coverage/redundancy/order），选出的 top-5 可能信息高度重叠。
+5. Evidence order 效应：pointwise 按 score 降序排列，而 MMR 按逐步选择排列——SFT 模型对 evidence 顺序敏感。
 
 [`../implementation/202605171322_oracle_search_output_contract.md`](../implementation/202605171322_oracle_search_output_contract.md) 随后修正 oracle search 输出契约：保存完整 `candidate_pool`、`candidate_scores`、`candidate_pool_fingerprint`、两阶段剪枝元数据，并明确 `selected_indices` 是相对于 `candidate_pool` 的索引，解决后续 selector 训练的候选池可追溯问题。
 
@@ -405,7 +409,7 @@ Candidate-level AUPRC=0.8971, AUROC=0.8908。Per-label Jaccard@5 在 four retain
 
 V1b 相比 V1a 有微弱提升（accuracy +0.0048, macro_f1 +0.0050），但**仍显著低于 fixed λ=0.7**（accuracy 差距约 3.4pp）。低权重 anchor 未能将 true-side 指标拉回 MMR 水平。
 
-**V1a/V1b 的总体结论**：Pointwise oracle selector 能在 selection-only overlap 指标上强力吸收 oracle-selected evidence（Jaccard@5 0.75 vs hybrid 0.09），但下游 verifier evaluation 给出了反向结论——accuracy 和 macro-F1 均低于 fixed-MMR baseline。这说明 selection-only overlap 并不等价于下游 verifier 指标提升，原因是：(1) 旧 oracle set 继承了旧 verifier 的 false bias；(2) pointwise independent selection 忽略了 evidence 间的交互效应；(3) evidence order 对 SFT 训练的影响未被考虑。后续 selector 方向的核心前提——"oracle evidence 可被模型吸收并转化为下游 verifier 提升"——在 pointwise 范式下尚未得到验证。
+**V1a/V1b 的总体结论**：Pointwise oracle selector 的旧 selection-only overlap 指标不能作为强结论，原因是 cache/chunking 和 candidate-pool 构造口径与正式 pipeline 不一致。下游 verifier evaluation 给出了反向结论——accuracy 和 macro-F1 均低于 fixed-MMR baseline。后续 selector 监督必须基于 re-oracle 保存的完整 candidate pool，并共享同一个 chunk cache fingerprint。
 
 [`../plan/202605180118_oracle_calibration_reoracle_four_stage_plan.md`](../plan/202605180118_oracle_calibration_reoracle_four_stage_plan.md) 把下一轮主线明确调整为四阶段：
 
@@ -452,7 +456,7 @@ class_weights:
 Checkpoint 选择曲线（按 `selection_score = macro_f1 + 0.5 × true_side_macro_f1`）：
 
 | step | macro_f1 | true_side_macro_f1 | selection_score |
-|---|---:|---:|---:|---:|
+|---|---|---|---|
 | 200 | 0.2511 | 0.3431 | 0.4227 |
 | 350 | 0.2800 | 0.3148 | 0.4374 |
 | 450 | 0.2930 | 0.3224 | 0.4543 |
@@ -531,7 +535,7 @@ $$\text{margin} = \log P(y_{\text{gold}} \mid c, S_K) - \max_{y \neq y_{\text{go
 3. Oracle λ 证明 adaptive λ 有约 3 pp 的理论收益（accuracy 30.40% → 33.48%），但 hard predictor（$R^2 \approx 0.01$）、high-margin 过滤（$R^2 = -0.17$）、3-bin 分类（全坍缩）、soft-label（utility curve 接近均匀）、DPO step-wise（4 轮全部坍缩到 λ=0.7）都没有形成可用策略。
 4. Scalar λ 路线已经足够充分地探索并阶段性停止；`log(n)`（test +0.0064）和 sensitivity-gated（test +0.0040）只作为弱 adaptive baseline 保留。
 5. Oracle evidence set 的上界 gap（accuracy +18.76 pp, macro-F1 +13.00 pp）远大于 oracle λ（~3 pp），说明后续更应学习 evidence set / selector / utility，而不是继续精确预测单一 λ。
-6. Pointwise V1 能在 selection-only overlap 指标上强吸收 oracle-selected evidence（Jaccard@5 0.75 vs hybrid 0.09），但下游 vLLM verifier evaluation 给出了反向结论：V1a test accuracy 0.2230、macro-F1 0.2059，均显著低于 fixed-MMR（0.2702/0.2769）；V1b 加入 true-side anchor 后 val 仅微升至 0.2630/0.2632，仍低于 fixed-MMR。Selection-only overlap 高 ≠ 下游 verifier 指标提升。
+6. Pointwise V1 旧 selection-only overlap 指标已判定为无效强 gate：它混用了非正式 cache，并在候选池中注入 oracle positives。下游 vLLM verifier evaluation 给出了反向结论：V1a test accuracy 0.2230、macro-F1 0.2059，均显著低于 fixed-MMR（0.2702/0.2769）；V1b 加入 true-side anchor 后 val 仅微升至 0.2630/0.2632，仍低于 fixed-MMR。
 7. 当前最合理主线是先校准 verifier（label-token weighted CE + margin objective），再用 calibration-aware objective 重跑 oracle，最后基于可追溯 candidate pool 构造 filtered supervision。
 8. **Stage 1 已完成**：Label-token weighted CE verifier 在 val 上整体指标与旧 verifier 持平（accuracy 0.3006 vs 0.2967），但 true-side 未退化（mostly-true F1=0.3419, true F1=0.3298，为全部 6 类最高），说明加权有效防止了 false-side bias。中间类（half-true/barely-true）仍是难点。
 9. **Stage 2 正在进行**：用 Stage 1 verifier + margin objective 在 train set 上重跑 oracle search。
@@ -548,8 +552,8 @@ $$\text{margin} = \log P(y_{\text{gold}} \mid c, S_K) - \max_{y \neq y_{\text{go
 | GRPO refinement | 暂不跑 | 前置 DPO 或 stable offline policy 不满足。 |
 | `log(n)` / sensitivity-gated | 保留 | 作为弱 adaptive baseline（+0.004-0.006），不继续深挖。 |
 | multi-weight MMR | 待定 | 仍可能解决 scalar λ 表达能力不足，但应在 re-oracle 后再决定。 |
-| Pointwise oracle selector (V1a) | 停止 | Selection-only overlap 高（Jaccard@5 0.75），但下游 test accuracy 0.2230 显著低于 fixed 0.2702。 |
-| Pointwise oracle selector (V1b) | 停止 | True-side anchor 仅微升（val +0.005），仍低于 fixed-MMR；pointwise 范式无法建模 evidence 交互。 |
+| Pointwise oracle selector (V1a) | 停止 | 旧 selection-only gate 无效，只能作弱参考；下游 test accuracy 0.2230 显著低于 fixed 0.2702。 |
+| Pointwise oracle selector (V1b) | 停止 | True-side anchor 仅微升（val +0.005），仍低于 fixed-MMR；旧 gate 口径不能支撑继续放大。 |
 | Oracle-set supervision | 继续 | 上界 gap 大（+13 pp macro-F1），但需要先修 verifier false bias + 换用 preference/sequential 范式。 |
 | Label-token CE verifier + margin re-oracle | 当前主线 | Stage 1 完成（val 持平旧 verifier，true-side 未退化）；Stage 2 train set re-oracle 进行中。 |
 

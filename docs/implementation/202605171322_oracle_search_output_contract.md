@@ -76,6 +76,27 @@ scripts/oracle_evidence/run_search.sh
 indices into per-row effective candidate_pool after deduplication and optional two-stage pruning
 ```
 
+## Selector 数据构造约束
+
+2026-05-19 起，pointwise selector 训练和 selection-only eval 默认把本页字段作为唯一严格监督来源：
+
+```text
+candidate_pool
+candidate_scores
+candidate_pool_fingerprint
+candidate_pool_metadata.chunk_mmr_fingerprint
+```
+
+新的默认候选池语义与正式 build pipeline 对齐：
+
+```text
+dedup -> hybrid top candidate_pool_size -> selector topK
+```
+
+禁止把 oracle positives 预先注入候选池后再评估 selector。旧的 `oracle_n_top_hybrid_with_positives` 只保留作历史诊断口径，不能作为 selection-only gate。
+
+训练、selection-only eval、build pipeline 必须共享同一个 Chunk-MMR fingerprint。若 oracle result 的 `candidate_pool_metadata.chunk_mmr_fingerprint`、显式 `--chunk-mmr-cache` 的父目录 fingerprint、或 pointwise model metadata 中的 `chunk_mmr_fingerprint` 与当前 build config 不一致，代码应直接抛异常。
+
 ## Two-stage 行为修正
 
 之前 two-stage 注释是按 `hybrid_score` 截断，但 Chunk-MMR cache 的候选 dict 不一定带 `hybrid_score`。现在 search 入口会先调用 `compute_hybrid_scores()`，为每个候选重新计算:

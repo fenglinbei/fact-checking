@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +43,9 @@ DEFAULT_FEATURE_NAMES = [
     "oracle_pool_size",
 ]
 
+PIPELINE_POOL_MODE = "pipeline_hybrid_topk"
+LEGACY_POSITIVE_INJECTION_POOL_MODE = "oracle_n_top_hybrid_with_positives"
+
 
 @dataclass
 class CandidatePool:
@@ -56,6 +59,10 @@ class CandidatePool:
     oracle_positive_count: int
     source_candidate_count: int
     pool_mode: str
+    chunk_mmr_fingerprint: str = ""
+    candidate_pool_source: str = ""
+    candidate_pool_fingerprint: str = ""
+    candidate_pool_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -66,6 +73,7 @@ class PointwiseSelectorModel:
     feature_std: np.ndarray
     feature_names: list[str]
     path: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -99,21 +107,19 @@ def load_build_config(
     config_overrides: str | None = None,
     model_base_path: str | None = None,
 ) -> dict[str, Any]:
-    """Load the build config the same way oracle search does.
-
-    This intentionally avoids Hydra compose because the plan uses an explicit
-    experiment YAML path.
-    """
+    """Load an experiment build config, expanding Hydra defaults when possible."""
     project_root = Path(__file__).resolve().parents[2]
     default_path = project_root / "configs" / "build" / "default.yaml"
     exp_path = Path(config_path)
     if not exp_path.is_absolute():
         exp_path = project_root / exp_path
-    default_cfg = OmegaConf.to_container(OmegaConf.load(default_path), resolve=False)
-    exp_cfg = OmegaConf.to_container(OmegaConf.load(exp_path), resolve=False)
-    build_default = dict(default_cfg.get("build", {}) or {})
-    build_exp = dict(exp_cfg.get("build", {}) or {})
-    build_cfg = _deep_merge(build_default, build_exp)
+    build_cfg = _load_hydra_build_config(project_root, exp_path)
+    if build_cfg is None:
+        default_cfg = OmegaConf.to_container(OmegaConf.load(default_path), resolve=False)
+        exp_cfg = OmegaConf.to_container(OmegaConf.load(exp_path), resolve=False)
+        build_default = dict(default_cfg.get("build", {}) or {})
+        build_exp = dict(exp_cfg.get("build", {}) or {})
+        build_cfg = _deep_merge(build_default, build_exp)
 
     if config_overrides:
         for override in config_overrides.split(","):
@@ -146,6 +152,31 @@ def load_build_config(
             )
 
     return build_cfg
+
+
+def _load_hydra_build_config(project_root: Path, exp_path: Path) -> dict[str, Any] | None:
+    experiment_dir = project_root / "configs" / "experiment"
+    try:
+        rel = exp_path.resolve().relative_to(experiment_dir.resolve())
+    except ValueError:
+        return None
+    if len(rel.parts) != 1 or rel.suffix not in {".yaml", ".yml"}:
+        return None
+    try:
+        from hydra import compose, initialize_config_dir
+        from hydra.core.global_hydra import GlobalHydra
+
+        if GlobalHydra.instance().is_initialized():
+            GlobalHydra.instance().clear()
+        with initialize_config_dir(version_base=None, config_dir=str(project_root / "configs")):
+            cfg = compose(
+                config_name="pipeline/default",
+                overrides=[f"experiment={rel.stem}"],
+            )
+        build_cfg = OmegaConf.to_container(cfg.get("build", {}), resolve=False)
+        return dict(build_cfg or {})
+    except Exception:
+        return None
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -183,14 +214,30 @@ def resolve_chunk_cache_path(
     split: str,
     cache_root: str | Path = "outputs/cache/chunk_mmr",
     explicit_path: str | None = None,
-    allow_single_fallback: bool = True,
+    expected_fingerprint: str | None = None,
+    allow_single_fallback: bool = False,
+    allow_explicit_mismatch: bool = False,
 ) -> tuple[Path, dict[str, Any]]:
+    fp = expected_fingerprint or _chunk_mmr_config_fingerprint(build_cfg)
     if explicit_path:
         path = Path(explicit_path)
-        return path, {"mode": "explicit", "path": str(path)}
+        if not path.exists():
+            raise FileNotFoundError(f"Explicit Chunk-MMR cache not found: {path}")
+        actual_fp = path.parent.name
+        if actual_fp != fp and not allow_explicit_mismatch:
+            raise ValueError(
+                f"Explicit Chunk-MMR cache fingerprint mismatch for split={split}: "
+                f"expected {fp}, got {actual_fp} from {path}. "
+                "Use a config that resolves to the same cache fingerprint."
+            )
+        return path, {
+            "mode": "explicit",
+            "fingerprint": actual_fp,
+            "expected_fingerprint": fp,
+            "path": str(path),
+        }
 
     cache_root = Path(cache_root)
-    fp = _chunk_mmr_config_fingerprint(build_cfg)
     resolved = cache_root / fp / f"{split}.pkl"
     if resolved.exists():
         return resolved, {"mode": "fingerprint", "fingerprint": fp, "path": str(resolved)}
@@ -295,7 +342,7 @@ def build_candidate_pool(
     alpha_dense: float,
     alpha_lexical: float,
     alpha_bm25: float,
-    pool_mode: str = "oracle_n_top_hybrid_with_positives",
+    pool_mode: str = LEGACY_POSITIVE_INJECTION_POOL_MODE,
     fallback_pool_size: int = 15,
 ) -> CandidatePool:
     scored = compute_hybrid_scores(sample, alpha_dense, alpha_lexical, alpha_bm25)
@@ -312,6 +359,7 @@ def build_candidate_pool(
             oracle_positive_count=len(oracle_rec.get("selected_texts") or []),
             source_candidate_count=0,
             pool_mode=pool_mode,
+            candidate_pool_source="legacy_reconstructed_with_positive_injection",
         )
 
     source_indices = _dedup_source_indices(sample, scored["hybrid_scores"], n)
@@ -355,7 +403,176 @@ def build_candidate_pool(
         oracle_positive_count=len(oracle_rec.get("selected_texts") or []),
         source_candidate_count=len(source_indices),
         pool_mode=pool_mode,
+        candidate_pool_source="legacy_reconstructed_with_positive_injection",
     )
+
+
+def build_pipeline_style_candidate_pool(
+    sample: Any,
+    oracle_rec: dict[str, Any],
+    *,
+    alpha_dense: float,
+    alpha_lexical: float,
+    alpha_bm25: float,
+    candidate_pool_size: int | None = None,
+    fallback_pool_size: int = 15,
+    require_oracle_candidate_pool: bool = True,
+    expected_chunk_mmr_fingerprint: str | None = None,
+) -> CandidatePool:
+    """Rebuild the model-facing pool with the production pipeline contract.
+
+    The contract is: deduplicate source chunks, rank by hybrid score, truncate to
+    the candidate pool size, then let the pointwise model choose topK. No oracle
+    positives are injected before truncation.
+    """
+    oracle_pool = oracle_rec.get("candidate_pool") or []
+    metadata = dict(oracle_rec.get("candidate_pool_metadata") or {})
+    oracle_fp = str(metadata.get("chunk_mmr_fingerprint") or "")
+    if expected_chunk_mmr_fingerprint:
+        if not oracle_fp:
+            raise ValueError(
+                f"Oracle record {oracle_rec.get('event_id')} has no chunk_mmr_fingerprint "
+                "in candidate_pool_metadata."
+            )
+        if oracle_fp != expected_chunk_mmr_fingerprint:
+            raise ValueError(
+                f"Oracle record {oracle_rec.get('event_id')} chunk cache fingerprint mismatch: "
+                f"expected {expected_chunk_mmr_fingerprint}, got {oracle_fp}."
+            )
+    if require_oracle_candidate_pool and not oracle_pool:
+        raise ValueError(
+            f"Oracle record {oracle_rec.get('event_id')} has no saved candidate_pool; "
+            "pipeline-style selector data must be built from oracle-search candidate pools."
+        )
+
+    effective_pool_size = candidate_pool_size
+    if effective_pool_size is None or int(effective_pool_size) <= 0:
+        effective_pool_size = len(oracle_pool) if oracle_pool else int(
+            oracle_rec.get("n_candidates") or fallback_pool_size
+        )
+    candidates, features, source_indices, source_count = build_pointwise_inference_pool(
+        sample,
+        alpha_dense=alpha_dense,
+        alpha_lexical=alpha_lexical,
+        alpha_bm25=alpha_bm25,
+        candidate_pool_size=int(effective_pool_size),
+    )
+    if not candidates:
+        return CandidatePool(
+            event_id=str(sample.event_id),
+            claim=str(sample.claim),
+            gold_label=str(sample.label),
+            candidates=[],
+            features=[],
+            positive_local_indices=set(),
+            matched_positive_count=0,
+            oracle_positive_count=len(oracle_rec.get("selected_indices") or []),
+            source_candidate_count=int(source_count),
+            pool_mode=PIPELINE_POOL_MODE,
+            chunk_mmr_fingerprint=oracle_fp,
+            candidate_pool_source="oracle_results_candidate_pool",
+            candidate_pool_fingerprint=str(oracle_rec.get("candidate_pool_fingerprint") or ""),
+            candidate_pool_metadata=metadata,
+        )
+
+    oracle_source_indices: list[int] = []
+    if oracle_pool:
+        oracle_source_indices = _validate_pipeline_pool_matches_oracle(
+            event_id=str(sample.event_id),
+            candidates=candidates,
+            source_indices=source_indices,
+            oracle_pool=oracle_pool,
+        )
+
+    selected_indices = _oracle_selected_indices(oracle_rec)
+    if oracle_pool and selected_indices:
+        max_index = len(oracle_pool) - 1
+        bad = [idx for idx in selected_indices if idx < 0 or idx > max_index]
+        if bad:
+            raise ValueError(
+                f"Oracle record {sample.event_id} has selected_indices outside candidate_pool: {bad}"
+            )
+        if oracle_source_indices:
+            source_to_local = {source_idx: local_idx for local_idx, source_idx in enumerate(source_indices)}
+            positive_local = {
+                source_to_local[oracle_source_indices[idx]]
+                for idx in selected_indices
+                if idx < len(oracle_source_indices) and oracle_source_indices[idx] in source_to_local
+            }
+        else:
+            positive_local = {idx for idx in selected_indices if 0 <= idx < len(candidates)}
+    else:
+        positive_local = set()
+    if not positive_local and not selected_indices:
+        positive_source_indices = _match_positive_indices(sample, source_indices, oracle_rec)
+        source_to_local = {source_idx: local_idx for local_idx, source_idx in enumerate(source_indices)}
+        positive_local = {
+            source_to_local[idx]
+            for idx in positive_source_indices
+            if idx in source_to_local
+        }
+
+    return CandidatePool(
+        event_id=str(sample.event_id),
+        claim=str(sample.claim),
+        gold_label=str(sample.label),
+        candidates=candidates,
+        features=features,
+        positive_local_indices=positive_local,
+        matched_positive_count=len(positive_local),
+        oracle_positive_count=len(selected_indices or (oracle_rec.get("selected_texts") or [])),
+        source_candidate_count=int(source_count),
+        pool_mode=PIPELINE_POOL_MODE,
+        chunk_mmr_fingerprint=oracle_fp,
+        candidate_pool_source="oracle_results_candidate_pool",
+        candidate_pool_fingerprint=str(oracle_rec.get("candidate_pool_fingerprint") or ""),
+        candidate_pool_metadata=metadata,
+    )
+
+
+def _oracle_selected_indices(oracle_rec: dict[str, Any]) -> list[int]:
+    selected: list[int] = []
+    for raw in oracle_rec.get("selected_indices") or []:
+        try:
+            selected.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return selected
+
+
+def _validate_pipeline_pool_matches_oracle(
+    *,
+    event_id: str,
+    candidates: list[dict[str, Any]],
+    source_indices: list[int],
+    oracle_pool: list[dict[str, Any]],
+) -> list[int]:
+    if len(candidates) != len(oracle_pool):
+        raise ValueError(
+            f"Pipeline-style candidate pool size mismatch for {event_id}: "
+            f"rebuilt {len(candidates)}, oracle saved {len(oracle_pool)}."
+        )
+
+    oracle_source_indices = [item.get("source_index") for item in oracle_pool]
+    if all(idx is not None for idx in oracle_source_indices):
+        expected = [int(idx) for idx in oracle_source_indices]
+        actual = [int(idx) for idx in source_indices]
+        if actual != expected:
+            if set(actual) != set(expected):
+                raise ValueError(
+                    f"Pipeline-style candidate pool membership mismatch for {event_id}: "
+                    f"rebuilt source_index[:5]={actual[:5]}, oracle source_index[:5]={expected[:5]}."
+                )
+        return expected
+
+    oracle_uids = [str(item.get("candidate_uid") or "") for item in oracle_pool]
+    actual_uids = [str(item.get("candidate_uid") or "") for item in candidates]
+    if all(oracle_uids) and actual_uids != oracle_uids:
+        raise ValueError(
+            f"Pipeline-style candidate pool uid mismatch for {event_id}: "
+            f"rebuilt uid[:3]={actual_uids[:3]}, oracle uid[:3]={oracle_uids[:3]}."
+        )
+    return []
 
 
 def _dedup_source_indices(sample: Any, hybrid_scores: np.ndarray, n: int) -> list[int]:
@@ -463,7 +680,12 @@ def _pool_features(
     return rows
 
 
-def load_pointwise_selector_model(path: str | Path) -> PointwiseSelectorModel:
+def load_pointwise_selector_model(
+    path: str | Path,
+    *,
+    expected_chunk_mmr_fingerprint: str | None = None,
+    strict_fingerprint: bool = True,
+) -> PointwiseSelectorModel:
     model_path = Path(path)
     if model_path.is_dir():
         model_path = model_path / "model.npz"
@@ -471,6 +693,19 @@ def load_pointwise_selector_model(path: str | Path) -> PointwiseSelectorModel:
         raise FileNotFoundError(f"Pointwise selector model not found: {model_path}")
 
     data = np.load(model_path, allow_pickle=True)
+    metadata = _load_pointwise_model_metadata(model_path, data)
+    model_fp = str(metadata.get("chunk_mmr_fingerprint") or "")
+    if expected_chunk_mmr_fingerprint:
+        if not model_fp and strict_fingerprint:
+            raise ValueError(
+                f"Pointwise selector model {model_path} has no chunk_mmr_fingerprint metadata; "
+                f"expected {expected_chunk_mmr_fingerprint}."
+            )
+        if model_fp and model_fp != expected_chunk_mmr_fingerprint and strict_fingerprint:
+            raise ValueError(
+                f"Pointwise selector model chunk cache fingerprint mismatch: "
+                f"expected {expected_chunk_mmr_fingerprint}, got {model_fp} from {model_path}."
+            )
     return PointwiseSelectorModel(
         weights=data["weights"].astype(np.float32),
         bias=float(data["bias"][0]),
@@ -478,7 +713,27 @@ def load_pointwise_selector_model(path: str | Path) -> PointwiseSelectorModel:
         feature_std=data["feature_std"].astype(np.float32),
         feature_names=[str(x) for x in data["feature_names"].tolist()],
         path=str(model_path),
+        metadata=metadata,
     )
+
+
+def _load_pointwise_model_metadata(model_path: Path, data: Any) -> dict[str, Any]:
+    if "metadata_json" in getattr(data, "files", []):
+        raw = data["metadata_json"]
+        try:
+            text = str(raw.item() if getattr(raw, "shape", ()) == () else raw.tolist()[0])
+            payload = json.loads(text)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            pass
+    metadata_path = model_path.parent / "metadata.json"
+    if metadata_path.exists():
+        with metadata_path.open(encoding="utf-8") as fh:
+            payload = json.load(fh)
+        if isinstance(payload, dict):
+            return payload
+    return {}
 
 
 def build_pointwise_inference_pool(
@@ -648,11 +903,15 @@ def pool_to_pointwise_rows(
             "claim": pool.claim,
             "gold_label": pool.gold_label,
             "candidate_idx": i,
+            "candidate_uid": str(candidate.get("candidate_uid") or ""),
+            "source_index": int(candidate.get("source_index", i)),
+            "candidate_pool_rank": int(candidate.get("candidate_pool_rank", i)),
             "source_text": str(candidate.get("text", "")),
             "report_id": str(candidate.get("report_id") or _source_report_id(candidate)),
             "is_oracle_selected": int(i in pool.positive_local_indices),
             "features": {name: float(features.get(name, 0.0)) for name in DEFAULT_FEATURE_NAMES},
             "oracle_final_logprob": float(oracle_rec.get("final_logprob", 0.0)),
+            "oracle_margin": float(oracle_rec.get("margin", 0.0)),
             "oracle_correct": bool(oracle_rec.get("is_correct")),
             "oracle_n_candidates": int(oracle_rec.get("n_candidates", 0)),
             "matched_positive_count": int(pool.matched_positive_count),
@@ -661,6 +920,9 @@ def pool_to_pointwise_rows(
             "supervision_weight": float(supervision_weight),
             "anchor_source": anchor_source,
             "pool_mode": pool.pool_mode,
+            "candidate_pool_source": pool.candidate_pool_source,
+            "candidate_pool_fingerprint": pool.candidate_pool_fingerprint,
+            "chunk_mmr_fingerprint": pool.chunk_mmr_fingerprint,
         })
     return rows
 
@@ -853,6 +1115,9 @@ def selected_evidence_rows(
             selected.append({
                 "rank": rank,
                 "candidate_idx": int(row["candidate_idx"]),
+                "candidate_uid": str(row.get("candidate_uid", "")),
+                "source_index": int(row.get("source_index", row["candidate_idx"])),
+                "candidate_pool_rank": int(row.get("candidate_pool_rank", row["candidate_idx"])),
                 "score": float(local_scores[local_idx]),
                 "is_oracle_selected": int(row["is_oracle_selected"]),
                 "text": row.get("source_text", ""),
@@ -861,6 +1126,8 @@ def selected_evidence_rows(
         out.append({
             "event_id": eid,
             "gold_label": rows[idxs[0]]["gold_label"],
+            "pool_mode": rows[idxs[0]].get("pool_mode", ""),
+            "chunk_mmr_fingerprint": rows[idxs[0]].get("chunk_mmr_fingerprint", ""),
             "selected": selected,
         })
     return out

@@ -10,7 +10,10 @@ cd "${PROJECT_ROOT}"
 export PYTHONPATH="${PROJECT_ROOT}/src:${PYTHONPATH:-}"
 
 STAGE1_RUN_DIR="${STAGE1_RUN_DIR:-outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f}"
-CONFIG="${CONFIG:-configs/experiment/b3_label_token_ce_1024.yaml}"
+# Keep re-oracle evidence chunking on the b3 semantic pipeline cache
+# (chunk_mmr_fingerprint=e0b01520364d).  The verifier itself is still supplied
+# by STAGE1_RUN_DIR/LORA_ADAPTER below.
+CONFIG="${CONFIG:-configs/experiment/b3_mmr_topk_sweep_1024.yaml}"
 VERIFIER_MODEL="${VERIFIER_MODEL:-/data/models/Qwen2.5-7B-Instruct/}"
 LORA_ADAPTER="${LORA_ADAPTER:-${STAGE1_RUN_DIR}/train/best}"
 SPLIT="${SPLIT:-val}"

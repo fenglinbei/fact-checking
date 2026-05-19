@@ -28,6 +28,12 @@ margin = log P(y_gold | claim, evidence_set)
 | `scripts/oracle_evidence/run_reoracle_stage2.sh` | Stage 2 默认运行脚本 |
 | `scripts/oracle_evidence/merge_shards.py` | 合并 sharded oracle JSONL，并重算合并指标 |
 
+2026-05-19 修正：
+
+- `search_optimal_evidence.py` 的 config 加载已优先使用 Hydra compose 展开 experiment defaults，避免只读取当前 YAML 而丢失父配置。
+- `run_reoracle_stage2.sh` 默认 `CONFIG` 改为 `configs/experiment/b3_mmr_topk_sweep_1024.yaml`，使后续 re-oracle 默认回到 b3 semantic chunk pipeline，Chunk-MMR fingerprint 应为 `e0b01520364d`。
+- 既有 `outputs/oracle_evidence/stage2_margin_train_sharded` 是修正前产物，里面保存的 `candidate_pool_metadata.chunk_mmr_fingerprint` 为 `432dfc970e75`，属于 sentence-cache 结果。它可以用于当前 sentence-cache pointwise 试验，但不应与后续 semantic re-oracle 结果混用。
+
 默认仍保持向后兼容：
 
 ```bash
@@ -54,7 +60,7 @@ bash scripts/oracle_evidence/run_reoracle_stage2.sh
 STAGE1_RUN_DIR=outputs/runs/b3_label_token_ce_1024/label_token_ce_stage1__0ee9b55f
 VERIFIER_MODEL=/data/models/Qwen2.5-7B-Instruct/
 LORA_ADAPTER=${STAGE1_RUN_DIR}/train/best
-CONFIG=configs/experiment/b3_label_token_ce_1024.yaml
+CONFIG=configs/experiment/b3_mmr_topk_sweep_1024.yaml
 SPLIT=val
 TOP_K=5
 SEARCH_METHOD=greedy
@@ -66,6 +72,14 @@ NUM_SHARDS=1
 SHARD_INDEX=0
 RESUME=true
 ```
+
+当前脚本默认值已更新为：
+
+```text
+CONFIG=configs/experiment/b3_mmr_topk_sweep_1024.yaml
+```
+
+Stage 1 verifier 仍由 `STAGE1_RUN_DIR` / `LORA_ADAPTER` 指定；`CONFIG` 在这里主要决定 evidence candidate pool 和 prompt/build 配置。
 
 训练集 re-oracle：
 

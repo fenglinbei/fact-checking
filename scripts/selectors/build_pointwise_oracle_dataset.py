@@ -9,8 +9,11 @@ from tqdm.auto import tqdm
 from fact_checking.oracle_pointwise import (
     ANCHOR_WEIGHTS,
     DEFAULT_FEATURE_NAMES,
+    LEGACY_POSITIVE_INJECTION_POOL_MODE,
+    PIPELINE_POOL_MODE,
     TRUE_SIDE_LABELS,
     build_candidate_pool,
+    build_pipeline_style_candidate_pool,
     finite_or_zero,
     load_build_config,
     load_chunk_samples_by_event,
@@ -56,10 +59,25 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--pool-mode",
-        default="oracle_n_top_hybrid_with_positives",
-        choices=["oracle_n_top_hybrid_with_positives"],
+        default=PIPELINE_POOL_MODE,
+        choices=[PIPELINE_POOL_MODE, LEGACY_POSITIVE_INJECTION_POOL_MODE],
     )
     p.add_argument("--fallback-pool-size", type=int, default=15)
+    p.add_argument(
+        "--expected-chunk-mmr-fingerprint",
+        default=None,
+        help="Optional hard expectation for the Chunk-MMR cache fingerprint.",
+    )
+    p.add_argument(
+        "--allow-cache-fingerprint-mismatch",
+        action="store_true",
+        help="Permit an explicit --chunk-mmr-cache whose parent fingerprint differs from the config.",
+    )
+    p.add_argument(
+        "--allow-missing-oracle-candidate-pool",
+        action="store_true",
+        help="Only for legacy diagnostics; pipeline-style data should use saved oracle candidate_pool.",
+    )
     p.add_argument("--alpha-dense", type=float, default=None)
     p.add_argument("--alpha-lexical", type=float, default=None)
     p.add_argument("--alpha-bm25", type=float, default=None)
@@ -88,6 +106,13 @@ def main() -> None:
         split=args.split,
         cache_root=args.chunk_mmr_cache_root,
         explicit_path=args.chunk_mmr_cache,
+        expected_fingerprint=args.expected_chunk_mmr_fingerprint,
+        allow_explicit_mismatch=args.allow_cache_fingerprint_mismatch,
+    )
+    chunk_mmr_fingerprint = str(
+        cache_resolution.get("fingerprint")
+        or cache_resolution.get("expected_fingerprint")
+        or cache_path.parent.name
     )
     samples_by_event = load_chunk_samples_by_event(cache_path)
     oracle_records = read_jsonl(args.oracle_results)
@@ -151,21 +176,39 @@ def main() -> None:
 
         rec_for_pool = dict(rec)
         if policy.get("anchor_source") == "fixed_mmr_correct" and eid in fixed_anchor_texts:
+            if args.pool_mode == PIPELINE_POOL_MODE:
+                raise ValueError(
+                    "fixed_mmr_correct anchors are not compatible with pipeline-style oracle pools; "
+                    "use the legacy positive-injection mode only for that diagnostic."
+                )
             rec_for_pool["selected_texts"] = fixed_anchor_texts[eid]
             rec_for_pool["n_candidates"] = max(
                 int(rec_for_pool.get("n_candidates") or 0),
                 int(args.fallback_pool_size),
             )
 
-        pool = build_candidate_pool(
-            sample,
-            rec_for_pool,
-            alpha_dense=alpha_dense,
-            alpha_lexical=alpha_lexical,
-            alpha_bm25=alpha_bm25,
-            pool_mode=args.pool_mode,
-            fallback_pool_size=args.fallback_pool_size,
-        )
+        if args.pool_mode == PIPELINE_POOL_MODE:
+            pool = build_pipeline_style_candidate_pool(
+                sample,
+                rec_for_pool,
+                alpha_dense=alpha_dense,
+                alpha_lexical=alpha_lexical,
+                alpha_bm25=alpha_bm25,
+                fallback_pool_size=args.fallback_pool_size,
+                require_oracle_candidate_pool=not args.allow_missing_oracle_candidate_pool,
+                expected_chunk_mmr_fingerprint=chunk_mmr_fingerprint,
+            )
+        else:
+            pool = build_candidate_pool(
+                sample,
+                rec_for_pool,
+                alpha_dense=alpha_dense,
+                alpha_lexical=alpha_lexical,
+                alpha_bm25=alpha_bm25,
+                pool_mode=args.pool_mode,
+                fallback_pool_size=args.fallback_pool_size,
+            )
+            pool.chunk_mmr_fingerprint = chunk_mmr_fingerprint
         if not pool.candidates:
             skipped["no_candidates"] += 1
             continue
@@ -196,6 +239,14 @@ def main() -> None:
         "feature_names": DEFAULT_FEATURE_NAMES,
         "label_name": "is_oracle_selected",
         "pool_mode": args.pool_mode,
+        "candidate_pool_source": (
+            "oracle_results_candidate_pool"
+            if args.pool_mode == PIPELINE_POOL_MODE
+            else "legacy_reconstructed_with_positive_injection"
+        ),
+        "chunk_mmr_fingerprint": chunk_mmr_fingerprint,
+        "oracle_results": args.oracle_results,
+        "chunk_mmr_cache": str(cache_path),
         "filter_preset": args.filter_preset,
         "supervision_weight_name": "supervision_weight",
         "anchor_weights": true_side_anchor_weights,
@@ -211,6 +262,7 @@ def main() -> None:
     )
     report.update({
         "cache_resolution": cache_resolution,
+        "chunk_mmr_fingerprint": chunk_mmr_fingerprint,
         "split": args.split,
         "output_rows": len(rows),
         "skipped": skipped,
@@ -229,7 +281,9 @@ def main() -> None:
         },
         "notes": [
             "Rows are candidate-level examples; event_id must be used for grouped splits.",
-            "If cache_resolution.mode is fallback or explicit to a non-original cache, candidate pools are reconstructed by text-matching oracle positives and filling negatives by hybrid rank.",
+            "Default rows use pipeline-style pools: dedup -> hybrid top candidate_pool_size -> selector topK.",
+            "pipeline_hybrid_topk requires the saved oracle candidate_pool and matching chunk_mmr_fingerprint.",
+            "oracle_n_top_hybrid_with_positives is legacy only and should not be used as a selection-only gate.",
         ],
     })
     write_json(output_dir / "filter_report.json", report)

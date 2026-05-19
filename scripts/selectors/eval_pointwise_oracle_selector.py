@@ -8,20 +8,23 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from fact_checking.oracle_pointwise import (
+    LEGACY_POSITIVE_INJECTION_POOL_MODE,
+    PIPELINE_POOL_MODE,
     average_precision,
     bce_loss,
     build_candidate_pool,
+    build_pipeline_style_candidate_pool,
     claim_selection_metrics,
-    feature_matrix,
     labels_array,
     load_build_config,
     load_chunk_samples_by_event,
+    load_pointwise_selector_model,
     pool_to_pointwise_rows,
     read_jsonl,
     resolve_chunk_cache_path,
     roc_auc,
+    score_pointwise_features,
     selected_evidence_rows,
-    sigmoid,
     supervision_policy_for_record,
     write_json,
     write_jsonl,
@@ -40,8 +43,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--chunk-mmr-cache-root", default="outputs/cache/chunk_mmr")
     p.add_argument("--output-dir", required=True)
     p.add_argument("--filter-preset", default="v1a", choices=["v1a", "v1b", "all"])
-    p.add_argument("--pool-mode", default="oracle_n_top_hybrid_with_positives")
+    p.add_argument(
+        "--pool-mode",
+        default=PIPELINE_POOL_MODE,
+        choices=[PIPELINE_POOL_MODE, LEGACY_POSITIVE_INJECTION_POOL_MODE],
+    )
     p.add_argument("--fallback-pool-size", type=int, default=15)
+    p.add_argument("--expected-chunk-mmr-fingerprint", default=None)
+    p.add_argument("--allow-cache-fingerprint-mismatch", action="store_true")
+    p.add_argument("--allow-model-fingerprint-mismatch", action="store_true")
+    p.add_argument("--allow-missing-oracle-candidate-pool", action="store_true")
     p.add_argument("--top-k", type=int, default=5)
     p.add_argument("--alpha-dense", type=float, default=None)
     p.add_argument("--alpha-lexical", type=float, default=None)
@@ -53,7 +64,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    model = _load_model(Path(args.model_dir) / "model.npz")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -72,6 +82,18 @@ def main() -> None:
         split=args.split,
         cache_root=args.chunk_mmr_cache_root,
         explicit_path=args.chunk_mmr_cache,
+        expected_fingerprint=args.expected_chunk_mmr_fingerprint,
+        allow_explicit_mismatch=args.allow_cache_fingerprint_mismatch,
+    )
+    chunk_mmr_fingerprint = str(
+        cache_resolution.get("fingerprint")
+        or cache_resolution.get("expected_fingerprint")
+        or cache_path.parent.name
+    )
+    model = load_pointwise_selector_model(
+        args.model_dir,
+        expected_chunk_mmr_fingerprint=chunk_mmr_fingerprint,
+        strict_fingerprint=not args.allow_model_fingerprint_mismatch,
     )
     samples_by_event = load_chunk_samples_by_event(cache_path)
     oracle_records = read_jsonl(args.oracle_results)
@@ -101,15 +123,28 @@ def main() -> None:
         if not policy["keep"]:
             skipped["filter"] += 1
             continue
-        pool = build_candidate_pool(
-            sample,
-            rec,
-            alpha_dense=alpha_dense,
-            alpha_lexical=alpha_lexical,
-            alpha_bm25=alpha_bm25,
-            pool_mode=args.pool_mode,
-            fallback_pool_size=args.fallback_pool_size,
-        )
+        if args.pool_mode == PIPELINE_POOL_MODE:
+            pool = build_pipeline_style_candidate_pool(
+                sample,
+                rec,
+                alpha_dense=alpha_dense,
+                alpha_lexical=alpha_lexical,
+                alpha_bm25=alpha_bm25,
+                fallback_pool_size=args.fallback_pool_size,
+                require_oracle_candidate_pool=not args.allow_missing_oracle_candidate_pool,
+                expected_chunk_mmr_fingerprint=chunk_mmr_fingerprint,
+            )
+        else:
+            pool = build_candidate_pool(
+                sample,
+                rec,
+                alpha_dense=alpha_dense,
+                alpha_lexical=alpha_lexical,
+                alpha_bm25=alpha_bm25,
+                pool_mode=args.pool_mode,
+                fallback_pool_size=args.fallback_pool_size,
+            )
+            pool.chunk_mmr_fingerprint = chunk_mmr_fingerprint
         if not pool.candidates:
             skipped["no_candidates"] += 1
             continue
@@ -129,10 +164,8 @@ def main() -> None:
     if not rows:
         raise ValueError("No evaluation rows were produced.")
 
-    x_raw = feature_matrix(rows, model["feature_names"])
-    x = (x_raw - model["feature_mean"]) / model["feature_std"]
     y = labels_array(rows)
-    model_scores = sigmoid(x @ model["weights"] + model["bias"])
+    model_scores = score_pointwise_features([row["features"] for row in rows], model)
     hybrid_scores = np.array([float(row["features"].get("hybrid_score", 0.0)) for row in rows], dtype=np.float32)
 
     metrics = {
@@ -140,8 +173,11 @@ def main() -> None:
         "oracle_results": args.oracle_results,
         "split": args.split,
         "filter_preset": args.filter_preset,
+        "pool_mode": args.pool_mode,
         "cache_path": str(cache_path),
         "cache_resolution": cache_resolution,
+        "chunk_mmr_fingerprint": chunk_mmr_fingerprint,
+        "model_metadata": model.metadata,
         "n_rows": len(rows),
         "n_claims": len({row["event_id"] for row in rows}),
         "skipped": skipped,
@@ -186,19 +222,6 @@ def main() -> None:
             hr=hybrid_sel["recall_at_k"],
         )
     )
-
-
-def _load_model(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"Model not found: {path}")
-    data = np.load(path, allow_pickle=True)
-    return {
-        "weights": data["weights"].astype(np.float32),
-        "bias": float(data["bias"][0]),
-        "feature_mean": data["feature_mean"].astype(np.float32),
-        "feature_std": data["feature_std"].astype(np.float32),
-        "feature_names": [str(x) for x in data["feature_names"].tolist()],
-    }
 
 
 if __name__ == "__main__":

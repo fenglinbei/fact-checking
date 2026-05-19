@@ -10,6 +10,8 @@ docs/plan/202605171203_oracle_pointwise_supervision_v1.md
 
 ## 1. 实现范围
 
+> 2026-05-19 修正：本页记录的 V1 selection-only gate 已标记为**无效强门槛 / 仅可作为弱参考**。原因是 V1 数据构造使用 `oracle_n_top_hybrid_with_positives`，会先把 oracle positives 注入候选池；同时旧运行显式读取了与当前 b3 semantic pipeline 不一致的 Chunk-MMR cache。该指标不能再作为进入 verifier pipeline 的 go/no-go 依据。新的 selector 监督必须使用 oracle result 保存的 `candidate_pool` / `candidate_scores` / `candidate_pool_metadata.chunk_mmr_fingerprint`，并通过 pipeline-style pool：`dedup -> hybrid top candidate_pool_size -> selector topK`。
+
 本轮已实现第一版轻量闭环:
 
 1. 从 oracle evidence search 输出构造 filtered pointwise supervision rows。
@@ -148,7 +150,7 @@ outputs/oracle_pointwise/v1/logreg/eval_val/candidate_scores.jsonl
 
 ## 3. 重要实现约束
 
-### 3.1 当前候选池不是 oracle run 的严格原始候选池
+### 3.1 V1 候选池不是 oracle run 的严格原始候选池
 
 `outputs/oracle_evidence/20260517_041502/oracle_results_train.jsonl` 没有保存完整 candidate pool，只保存了 oracle-selected texts / indices / search steps。
 
@@ -166,9 +168,22 @@ outputs/cache/chunk_mmr/57e1c87dcd33/val.pkl
 3. 用当前 cache 中 hybrid score 最高的候选补 negatives。
 4. 若 positive 数超过目标池大小，则保留所有 positives。
 
-所以本轮结果是 `reconstructed-pool selection-only probe`，不是严格复现 oracle search 的原始 candidate pool。
+所以本轮结果是 `reconstructed-pool selection-only probe`，不是严格复现 oracle search 的原始 candidate pool。2026-05-19 之后，这一路径只能用于历史复盘；新训练和 selection-only eval 默认不再允许该口径。
 
-### 3.2 如何判断重建质量
+### 3.2 新的 selector 数据构造规范
+
+严格 pointwise selector 数据必须满足:
+
+```text
+oracle_results_<split>.jsonl 中存在 candidate_pool / candidate_scores / candidate_pool_metadata
+candidate_pool_metadata.chunk_mmr_fingerprint == 当前 build config 解析出的 Chunk-MMR fingerprint
+训练、selection-only eval、build pipeline 三处使用同一个 chunk_mmr_fingerprint
+候选池构造口径为 dedup -> hybrid top candidate_pool_size -> selector topK
+```
+
+若显式传入的 `--chunk-mmr-cache` 与 config fingerprint 不一致，或模型元数据中的 `chunk_mmr_fingerprint` 与 build pipeline 当前 fingerprint 不一致，新代码会直接抛异常。
+
+### 3.3 如何判断重建质量
 
 数据构造脚本会在 `filter_report.json` 中记录 positive text match rate。
 

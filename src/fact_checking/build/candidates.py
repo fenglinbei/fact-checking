@@ -1489,11 +1489,16 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                 "build.retrieval.pointwise_oracle.model_dir is required when "
                 "build.retrieval.selection_method=pointwise_oracle."
             )
-        pointwise_model = load_pointwise_selector_model(pointwise_model_path)
+        pointwise_model = load_pointwise_selector_model(
+            pointwise_model_path,
+            expected_chunk_mmr_fingerprint=chunk_mmr_fp,
+            strict_fingerprint=bool(pointwise_cfg.get("strict_fingerprint", True)),
+        )
         logger.info(
-            "Loaded pointwise oracle selector: model=%s features=%d",
+            "Loaded pointwise oracle selector: model=%s features=%d chunk_mmr_fp=%s",
             pointwise_model.path,
             len(pointwise_model.feature_names),
+            pointwise_model.metadata.get("chunk_mmr_fingerprint", ""),
         )
 
     # ---- Optional: learned λ predictor (MMR path only) ----

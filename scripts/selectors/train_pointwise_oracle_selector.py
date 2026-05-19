@@ -51,7 +51,18 @@ def main() -> None:
     if not rows:
         raise ValueError(f"No rows found in {args.train_jsonl}")
 
-    feature_names = _load_feature_names(args.feature_schema)
+    feature_schema = _load_feature_schema(args.feature_schema)
+    feature_names = list(feature_schema.get("feature_names") or DEFAULT_FEATURE_NAMES)
+    chunk_mmr_fingerprint = _require_single_value(
+        rows,
+        "chunk_mmr_fingerprint",
+        "Training rows must come from one Chunk-MMR cache fingerprint.",
+    )
+    pool_mode = _require_single_value(
+        rows,
+        "pool_mode",
+        "Training rows must come from one selector pool_mode.",
+    )
     train_eids, val_eids = split_event_ids_by_label(rows, args.val_fraction, args.seed)
     train_rows = [r for r in rows if str(r["event_id"]) in train_eids]
     val_rows = [r for r in rows if str(r["event_id"]) in val_eids]
@@ -96,6 +107,23 @@ def main() -> None:
     val_claim = claim_selection_metrics(val_rows, val_scores, top_k=args.top_k, score_name="model")
     hybrid_val_claim = claim_selection_metrics(val_rows, hybrid_val, top_k=args.top_k, score_name="hybrid_score")
 
+    metadata = {
+        "model_type": "numpy_logistic_regression",
+        "train_jsonl": args.train_jsonl,
+        "feature_schema": args.feature_schema,
+        "chunk_mmr_fingerprint": chunk_mmr_fingerprint,
+        "pool_mode": pool_mode,
+        "candidate_pool_source": _common_nonempty_value(rows, "candidate_pool_source"),
+        "candidate_pool_fingerprint_count": len(
+            {str(r.get("candidate_pool_fingerprint", "")) for r in rows if r.get("candidate_pool_fingerprint")}
+        ),
+        "feature_names": feature_names,
+        "schema_metadata": {
+            key: value
+            for key, value in feature_schema.items()
+            if key != "feature_names"
+        },
+    }
     model_path = out_dir / "model.npz"
     np.savez(
         model_path,
@@ -104,7 +132,9 @@ def main() -> None:
         feature_mean=mean.astype(np.float32),
         feature_std=std.astype(np.float32),
         feature_names=np.array(feature_names, dtype=object),
+        metadata_json=np.array(json.dumps(metadata, ensure_ascii=False), dtype=object),
     )
+    write_json(out_dir / "metadata.json", metadata)
 
     metrics = {
         "model_type": "numpy_logistic_regression",
@@ -124,6 +154,7 @@ def main() -> None:
         "history": history,
         "feature_names": feature_names,
         "model_path": str(model_path),
+        "metadata": metadata,
     }
     write_json(out_dir / "training_metrics.json", metrics)
 
@@ -154,12 +185,27 @@ def main() -> None:
     )
 
 
-def _load_feature_names(schema_path: str | None) -> list[str]:
+def _load_feature_schema(schema_path: str | None) -> dict[str, object]:
     if not schema_path:
-        return list(DEFAULT_FEATURE_NAMES)
+        return {"feature_names": list(DEFAULT_FEATURE_NAMES)}
     with Path(schema_path).open(encoding="utf-8") as fh:
         payload = json.load(fh)
-    return list(payload.get("feature_names") or DEFAULT_FEATURE_NAMES)
+    return dict(payload)
+
+
+def _require_single_value(rows: list[dict], key: str, message: str) -> str:
+    values = sorted({str(row.get(key, "")) for row in rows if str(row.get(key, ""))})
+    if len(values) != 1:
+        raise ValueError(f"{message} key={key}, values={values[:5]}, count={len(values)}")
+    return values[0]
+
+
+def _common_nonempty_value(rows: list[dict], key: str) -> str:
+    values = [str(row.get(key, "")) for row in rows if str(row.get(key, ""))]
+    if not values:
+        return ""
+    counts = Counter(values)
+    return str(counts.most_common(1)[0][0])
 
 
 def _train_logreg(

@@ -1,0 +1,39 @@
+# @package _global_
+# Experimental pointwise selector trained from the current Stage-2 re-oracle
+# result, whose saved candidate pools were produced from the sentence chunk
+# cache (chunk_mmr_fingerprint=432dfc970e75).
+
+defaults:
+  - b3_label_token_ce_1024
+  - _self_
+
+experiment:
+  name: b3_pointwise_stage2_sentence_1024
+
+baseline:
+  variant: b3_pointwise_stage2_sentence_1024
+  chunking_strategy: sentence
+
+build:
+  retrieval:
+    top_k: 5
+    selection_method: pointwise_oracle
+    pointwise_oracle:
+      model_dir: outputs/oracle_pointwise/stage2_margin_sentence/logreg
+      candidate_pool_size: 15
+      candidate_pool_multiplier: 3
+      dump_trace: true
+      strict_fingerprint: true
+    chunking:
+      strategy: sentence
+      context_k: 1
+      theta: 0.7
+      embedder_model: null
+      device: cpu
+      max_length: 256
+      batch_size: 64
+      precision: fp32
+
+swanlab:
+  project: fact-checking-stage2-pointwise
+  experiment_name: b3_pointwise_stage2_sentence_1024

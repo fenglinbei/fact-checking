@@ -68,27 +68,28 @@ def _resolve_model_path(raw: str | None, base_path: str | None) -> str | None:
 def load_build_config(config_path: str, config_overrides: str | None, model_base_path: str | None) -> dict:
     """Load and merge Hydra build config from experiment file + defaults."""
     project_root = Path(__file__).resolve().parents[2]
-
-    # Load defaults
-    default_path = project_root / "configs" / "build" / "default.yaml"
-    if not default_path.exists():
-        raise FileNotFoundError(f"Default build config not found: {default_path}")
-    default_cfg = OmegaConf.to_container(
-        OmegaConf.load(default_path), resolve=False
-    )
-    build_default = default_cfg.get("build", {})
-
-    # Load experiment config
     exp_path = Path(config_path)
     if not exp_path.is_absolute():
         exp_path = project_root / exp_path
     if not exp_path.exists():
         raise FileNotFoundError(f"Experiment config not found: {exp_path}")
-    exp_cfg = OmegaConf.to_container(OmegaConf.load(str(exp_path)), resolve=False)
-    build_exp = exp_cfg.get("build", {})
+    build_cfg = _load_hydra_build_config(project_root, exp_path)
+    if build_cfg is None:
+        # Load defaults
+        default_path = project_root / "configs" / "build" / "default.yaml"
+        if not default_path.exists():
+            raise FileNotFoundError(f"Default build config not found: {default_path}")
+        default_cfg = OmegaConf.to_container(
+            OmegaConf.load(default_path), resolve=False
+        )
+        build_default = default_cfg.get("build", {})
 
-    # Merge: default → experiment
-    build_cfg = _deep_merge(build_default, build_exp)
+        # Load experiment config
+        exp_cfg = OmegaConf.to_container(OmegaConf.load(str(exp_path)), resolve=False)
+        build_exp = exp_cfg.get("build", {})
+
+        # Merge: default → experiment
+        build_cfg = _deep_merge(build_default, build_exp)
 
     # Apply CLI overrides
     if config_overrides:
@@ -134,6 +135,36 @@ def load_build_config(config_path: str, config_overrides: str | None, model_base
             )
 
     return build_cfg
+
+
+def _load_hydra_build_config(project_root: Path, exp_path: Path) -> dict | None:
+    experiment_dir = project_root / "configs" / "experiment"
+    try:
+        rel = exp_path.resolve().relative_to(experiment_dir.resolve())
+    except ValueError:
+        return None
+    if len(rel.parts) != 1 or rel.suffix not in {".yaml", ".yml"}:
+        return None
+    try:
+        from hydra import compose, initialize_config_dir
+        from hydra.core.global_hydra import GlobalHydra
+
+        if GlobalHydra.instance().is_initialized():
+            GlobalHydra.instance().clear()
+        with initialize_config_dir(version_base=None, config_dir=str(project_root / "configs")):
+            cfg = compose(
+                config_name="pipeline/default",
+                overrides=[f"experiment={rel.stem}"],
+            )
+        build_cfg = OmegaConf.to_container(cfg.get("build", {}), resolve=False)
+        return dict(build_cfg or {})
+    except Exception as exc:
+        logger.warning(
+            "Hydra compose failed for %s; falling back to direct YAML merge: %s",
+            exp_path,
+            exc,
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------
