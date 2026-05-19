@@ -15,6 +15,7 @@ from fact_checking.data.constants import LABELS
 from fact_checking.utils.logging import init_logger
 from sft.data.types import PreparedSample
 from sft.eval import summarize_prediction_records
+from sft.infer_common import build_label_decoding_prompt
 from sft.logit_adjust import create_label_choice_processor
 from sft.parser import _parse_label_id
 from sft.runtime.adapters import is_peft_model
@@ -381,8 +382,12 @@ class OnlineVLLMEvaluator:
             temperature=self.temperature,
             logits_processors=logits_processors if logits_processors else None,
         )
+        label_prefix = "Label:"
         outputs = self.llm.generate(
-            prompts=[sample.prompt + "Label:" if use_label_decoding else sample.prompt for sample in self.samples],
+            prompts=[
+                build_label_decoding_prompt(sample, label_prefix) if use_label_decoding else sample.prompt
+                for sample in self.samples
+            ],
             sampling_params=sampling_params,
             use_tqdm=self.cfg.use_tqdm,
         )
@@ -390,7 +395,7 @@ class OnlineVLLMEvaluator:
         prediction_records: list[dict[str, object]] = []
         for sample_idx, (sample, output) in enumerate(zip(self.samples, outputs)):
             raw_completion = output.outputs[0].text if output.outputs else ""
-            raw_output = f"Label:{raw_completion}" if use_label_decoding else raw_completion
+            raw_output = f"{label_prefix}{raw_completion}" if use_label_decoding else raw_completion
             pred_id = _parse_label_id(raw_output)
             prediction_records.append(
                 {

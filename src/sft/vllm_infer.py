@@ -6,7 +6,7 @@ from fact_checking.data.constants import LABELS
 from fact_checking.utils.logging import init_logger
 from sft.data.io import save_eval_artifacts
 from sft.eval import summarize_prediction_records
-from sft.infer_common import build_inference_context, build_serializable_metrics
+from sft.infer_common import build_inference_context, build_label_decoding_prompt, build_serializable_metrics
 from sft.logit_adjust import build_logit_adjust_cfg_from_train_config, create_label_choice_processor, load_logit_adjust_cfg
 from sft.parser import _parse_label_id
 
@@ -97,8 +97,12 @@ def main() -> None:
         logits_processors=logits_processors if logits_processors else None,
     )
 
+    label_prefix = "Label:"
     generate_kwargs = {
-        "prompts": [sample.prompt + "Label:" if use_label_decoding else sample.prompt for sample in context.samples],
+        "prompts": [
+            build_label_decoding_prompt(sample, label_prefix) if use_label_decoding else sample.prompt
+            for sample in context.samples
+        ],
         "sampling_params": sampling_params,
         "use_tqdm": True,
     }
@@ -109,7 +113,7 @@ def main() -> None:
     prediction_records: list[dict[str, object]] = []
     for sample_idx, (sample, output) in enumerate(zip(context.samples, outputs)):
         raw_completion = output.outputs[0].text if output.outputs else ""
-        raw_output = f"Label:{raw_completion}" if use_label_decoding else raw_completion
+        raw_output = f"{label_prefix}{raw_completion}" if use_label_decoding else raw_completion
         pred_id = _parse_label_id(raw_output)
 
         prediction_records.append(

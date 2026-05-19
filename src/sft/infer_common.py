@@ -29,6 +29,14 @@ class InferenceContext:
     eval_output_dir: Path
 
 
+def build_label_decoding_prompt(sample: PreparedSample, label_prefix: str) -> str:
+    """Match LabelTokenDataset's prompt context before scoring/generating a label."""
+    prompt_text = sample.prompt.rstrip()
+    if sample.prompt_add_special_tokens:
+        prompt_text += " "
+    return prompt_text + label_prefix
+
+
 def load_inference_config(run_dir: Path, config_path: str | None = None) -> dict[str, Any]:
     resolved_path = Path(config_path) if config_path else run_dir / "config.resolved.yaml"
     if not resolved_path.exists():

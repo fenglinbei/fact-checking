@@ -21,7 +21,7 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from fact_checking.data.constants import LABELS, LETTER_ORDER
-from sft.infer_common import build_inference_context
+from sft.infer_common import build_inference_context, build_label_decoding_prompt
 from sft.logit_adjust import build_logit_bias, build_logit_adjust_cfg_from_train_config, load_logit_adjust_cfg
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
 from sft.parser import _parse_label_id
@@ -200,7 +200,7 @@ def run_api_inference(
             request_max_tokens = max_tokens
             extra_body = dict(decoding_extra_body) if decoding_extra_body else None
             if use_label_decoding:
-                request_prompt = sample.prompt + label_prefix
+                request_prompt = build_label_decoding_prompt(sample, label_prefix)
                 request_max_tokens = label_max_tokens
                 extra_body = label_extra_body
             raw_completion = client.generate(
