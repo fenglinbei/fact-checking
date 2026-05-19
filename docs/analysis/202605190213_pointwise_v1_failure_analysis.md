@@ -30,7 +30,7 @@
 
 本次检查使用现有代码和产物，没有重跑 vLLM：
 
-- 时间线：`docs/analysis/202605192113_experiment_progress_timeline.md`
+- 时间线：`docs/analysis/202605192141_experiment_progress_timeline.md`
 - V1 计划与实现：`docs/plan/202605171203_oracle_pointwise_supervision_v1.md`、`docs/implementation/202605171203_oracle_pointwise_supervision_v1.md`
 - pipeline 接入：`docs/implementation/202605171430_pointwise_oracle_pipeline.md`
 - oracle 输出契约修正：`docs/implementation/202605171322_oracle_search_output_contract.md`

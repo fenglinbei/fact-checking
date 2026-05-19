@@ -20,6 +20,7 @@ MODEL_BASE_PATH="${MODEL_BASE_PATH:-/data/models/}"
 PROMPT_MODEL_NAME_OR_PATH="${PROMPT_MODEL_NAME_OR_PATH:-}"
 TRAIN_MODEL_NAME_OR_PATH="${TRAIN_MODEL_NAME_OR_PATH:-}"
 ORDER="${ORDER:-oracle}"
+ORDER_SEED="${ORDER_SEED:-0}"
 FILTER="${FILTER:-all}"
 SAMPLE_LIMIT="${SAMPLE_LIMIT:-0}"
 RUN_TRAIN="${RUN_TRAIN:-false}"
@@ -32,6 +33,7 @@ args=(
   --expected-chunk-mmr-fingerprint "${EXPECTED_CHUNK_MMR_FINGERPRINT}"
   --model-base-path "${MODEL_BASE_PATH}"
   --order "${ORDER}"
+  --order-seed "${ORDER_SEED}"
   --filter "${FILTER}"
 )
 

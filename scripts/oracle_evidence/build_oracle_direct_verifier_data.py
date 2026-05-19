@@ -9,7 +9,9 @@ that can be consumed by ``sft.label_token_trainer``.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import random
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -29,7 +31,7 @@ from fact_checking.oracle_pointwise import write_json, write_jsonl
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Build direct verifier data from oracle evidence sets.")
     p.add_argument("--config", default="configs/experiment/b3_oracle_sentence_direct_verifier_1024.yaml")
-    p.add_argument("--train-oracle-results", required=True)
+    p.add_argument("--train-oracle-results", default=None)
     p.add_argument("--val-oracle-results", required=True)
     p.add_argument("--test-oracle-results", default=None)
     p.add_argument("--train-raw", default="data/raw/LIAR-RAW/train.json")
@@ -40,10 +42,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--prompt-model-name-or-path", default=None)
     p.add_argument("--train-model-name-or-path", default=None)
     p.add_argument("--model-base-path", default=None)
-    p.add_argument("--order", default="oracle", choices=["oracle", "hybrid", "candidate_pool"])
+    p.add_argument("--order", default="oracle", choices=["oracle", "hybrid", "candidate_pool", "random"])
+    p.add_argument("--order-seed", type=int, default=0)
     p.add_argument("--filter", default="all", choices=["all", "oracle_correct", "margin_positive"])
     p.add_argument("--allow-selected-texts-fallback", action="store_true")
     p.add_argument("--sample-limit", type=int, default=None)
+    p.add_argument("--val-only", action="store_true")
     p.add_argument("--no-progress", action="store_true")
     return p.parse_args()
 
@@ -64,10 +68,12 @@ def main() -> None:
         )
     tokenizer = _load_prompt_tokenizer(str(prompt_cfg["model_name_or_path"]))
 
-    split_specs = [
-        ("train", args.train_oracle_results, args.train_raw),
-        ("val", args.val_oracle_results, args.val_raw),
-    ]
+    split_specs = []
+    if not args.val_only:
+        if not args.train_oracle_results:
+            raise ValueError("--train-oracle-results is required unless --val-only is set.")
+        split_specs.append(("train", args.train_oracle_results, args.train_raw))
+    split_specs.append(("val", args.val_oracle_results, args.val_raw))
     if args.test_oracle_results:
         split_specs.append(("test", args.test_oracle_results, args.test_raw))
 
@@ -82,6 +88,7 @@ def main() -> None:
             prompt_cfg=prompt_cfg,
             expected_chunk_mmr_fingerprint=args.expected_chunk_mmr_fingerprint,
             order=args.order,
+            order_seed=args.order_seed,
             row_filter=args.filter,
             allow_selected_texts_fallback=args.allow_selected_texts_fallback,
             sample_limit=args.sample_limit,
@@ -92,6 +99,8 @@ def main() -> None:
         split_paths[split] = str(out_path)
         reports[split] = report
 
+    if "train" not in split_paths:
+        split_paths["train"] = split_paths["val"]
     if "test" not in split_paths:
         split_paths["test"] = split_paths["val"]
 
@@ -110,6 +119,8 @@ def main() -> None:
         "output_dir": str(output_dir),
         "expected_chunk_mmr_fingerprint": args.expected_chunk_mmr_fingerprint,
         "order": args.order,
+        "order_seed": args.order_seed,
+        "val_only": bool(args.val_only),
         "filter": args.filter,
         "prompt_model_name_or_path": str(prompt_cfg["model_name_or_path"]),
         "split_paths": split_paths,
@@ -170,6 +181,7 @@ def _build_split(
     prompt_cfg: dict[str, Any],
     expected_chunk_mmr_fingerprint: str,
     order: str,
+    order_seed: int,
     row_filter: str,
     allow_selected_texts_fallback: bool,
     sample_limit: int | None,
@@ -217,6 +229,7 @@ def _build_split(
             candidates = _oracle_selected_candidates(
                 rec,
                 order=order,
+                order_seed=order_seed,
                 allow_selected_texts_fallback=allow_selected_texts_fallback,
             )
         except ValueError as exc:
@@ -243,6 +256,7 @@ def _build_split(
             "oracle_margin": _float_or_none(rec.get("margin")),
             "oracle_selected_indices": [int(x) for x in (rec.get("selected_indices") or [])],
             "order": order,
+            "order_seed": int(order_seed),
         }
         out_rows.append(training_row)
         label_counter[str(training_row.get("gold_label", ""))] += 1
@@ -274,6 +288,7 @@ def _oracle_selected_candidates(
     rec: dict[str, Any],
     *,
     order: str,
+    order_seed: int,
     allow_selected_texts_fallback: bool,
 ) -> list[dict[str, Any]]:
     pool = rec.get("candidate_pool") or []
@@ -319,6 +334,11 @@ def _oracle_selected_candidates(
         selected.sort(key=lambda item: float(item.get("hybrid_score", 0.0)), reverse=True)
     elif order == "candidate_pool":
         selected.sort(key=lambda item: int(item.get("oracle_candidate_idx", 0)))
+    elif order == "random":
+        event_id = str(rec.get("event_id", ""))
+        digest = hashlib.sha1(f"{int(order_seed)}:{event_id}".encode("utf-8")).digest()
+        seed = int.from_bytes(digest[:8], byteorder="big", signed=False)
+        random.Random(seed).shuffle(selected)
     return selected
 
 

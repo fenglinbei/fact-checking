@@ -1,10 +1,10 @@
 # 实验总进度时间线与文档索引
 
-文档更新时间：2026-05-19 21:13 CST
+文档更新时间：2026-05-19 21:41 CST
 
 本文整理 `docs/` 目录下截至当前的计划、分析、实现与运维文档，按实验推进时间线归纳总体进度。本文只汇总已有文档与已记录结果，不新增实验结论，不重新解释未验证产物。
 
-命名约定：从 2026-05-19 21:13 起，新增或实质更新后重新落盘的分析文档，文件名前缀使用文档更新时间 `YYYYMMDDHHMM`，而不是实验启动时间或首次创建时间。
+命名约定：从 2026-05-19 起，新增或实质更新后重新落盘的分析文档，文件名前缀使用文档更新时间 `YYYYMMDDHHMM`，而不是实验启动时间或首次创建时间。
 
 ## 1. 文档版图
 
@@ -16,7 +16,7 @@
 | 早期训练与评估诊断 | [`202605111212_classifier-collapse-analysis.md`](202605111212_classifier-collapse-analysis.md), [`202605112128_val_test_Mismatch.md`](202605112128_val_test_Mismatch.md), [`202605131520_val-test-f1-gap-diagnosis.md`](202605131520_val-test-f1-gap-diagnosis.md) | 诊断分类器塌陷、MMR λ sweep 的 val/test 差距、训练/推理路径差异与泛化差距。 |
 | MMR / learned-λ 主线 | [`../implementation/202605111255_mmr-lambda-sweep-pipeline.md`](../implementation/202605111255_mmr-lambda-sweep-pipeline.md), [`../learned_lambda/202605122054_generate_oracle_prompts.md`](../learned_lambda/202605122054_generate_oracle_prompts.md), [`../learned_lambda/202605141045_verification_experiment.md`](../learned_lambda/202605141045_verification_experiment.md), [`../learned_lambda/202605141052_analysis.md`](../learned_lambda/202605141052_analysis.md), [`../plan/202605141045_Improving_Learned_Lambda.md`](../plan/202605141045_Improving_Learned_Lambda.md), [`../implementation/202605141531_sensitivity-gated-mmr.md`](../implementation/202605141531_sensitivity-gated-mmr.md), [`../plan/202605141828_soft_label_policy.md`](../plan/202605141828_soft_label_policy.md) | 从固定 λ 扫描到 oracle λ 验证、hard predictor 失败、sensitivity-gated、soft-label λ 的完整探索。 |
 | RL-MMR / DPO 计划与阶段结论 | [`202605141045_RL_MMR_research_review.md`](202605141045_RL_MMR_research_review.md), [`../plan/202605111704_RL_MMR_experiment_plan_v1.md`](../plan/202605111704_RL_MMR_experiment_plan_v1.md), [`202605151453_RL_MMR_direction_summary.md`](202605151453_RL_MMR_direction_summary.md), [`../plan/202605151936_dpo_step_wise_lambda.md`](../plan/202605151936_dpo_step_wise_lambda.md), [`../plan/202605152032_dpo_stepwise_lambda.md`](../plan/202605152032_dpo_stepwise_lambda.md), [`../plan/202605161049_RL_MMR_experiment_plan_v2.md`](../plan/202605161049_RL_MMR_experiment_plan_v2.md) | 形成 fixed → heuristic → gated → soft-label → DPO step-wise → multi-weight → GRPO 的有序实验路线，并记录 scalar λ 方向的停止条件。 |
-| Oracle evidence set / selector 主线 | [`../plan/202605161147_oracle_evidence_selection.md`](../plan/202605161147_oracle_evidence_selection.md), [`202605161449_oracle_set_gap_analysis.md`](202605161449_oracle_set_gap_analysis.md), [`202605161516_oracle_set_supervision_next_steps.md`](202605161516_oracle_set_supervision_next_steps.md), [`../plan/202605170118_oracle_set_supervision_next_steps.md`](../plan/202605170118_oracle_set_supervision_next_steps.md), [`../plan/202605171203_oracle_pointwise_supervision_v1.md`](../plan/202605171203_oracle_pointwise_supervision_v1.md), [`../implementation/202605171203_oracle_pointwise_supervision_v1.md`](../implementation/202605171203_oracle_pointwise_supervision_v1.md), [`../implementation/202605171322_oracle_search_output_contract.md`](../implementation/202605171322_oracle_search_output_contract.md), [`../implementation/202605171430_pointwise_oracle_pipeline.md`](../implementation/202605171430_pointwise_oracle_pipeline.md), [`../implementation/202605180045_pointwise_v1b_true_side_anchor.md`](../implementation/202605180045_pointwise_v1b_true_side_anchor.md), [`202605190213_pointwise_v1_failure_analysis.md`](202605190213_pointwise_v1_failure_analysis.md), [`202605190340_pointwise_selector_contract_fix_and_stage2_sentence_trial.md`](202605190340_pointwise_selector_contract_fix_and_stage2_sentence_trial.md), [`202605191945_sentence_vs_semantic_stage2_oracle_decision.md`](202605191945_sentence_vs_semantic_stage2_oracle_decision.md), [`202605192113_oracle_direct_verifier_result_and_next_plan.md`](202605192113_oracle_direct_verifier_result_and_next_plan.md) | 从 oracle 上界计算转向 oracle-set supervision，完成 pointwise V1 selection-only probe、候选池输出契约、Stage2 sentence-vs-semantic 粒度决策，并确认 oracle direct verifier 强阳性。 |
+| Oracle evidence set / selector 主线 | [`../plan/202605161147_oracle_evidence_selection.md`](../plan/202605161147_oracle_evidence_selection.md), [`202605161449_oracle_set_gap_analysis.md`](202605161449_oracle_set_gap_analysis.md), [`202605161516_oracle_set_supervision_next_steps.md`](202605161516_oracle_set_supervision_next_steps.md), [`../plan/202605170118_oracle_set_supervision_next_steps.md`](../plan/202605170118_oracle_set_supervision_next_steps.md), [`../plan/202605171203_oracle_pointwise_supervision_v1.md`](../plan/202605171203_oracle_pointwise_supervision_v1.md), [`../implementation/202605171203_oracle_pointwise_supervision_v1.md`](../implementation/202605171203_oracle_pointwise_supervision_v1.md), [`../implementation/202605171322_oracle_search_output_contract.md`](../implementation/202605171322_oracle_search_output_contract.md), [`../implementation/202605171430_pointwise_oracle_pipeline.md`](../implementation/202605171430_pointwise_oracle_pipeline.md), [`../implementation/202605180045_pointwise_v1b_true_side_anchor.md`](../implementation/202605180045_pointwise_v1b_true_side_anchor.md), [`202605190213_pointwise_v1_failure_analysis.md`](202605190213_pointwise_v1_failure_analysis.md), [`202605190340_pointwise_selector_contract_fix_and_stage2_sentence_trial.md`](202605190340_pointwise_selector_contract_fix_and_stage2_sentence_trial.md), [`202605191945_sentence_vs_semantic_stage2_oracle_decision.md`](202605191945_sentence_vs_semantic_stage2_oracle_decision.md), [`202605192113_oracle_direct_verifier_result_and_next_plan.md`](202605192113_oracle_direct_verifier_result_and_next_plan.md), [`202605192141_oracle_direct_val_evidence_checks.md`](202605192141_oracle_direct_val_evidence_checks.md) | 从 oracle 上界计算转向 oracle-set supervision，完成 pointwise V1 selection-only probe、候选池输出契约、Stage2 sentence-vs-semantic 粒度决策、oracle direct verifier 上界确认，以及非 oracle evidence 对照。 |
 | Verifier 校准与复现实验基础设施 | [`../plan/202605180118_oracle_calibration_reoracle_four_stage_plan.md`](../plan/202605180118_oracle_calibration_reoracle_four_stage_plan.md), [`../implementation/202605180118_label_token_ce_verifier_stage1.md`](../implementation/202605180118_label_token_ce_verifier_stage1.md), [`../implementation/202605181113_calibration_aware_reoracle_stage2.md`](../implementation/202605181113_calibration_aware_reoracle_stage2.md), [`../implementation/202605192010_oracle_sentence_direct_verifier.md`](../implementation/202605192010_oracle_sentence_direct_verifier.md), [`../plan/202605131653_dvc-warm-minsky.md`](../plan/202605131653_dvc-warm-minsky.md), [`../implementation/202605171700_tailscale_container_ssh_vscode.md`](../implementation/202605171700_tailscale_container_ssh_vscode.md) | 修复 verifier false-side bias、用 margin objective 重跑 oracle，补齐 oracle sentence direct verifier 诊断路径，同时维护跨机复现与访问能力。 |
 
 ## 2. 系统基础设施
@@ -601,6 +601,37 @@ oracle_results_<split>.jsonl
 
 结论：direct verifier 在同一份 val oracle evidence 上达到去重后 accuracy 0.7111，高于 Stage1 verifier oracle correct rate 0.6593，净提升约 +5.18 pp。说明 verifier 可以吸收 sentence-level oracle evidence supervision；pointwise full pipeline 低分更像 selector 没有选到 oracle 分布附近，而不是 verifier 或 evidence order 本身失效。
 
+### 2026-05-19 21:41：Oracle Direct Verifier 非 Oracle Evidence 对照完成
+
+[`202605192141_oracle_direct_val_evidence_checks.md`](202605192141_oracle_direct_val_evidence_checks.md) 记录了 `outputs/runs/b3_oracle_direct_verifier_val_evidence_checks` 的结果。
+
+该实验用同一个 oracle-direct verifier checkpoint，在非 oracle evidence 上跑 val：
+
+```text
+fixed-MMR sentence evidence + oracle-direct verifier
+pointwise-selected sentence evidence + oracle-direct verifier
+```
+
+主指标：
+
+| evidence | checkpoint | n | accuracy | macro-F1 | parse error |
+|---|---|---:|---:|---:|---:|
+| fixed-MMR sentence | best | 1274 | 0.2716 | 0.2663 | 0.0000 |
+| fixed-MMR sentence | checkpoint-600 | 1274 | 0.2716 | 0.2663 | 0.0000 |
+| pointwise sentence | best | 1274 | 0.2637 | 0.2596 | 0.0000 |
+| pointwise sentence | checkpoint-600 | 1274 | 0.2637 | 0.2596 | 0.0000 |
+
+完整性检查：
+
+```text
+prediction rows = 1274
+unique sample_idx = 1274
+duplicates = 0
+val prompt truncation = 0
+```
+
+结论：oracle-direct verifier 只有在 oracle evidence 条件下强；换成 fixed-MMR 或当前 pointwise 的非 oracle evidence 后，指标回到 0.26-0.27 区间。best 与 checkpoint-600 完全一致，说明不是 checkpoint 选择问题；parse error 为 0、无重复样本、无 val truncation，说明也不是 decode 或 prompt-budget 问题。当前瓶颈进一步确认是 selector / evidence distribution gap。
+
 ## 4. 当前总体结论
 
 1. 早期 classifier collapse 已经把主要矛盾从"分类头/损失函数"推到"证据选择质量"。单纯换 CE/CORAL/3-class 无法解决问题。
@@ -613,6 +644,7 @@ oracle_results_<split>.jsonl
 8. **Stage 1 已完成**：Label-token weighted CE verifier 在 val 上整体指标与旧 verifier 持平（accuracy 0.3006 vs 0.2967），但 true-side 未退化（mostly-true F1=0.3419, true F1=0.3298，为全部 6 类最高），说明加权有效防止了 false-side bias。中间类（half-true/barely-true）仍是难点。
 9. **Stage 2 粒度决策已更新**：sentence-level train oracle 已完成并显著强于 semantic paired subset；semantic 保留为对照，sentence-level oracle supervision 进入下一阶段。
 10. **Oracle sentence direct verifier 已强阳性**：在 val oracle evidence 上，direct verifier 去重后 accuracy 0.7111、macro-F1 0.7169，高于 Stage1 verifier oracle correct rate 0.6593。当前瓶颈从 verifier 能否吸收 evidence，转向 selector 能否在正式候选池中近似 oracle evidence set。
+11. **非 oracle evidence 对照已完成**：oracle-direct verifier 在 fixed-MMR sentence evidence 上仅 0.2716/0.2663，在当前 pointwise evidence 上仅 0.2637/0.2596；低分不是 checkpoint、解码、重复样本或 prompt truncation 导致，而是 evidence distribution gap。
 
 ## 5. 当前 Stop / Go 状态
 
@@ -627,9 +659,9 @@ oracle_results_<split>.jsonl
 | `log(n)` / sensitivity-gated | 保留 | 作为弱 adaptive baseline（+0.004-0.006），不继续深挖。 |
 | multi-weight MMR | 待定 | 仍可能解决 scalar λ 表达能力不足，但应在 re-oracle 后再决定。 |
 | Pointwise oracle selector (V1a) | 停止 | 旧 selection-only gate 无效，只能作弱参考；下游 test accuracy 0.2230 显著低于 fixed 0.2702。 |
-| Pointwise oracle selector (V1b) | 停止 | True-side anchor 仅微升（val +0.005），仍低于 fixed-MMR；旧 gate 口径不能支撑继续放大。 |
+| Pointwise oracle selector (V1b / current Stage2 pointwise) | 停止 | True-side anchor 仅微升；Stage2 pointwise evidence + oracle-direct verifier val 0.2637/0.2596，仍低于 fixed-MMR evidence。 |
 | Oracle-set supervision | 继续，sentence-level 为主 | sentence-level Stage2 oracle paired accuracy 0.6192，高于 semantic 0.5407；direct verifier 已验证该 supervision 可被吸收。 |
-| Oracle sentence direct verifier | Go / 诊断上界已确认 | val oracle evidence 上去重后 accuracy 0.7111、macro-F1 0.7169；不是可部署 pipeline 指标。 |
+| Oracle sentence direct verifier | Upper-bound probe | val oracle evidence 上去重后 accuracy 0.7111、macro-F1 0.7169；非 oracle evidence 回到 0.26-0.27，因此不应直接替代部署 verifier。 |
 | Semantic-level oracle supervision | 诊断保留 | paired subset 低于 sentence-level +7.85 pp；不建议等权推进或继续大量消耗 GPU。 |
 | Label-token CE verifier + margin re-oracle | 完成 Stage1，Stage2 转向 sentence 主线 | Stage 1 完成；Stage2 sentence train oracle 完成，semantic 对照弱于 sentence。 |
 
@@ -639,7 +671,7 @@ oracle_results_<split>.jsonl
 2. **Stage 2 粒度决策已完成**：sentence-level oracle 明显强于 semantic paired subset；后续主线使用 `outputs/oracle_evidence/stage2_margin_train_sharded`。
 3. ~~优先做 `oracle sentence evidence direct verifier`~~ → **已完成，强阳性**。Val oracle evidence 上去重后 accuracy 0.7111、macro-F1 0.7169。
 4. 修正 eval metric 去重：`val_predictions.jsonl` / distributed gather 输出按唯一 `sample_idx` 去重后再算正式 eval 指标，避免 padding 样本影响 checkpoint 选择与报告口径。
-5. 做 oracle-direct verifier 的非 oracle evidence 对照：用 best/step-600 checkpoint 分别在 fixed-MMR sentence evidence 和当前 pointwise-selected evidence 上跑 val，拆分 verifier 分布泛化与 selector gap。
+5. ~~做 oracle-direct verifier 的非 oracle evidence 对照~~ → **已完成**。fixed-MMR sentence evidence 为 0.2716/0.2663，pointwise sentence evidence 为 0.2637/0.2596，进一步确认 selector / evidence distribution gap。
 6. 升级 selector，而不是继续放大当前 pointwise logreg。固定候选池口径为 `dedup -> hybrid top15 -> selector top5`、`chunk_mmr_fingerprint=432dfc970e75`，用 Stage2 oracle `selected_indices` 构造 pairwise / listwise reranker 数据。
 7. 新 selector 必须先过 selection-only gate，再跑完整 pipeline。当前 pointwise val recall@5=0.3755、Jaccard@5=0.2536，只能作为弱 baseline。
 8. Semantic-level oracle 只保留 paired diagnostic 或报告对照；不建议等权推进完整 train oracle。
