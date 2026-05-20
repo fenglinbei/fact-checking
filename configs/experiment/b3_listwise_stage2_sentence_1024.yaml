@@ -1,0 +1,39 @@
+# @package _global_
+# Step3 set-aware listwise selector trained from Stage2 sentence-level margin oracle.
+
+defaults:
+  - b3_label_token_ce_1024
+  - _self_
+
+experiment:
+  name: b3_listwise_stage2_sentence_1024
+
+baseline:
+  variant: b3_listwise_stage2_sentence_1024
+  chunking_strategy: sentence
+
+build:
+  retrieval:
+    top_k: 5
+    selection_method: listwise_selector
+    listwise_selector:
+      model_dir: outputs/selectors/stage2_sentence_listwise/deberta_listwise
+      candidate_pool_size: 15
+      max_length: 384
+      batch_size: 8
+      device: cuda
+      dump_trace: true
+      strict_fingerprint: true
+    chunking:
+      strategy: sentence
+      context_k: 1
+      theta: 0.7
+      embedder_model: null
+      device: cpu
+      max_length: 256
+      batch_size: 64
+      precision: fp32
+
+swanlab:
+  project: fact-checking-stage2-listwise
+  experiment_name: b3_listwise_stage2_sentence_1024
