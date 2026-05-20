@@ -700,4 +700,4 @@ low-margin oracle rows
 
 ## 本计划状态
 
-2026-05-20 已实现第一版 `deep` Sequential Pointer Selector：默认只使用 `h_i_pair`、`H_i_ctx`、`P_t`、乘积/差分/cosine/bilinear 深层交互；targeted/shallow profile 暂锁为 `none/off`，保留接口用于后续扩展。
+2026-05-20 已实现第一版 `deep` Sequential Pointer Selector：默认只使用 `h_i_pair`、`H_i_ctx`、`P_t`、乘积/差分/cosine/bilinear 深层交互；targeted/shallow profile 暂锁为 `none/off`，保留接口用于后续扩展。训练脚本已加入 SwanLab 上传和 `val_history.jsonl`，用于观察 train loss、validation selection metrics、controls 与 step diagnostics 曲线。

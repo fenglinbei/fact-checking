@@ -25,6 +25,14 @@ SEMANTIC_FEATURE_PROFILE="${SEMANTIC_FEATURE_PROFILE:-deep}"
 TARGETED_FEATURE_PROFILE="${TARGETED_FEATURE_PROFILE:-none}"
 SHALLOW_FEATURE_PROFILE="${SHALLOW_FEATURE_PROFILE:-off}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
+SWANLAB_PROJECT="${SWANLAB_PROJECT:-fact-checking-stage2-sequential}"
+SWANLAB_EXPERIMENT_NAME="${SWANLAB_EXPERIMENT_NAME:-$(basename "${OUTPUT_DIR}")}"
+SWANLAB_WORKSPACE="${SWANLAB_WORKSPACE:-}"
+SWANLAB_MODE="${SWANLAB_MODE:-}"
+SWANLAB_LOGDIR="${SWANLAB_LOGDIR:-}"
+SWANLAB_TAGS="${SWANLAB_TAGS:-selector,sequential,step4}"
+SWANLAB_DESCRIPTION="${SWANLAB_DESCRIPTION:-}"
+SWANLAB_DISABLED="${SWANLAB_DISABLED:-0}"
 
 echo "[sequential-step4] model=${MODEL_NAME}"
 echo "[sequential-step4] output=${OUTPUT_DIR}"
@@ -34,6 +42,8 @@ echo "[sequential-step4] nproc_per_node=${NPROC_PER_NODE}"
 echo "[sequential-step4] semantic_feature_profile=${SEMANTIC_FEATURE_PROFILE}"
 echo "[sequential-step4] targeted_feature_profile=${TARGETED_FEATURE_PROFILE}"
 echo "[sequential-step4] shallow_feature_profile=${SHALLOW_FEATURE_PROFILE}"
+echo "[sequential-step4] swanlab_project=${SWANLAB_PROJECT}"
+echo "[sequential-step4] swanlab_experiment_name=${SWANLAB_EXPERIMENT_NAME}"
 
 TRAIN_CMD=(
     scripts/selectors/train_sequential_selector.py
@@ -50,8 +60,27 @@ TRAIN_CMD=(
     --semantic-feature-profile "${SEMANTIC_FEATURE_PROFILE}" \
     --targeted-feature-profile "${TARGETED_FEATURE_PROFILE}" \
     --shallow-feature-profile "${SHALLOW_FEATURE_PROFILE}" \
+    --swanlab-project "${SWANLAB_PROJECT}" \
+    --swanlab-experiment-name "${SWANLAB_EXPERIMENT_NAME}" \
+    --swanlab-tags "${SWANLAB_TAGS}" \
     "$@"
 )
+
+if [[ -n "${SWANLAB_WORKSPACE}" ]]; then
+    TRAIN_CMD+=(--swanlab-workspace "${SWANLAB_WORKSPACE}")
+fi
+if [[ -n "${SWANLAB_MODE}" ]]; then
+    TRAIN_CMD+=(--swanlab-mode "${SWANLAB_MODE}")
+fi
+if [[ -n "${SWANLAB_LOGDIR}" ]]; then
+    TRAIN_CMD+=(--swanlab-logdir "${SWANLAB_LOGDIR}")
+fi
+if [[ -n "${SWANLAB_DESCRIPTION}" ]]; then
+    TRAIN_CMD+=(--swanlab-description "${SWANLAB_DESCRIPTION}")
+fi
+if [[ "${SWANLAB_DISABLED}" == "1" || "${SWANLAB_DISABLED}" == "true" || "${SWANLAB_DISABLED}" == "TRUE" ]]; then
+    TRAIN_CMD+=(--no-swanlab)
+fi
 
 if [[ "${NPROC_PER_NODE}" -gt 1 ]]; then
     torchrun --standalone --nproc_per_node="${NPROC_PER_NODE}" "${TRAIN_CMD[@]}"

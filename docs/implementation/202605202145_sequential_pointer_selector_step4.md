@@ -112,6 +112,33 @@ outputs/cache/build/<build_id>/sequential_selector_trace_<split>.jsonl
 scripts/selectors/run_sequential_step4.sh
 ```
 
+Wrapper 默认开启 SwanLab 上传：
+
+```text
+SWANLAB_PROJECT=fact-checking-stage2-sequential
+SWANLAB_EXPERIMENT_NAME=<OUTPUT_DIR basename>
+SWANLAB_TAGS=selector,sequential,step4
+```
+
+可用 `SWANLAB_DISABLED=1` 关闭上传。训练脚本会上传：
+
+```text
+train/loss
+train/sequence_ce_loss
+train/mask_loss
+train/weighted_loss
+train/lr/*
+val/selector/*
+val/controls/*
+val/step_diagnostics/*
+```
+
+每次 validation 也会追加落盘到：
+
+```text
+val_history.jsonl
+```
+
 等价主命令：
 
 ```bash
@@ -122,7 +149,9 @@ PYTHONPATH=src python scripts/selectors/train_sequential_selector.py \
   --output-dir outputs/selectors/stage2_sentence_sequential/deberta_sequential_deep \
   --semantic-feature-profile deep \
   --targeted-feature-profile none \
-  --shallow-feature-profile off
+  --shallow-feature-profile off \
+  --swanlab-project fact-checking-stage2-sequential \
+  --swanlab-experiment-name deberta_sequential_deep
 ```
 
 selection-only eval 输出：

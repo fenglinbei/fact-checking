@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import math
 import os
 import random
@@ -57,6 +58,12 @@ class DistributedState:
     device: torch.device
 
 
+@dataclass(frozen=True)
+class SwanLabRun:
+    enabled: bool
+    module: Any | None = None
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train a Step4 sequential pointer Stage2 evidence selector.")
     p.add_argument("--train-oracle-results", required=True)
@@ -96,6 +103,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--early-stopping-metric", default="oracle_rank_ndcg@5")
     p.add_argument("--ddp-find-unused-parameters", action="store_true")
     p.add_argument("--no-progress", action="store_true")
+    p.add_argument("--no-swanlab", action="store_true", help="Disable SwanLab logging for this selector run.")
+    p.add_argument("--swanlab-project", default="fact-checking-stage2-sequential")
+    p.add_argument("--swanlab-experiment-name", default=None)
+    p.add_argument("--swanlab-workspace", default=None)
+    p.add_argument("--swanlab-mode", default=None)
+    p.add_argument("--swanlab-logdir", default=None)
+    p.add_argument("--swanlab-tags", default="selector,sequential,step4")
+    p.add_argument("--swanlab-description", default=None)
     return p.parse_args()
 
 
@@ -131,6 +146,8 @@ def main() -> None:
         raise ValueError("No train examples after Stage2 audit/filtering.")
     if not val_examples:
         raise ValueError("No val examples after Stage2 audit/filtering.")
+
+    swanlab_run = _init_swanlab(args, out_dir, is_main=is_main)
 
     device = distributed.device
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
@@ -176,6 +193,7 @@ def main() -> None:
     stale = 0
     global_step = 0
     history: list[dict[str, Any]] = []
+    val_history: list[dict[str, Any]] = []
     optimizer.zero_grad(set_to_none=True)
 
     for epoch in range(1, int(args.epochs) + 1):
@@ -236,6 +254,19 @@ def main() -> None:
                 if is_main:
                     history.append(parts)
                     iterator.set_postfix(loss=f"{parts['loss']:.4f}", ce=f"{parts['sequence_ce_loss']:.4f}")
+                    _log_swanlab(
+                        swanlab_run,
+                        {
+                            "train/loss": parts.get("loss"),
+                            "train/sequence_ce_loss": parts.get("sequence_ce_loss"),
+                            "train/mask_loss": parts.get("mask_loss"),
+                            "train/n_steps": parts.get("n_steps"),
+                            "train/weighted_loss": parts.get("weighted_loss"),
+                            "train/epoch": parts.get("epoch"),
+                            **_optimizer_lr_metrics(optimizer),
+                        },
+                        step=global_step,
+                    )
 
                 if int(args.eval_every) > 0 and global_step % int(args.eval_every) == 0:
                     _barrier(distributed)
@@ -248,6 +279,8 @@ def main() -> None:
                             args,
                             out_dir,
                             history,
+                            val_history,
+                            swanlab_run,
                             global_step=global_step,
                             best_metric=best_metric,
                         )
@@ -272,12 +305,15 @@ def main() -> None:
             args,
             out_dir,
             history,
+            val_history,
+            swanlab_run,
             global_step=global_step,
             best_metric=best_metric,
             force_save=best_metric < 0,
         )
         print(f"Best/Final {args.early_stopping_metric}: {max(best_metric, final_metric):.4f}")
         print(f"Saved sequential selector under: {out_dir}")
+        _finish_swanlab(swanlab_run)
     _barrier(distributed)
     _cleanup_distributed(distributed)
 
@@ -289,6 +325,8 @@ def _validate_and_maybe_save(
     args: argparse.Namespace,
     out_dir: Path,
     history: list[dict[str, Any]],
+    val_history: list[dict[str, Any]],
+    swanlab_run: SwanLabRun,
     *,
     global_step: int,
     best_metric: float,
@@ -306,6 +344,20 @@ def _validate_and_maybe_save(
     metrics = summarize_ordered_selection(traces)
     step_metrics = summarize_sequential_step_diagnostics(traces)
     metric_value = float(metrics.get(args.early_stopping_metric, 0.0))
+    validation_record = {
+        "global_step": int(global_step),
+        "metric_name": str(args.early_stopping_metric),
+        "metric_value": metric_value,
+        "selector": metrics,
+        "controls": control_metrics,
+        "step_diagnostics": step_metrics,
+    }
+    if val_history and int(val_history[-1].get("global_step", -1)) == int(global_step):
+        val_history[-1] = validation_record
+    else:
+        val_history.append(validation_record)
+    write_jsonl(out_dir / "val_history.jsonl", val_history)
+    _log_validation_to_swanlab(swanlab_run, validation_record, step=global_step)
     if force_save or metric_value > best_metric + 1e-8:
         model.encoder.save_pretrained(out_dir)
         tokenizer.save_pretrained(out_dir)
@@ -345,6 +397,7 @@ def _validate_and_maybe_save(
                 "controls": control_metrics,
                 "step_diagnostics": step_metrics,
                 "history": history,
+                "val_history": val_history,
                 "metadata": metadata,
             },
         )
@@ -445,6 +498,158 @@ def evaluate_model(
         "same_set_random_order_mean": summarize_ordered_selection(random_traces),
     }
     return traces, controls
+
+
+def _init_swanlab(args: argparse.Namespace, out_dir: Path, *, is_main: bool) -> SwanLabRun:
+    if not is_main or bool(args.no_swanlab):
+        return SwanLabRun(enabled=False)
+    try:
+        import swanlab
+    except ImportError as exc:
+        raise RuntimeError(
+            "SwanLab logging is enabled but `swanlab` is not installed. "
+            "Install it or pass --no-swanlab."
+        ) from exc
+
+    experiment_name = str(args.swanlab_experiment_name or Path(args.output_dir).name)
+    tags = [
+        item.strip()
+        for item in str(args.swanlab_tags or "").split(",")
+        if item.strip()
+    ]
+    config = {
+        key: _json_safe_value(value)
+        for key, value in vars(args).items()
+        if key not in {"no_progress"}
+    }
+    config["selector_type"] = "sequential_pointer"
+    config["output_dir"] = str(out_dir)
+
+    init_kwargs: dict[str, Any] = {
+        "project": str(args.swanlab_project),
+        "experiment_name": experiment_name,
+        "config": config,
+    }
+    if args.swanlab_workspace:
+        init_kwargs["workspace"] = str(args.swanlab_workspace)
+    if args.swanlab_mode:
+        init_kwargs["mode"] = str(args.swanlab_mode)
+    if args.swanlab_logdir:
+        init_kwargs["logdir"] = str(args.swanlab_logdir)
+    if tags:
+        init_kwargs["tags"] = tags
+    if args.swanlab_description:
+        init_kwargs["description"] = str(args.swanlab_description)
+
+    try:
+        swanlab.init(**init_kwargs)
+    except TypeError:
+        minimal_kwargs = {
+            "project": str(args.swanlab_project),
+            "experiment_name": experiment_name,
+            "config": config,
+        }
+        try:
+            swanlab.init(**minimal_kwargs)
+        except TypeError:
+            swanlab.init(project=str(args.swanlab_project), experiment_name=experiment_name)
+    return SwanLabRun(enabled=True, module=swanlab)
+
+
+def _finish_swanlab(run: SwanLabRun) -> None:
+    if not run.enabled or run.module is None:
+        return
+    finish = getattr(run.module, "finish", None)
+    if callable(finish):
+        finish()
+
+
+def _log_swanlab(run: SwanLabRun, values: dict[str, Any], *, step: int) -> None:
+    if not run.enabled or run.module is None:
+        return
+    payload = {
+        key: scalar
+        for key, value in values.items()
+        for scalar in [_as_loggable_scalar(value)]
+        if scalar is not None
+    }
+    if payload:
+        run.module.log(payload, step=int(step))
+
+
+def _log_validation_to_swanlab(
+    run: SwanLabRun,
+    validation_record: dict[str, Any],
+    *,
+    step: int,
+) -> None:
+    if not run.enabled:
+        return
+    metric_name = str(validation_record.get("metric_name") or "selected_metric")
+    payload: dict[str, Any] = {
+        "val/selected_metric": validation_record.get("metric_value"),
+        f"val/selected_metric/{metric_name}": validation_record.get("metric_value"),
+    }
+    payload.update(_flatten_numeric_metrics("val/selector", validation_record.get("selector", {})))
+    payload.update(_flatten_numeric_metrics("val/controls", validation_record.get("controls", {})))
+    payload.update(
+        _flatten_numeric_metrics("val/step_diagnostics", validation_record.get("step_diagnostics", {}))
+    )
+    _log_swanlab(run, payload, step=step)
+
+
+def _flatten_numeric_metrics(prefix: str, value: Any) -> dict[str, Any]:
+    scalar = _as_loggable_scalar(value)
+    if scalar is not None:
+        return {prefix: scalar}
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            child_prefix = f"{prefix}/{_metric_key(key)}"
+            out.update(_flatten_numeric_metrics(child_prefix, item))
+        return out
+    return {}
+
+
+def _metric_key(value: Any) -> str:
+    return str(value).strip().replace(" ", "_")
+
+
+def _as_loggable_scalar(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        scalar = float(value)
+        return scalar if math.isfinite(scalar) else None
+    if isinstance(value, torch.Tensor) and value.numel() == 1:
+        scalar = float(value.detach().float().cpu().item())
+        return scalar if math.isfinite(scalar) else None
+    return None
+
+
+def _json_safe_value(value: Any) -> Any:
+    if dataclasses.is_dataclass(value):
+        return dataclasses.asdict(value)
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe_value(item) for key, item in value.items()}
+    return str(value)
+
+
+def _optimizer_lr_metrics(optimizer: torch.optim.Optimizer) -> dict[str, float]:
+    lrs = [float(group.get("lr", 0.0)) for group in optimizer.param_groups]
+    metrics = {f"train/lr/group_{idx}": value for idx, value in enumerate(lrs)}
+    if lrs:
+        metrics["train/lr/min"] = min(lrs)
+        metrics["train/lr/max"] = max(lrs)
+    return metrics
 
 
 def _build_optimizer(model: SequentialPointerSelectorModel, args: argparse.Namespace) -> torch.optim.Optimizer:
