@@ -5,14 +5,14 @@
   "phases": {
     "infer": {
       "status": "completed",
-      "updated_at": "2026-05-19 23:09:22",
-      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/hybrid_best/infer/val/best/0cd205080b49",
-      "infer_id": "0cd205080b49",
+      "updated_at": "2026-05-20 01:11:58",
+      "output_dir": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/hybrid_best/infer/val/best/b07d28b081f8",
+      "infer_id": "b07d28b081f8",
       "artifacts": {
-        "metrics_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/hybrid_best/infer/val/best/0cd205080b49/api/metrics.json",
-        "confusion_data_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/hybrid_best/infer/val/best/0cd205080b49/api/confusion_matrix.json",
-        "confusion_png_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/hybrid_best/infer/val/best/0cd205080b49/api/confusion_matrix.png",
-        "predictions_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/hybrid_best/infer/val/best/0cd205080b49/api/val_predictions.jsonl"
+        "metrics_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/hybrid_best/infer/val/best/b07d28b081f8/api/metrics.json",
+        "confusion_data_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/hybrid_best/infer/val/best/b07d28b081f8/api/confusion_matrix.json",
+        "confusion_png_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/hybrid_best/infer/val/best/b07d28b081f8/api/confusion_matrix.png",
+        "predictions_path": "/data/liaozijie/fact-checking/outputs/runs/b3_oracle_direct_order_sensitivity/hybrid_best/infer/val/best/b07d28b081f8/api/val_predictions.jsonl"
       },
       "reused": false
     }

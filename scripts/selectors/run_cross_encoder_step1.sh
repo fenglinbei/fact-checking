@@ -9,8 +9,8 @@ cd "${PROJECT_ROOT}"
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PYTHONPATH:-}"
 
-MODEL_NAME="${MODEL_NAME:-microsoft/deberta-v3-base}"
-OUTPUT_DIR="${OUTPUT_DIR:-outputs/selectors/stage2_sentence_cross_encoder/deberta_pairwise}"
+MODEL_NAME="${MODEL_NAME:-/data/models/bge-reranker-large}"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/selectors/stage2_sentence_cross_encoder/bge_reranker_large_pairwise}"
 TRAIN_ORACLE_RESULTS="${TRAIN_ORACLE_RESULTS:-outputs/oracle_evidence/stage2_margin_train_sharded/oracle_results_train.jsonl}"
 VAL_ORACLE_RESULTS="${VAL_ORACLE_RESULTS:-outputs/oracle_evidence/stage2_margin_val_20260518_111721/oracle_results_val.jsonl}"
 EVAL_OUTPUT_DIR="${EVAL_OUTPUT_DIR:-${OUTPUT_DIR}/eval_val}"
