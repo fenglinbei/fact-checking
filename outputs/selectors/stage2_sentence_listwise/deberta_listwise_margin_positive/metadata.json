@@ -40,6 +40,6 @@
   "freeze_pair_encoder": false,
   "seed": 42,
   "best_metric": "jaccard@5",
-  "best_metric_value": 0.23084845049130762,
-  "global_step": 500
+  "best_metric_value": 0.23716931216931217,
+  "global_step": 1558
 }

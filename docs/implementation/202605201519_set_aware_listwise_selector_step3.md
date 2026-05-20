@@ -244,4 +244,120 @@ PYTHONPATH=src python scripts/selectors/eval_listwise_selector.py --help
 bash -n scripts/selectors/run_listwise_step3.sh
 ```
 
-本次未实际训练 Step3 模型；真实 go/no-go 以后续 `eval_val/selection_metrics.json` 为准。
+## 2026-05-20 诊断运行结果
+
+### 运行产物
+
+当前已完成三组 Step3 listwise 诊断：
+
+```text
+outputs/selectors/stage2_sentence_listwise/deberta_listwise
+outputs/selectors/stage2_sentence_listwise/deberta_listwise_shuffle03
+outputs/selectors/stage2_sentence_listwise/deberta_listwise_margin_positive
+```
+
+统一候选池口径：
+
+```text
+chunk_mmr_fingerprint = 432dfc970e75
+candidate pool        = saved Stage2 oracle candidate_pool top15
+selector output       = ordered top5
+base model            = /data/models/deberta-v3-base/
+metric source          = <run_dir>/eval_val/selection_metrics.json
+```
+
+`deberta_listwise_margin_positive` 的 metadata 显示：
+
+```text
+filter_policy       = margin_positive
+shuffle_probability = 0.3
+n_val               = 840
+```
+
+因此它不是纯 filter 诊断，而是 `margin_positive + shuffle03` 的组合诊断；其 val 指标只覆盖 margin-positive 子集，不能直接与全量 val 的 1274 条样本等量比较。
+
+### 全量 val 指标
+
+| Run | filter | shuffle | n | recall@5 | jaccard@5 | top1_match | oracle_rank_ndcg@5 | pairwise_order_acc@5 | Gate |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `deberta_listwise` | all | 0.0 | 1274 | 0.3689 | 0.2484 | 0.1162 | 0.3072 | 0.5145 | No-Go |
+| `deberta_listwise_shuffle03` | all | 0.3 | 1274 | 0.3732 | 0.2518 | 0.1279 | 0.3131 | 0.5372 | No-Go |
+| `hybrid_score_top5` control | all | - | 1274 | 0.3435 | 0.2294 | 0.1028 | 0.2872 | 0.5271 | - |
+
+`shuffle03` 相比 no-shuffle 有小幅正向作用：
+
+```text
+recall@5           +0.0043
+jaccard@5          +0.0034
+top1_match         +0.0117
+oracle_rank_ndcg@5 +0.0059
+```
+
+但仍远低于 Step3 gate：
+
+```text
+recall@5 >= 0.50
+jaccard@5 >= 0.35
+```
+
+因此全量 val 下 Step3 仍不进入 full pipeline。
+
+### margin-positive 子集对齐比较
+
+以 `deberta_listwise_margin_positive/eval_val/selection_trace.jsonl` 的 840 条 event_id 为共同子集，重算三个模型的同子集指标：
+
+| Run | train filter | shuffle | subset n | recall@5 | jaccard@5 | top1_match | oracle_rank_ndcg@5 | pairwise_order_acc@5 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `deberta_listwise` | all | 0.0 | 840 | 0.3619 | 0.2398 | 0.1369 | 0.3204 | 0.5190 |
+| `deberta_listwise_shuffle03` | all | 0.3 | 840 | 0.3645 | 0.2423 | 0.1464 | 0.3211 | 0.5703 |
+| `deberta_listwise_margin_positive` | margin_positive | 0.3 | 840 | 0.3576 | 0.2372 | 0.1798 | 0.3478 | 0.5801 |
+
+结论：`margin_positive + shuffle03` 明显增强 order 指标，尤其 `top1_match` 与 `oracle_rank_ndcg@5`；但没有提升 set selection，`recall@5` / `jaccard@5` 反而略低于 all/shuffle03 模型。
+
+这说明 filtering high-signal rows 可以让模型更会排序“已接近 oracle 的集合”，但没有解决“选中 oracle set”的核心问题。
+
+### Rank shortcut 诊断
+
+候选池原始顺序是 hybrid_score descending。若模型过度依赖 rank prior，会大量选择 `candidate_idx=0` 或 hybrid top5。
+
+| Run | pred top1 为 idx0 | oracle top1 为 idx0 | pred top5 中落在 hybrid top5 的比例 | oracle top5 中落在 hybrid top5 的比例 |
+|---|---:|---:|---:|---:|
+| `deberta_listwise` | 0.5118 | 0.1028 | 0.4819 | 0.3375 |
+| `deberta_listwise_shuffle03` | 0.4262 | 0.1028 | 0.4257 | 0.3375 |
+| `deberta_listwise_margin_positive` | 0.6369 | 0.1143 | 0.6390 | 0.3395 |
+
+`shuffle03` 确实削弱了 rank shortcut：idx0 top1 比例从 51.2% 降到 42.6%，pred top5 落在 hybrid top5 的比例从 48.2% 降到 42.6%。但偏置仍明显高于 oracle 分布。
+
+`margin_positive + shuffle03` 的 rank shortcut 反而更强，idx0 top1 达到 63.7%。这说明仅过滤 margin-positive 样本不能消除 hybrid-rank shortcut。
+
+### Loss 曲线
+
+`deberta_listwise` 的训练 history 分段均值：
+
+| loss | first100 | last100 | 变化 |
+|---|---:|---:|---:|
+| total loss | 1.9368 | 1.9097 | -0.0271 |
+| mask_loss | 0.6848 | 0.6133 | -0.0715 |
+| listmle_loss | 1.4747 | 1.4704 | -0.0043 |
+| order_loss | 0.5133 | 0.5105 | -0.0028 |
+
+主要下降来自 `mask_loss`，`ListMLE/order` 基本没有有效下降。这与 selection-only 指标一致：模型学到一点 selected-mask / rank-prior 信息，但没有稳定学到 oracle greedy order 或 oracle set selection。
+
+### Gate 判定
+
+| Gate 条件 | 要求 | 当前最好结果 | 是否通过 |
+|---|---:|---:|---|
+| `recall@5 >= 0.50` | 0.5000 | 0.3732 (`shuffle03`) | 否 |
+| `jaccard@5 >= 0.35` | 0.3500 | 0.2518 (`shuffle03`) | 否 |
+| `oracle_rank_ndcg@5 > hybrid-order control` | > 0.2872 | 0.3131 (`shuffle03`, all-val) | 是 |
+| `top1_match > hybrid-order control` | > 0.1028 | 0.1279 (`shuffle03`, all-val) | 是 |
+
+Step3 目前表现为：order metrics 有改善，set metrics 没突破。根据预设 gate，当前 Step3 run 判定为 **No-Go**，不建议进入 full pipeline。
+
+### 阶段结论
+
+1. `shuffle_probability=0.3` 是正向诊断，说明原模型确有 candidate-rank shortcut；但它只能小幅改善，不能把 set metrics 拉到 gate。
+2. `margin_positive + shuffle03` 提升 top1 / NDCG / pairwise order，但没有提升 recall / Jaccard，说明高 margin 过滤主要改善 order，不解决 set selection。
+3. 当前 Step3 架构没有充分学到 oracle set-selection 信号；继续单纯增加 epoch 或扩大同构训练，不太可能从 `recall@5≈0.37` 提到 `0.50`。
+4. 若继续压 Step3，应优先做 rank-prior ablation：去掉或弱化 `rank_embedding`、`hybrid_rank_norm`、`candidate_idx_norm`，只保留 `hybrid_score` 作为连续 retrieval prior。
+5. 若 rank-prior ablation 仍不过 gate，应转向 Step4 sequential pointer selector，直接建模 oracle greedy order 与 prefix-dependent selection。
