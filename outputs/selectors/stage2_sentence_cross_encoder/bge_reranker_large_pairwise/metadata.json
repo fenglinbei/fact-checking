@@ -1,0 +1,22 @@
+{
+  "selector_type": "cross_encoder_pairwise",
+  "base_model": "/data/models/bge-reranker-large",
+  "train_oracle_results": "outputs/oracle_evidence/stage2_margin_train_sharded/oracle_results_train.jsonl",
+  "val_oracle_results": "outputs/oracle_evidence/stage2_margin_val_20260518_111721/oracle_results_val.jsonl",
+  "chunk_mmr_fingerprint": "432dfc970e75",
+  "candidate_pool_policy": "saved_stage2_candidate_pool_top15",
+  "filter_policy": "all",
+  "min_margin": 0.25,
+  "top_k": 5,
+  "max_length": 384,
+  "losses": {
+    "pairwise_logistic": 1.0,
+    "selected_mask_bce": 0.3,
+    "selected_order_pair": 0.5
+  },
+  "negative_sampling": "all positive-negative pairs with hybrid-top and high-hybrid weights",
+  "seed": 42,
+  "best_metric": "jaccard@5",
+  "best_metric_value": 0.25,
+  "global_step": 1500
+}

@@ -9,7 +9,7 @@ cd "${PROJECT_ROOT}"
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PYTHONPATH:-}"
 
-MODEL_NAME="${MODEL_NAME:-microsoft/deberta-v3-base}"
+MODEL_NAME="${MODEL_NAME:-/data/models/deberta-v3-base/}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/selectors/stage2_sentence_listwise/deberta_listwise}"
 TRAIN_ORACLE_RESULTS="${TRAIN_ORACLE_RESULTS:-outputs/oracle_evidence/stage2_margin_train_sharded/oracle_results_train.jsonl}"
 VAL_ORACLE_RESULTS="${VAL_ORACLE_RESULTS:-outputs/oracle_evidence/stage2_margin_val_20260518_111721/oracle_results_val.jsonl}"
