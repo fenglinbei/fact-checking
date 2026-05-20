@@ -341,13 +341,17 @@ def listwise_selector_loss(
         labels[selected] = 1.0
         mask_losses.append(nn.functional.binary_cross_entropy_with_logits(scores, labels))
 
-        remaining = torch.ones(scores.numel(), dtype=torch.bool, device=scores.device)
+        remaining = list(range(scores.numel()))
         for rank, idx in enumerate(selected):
-            if not bool(remaining[idx]):
+            if idx not in remaining:
                 continue
             position_weight = 1.0 / np.log2(rank + 2.0)
-            listmle_losses.append((torch.logsumexp(scores[remaining], dim=0) - scores[idx]) * float(position_weight))
-            remaining[idx] = False
+            remaining_tensor = torch.tensor(remaining, dtype=torch.long, device=scores.device)
+            listmle_losses.append(
+                (torch.logsumexp(scores.index_select(0, remaining_tensor), dim=0) - scores[idx])
+                * float(position_weight)
+            )
+            remaining = [candidate_idx for candidate_idx in remaining if candidate_idx != idx]
             n_list_steps += 1
 
         for rank_a, idx_a in enumerate(selected):

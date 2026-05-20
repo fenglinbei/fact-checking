@@ -21,6 +21,16 @@ class ListwiseSelectorTest(unittest.TestCase):
         self.assertGreater(good_parts["n_order_pairs"], 0.0)
         self.assertGreater(bad_parts["order_loss"], good_parts["order_loss"])
 
+    def test_listwise_loss_backward_without_inplace_mask_error(self) -> None:
+        scores = [torch.tensor([0.1, 2.0, 0.3, 1.5, -0.2], dtype=torch.float32, requires_grad=True)]
+
+        loss, parts = listwise_selector_loss(scores, [[1, 3, 2]])
+        loss.backward()
+
+        self.assertGreater(parts["n_list_steps"], 0.0)
+        self.assertIsNotNone(scores[0].grad)
+        self.assertEqual(tuple(scores[0].grad.shape), tuple(scores[0].shape))
+
     def test_numeric_features_are_stable_length(self) -> None:
         features = build_numeric_features(
             "Claim says 70 percent in 2020.",
