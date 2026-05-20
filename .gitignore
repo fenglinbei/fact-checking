@@ -244,14 +244,6 @@ outputs/runs/**/test_predictions.jsonl
 !outputs/runs/**/prompt_stats/*
 !outputs/runs/overall_run_analysis/*
 
-# Selector experiment outputs — sync lightweight metrics/results, ignore model weights.
-!outputs/selectors/
-outputs/selectors/**
-!outputs/selectors/**/
-!outputs/selectors/**/*.json
-!outputs/selectors/**/*.jsonl
-outputs/selectors/**/tokenizer.json
-
 wandb/
 multirun/
 swanlog/
