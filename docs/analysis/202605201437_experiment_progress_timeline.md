@@ -1,6 +1,6 @@
 # 实验总进度时间线与文档索引
 
-文档更新时间：2026-05-19 21:41 CST
+文档更新时间：2026-05-20 14:37 CST
 
 本文整理 `docs/` 目录下截至当前的计划、分析、实现与运维文档，按实验推进时间线归纳总体进度。本文只汇总已有文档与已记录结果，不新增实验结论，不重新解释未验证产物。
 
@@ -16,7 +16,7 @@
 | 早期训练与评估诊断 | [`202605111212_classifier-collapse-analysis.md`](202605111212_classifier-collapse-analysis.md), [`202605112128_val_test_Mismatch.md`](202605112128_val_test_Mismatch.md), [`202605131520_val-test-f1-gap-diagnosis.md`](202605131520_val-test-f1-gap-diagnosis.md) | 诊断分类器塌陷、MMR λ sweep 的 val/test 差距、训练/推理路径差异与泛化差距。 |
 | MMR / learned-λ 主线 | [`../implementation/202605111255_mmr-lambda-sweep-pipeline.md`](../implementation/202605111255_mmr-lambda-sweep-pipeline.md), [`../learned_lambda/202605122054_generate_oracle_prompts.md`](../learned_lambda/202605122054_generate_oracle_prompts.md), [`../learned_lambda/202605141045_verification_experiment.md`](../learned_lambda/202605141045_verification_experiment.md), [`../learned_lambda/202605141052_analysis.md`](../learned_lambda/202605141052_analysis.md), [`../plan/202605141045_Improving_Learned_Lambda.md`](../plan/202605141045_Improving_Learned_Lambda.md), [`../implementation/202605141531_sensitivity-gated-mmr.md`](../implementation/202605141531_sensitivity-gated-mmr.md), [`../plan/202605141828_soft_label_policy.md`](../plan/202605141828_soft_label_policy.md) | 从固定 λ 扫描到 oracle λ 验证、hard predictor 失败、sensitivity-gated、soft-label λ 的完整探索。 |
 | RL-MMR / DPO 计划与阶段结论 | [`202605141045_RL_MMR_research_review.md`](202605141045_RL_MMR_research_review.md), [`../plan/202605111704_RL_MMR_experiment_plan_v1.md`](../plan/202605111704_RL_MMR_experiment_plan_v1.md), [`202605151453_RL_MMR_direction_summary.md`](202605151453_RL_MMR_direction_summary.md), [`../plan/202605151936_dpo_step_wise_lambda.md`](../plan/202605151936_dpo_step_wise_lambda.md), [`../plan/202605152032_dpo_stepwise_lambda.md`](../plan/202605152032_dpo_stepwise_lambda.md), [`../plan/202605161049_RL_MMR_experiment_plan_v2.md`](../plan/202605161049_RL_MMR_experiment_plan_v2.md) | 形成 fixed → heuristic → gated → soft-label → DPO step-wise → multi-weight → GRPO 的有序实验路线，并记录 scalar λ 方向的停止条件。 |
-| Oracle evidence set / selector 主线 | [`../plan/202605161147_oracle_evidence_selection.md`](../plan/202605161147_oracle_evidence_selection.md), [`202605161449_oracle_set_gap_analysis.md`](202605161449_oracle_set_gap_analysis.md), [`202605161516_oracle_set_supervision_next_steps.md`](202605161516_oracle_set_supervision_next_steps.md), [`../plan/202605170118_oracle_set_supervision_next_steps.md`](../plan/202605170118_oracle_set_supervision_next_steps.md), [`../plan/202605171203_oracle_pointwise_supervision_v1.md`](../plan/202605171203_oracle_pointwise_supervision_v1.md), [`../implementation/202605171203_oracle_pointwise_supervision_v1.md`](../implementation/202605171203_oracle_pointwise_supervision_v1.md), [`../implementation/202605171322_oracle_search_output_contract.md`](../implementation/202605171322_oracle_search_output_contract.md), [`../implementation/202605171430_pointwise_oracle_pipeline.md`](../implementation/202605171430_pointwise_oracle_pipeline.md), [`../implementation/202605180045_pointwise_v1b_true_side_anchor.md`](../implementation/202605180045_pointwise_v1b_true_side_anchor.md), [`202605190213_pointwise_v1_failure_analysis.md`](202605190213_pointwise_v1_failure_analysis.md), [`202605190340_pointwise_selector_contract_fix_and_stage2_sentence_trial.md`](202605190340_pointwise_selector_contract_fix_and_stage2_sentence_trial.md), [`202605191945_sentence_vs_semantic_stage2_oracle_decision.md`](202605191945_sentence_vs_semantic_stage2_oracle_decision.md), [`202605192113_oracle_direct_verifier_result_and_next_plan.md`](202605192113_oracle_direct_verifier_result_and_next_plan.md), [`202605192141_oracle_direct_val_evidence_checks.md`](202605192141_oracle_direct_val_evidence_checks.md) | 从 oracle 上界计算转向 oracle-set supervision，完成 pointwise V1 selection-only probe、候选池输出契约、Stage2 sentence-vs-semantic 粒度决策、oracle direct verifier 上界确认，以及非 oracle evidence 对照。 |
+| Oracle evidence set / selector 主线 | [`../plan/202605161147_oracle_evidence_selection.md`](../plan/202605161147_oracle_evidence_selection.md), [`202605161449_oracle_set_gap_analysis.md`](202605161449_oracle_set_gap_analysis.md), [`202605161516_oracle_set_supervision_next_steps.md`](202605161516_oracle_set_supervision_next_steps.md), [`../plan/202605170118_oracle_set_supervision_next_steps.md`](../plan/202605170118_oracle_set_supervision_next_steps.md), [`../plan/202605171203_oracle_pointwise_supervision_v1.md`](../plan/202605171203_oracle_pointwise_supervision_v1.md), [`../implementation/202605171203_oracle_pointwise_supervision_v1.md`](../implementation/202605171203_oracle_pointwise_supervision_v1.md), [`../implementation/202605171322_oracle_search_output_contract.md`](../implementation/202605171322_oracle_search_output_contract.md), [`../implementation/202605171430_pointwise_oracle_pipeline.md`](../implementation/202605171430_pointwise_oracle_pipeline.md), [`../implementation/202605180045_pointwise_v1b_true_side_anchor.md`](../implementation/202605180045_pointwise_v1b_true_side_anchor.md), [`202605190213_pointwise_v1_failure_analysis.md`](202605190213_pointwise_v1_failure_analysis.md), [`202605190340_pointwise_selector_contract_fix_and_stage2_sentence_trial.md`](202605190340_pointwise_selector_contract_fix_and_stage2_sentence_trial.md), [`202605191945_sentence_vs_semantic_stage2_oracle_decision.md`](202605191945_sentence_vs_semantic_stage2_oracle_decision.md), [`202605192113_oracle_direct_verifier_result_and_next_plan.md`](202605192113_oracle_direct_verifier_result_and_next_plan.md), [`202605192141_oracle_direct_val_evidence_checks.md`](202605192141_oracle_direct_val_evidence_checks.md), [`202605200004_oracle_direct_order_sensitivity.md`](202605200004_oracle_direct_order_sensitivity.md), [`../plan/202605192148_new_selector_model_research_brief.md`](../plan/202605192148_new_selector_model_research_brief.md), [`202605200216_selector_experiment_plan_and_literature_review.md`](202605200216_selector_experiment_plan_and_literature_review.md), [`../implementation/202605201045_cross_encoder_pairwise_selector_step1.md`](../implementation/202605201045_cross_encoder_pairwise_selector_step1.md) | 从 oracle 上界计算转向 oracle-set supervision，完成 pointwise V1 selection-only probe、候选池输出契约、Stage2 sentence-vs-semantic 粒度决策、oracle direct verifier 上界确认、非 oracle evidence 对照、order-sensitive gate 规范，以及 Step1 cross-encoder selector 的三模型 No-Go 验证。 |
 | Verifier 校准与复现实验基础设施 | [`../plan/202605180118_oracle_calibration_reoracle_four_stage_plan.md`](../plan/202605180118_oracle_calibration_reoracle_four_stage_plan.md), [`../implementation/202605180118_label_token_ce_verifier_stage1.md`](../implementation/202605180118_label_token_ce_verifier_stage1.md), [`../implementation/202605181113_calibration_aware_reoracle_stage2.md`](../implementation/202605181113_calibration_aware_reoracle_stage2.md), [`../implementation/202605192010_oracle_sentence_direct_verifier.md`](../implementation/202605192010_oracle_sentence_direct_verifier.md), [`../plan/202605131653_dvc-warm-minsky.md`](../plan/202605131653_dvc-warm-minsky.md), [`../implementation/202605171700_tailscale_container_ssh_vscode.md`](../implementation/202605171700_tailscale_container_ssh_vscode.md) | 修复 verifier false-side bias、用 margin objective 重跑 oracle，补齐 oracle sentence direct verifier 诊断路径，同时维护跨机复现与访问能力。 |
 
 ## 2. 系统基础设施
@@ -632,6 +632,80 @@ val prompt truncation = 0
 
 结论：oracle-direct verifier 只有在 oracle evidence 条件下强；换成 fixed-MMR 或当前 pointwise 的非 oracle evidence 后，指标回到 0.26-0.27 区间。best 与 checkpoint-600 完全一致，说明不是 checkpoint 选择问题；parse error 为 0、无重复样本、无 val truncation，说明也不是 decode 或 prompt-budget 问题。当前瓶颈进一步确认是 selector / evidence distribution gap。
 
+### 2026-05-20：Order-aware selector gate 与 Step1 Cross-encoder Pairwise No-Go
+
+[`202605200004_oracle_direct_order_sensitivity.md`](202605200004_oracle_direct_order_sensitivity.md) 与 [`../plan/202605192148_new_selector_model_research_brief.md`](../plan/202605192148_new_selector_model_research_brief.md) 将 selector gate 从 set overlap 扩展到 order-aware evaluation。核心原因是：同一组 oracle evidence 只改变顺序，也会显著改变 verifier 输出；因此 selector 输出应定义为 ordered evidence list $L_5$，而不是无序 evidence set。
+
+新增 selection-only gate 分两层：
+
+```text
+set metrics: recall@5, precision@5, jaccard@5
+order metrics: top1_match, prefix_match@1/3/5, ordered_hit@5,
+               oracle_rank_ndcg@5, pairwise_order_acc@5,
+               ordered_exact_match@5
+controls: hybrid_score top5, candidate_pool_order top5,
+          same predicted set + hybrid-order,
+          same predicted set + candidate-pool-order,
+          same predicted set + random-order seeds 0-4
+```
+
+[`202605200216_selector_experiment_plan_and_literature_review.md`](202605200216_selector_experiment_plan_and_literature_review.md) 随后把 selector 路线固定为：
+
+```text
+Step 0: 数据与评估 harness 审计
+Step 1: Cross-encoder pairwise reranker
+Step 2: Cross-encoder score + light MMR diversity 后处理
+Step 3: Set-aware / listwise 15-candidate reranker
+Step 4: Sequential pointer selector
+Step 5: OPD / DAgger-style on-policy distillation
+Step 6: KL-constrained GRPO refinement
+```
+
+Step1 的部署和训练候选池合同固定为：
+
+```text
+chunk_mmr_fingerprint = 432dfc970e75
+chunking.strategy     = sentence
+candidate pool        = saved Stage2 oracle candidate_pool top15
+selector output       = ordered top5
+oracle objective      = margin
+```
+
+[`../implementation/202605201045_cross_encoder_pairwise_selector_step1.md`](../implementation/202605201045_cross_encoder_pairwise_selector_step1.md) 实现了 Step1：
+
+- `src/fact_checking/selectors/stage2_oracle.py`：读取并审计 Stage2 oracle rows，缺失 `candidate_pool`、`selected_indices` 越界、非 `margin` objective、fingerprint mismatch 均 fail fast。
+- `src/fact_checking/selectors/metrics.py`：实现 set + order metrics 与同 predicted set 的排序 controls。
+- `src/fact_checking/selectors/cross_encoder.py`：实现 cross-encoder selector、pairwise logistic loss、selected-mask BCE、selected-order pairwise loss。
+- `scripts/selectors/train_cross_encoder_pairwise.py` / `eval_cross_encoder_selector.py`：训练与 selection-only eval 入口。
+- `configs/experiment/b3_cross_encoder_stage2_sentence_1024.yaml` 与 `src/fact_checking/build/candidates.py`：接入 `selection_method=cross_encoder_selector`，使该 selector 可进入 build pipeline。
+
+三种模型均已完成 train + val selection-only eval，结果位于 `outputs/selectors/stage2_sentence_cross_encoder`：
+
+| 模型目录 | base model | recall@5 | jaccard@5 | oracle_rank_ndcg@5 | top1_match | Gate |
+|---|---|---:|---:|---:|---:|---|
+| `deberta_pairwise` | `microsoft/deberta-v3-base` | 0.3739 | 0.2522 | 0.2646 | 0.0667 | No-Go |
+| `modernbert_pairwise` | `answerdotai/ModernBERT-base` | 0.3733 | 0.2536 | 0.2635 | 0.0659 | No-Go |
+| `bge_reranker_base_pairwise` | `/data/models/bge-reranker-base` | 0.3736 | 0.2528 | 0.2593 | 0.0667 | No-Go |
+
+对照：
+
+| 对照 | recall@5 | jaccard@5 | oracle_rank_ndcg@5 | top1_match |
+|---|---:|---:|---:|---:|
+| `hybrid_score_top5` | 0.3435 | 0.2294 | 0.2872 | 0.1028 |
+| current pointwise logreg | 0.3755 | 0.2536 | 0.2837 | 0.0950 |
+
+Step1 gate 判定：
+
+| Gate 条件 | 要求 | 最好结果 | 是否通过 |
+|---|---:|---:|---|
+| `recall@5 >= 0.50` | 0.5000 | 0.3739 | 否 |
+| `jaccard@5 >= 0.35` | 0.3500 | 0.2536 | 否 |
+| `oracle_rank_ndcg@5 > current pointwise` | > 0.2837 | 0.2646 | 否 |
+| `oracle_rank_ndcg@5 > hybrid-order control` | > 0.2872 | 0.2646 | 否 |
+| `top1_match > current pointwise` | > 0.0950 | 0.0667 | 否 |
+
+结论：三种 cross-encoder pairwise selector 均未达到 Step1 selection-only gate，不建议进入 full pipeline 或 oracle-direct verifier evaluation-only。该结果不像是候选池或 fingerprint 错配导致：三组 eval 均覆盖 1274 条 val claim，fingerprint 均为 `432dfc970e75`，hybrid control 一致。当前应停止 Step1 pointwise cross-encoder 作为主线强 baseline 的继续扩展；若继续推进 selector，应优先转向 Step3 set-aware / listwise 15-candidate reranker，或先诊断 pairwise 训练目标是否过度退化为逐候选相关性而没有学习 oracle greedy order。
+
 ## 4. 当前总体结论
 
 1. 早期 classifier collapse 已经把主要矛盾从"分类头/损失函数"推到"证据选择质量"。单纯换 CE/CORAL/3-class 无法解决问题。
@@ -645,6 +719,7 @@ val prompt truncation = 0
 9. **Stage 2 粒度决策已更新**：sentence-level train oracle 已完成并显著强于 semantic paired subset；semantic 保留为对照，sentence-level oracle supervision 进入下一阶段。
 10. **Oracle sentence direct verifier 已强阳性**：在 val oracle evidence 上，direct verifier 去重后 accuracy 0.7111、macro-F1 0.7169，高于 Stage1 verifier oracle correct rate 0.6593。当前瓶颈从 verifier 能否吸收 evidence，转向 selector 能否在正式候选池中近似 oracle evidence set。
 11. **非 oracle evidence 对照已完成**：oracle-direct verifier 在 fixed-MMR sentence evidence 上仅 0.2716/0.2663，在当前 pointwise evidence 上仅 0.2637/0.2596；低分不是 checkpoint、解码、重复样本或 prompt truncation 导致，而是 evidence distribution gap。
+12. **Order-aware selector gate 已固化，Step1 cross-encoder pairwise 已 No-Go**：三种 cross-encoder（DeBERTa-v3-base、ModernBERT-base、BGE-reranker-base）在同一 Stage2 sentence candidate pool 上均未达到 gate。最好结果仅 recall@5=0.3739、Jaccard@5=0.2536、oracle_rank_ndcg@5=0.2646，低于 `recall@5>=0.50`、`jaccard@5>=0.35` 目标，也低于 current pointwise / hybrid-order 的 order 指标。因此不进入 full pipeline，应转向 set-aware/listwise selector 或先诊断 pairwise 目标。
 
 ## 5. 当前 Stop / Go 状态
 
@@ -660,6 +735,7 @@ val prompt truncation = 0
 | multi-weight MMR | 待定 | 仍可能解决 scalar λ 表达能力不足，但应在 re-oracle 后再决定。 |
 | Pointwise oracle selector (V1a) | 停止 | 旧 selection-only gate 无效，只能作弱参考；下游 test accuracy 0.2230 显著低于 fixed 0.2702。 |
 | Pointwise oracle selector (V1b / current Stage2 pointwise) | 停止 | True-side anchor 仅微升；Stage2 pointwise evidence + oracle-direct verifier val 0.2637/0.2596，仍低于 fixed-MMR evidence。 |
+| Cross-encoder pairwise selector (Step1) | 停止 | DeBERTa / ModernBERT / BGE 三组均未过 gate；最好 recall@5=0.3739、Jaccard@5=0.2536，NDCG/top1 低于 pointwise 与 hybrid-order control。 |
 | Oracle-set supervision | 继续，sentence-level 为主 | sentence-level Stage2 oracle paired accuracy 0.6192，高于 semantic 0.5407；direct verifier 已验证该 supervision 可被吸收。 |
 | Oracle sentence direct verifier | Upper-bound probe | val oracle evidence 上去重后 accuracy 0.7111、macro-F1 0.7169；非 oracle evidence 回到 0.26-0.27，因此不应直接替代部署 verifier。 |
 | Semantic-level oracle supervision | 诊断保留 | paired subset 低于 sentence-level +7.85 pp；不建议等权推进或继续大量消耗 GPU。 |
@@ -672,9 +748,10 @@ val prompt truncation = 0
 3. ~~优先做 `oracle sentence evidence direct verifier`~~ → **已完成，强阳性**。Val oracle evidence 上去重后 accuracy 0.7111、macro-F1 0.7169。
 4. 修正 eval metric 去重：`val_predictions.jsonl` / distributed gather 输出按唯一 `sample_idx` 去重后再算正式 eval 指标，避免 padding 样本影响 checkpoint 选择与报告口径。
 5. ~~做 oracle-direct verifier 的非 oracle evidence 对照~~ → **已完成**。fixed-MMR sentence evidence 为 0.2716/0.2663，pointwise sentence evidence 为 0.2637/0.2596，进一步确认 selector / evidence distribution gap。
-6. 升级 selector，而不是继续放大当前 pointwise logreg。固定候选池口径为 `dedup -> hybrid top15 -> selector top5`、`chunk_mmr_fingerprint=432dfc970e75`，用 Stage2 oracle `selected_indices` 构造 pairwise / listwise reranker 数据。
-7. 新 selector 必须先过 selection-only gate，再跑完整 pipeline。当前 pointwise val recall@5=0.3755、Jaccard@5=0.2536，只能作为弱 baseline。
-8. Semantic-level oracle 只保留 paired diagnostic 或报告对照；不建议等权推进完整 train oracle。
+6. ~~先做 Step1 cross-encoder pairwise selector~~ → **已完成，No-Go**。三种模型都未达到 `recall@5>=0.50` / `jaccard@5>=0.35`，order 指标也低于 current pointwise / hybrid controls。
+7. 升级 selector，但不要继续放大当前 pointwise logreg 或 Step1 pointwise cross-encoder。固定候选池口径为 `dedup -> hybrid top15 -> selector top5`、`chunk_mmr_fingerprint=432dfc970e75`，下一步优先做 Step3 set-aware / listwise 15-candidate reranker，显式建模候选间 interaction 与 oracle order。
+8. 新 selector 必须先过 order-aware selection-only gate，再跑完整 pipeline。当前 pointwise val recall@5=0.3755、Jaccard@5=0.2536；Step1 cross-encoder 最好 recall@5=0.3739、Jaccard@5=0.2536，二者都只能作为弱 baseline。
+9. Semantic-level oracle 只保留 paired diagnostic 或报告对照；不建议等权推进完整 train oracle。
 
 ## 7. 关键文件索引
 
@@ -711,7 +788,7 @@ val prompt truncation = 0
 | `src/fact_checking/rl_mmr/trajectory.py` | `Trajectory`, `MMRStep`, `PreferencePair` dataclasses |
 | `src/fact_checking/rl_mmr/step_features.py` | 每步 state 特征提取（13 维最终版） |
 
-### Oracle Evidence / Pointwise Selector
+### Oracle Evidence / Selector
 
 | 文件 | 作用 |
 |---|---|
@@ -723,6 +800,12 @@ val prompt truncation = 0
 | `scripts/selectors/train_pointwise_oracle_selector.py` | NumPy logistic regression 训练 |
 | `scripts/selectors/eval_pointwise_oracle_selector.py` | Selection-only 评估 |
 | `scripts/oracle_evidence/build_oracle_direct_verifier_data.py` | 从 oracle selected evidence 构造 verifier-ready JSONL |
+| `src/fact_checking/selectors/stage2_oracle.py` | Stage2 oracle candidate pool 契约检查、fingerprint 校验与训练/评估样本加载 |
+| `src/fact_checking/selectors/metrics.py` | Ordered selector metrics 与 hybrid / candidate-pool / random-order controls |
+| `src/fact_checking/selectors/cross_encoder.py` | Step1 cross-encoder pairwise selector 模型、loss 与 pipeline inference |
+| `scripts/selectors/train_cross_encoder_pairwise.py` | Step1 cross-encoder pairwise selector 训练入口 |
+| `scripts/selectors/eval_cross_encoder_selector.py` | Step1 selection-only 评估入口 |
+| `scripts/selectors/run_cross_encoder_step1.sh` | 三模型 Step1 运行 wrapper |
 
 ### Verifier Calibration
 
@@ -751,3 +834,4 @@ val prompt truncation = 0
 | `configs/experiment/mmr_lambda_sweep.yaml` | MMR λ sweep 实验配置 |
 | `configs/experiment/mmr_sensitivity_gated.yaml` | Sensitivity-gated MMR 配置 |
 | `configs/experiment/mmr_dpo_step_lambda.yaml` | DPO step-wise λ 配置 |
+| `configs/experiment/b3_cross_encoder_stage2_sentence_1024.yaml` | Cross-encoder selector 接入 build pipeline 的 Stage2 sentence 配置 |

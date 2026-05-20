@@ -219,7 +219,76 @@ top1_match > current pointwise
 
 若 selection-only 不过关，不进入 full pipeline；优先检查 hard negative 权重、loss 权重、fingerprint audit、是否意外重排、候选池是否仍为 `432dfc970e75`。
 
-## 当前验证范围
+## 2026-05-20 三模型运行结果
 
-本次实施只做代码级与轻量单测验证，不运行真实 cross-encoder 训练；真实训练需要下载/加载 base model，并消耗 GPU。训练完成后应以 `selection_metrics.json` 与 `selection_trace.jsonl` 作为 Step1 的主要验收产物。
+### 运行产物
 
+三种 Step1 cross-encoder 都已完成训练与 val selection-only eval，结果目录为：
+
+```text
+outputs/selectors/stage2_sentence_cross_encoder/deberta_pairwise
+outputs/selectors/stage2_sentence_cross_encoder/modernbert_pairwise
+outputs/selectors/stage2_sentence_cross_encoder/bge_reranker_base_pairwise
+```
+
+统一评估口径：
+
+```text
+split                         = val
+n_claims                      = 1274
+filter_policy                 = all
+chunk_mmr_fingerprint          = 432dfc970e75
+candidate pool                 = saved Stage2 oracle candidate_pool top15
+selector output                = ordered top5
+metric source                  = <model_dir>/eval_val/selection_metrics.json
+```
+
+### Selection-only 指标
+
+| 模型目录 | base model | recall@5 | jaccard@5 | oracle_rank_ndcg@5 | top1_match | Gate |
+|---|---|---:|---:|---:|---:|---|
+| `deberta_pairwise` | `microsoft/deberta-v3-base` | 0.3739 | 0.2522 | 0.2646 | 0.0667 | No-Go |
+| `modernbert_pairwise` | `answerdotai/ModernBERT-base` | 0.3733 | 0.2536 | 0.2635 | 0.0659 | No-Go |
+| `bge_reranker_base_pairwise` | `/data/models/bge-reranker-base` | 0.3736 | 0.2528 | 0.2593 | 0.0667 | No-Go |
+
+对照项：
+
+| 对照 | recall@5 | jaccard@5 | oracle_rank_ndcg@5 | top1_match | 说明 |
+|---|---:|---:|---:|---:|---|
+| `hybrid_score_top5` | 0.3435 | 0.2294 | 0.2872 | 0.1028 | 三个 cross-encoder eval 文件中的同一 control |
+| current pointwise logreg | 0.3755 | 0.2536 | 0.2837 | 0.0950 | 由 `outputs/oracle_pointwise/stage2_margin_sentence/eval_val/selected_evidence.jsonl` 对齐 Stage2 val oracle 后补算 |
+
+注：`modernbert_pairwise/selection_metrics.json` 中训练阶段保存的 best `jaccard@5=0.2546`，略高于单独 `eval_val` 的 `0.2536`，但仍远低于 `0.35` gate，且 NDCG / top1 也没有超过 pointwise 或 hybrid control，因此不影响 No-Go 判断。
+
+### Gate 判定
+
+Step1 预设 gate 与实际结果：
+
+| Gate 条件 | 要求 | 最好结果 | 是否通过 |
+|---|---:|---:|---|
+| `recall@5 >= 0.50` | 0.5000 | 0.3739 | 否 |
+| `jaccard@5 >= 0.35` | 0.3500 | 0.2536 | 否 |
+| `oracle_rank_ndcg@5 > current pointwise` | > 0.2837 | 0.2646 | 否 |
+| `oracle_rank_ndcg@5 > hybrid-order control` | > 0.2872 | 0.2646 | 否 |
+| `top1_match > current pointwise` | > 0.0950 | 0.0667 | 否 |
+
+### 结论
+
+三种 cross-encoder pairwise selector 均未达到 Step1 selection-only gate，不建议进入 full pipeline 或 oracle-direct verifier evaluation-only。当前结果也不像是候选池或 fingerprint 错配导致的误判：三组结果都覆盖 `1274` 条 val claim，fingerprint 均为 `432dfc970e75`，hybrid control 一致。
+
+更合理的 stop/go 判断是：停止 Step1 pointwise cross-encoder 作为主线强 baseline 的继续扩展；若继续推进 selector，应优先转向 Step3 set-aware / listwise 15-candidate reranker，或者先诊断 pairwise 训练目标是否过度压成“逐候选相关性”而没有学到 oracle greedy order。
+
+## 实现验证与实验状态
+
+实现阶段已完成代码级与轻量单测验证：
+
+```text
+compileall
+unittest: src/fact_checking/selectors/test_metrics.py
+Stage2 oracle sample audit
+Hydra config compose
+CLI --help
+git diff --check
+```
+
+后续真实训练已按上述三个模型完成；当前验收结论以 `eval_val/selection_metrics.json` 为准。
