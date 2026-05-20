@@ -1571,6 +1571,41 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
             listwise_selector.metadata.get("chunk_mmr_fingerprint", ""),
         )
 
+    # ---- Optional: Stage2 sequential pointer selector ----
+    sequential_selector = None
+    sequential_cfg = dict(retrieval_cfg.get("sequential_selector", {}) or {})
+    if selection_method in {"sequential_selector", "sequential_pointer", "pointer_selector"}:
+        from fact_checking.selectors.sequential import (
+            SequentialSelector,
+            SequentialSelectorConfig,
+        )
+
+        sequential_model_dir = str(
+            sequential_cfg.get("model_dir")
+            or sequential_cfg.get("model_path")
+            or ""
+        ).strip()
+        if not sequential_model_dir:
+            raise ValueError(
+                "build.retrieval.sequential_selector.model_dir is required when "
+                "build.retrieval.selection_method=sequential_selector."
+            )
+        sequential_selector = SequentialSelector(
+            SequentialSelectorConfig(
+                model_dir=sequential_model_dir,
+                device=str(sequential_cfg.get("device", retrieval_cfg.get("device", "cuda"))),
+                max_length=int(sequential_cfg.get("max_length", 384)),
+                batch_size=int(sequential_cfg.get("batch_size", 8)),
+                strict_fingerprint=bool(sequential_cfg.get("strict_fingerprint", True)),
+                expected_chunk_mmr_fingerprint=chunk_mmr_fp,
+            )
+        )
+        logger.info(
+            "Loaded sequential selector: model=%s chunk_mmr_fp=%s",
+            sequential_selector.model_dir,
+            sequential_selector.metadata.get("chunk_mmr_fingerprint", ""),
+        )
+
     # ---- Optional: learned λ predictor (MMR path only) ----
     learned_lambda_cfg = retrieval_cfg.get("learned_lambda", {}) or {}
     use_learned_lambda = bool(learned_lambda_cfg.get("enabled", False))
@@ -1719,6 +1754,48 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                     for trace in trace_rows:
                         trace_writer.write(json.dumps(trace, ensure_ascii=False) + "\n")
                 logger.info("Wrote listwise selector trace: %s", trace_path)
+        elif selection_method in {"sequential_selector", "sequential_pointer", "pointer_selector"}:
+            from fact_checking.selectors.sequential import select_candidates_sequential
+
+            if sequential_selector is None:
+                raise RuntimeError("Sequential selector model was not loaded.")
+
+            raw_pool_size = sequential_cfg.get("candidate_pool_size", 15)
+            candidate_pool_size = None
+            if raw_pool_size not in (None, "", 0, "0"):
+                candidate_pool_size = int(raw_pool_size)
+            dump_trace = bool(sequential_cfg.get("dump_trace", True))
+            trace_rows: list[dict[str, Any]] = []
+
+            with output_path.open("w", encoding="utf-8") as writer:
+                sequential_pbar = tqdm(
+                    chunk_samples,
+                    desc=f"Sequential selector [{split_name}]",
+                    unit="sample",
+                    dynamic_ncols=True,
+                )
+                for sample in sequential_pbar:
+                    row, trace = select_candidates_sequential(
+                        sample,
+                        sequential_selector,
+                        top_k=run_summary["top_k"],
+                        alpha_dense=run_summary["alpha_dense"],
+                        alpha_lexical=run_summary["alpha_lexical"],
+                        alpha_bm25=run_summary["alpha_bm25"],
+                        candidate_pool_size=candidate_pool_size,
+                    )
+                    if dump_trace:
+                        trace_rows.append(trace)
+                    training_row = _build_training_row(row, tokenizer, prompt_cfg_local)
+                    writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
+                sequential_pbar.close()
+
+            if dump_trace:
+                trace_path = target_dir / f"sequential_selector_trace_{split_name}.jsonl"
+                with trace_path.open("w", encoding="utf-8") as trace_writer:
+                    for trace in trace_rows:
+                        trace_writer.write(json.dumps(trace, ensure_ascii=False) + "\n")
+                logger.info("Wrote sequential selector trace: %s", trace_path)
         else:
             lambda_overrides: dict[str, float] | None = None
             if use_learned_lambda:

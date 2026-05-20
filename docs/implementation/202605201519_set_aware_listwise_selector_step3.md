@@ -24,7 +24,9 @@ src/fact_checking/selectors/test_listwise.py
 scripts/selectors/train_listwise_selector.py
 scripts/selectors/eval_listwise_selector.py
 scripts/selectors/run_listwise_step3.sh
+scripts/selectors/run_listwise_step3_rank_ablation.sh
 configs/experiment/b3_listwise_stage2_sentence_1024.yaml
+configs/experiment/b3_listwise_rank_ablation_stage2_sentence_1024.yaml
 src/fact_checking/build/candidates.py
 ```
 
@@ -68,6 +70,16 @@ number_overlap
 
 其中 `hybrid_rank` 同时进入 rank embedding。训练时可通过 `--shuffle-probability` 做 candidate permutation augmentation；默认 `0.0`，便于先跑 no-shuffle 主线，再单独做 shuffle ablation。
 
+Rank-prior ablation 通过 `--feature-ablation` 控制：
+
+```text
+none
+no_rank_prior
+hybrid_score_only_prior
+```
+
+其中 `hybrid_score_only_prior` 会保留 `hybrid_score`，清零 `dense_score`、`lexical_score`、`bm25_log_norm`、`hybrid_rank_norm`、`candidate_idx_norm`，并关闭 `rank_embedding`。非检索先验特征仍保留，例如 `sent_idx_norm`、`source_index_norm`、`text_token_len_norm`、`claim_token_overlap`、`number_overlap`。
+
 ## Loss
 
 训练 loss 由三部分组成：
@@ -106,6 +118,7 @@ PYTHONPATH=src python scripts/selectors/train_listwise_selector.py \
 --list-layers 2
 --list-heads 4
 --shuffle-probability 0.0
+--feature-ablation none
 --freeze-pair-encoder
 ```
 
@@ -242,18 +255,21 @@ PYTHONPATH=src python -m unittest src/fact_checking/selectors/test_metrics.py sr
 PYTHONPATH=src python scripts/selectors/train_listwise_selector.py --help
 PYTHONPATH=src python scripts/selectors/eval_listwise_selector.py --help
 bash -n scripts/selectors/run_listwise_step3.sh
+bash -n scripts/selectors/run_listwise_step3_rank_ablation.sh
+PYTHONPATH=src python -m fact_checking.pipeline.run experiment=b3_listwise_rank_ablation_stage2_sentence_1024 --cfg job
 ```
 
 ## 2026-05-20 诊断运行结果
 
 ### 运行产物
 
-当前已完成三组 Step3 listwise 诊断：
+当前已完成四组 Step3 listwise 诊断：
 
 ```text
 outputs/selectors/stage2_sentence_listwise/deberta_listwise
 outputs/selectors/stage2_sentence_listwise/deberta_listwise_shuffle03
 outputs/selectors/stage2_sentence_listwise/deberta_listwise_margin_positive
+outputs/selectors/stage2_sentence_listwise/deberta_listwise_rank_ablation
 ```
 
 统一候选池口径：
@@ -276,13 +292,28 @@ n_val               = 840
 
 因此它不是纯 filter 诊断，而是 `margin_positive + shuffle03` 的组合诊断；其 val 指标只覆盖 margin-positive 子集，不能直接与全量 val 的 1274 条样本等量比较。
 
+`deberta_listwise_rank_ablation` 的 metadata 显示：
+
+```text
+filter_policy                 = all
+shuffle_probability           = 0.3
+feature_ablation              = hybrid_score_only_prior
+rank_embedding_enabled        = false
+dropped_numeric_feature_names = dense_score, lexical_score, bm25_log_norm, hybrid_rank_norm, candidate_idx_norm
+n_val                         = 1274
+global_step                   = 1000
+```
+
+因此它是 Step3 的 rank-prior 关门实验：候选池、filter、shuffle 口径与 `deberta_listwise_shuffle03` 保持一致，只移除显式 rank / index prior，并只保留 `hybrid_score` 作为连续 retrieval prior。
+
 ### 全量 val 指标
 
-| Run | filter | shuffle | n | recall@5 | jaccard@5 | top1_match | oracle_rank_ndcg@5 | pairwise_order_acc@5 | Gate |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---|
-| `deberta_listwise` | all | 0.0 | 1274 | 0.3689 | 0.2484 | 0.1162 | 0.3072 | 0.5145 | No-Go |
-| `deberta_listwise_shuffle03` | all | 0.3 | 1274 | 0.3732 | 0.2518 | 0.1279 | 0.3131 | 0.5372 | No-Go |
-| `hybrid_score_top5` control | all | - | 1274 | 0.3435 | 0.2294 | 0.1028 | 0.2872 | 0.5271 | - |
+| Run | filter | shuffle | feature ablation | n | recall@5 | jaccard@5 | top1_match | oracle_rank_ndcg@5 | pairwise_order_acc@5 | Gate |
+|---|---|---:|---|---:|---:|---:|---:|---:|---:|---|
+| `deberta_listwise` | all | 0.0 | none | 1274 | 0.3689 | 0.2484 | 0.1162 | 0.3072 | 0.5145 | No-Go |
+| `deberta_listwise_shuffle03` | all | 0.3 | none | 1274 | 0.3732 | 0.2518 | 0.1279 | 0.3131 | 0.5372 | No-Go |
+| `deberta_listwise_rank_ablation` | all | 0.3 | hybrid_score_only_prior | 1274 | 0.3826 | 0.2588 | 0.1122 | 0.3108 | 0.5168 | No-Go |
+| `hybrid_score_top5` control | all | - | - | 1274 | 0.3435 | 0.2294 | 0.1028 | 0.2872 | 0.5271 | - |
 
 `shuffle03` 相比 no-shuffle 有小幅正向作用：
 
@@ -293,6 +324,16 @@ top1_match         +0.0117
 oracle_rank_ndcg@5 +0.0059
 ```
 
+`rank_ablation` 相比 `shuffle03` 进一步改善 set metrics，但幅度仍很小：
+
+```text
+recall@5           +0.0094
+jaccard@5          +0.0070
+top1_match         -0.0157
+oracle_rank_ndcg@5 -0.0023
+pairwise_order_acc -0.0203
+```
+
 但仍远低于 Step3 gate：
 
 ```text
@@ -300,7 +341,7 @@ recall@5 >= 0.50
 jaccard@5 >= 0.35
 ```
 
-因此全量 val 下 Step3 仍不进入 full pipeline。
+因此全量 val 下 Step3 仍不进入 full pipeline。`rank_ablation` 说明去掉显式 rank shortcut 能带来一点 set-selection 增益，但不足以改变 No-Go 判断。
 
 ### margin-positive 子集对齐比较
 
@@ -325,10 +366,13 @@ jaccard@5 >= 0.35
 | `deberta_listwise` | 0.5118 | 0.1028 | 0.4819 | 0.3375 |
 | `deberta_listwise_shuffle03` | 0.4262 | 0.1028 | 0.4257 | 0.3375 |
 | `deberta_listwise_margin_positive` | 0.6369 | 0.1143 | 0.6390 | 0.3395 |
+| `deberta_listwise_rank_ablation` | 0.1319 | 0.1028 | 0.4086 | 0.3375 |
 
 `shuffle03` 确实削弱了 rank shortcut：idx0 top1 比例从 51.2% 降到 42.6%，pred top5 落在 hybrid top5 的比例从 48.2% 降到 42.6%。但偏置仍明显高于 oracle 分布。
 
 `margin_positive + shuffle03` 的 rank shortcut 反而更强，idx0 top1 达到 63.7%。这说明仅过滤 margin-positive 样本不能消除 hybrid-rank shortcut。
+
+`rank_ablation` 后 idx0 top1 比例降到 13.2%，接近 oracle 的 10.3%，说明显式 rank/index prior 确实是 top1 shortcut 的主要来源。但 pred top5 落在 hybrid top5 的比例仍有 40.9%，高于 oracle 的 33.8%，并且 set metrics 只小幅上升，说明当前架构的主要瓶颈不只是 rank shortcut。
 
 ### Loss 曲线
 
@@ -343,31 +387,44 @@ jaccard@5 >= 0.35
 
 主要下降来自 `mask_loss`，`ListMLE/order` 基本没有有效下降。这与 selection-only 指标一致：模型学到一点 selected-mask / rank-prior 信息，但没有稳定学到 oracle greedy order 或 oracle set selection。
 
+`deberta_listwise_rank_ablation` 的训练 history 分段均值：
+
+| loss | first100 | last100 | 变化 |
+|---|---:|---:|---:|
+| total loss | 1.9279 | 1.9335 | +0.0056 |
+| mask_loss | 0.6712 | 0.6576 | -0.0136 |
+| listmle_loss | 1.4708 | 1.4839 | +0.0131 |
+| order_loss | 0.5114 | 0.5047 | -0.0067 |
+
+rank-prior ablation 下 `mask_loss` 仍有小幅下降，但 `ListMLE` 没有改善，order loss 下降也很弱。这与评估一致：set overlap 小幅提高，但没有学到足够强的 oracle greedy order。
+
+### Rank-ablation order controls
+
+`deberta_listwise_rank_ablation/eval_val/selection_metrics.json` 中同预测 set 的排序对照：
+
+| Order | n | recall@5 | jaccard@5 | top1_match | oracle_rank_ndcg@5 | pairwise_order_acc@5 |
+|---|---:|---:|---:|---:|---:|---:|
+| model order | 1274 | 0.3826 | 0.2588 | 0.1122 | 0.3108 | 0.5168 |
+| same set + hybrid order | 1274 | 0.3826 | 0.2588 | 0.1083 | 0.3040 | 0.5222 |
+| same set + random order mean | 6370 | 0.3826 | 0.2588 | 0.0738 | 0.2922 | 0.4857 |
+
+模型自身 order 比 random 明显好，NDCG / top1 略高于 same-set hybrid order，但 pairwise order accuracy 低于 same-set hybrid order。结论是 rank-ablation 后仍有一点排序信号，但不稳定，不能单独支撑进入 full pipeline。
+
 ### Gate 判定
 
 | Gate 条件 | 要求 | 当前最好结果 | 是否通过 |
 |---|---:|---:|---|
-| `recall@5 >= 0.50` | 0.5000 | 0.3732 (`shuffle03`) | 否 |
-| `jaccard@5 >= 0.35` | 0.3500 | 0.2518 (`shuffle03`) | 否 |
+| `recall@5 >= 0.50` | 0.5000 | 0.3826 (`rank_ablation`) | 否 |
+| `jaccard@5 >= 0.35` | 0.3500 | 0.2588 (`rank_ablation`) | 否 |
 | `oracle_rank_ndcg@5 > hybrid-order control` | > 0.2872 | 0.3131 (`shuffle03`, all-val) | 是 |
 | `top1_match > hybrid-order control` | > 0.1028 | 0.1279 (`shuffle03`, all-val) | 是 |
 
-Step3 目前表现为：order metrics 有改善，set metrics 没突破。根据预设 gate，当前 Step3 run 判定为 **No-Go**，不建议进入 full pipeline。
+Step3 目前表现为：order metrics 有改善，rank-prior ablation 小幅改善 set metrics，但 set metrics 仍远未突破。根据预设 gate，当前 Step3 判定为 **No-Go**，不建议进入 full pipeline。
 
 ### 阶段结论
 
 1. `shuffle_probability=0.3` 是正向诊断，说明原模型确有 candidate-rank shortcut；但它只能小幅改善，不能把 set metrics 拉到 gate。
 2. `margin_positive + shuffle03` 提升 top1 / NDCG / pairwise order，但没有提升 recall / Jaccard，说明高 margin 过滤主要改善 order，不解决 set selection。
-3. 当前 Step3 架构没有充分学到 oracle set-selection 信号；继续单纯增加 epoch 或扩大同构训练，不太可能从 `recall@5≈0.37` 提到 `0.50`。
-4. 若继续压 Step3，应优先做 rank-prior ablation：去掉或弱化 `rank_embedding`、`hybrid_rank_norm`、`candidate_idx_norm`，只保留 `hybrid_score` 作为连续 retrieval prior。
-5. 若 rank-prior ablation 仍不过 gate，应转向 Step4 sequential pointer selector，直接建模 oracle greedy order 与 prefix-dependent selection。
-
-## Rank-prior ablation 关门实验入口
-
-该收尾实验已单独落盘到 `docs/implementation/202605201915_listwise_rank_prior_ablation_step3.md`。默认入口为：
-
-```bash
-scripts/selectors/run_listwise_step3_rank_ablation.sh
-```
-
-默认设置为 `feature_ablation=hybrid_score_only_prior`、`filter_policy=all`、`shuffle_probability=0.3`，输出到 `outputs/selectors/stage2_sentence_listwise/deberta_listwise_rank_ablation`。
+3. `rank_ablation` 证明显式 rank/index prior 是 top1 shortcut 的主要来源，但去掉它只把 `recall@5` 从 0.3732 提到 0.3826、`jaccard@5` 从 0.2518 提到 0.2588，距离 gate 仍很远。
+4. 当前 Step3 架构没有充分学到 oracle set-selection 信号；继续单纯增加 epoch、扩大同构训练或继续微调 rank prior，不太可能从 `recall@5≈0.38` 提到 `0.50`。
+5. Step3 关门结论：不进入 full pipeline；下一步应转向 Step4 sequential pointer selector，直接建模 oracle greedy order 与 prefix-dependent selection。
