@@ -17,8 +17,10 @@ from tqdm.auto import tqdm
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
 from fact_checking.selectors.listwise import (
+    FEATURE_ABLATION_CHOICES,
     LISTWISE_HEAD_FILENAME,
     SetAwareListwiseSelectorModel,
+    dropped_numeric_feature_names,
     forward_listwise_examples,
     listwise_selector_loss,
 )
@@ -79,6 +81,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dropout", type=float, default=0.1)
     p.add_argument("--freeze-pair-encoder", action="store_true")
     p.add_argument("--shuffle-probability", type=float, default=0.0)
+    p.add_argument(
+        "--feature-ablation",
+        default="none",
+        choices=FEATURE_ABLATION_CHOICES,
+        help=(
+            "Listwise numeric/rank-prior ablation. "
+            "'no_rank_prior' zeros rank/index numeric features and disables rank embedding; "
+            "'hybrid_score_only_prior' additionally zeros dense/lexical/BM25 score components."
+        ),
+    )
     p.add_argument("--max-grad-norm", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", default="cuda")
@@ -134,6 +146,7 @@ def main() -> None:
         num_attention_heads=int(args.list_heads),
         dropout=float(args.dropout),
         max_candidates=int(args.max_candidates),
+        feature_ablation=str(args.feature_ablation),
     )
     if bool(args.freeze_pair_encoder):
         for param in raw_model.encoder.parameters():
@@ -315,6 +328,9 @@ def _validate_and_maybe_save(
                 "listmle_pl": float(args.listmle_weight),
                 "selected_order_pair": float(args.order_weight),
             },
+            "feature_ablation": str(args.feature_ablation),
+            "rank_embedding_enabled": bool(model.use_rank_embedding),
+            "dropped_numeric_feature_names": dropped_numeric_feature_names(args.feature_ablation),
             "shuffle_probability": float(args.shuffle_probability),
             "freeze_pair_encoder": bool(args.freeze_pair_encoder),
             "seed": int(args.seed),

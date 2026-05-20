@@ -1,0 +1,20 @@
+# @package _global_
+# Step3 rank-prior ablation selector trained from Stage2 sentence-level margin oracle.
+
+defaults:
+  - b3_listwise_stage2_sentence_1024
+  - _self_
+
+experiment:
+  name: b3_listwise_rank_ablation_stage2_sentence_1024
+
+baseline:
+  variant: b3_listwise_rank_ablation_stage2_sentence_1024
+
+build:
+  retrieval:
+    listwise_selector:
+      model_dir: outputs/selectors/stage2_sentence_listwise/deberta_listwise_rank_ablation
+
+swanlab:
+  experiment_name: b3_listwise_rank_ablation_stage2_sentence_1024

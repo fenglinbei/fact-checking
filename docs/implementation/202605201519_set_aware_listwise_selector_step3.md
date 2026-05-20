@@ -361,3 +361,13 @@ Step3 目前表现为：order metrics 有改善，set metrics 没突破。根据
 3. 当前 Step3 架构没有充分学到 oracle set-selection 信号；继续单纯增加 epoch 或扩大同构训练，不太可能从 `recall@5≈0.37` 提到 `0.50`。
 4. 若继续压 Step3，应优先做 rank-prior ablation：去掉或弱化 `rank_embedding`、`hybrid_rank_norm`、`candidate_idx_norm`，只保留 `hybrid_score` 作为连续 retrieval prior。
 5. 若 rank-prior ablation 仍不过 gate，应转向 Step4 sequential pointer selector，直接建模 oracle greedy order 与 prefix-dependent selection。
+
+## Rank-prior ablation 关门实验入口
+
+该收尾实验已单独落盘到 `docs/implementation/202605201915_listwise_rank_prior_ablation_step3.md`。默认入口为：
+
+```bash
+scripts/selectors/run_listwise_step3_rank_ablation.sh
+```
+
+默认设置为 `feature_ablation=hybrid_score_only_prior`、`filter_policy=all`、`shuffle_probability=0.3`，输出到 `outputs/selectors/stage2_sentence_listwise/deberta_listwise_rank_ablation`。

@@ -4,7 +4,14 @@ import unittest
 
 import torch
 
-from fact_checking.selectors.listwise import build_numeric_features, listwise_selector_loss
+from fact_checking.selectors.listwise import (
+    FEATURE_ABLATION_HYBRID_SCORE_ONLY_PRIOR,
+    FEATURE_ABLATION_NO_RANK_PRIOR,
+    NUMERIC_FEATURE_NAMES,
+    build_numeric_features,
+    dropped_numeric_feature_names,
+    listwise_selector_loss,
+)
 
 
 class ListwiseSelectorTest(unittest.TestCase):
@@ -54,6 +61,84 @@ class ListwiseSelectorTest(unittest.TestCase):
         self.assertEqual(len(features), 11)
         self.assertTrue(all(0.0 <= value <= 1.0 for value in features))
         self.assertGreater(features[-1], 0.0)
+
+    def test_rank_prior_ablation_keeps_feature_shape(self) -> None:
+        full = build_numeric_features(
+            "Claim says 70 percent in 2020.",
+            {
+                "text": "The article says 70 percent in 2020 and compares prior years.",
+                "sent_idx": 4,
+                "source_index": 12,
+            },
+            {
+                "candidate_idx": 3,
+                "hybrid_rank": 2,
+                "dense_score": 0.7,
+                "lexical_score": 0.25,
+                "bm25_score": 2.0,
+                "hybrid_score": 0.9,
+            },
+            idx=3,
+            max_candidates=15,
+        )
+        no_rank = build_numeric_features(
+            "Claim says 70 percent in 2020.",
+            {
+                "text": "The article says 70 percent in 2020 and compares prior years.",
+                "sent_idx": 4,
+                "source_index": 12,
+            },
+            {
+                "candidate_idx": 3,
+                "hybrid_rank": 2,
+                "dense_score": 0.7,
+                "lexical_score": 0.25,
+                "bm25_score": 2.0,
+                "hybrid_score": 0.9,
+            },
+            idx=3,
+            max_candidates=15,
+            feature_ablation=FEATURE_ABLATION_NO_RANK_PRIOR,
+        )
+        hybrid_only = build_numeric_features(
+            "Claim says 70 percent in 2020.",
+            {
+                "text": "The article says 70 percent in 2020 and compares prior years.",
+                "sent_idx": 4,
+                "source_index": 12,
+            },
+            {
+                "candidate_idx": 3,
+                "hybrid_rank": 2,
+                "dense_score": 0.7,
+                "lexical_score": 0.25,
+                "bm25_score": 2.0,
+                "hybrid_score": 0.9,
+            },
+            idx=3,
+            max_candidates=15,
+            feature_ablation=FEATURE_ABLATION_HYBRID_SCORE_ONLY_PRIOR,
+        )
+
+        self.assertEqual(len(full), len(no_rank))
+        self.assertEqual(len(full), len(hybrid_only))
+        name_to_idx = {name: idx for idx, name in enumerate(NUMERIC_FEATURE_NAMES)}
+        self.assertEqual(no_rank[name_to_idx["hybrid_score"]], full[name_to_idx["hybrid_score"]])
+        self.assertEqual(no_rank[name_to_idx["hybrid_rank_norm"]], 0.0)
+        self.assertEqual(no_rank[name_to_idx["candidate_idx_norm"]], 0.0)
+        self.assertEqual(hybrid_only[name_to_idx["dense_score"]], 0.0)
+        self.assertEqual(hybrid_only[name_to_idx["lexical_score"]], 0.0)
+        self.assertEqual(hybrid_only[name_to_idx["bm25_log_norm"]], 0.0)
+        self.assertEqual(
+            dropped_numeric_feature_names(FEATURE_ABLATION_HYBRID_SCORE_ONLY_PRIOR),
+            [
+                "dense_score",
+                "lexical_score",
+                "bm25_log_norm",
+                "hybrid_rank_norm",
+                "candidate_idx_norm",
+            ],
+        )
 
 
 if __name__ == "__main__":

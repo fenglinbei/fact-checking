@@ -37,6 +37,17 @@ NUMERIC_FEATURE_NAMES = [
     "number_overlap",
 ]
 
+FEATURE_ABLATION_NONE = "none"
+FEATURE_ABLATION_NO_RANK_PRIOR = "no_rank_prior"
+FEATURE_ABLATION_HYBRID_SCORE_ONLY_PRIOR = "hybrid_score_only_prior"
+FEATURE_ABLATION_CHOICES = (
+    FEATURE_ABLATION_NONE,
+    FEATURE_ABLATION_NO_RANK_PRIOR,
+    FEATURE_ABLATION_HYBRID_SCORE_ONLY_PRIOR,
+)
+_RANK_PRIOR_FEATURES = {"hybrid_rank_norm", "candidate_idx_norm"}
+_RETRIEVAL_COMPONENT_FEATURES = {"dense_score", "lexical_score", "bm25_log_norm"}
+
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
 
@@ -62,6 +73,8 @@ class SetAwareListwiseSelectorModel(nn.Module):
         num_attention_heads: int = 4,
         dropout: float = 0.1,
         max_candidates: int = DEFAULT_CANDIDATE_POOL_SIZE,
+        feature_ablation: str = FEATURE_ABLATION_NONE,
+        use_rank_embedding: bool | None = None,
         trust_remote_code: bool = True,
     ) -> None:
         super().__init__()
@@ -76,6 +89,10 @@ class SetAwareListwiseSelectorModel(nn.Module):
         self.num_attention_heads = int(num_attention_heads)
         self.dropout = float(dropout)
         self.max_candidates = int(max_candidates)
+        self.feature_ablation = normalize_feature_ablation(feature_ablation)
+        if use_rank_embedding is None:
+            use_rank_embedding = self.feature_ablation == FEATURE_ABLATION_NONE
+        self.use_rank_embedding = bool(use_rank_embedding)
 
         numeric_hidden = max(32, min(128, self.hidden_size // 2))
         self.numeric_projection = nn.Sequential(
@@ -89,7 +106,11 @@ class SetAwareListwiseSelectorModel(nn.Module):
             nn.GELU(),
             nn.Dropout(self.dropout),
         )
-        self.rank_embedding = nn.Embedding(self.max_candidates + 1, self.hidden_size)
+        self.rank_embedding = (
+            nn.Embedding(self.max_candidates + 1, self.hidden_size)
+            if self.use_rank_embedding
+            else None
+        )
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.hidden_size,
             nhead=self.num_attention_heads,
@@ -128,26 +149,31 @@ class SetAwareListwiseSelectorModel(nn.Module):
             group_sizes,
             max_candidates=self.max_candidates,
         )
-        x = padded_items + self.rank_embedding(padded_ranks)
+        x = padded_items
+        if self.rank_embedding is not None:
+            x = x + self.rank_embedding(padded_ranks)
         x = self.set_encoder(x, src_key_padding_mask=~mask)
         scores = self.scorer(self.output_norm(x)).squeeze(-1)
         scores = scores.masked_fill(~mask, -1.0e4)
         return scores, mask
 
     def selector_head_state_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "numeric_projection": self.numeric_projection.state_dict(),
             "item_projection": self.item_projection.state_dict(),
-            "rank_embedding": self.rank_embedding.state_dict(),
             "set_encoder": self.set_encoder.state_dict(),
             "output_norm": self.output_norm.state_dict(),
             "scorer": self.scorer.state_dict(),
         }
+        if self.rank_embedding is not None:
+            payload["rank_embedding"] = self.rank_embedding.state_dict()
+        return payload
 
     def load_selector_head_state_dict(self, payload: dict[str, Any]) -> None:
         self.numeric_projection.load_state_dict(payload["numeric_projection"])
         self.item_projection.load_state_dict(payload["item_projection"])
-        self.rank_embedding.load_state_dict(payload["rank_embedding"])
+        if self.rank_embedding is not None:
+            self.rank_embedding.load_state_dict(payload["rank_embedding"])
         self.set_encoder.load_state_dict(payload["set_encoder"])
         self.output_norm.load_state_dict(payload["output_norm"])
         self.scorer.load_state_dict(payload["scorer"])
@@ -161,6 +187,9 @@ class SetAwareListwiseSelectorModel(nn.Module):
             "num_attention_heads": self.num_attention_heads,
             "dropout": self.dropout,
             "max_candidates": self.max_candidates,
+            "feature_ablation": self.feature_ablation,
+            "dropped_numeric_feature_names": dropped_numeric_feature_names(self.feature_ablation),
+            "use_rank_embedding": self.use_rank_embedding,
         }
 
 
@@ -174,6 +203,9 @@ class ListwiseSelector:
         self._validate_fingerprint()
 
         model_cfg = dict(self.metadata.get("model_config") or {})
+        feature_ablation = normalize_feature_ablation(
+            model_cfg.get("feature_ablation", self.metadata.get("feature_ablation", FEATURE_ABLATION_NONE))
+        )
         self.device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_dir, trust_remote_code=True)
         self.model = SetAwareListwiseSelectorModel(
@@ -184,6 +216,10 @@ class ListwiseSelector:
             num_attention_heads=int(model_cfg.get("num_attention_heads", 4)),
             dropout=float(model_cfg.get("dropout", 0.1)),
             max_candidates=int(model_cfg.get("max_candidates", DEFAULT_CANDIDATE_POOL_SIZE)),
+            feature_ablation=feature_ablation,
+            use_rank_embedding=bool(
+                model_cfg.get("use_rank_embedding", feature_ablation == FEATURE_ABLATION_NONE)
+            ),
         )
         head_path = self.model_dir / LISTWISE_HEAD_FILENAME
         if not head_path.exists():
@@ -282,6 +318,7 @@ def forward_listwise_groups(
     group_sizes: list[int] = []
     feature_rows: list[list[float]] = []
     ranks: list[int] = []
+    feature_ablation = _model_feature_ablation(model)
 
     for group in groups:
         group_sizes.append(len(group.candidates))
@@ -296,6 +333,7 @@ def forward_listwise_groups(
                     score,
                     idx=idx,
                     max_candidates=max_candidates,
+                    feature_ablation=feature_ablation,
                 )
             )
             ranks.append(
@@ -389,6 +427,7 @@ def build_numeric_features(
     *,
     idx: int,
     max_candidates: int = DEFAULT_CANDIDATE_POOL_SIZE,
+    feature_ablation: str = FEATURE_ABLATION_NONE,
 ) -> list[float]:
     score = candidate_score or {}
     text = candidate_text(candidate)
@@ -406,7 +445,7 @@ def build_numeric_features(
     text_numbers = set(_NUMBER_RE.findall(text))
     number_overlap = len(claim_numbers & text_numbers) / max(len(claim_numbers), 1) if claim_numbers else 0.0
     denom = max(int(max_candidates) - 1, 1)
-    return [
+    features = [
         _safe_float(score.get("hybrid_score", candidate.get("hybrid_score", 0.0)), 0.0),
         _safe_float(score.get("dense_score", candidate.get("dense_score", 0.0)), 0.0),
         _safe_float(score.get("lexical_score", candidate.get("lexical_score", 0.0)), 0.0),
@@ -419,6 +458,44 @@ def build_numeric_features(
         float(min(max(overlap, 0.0), 1.0)),
         float(min(max(number_overlap, 0.0), 1.0)),
     ]
+    return apply_numeric_feature_ablation(features, feature_ablation)
+
+
+def normalize_feature_ablation(feature_ablation: Any) -> str:
+    value = str(feature_ablation or FEATURE_ABLATION_NONE).strip().lower()
+    if value in {"", "false", "off", "full"}:
+        value = FEATURE_ABLATION_NONE
+    if value not in FEATURE_ABLATION_CHOICES:
+        choices = ", ".join(FEATURE_ABLATION_CHOICES)
+        raise ValueError(f"Unknown listwise feature ablation mode: {value!r}; choices: {choices}")
+    return value
+
+
+def dropped_numeric_feature_names(feature_ablation: Any) -> list[str]:
+    mode = normalize_feature_ablation(feature_ablation)
+    dropped: set[str] = set()
+    if mode in {FEATURE_ABLATION_NO_RANK_PRIOR, FEATURE_ABLATION_HYBRID_SCORE_ONLY_PRIOR}:
+        dropped.update(_RANK_PRIOR_FEATURES)
+    if mode == FEATURE_ABLATION_HYBRID_SCORE_ONLY_PRIOR:
+        dropped.update(_RETRIEVAL_COMPONENT_FEATURES)
+    return [name for name in NUMERIC_FEATURE_NAMES if name in dropped]
+
+
+def apply_numeric_feature_ablation(features: list[float], feature_ablation: Any) -> list[float]:
+    dropped = set(dropped_numeric_feature_names(feature_ablation))
+    if not dropped:
+        return [float(value) for value in features]
+    return [
+        0.0
+        if idx < len(NUMERIC_FEATURE_NAMES) and NUMERIC_FEATURE_NAMES[idx] in dropped
+        else float(value)
+        for idx, value in enumerate(features)
+    ]
+
+
+def _model_feature_ablation(model: Any) -> str:
+    base_model = getattr(model, "module", model)
+    return normalize_feature_ablation(getattr(base_model, "feature_ablation", FEATURE_ABLATION_NONE))
 
 
 def select_candidates_listwise(

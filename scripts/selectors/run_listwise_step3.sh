@@ -22,6 +22,7 @@ LR="${LR:-2e-5}"
 HEAD_LR="${HEAD_LR:-1e-4}"
 FILTER_POLICY="${FILTER_POLICY:-all}"
 SHUFFLE_PROBABILITY="${SHUFFLE_PROBABILITY:-0.3}"
+FEATURE_ABLATION="${FEATURE_ABLATION:-none}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
 
 echo "[listwise-step3] model=${MODEL_NAME}"
@@ -29,6 +30,7 @@ echo "[listwise-step3] output=${OUTPUT_DIR}"
 echo "[listwise-step3] train=${TRAIN_ORACLE_RESULTS}"
 echo "[listwise-step3] val=${VAL_ORACLE_RESULTS}"
 echo "[listwise-step3] nproc_per_node=${NPROC_PER_NODE}"
+echo "[listwise-step3] feature_ablation=${FEATURE_ABLATION}"
 
 TRAIN_CMD=(
     scripts/selectors/train_listwise_selector.py
@@ -43,6 +45,7 @@ TRAIN_CMD=(
     --head-learning-rate "${HEAD_LR}" \
     --filter-policy "${FILTER_POLICY}" \
     --shuffle-probability "${SHUFFLE_PROBABILITY}" \
+    --feature-ablation "${FEATURE_ABLATION}" \
     "$@"
 )
 
