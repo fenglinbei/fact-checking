@@ -20,6 +20,8 @@ EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}"
 EPOCHS="${EPOCHS:-6}"
 LR="${LR:-2e-5}"
 HEAD_LR="${HEAD_LR:-1e-4}"
+SEQ_LOSS_WEIGHT="${SEQ_LOSS_WEIGHT:-1.0}"
+MASK_LOSS_WEIGHT="${MASK_LOSS_WEIGHT:-0.0}"
 FILTER_POLICY="${FILTER_POLICY:-all}"
 SEMANTIC_FEATURE_PROFILE="${SEMANTIC_FEATURE_PROFILE:-deep}"
 TARGETED_FEATURE_PROFILE="${TARGETED_FEATURE_PROFILE:-none}"
@@ -42,6 +44,8 @@ echo "[sequential-step4] nproc_per_node=${NPROC_PER_NODE}"
 echo "[sequential-step4] semantic_feature_profile=${SEMANTIC_FEATURE_PROFILE}"
 echo "[sequential-step4] targeted_feature_profile=${TARGETED_FEATURE_PROFILE}"
 echo "[sequential-step4] shallow_feature_profile=${SHALLOW_FEATURE_PROFILE}"
+echo "[sequential-step4] seq_loss_weight=${SEQ_LOSS_WEIGHT}"
+echo "[sequential-step4] mask_loss_weight=${MASK_LOSS_WEIGHT}"
 echo "[sequential-step4] swanlab_project=${SWANLAB_PROJECT}"
 echo "[sequential-step4] swanlab_experiment_name=${SWANLAB_EXPERIMENT_NAME}"
 
@@ -56,6 +60,8 @@ TRAIN_CMD=(
     --epochs "${EPOCHS}" \
     --learning-rate "${LR}" \
     --head-learning-rate "${HEAD_LR}" \
+    --seq-loss-weight "${SEQ_LOSS_WEIGHT}" \
+    --mask-loss-weight "${MASK_LOSS_WEIGHT}" \
     --filter-policy "${FILTER_POLICY}" \
     --semantic-feature-profile "${SEMANTIC_FEATURE_PROFILE}" \
     --targeted-feature-profile "${TARGETED_FEATURE_PROFILE}" \

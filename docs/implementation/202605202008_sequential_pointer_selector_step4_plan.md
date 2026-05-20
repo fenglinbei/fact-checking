@@ -16,6 +16,118 @@ output   = [a_1, a_2, ..., a_K], K <= 5
 
 第一版 Step4 只做 supervised teacher-forcing sequential selector，不做 OPD / DAgger，也不做 GRPO。Step5 OPD 需要以 Step4 可用 baseline 为前置。
 
+### 2026-05-21 阶段性结论
+
+`deberta_sequential_deep` 已完成完整训练，结果位于：
+
+```text
+outputs/selectors/stage2_sentence_sequential/deberta_sequential_deep
+```
+
+`selection_metrics.json` 保存的是按 `oracle_rank_ndcg@5` 选择的最佳 checkpoint，最佳点为 `global_step=2500`，不是最终训练步 `4000`。核心 selection-only 指标如下：
+
+| 指标 | Step4 deep-only best |
+|---|---:|
+| `recall@5` | 0.3852 |
+| `jaccard@5` | 0.2615 |
+| `top1_match` | 0.1664 |
+| `prefix_match@3` | 0.0055 |
+| `prefix_match@5` | 0.0000 |
+| `oracle_rank_ndcg@5` | 0.3306 |
+| `pairwise_order_acc@5` | 0.5871 |
+
+相对 Step3 rank-prior ablation，Step4 deep-only 在 order metrics 上有明确增益：`top1_match` 从 0.1122 提升到 0.1664，`oracle_rank_ndcg@5` 从 0.3108 提升到 0.3306，`pairwise_order_acc@5` 从 0.5168 提升到 0.5871。但 set metrics 仍几乎没有突破：`recall@5` 只到 0.3852，`jaccard@5` 只到 0.2615，距离 `0.50 / 0.35` gate 仍很远。
+
+完整 `val_history.jsonl` 有 16 个 validation 点。主指标 `oracle_rank_ndcg@5` 在 step 2500 达到最高 0.3306，之后震荡回落，最终 step 4000 为 0.3136。因此当前结果不支持继续单纯增加 epoch；训练更久没有稳定改善 selection-only gate。
+
+step-wise diagnostics 显示主要错误很早发生：
+
+| step | accuracy | entropy |
+|---:|---:|---:|
+| 0 | 0.1664 | 2.5699 |
+| 1 | 0.0921 | 2.5844 |
+| 2 | 0.0797 | 2.5020 |
+| 3 | 0.0714 | 2.4294 |
+| 4 | 0.0794 | 2.3414 |
+
+`first_wrong_step_mean=0.1954`。这说明当前瓶颈不只是 teacher forcing 到 greedy decoding 的 exposure bias。step0 尚未受到 on-policy prefix drift 影响，但准确率已经很低，说明模型对第一条 evidence utility 的判别仍不够强。
+
+因此当前 stop/go 判断为：
+
+1. Step4 deep-only baseline 是有效结构，证明 sequential pointer 与 prefix-conditioned semantic interaction 能改善 order metrics。
+2. Step4 deep-only 尚未达到 full pipeline gate，不进入 full pipeline。
+3. 不建议直接进入正式 Step5 OPD。OPD 主要解决 exposure bias，但当前 step0 弱，核心瓶颈更像 evidence utility 表示不够任务化。
+4. 下一主线应先深化 Step4：打开 set utility 辅助监督，并加入 fact-checking targeted semantic features。
+5. Step5 OPD 可做 hard-subset 小规模诊断，但不应作为当前主线大投入。
+
+建议下一阶段命名为 `Step4.1`，优先验证：
+
+```text
+deep + selected-mask BCE / set utility auxiliary loss
+deep + claim aspect / aspect coverage
+deep + stance_utility_semantics
+deep + graph_lite alignment
+```
+
+只有当 Step4.1 / Step4.2 将 `recall@5`、`jaccard@5` 与 `top1_match` 明显抬升，再进入正式 Step5 OPD。一个更实际的 OPD 前置参考线是：`recall@5` 接近 0.43-0.45、`jaccard@5` 接近 0.30，并且 step0 accuracy 明显高于当前 0.1664。
+
+### 2026-05-21 推荐实验顺序
+
+下一阶段不要直接扩大到 OPD 或 graph features，而应先做成本低、归因干净的 Step4.1 目标函数消融：
+
+| 优先级 | 实验 | 关键问题 | 成本 | 状态 |
+|---:|---|---|---:|---|
+| 1 | Step4.1-A: `deep + selected-mask BCE` | set utility 辅助监督能否提升 `recall@5 / jaccard@5` | 低 | 已实现 |
+| 2 | Step4.1-B: `deep + selected-mask BCE + first-step weighting` | 能否针对 step0 accuracy 低的问题提升首条 evidence 判断 | 低-中 | 待实现 |
+| 3 | Step4.1-C: `deep + claim aspect coverage` | aspect coverage 能否补足 evidence 覆盖不足 | 中 | 待实现 |
+| 4 | Step4.2: `deep + stance_utility_semantics` | support / refute / qualify / insufficient 证据作用是否改善 utility 判断 | 中-高 | 待实现 |
+| 5 | Step4.3: `deep + graph_lite alignment` | 实体、时间、数字、关系结构对齐是否改善 fact-checking 证据选择 | 高 | 待实现 |
+| 6 | hard-subset OPD probe | on-policy prefix drift 是否是主要剩余瓶颈 | 中 | 仅作诊断 |
+| 7 | full Step5 OPD | 正式 on-policy distillation | 高 | 暂不建议 |
+
+Step4.1-A 的实现要求：
+
+1. 使用与 `deberta_sequential_deep` 相同的 deep semantic profile：`h_i_pair`、`H_i_ctx`、`P_t`、乘积/差分/cosine/bilinear。
+2. 不引入 rank/index prior、retrieval numeric、位置、长度或词面 overlap。
+3. 保持 `targeted_feature_profile=none`、`shallow_feature_profile=off`。
+4. `L_mask` 必须是 order-agnostic selected-set utility 辅助项：在每个 teacher-forced prefix 下，把尚未选择的 oracle selected candidates 都标为正例，而不是只把当前 step 的下一个 oracle action 标为正例。否则会把后续 oracle positives 错当作负例。
+
+默认运行入口：
+
+```bash
+scripts/selectors/run_sequential_step4_1_mask_bce.sh
+```
+
+默认配置：
+
+```text
+OUTPUT_DIR=outputs/selectors/stage2_sentence_sequential/deberta_sequential_deep_mask02
+SEQ_LOSS_WEIGHT=1.0
+MASK_LOSS_WEIGHT=0.2
+SEMANTIC_FEATURE_PROFILE=deep
+TARGETED_FEATURE_PROFILE=none
+SHALLOW_FEATURE_PROFILE=off
+```
+
+如需跑更强的 mask loss 对照：
+
+```bash
+OUTPUT_DIR=outputs/selectors/stage2_sentence_sequential/deberta_sequential_deep_mask05 \
+MASK_LOSS_WEIGHT=0.5 \
+scripts/selectors/run_sequential_step4_1_mask_bce.sh
+```
+
+Step4.1-A 的 go/no-go 参考线：
+
+```text
+recall@5 >= 0.40
+jaccard@5 >= 0.275
+top1_match 不明显低于 0.1664
+oracle_rank_ndcg@5 不明显低于 0.3306
+```
+
+如果 Step4.1-A 只提升 order metrics 但 `recall@5 / jaccard@5` 不动，则说明单纯目标函数修正不足，应转向 Step4.1-C 的 claim aspect coverage；如果 `recall@5 / jaccard@5` 上升但 order metrics 回落，则继续调 `MASK_LOSS_WEIGHT` 或加入 first-step weighting，而不是直接进入 OPD。
+
 ## 不变约束
 
 必须沿用当前 selector 主线约束：
@@ -586,13 +698,14 @@ git diff --check
 
 | Run | 目的 | filter | semantic profile | targeted features | shallow profile | 期望 |
 |---|---|---|---|---|---|---|
-| `deberta_sequential_deep` | 主线 baseline | all | deep | none | off | set/order 同时超过 Step3 |
-| `deberta_sequential_no_maskloss` | 检查 mask BCE 是否干扰 order | all | deep | none | off | NDCG/top1 不降 |
-| `deberta_sequential_aspect` | 检查 claim 分解与 aspect coverage 的价值 | all | deep | aspect | off | recall/jaccard 或 prefix_match 上升 |
-| `deberta_sequential_stance_utility` | 检查辩护视角证据作用特征 | all | deep | aspect_stance | off | top1/order 或 label-specific failures 改善 |
-| `deberta_sequential_graph_lite` | 检查结构一致性特征 | all | deep | aspect_stance_graph | off | 数字/时间/实体错误 bucket 改善 |
+| `deberta_sequential_deep` | 已完成 deep-only baseline | all | deep | none | off | 有 order 增益，但 set metrics 未过 gate |
+| `deberta_sequential_deep_mask02` | Step4.1-A 主线：检查 selected-mask BCE 是否提升 set utility | all | deep | none | off | `recall@5>=0.40`、`jaccard@5>=0.275`，且 order 不明显回落 |
+| `deberta_sequential_deep_mask05` | Step4.1-A 强 mask loss 对照 | all | deep | none | off | 若 mask02 有益，检查更强 set loss 是否继续改善 |
+| `deberta_sequential_deep_mask02_stepweight` | Step4.1-B：补 step0/step1 权重 | all | deep | none | off | step0 accuracy 与 top1 上升 |
+| `deberta_sequential_aspect` | Step4.1-C：检查 claim 分解与 aspect coverage 的价值 | all | deep | aspect | off | recall/jaccard 或 prefix_match 上升 |
+| `deberta_sequential_stance_utility` | Step4.2：检查辩护视角证据作用特征 | all | deep | aspect_stance | off | top1/order 或 label-specific failures 改善 |
+| `deberta_sequential_graph_lite` | Step4.3：检查结构一致性特征 | all | deep | aspect_stance_graph | off | 数字/时间/实体错误 bucket 改善 |
 | `deberta_sequential_shallow_control` | 诊断浅层特征是否 shortcut | all | shallow_control | none | full_shallow | 若只提升 top1 但 set/order 不稳，不进主线 |
-| `deberta_sequential_margin_positive` | 高信号辅助诊断 | margin_positive | deep | none | off | 只看 order upper diagnostic |
 
 主表只接受 all rows。
 
@@ -636,6 +749,8 @@ selection-only set metrics 仍停在 recall@5≈0.38 / jaccard@5≈0.26
 ```
 
 则不进入 full pipeline，也不直接上 OPD；先做 error analysis，确认是 candidate pool supervision 不可学、pair encoder 不足、还是 prefix inference drift。
+
+`deberta_sequential_deep` 的实际结果命中该 stop condition 的前半部分：set metrics 仍停在 `recall@5=0.3852`、`jaccard@5=0.2615`。虽然 `top1_match=0.1664`、`oracle_rank_ndcg@5=0.3306`、`pairwise_order_acc@5=0.5871` 说明 order modeling 有收益，但 step0 accuracy 只有 0.1664，不能把主要问题归因于 exposure bias。因此当前决策是：不进入 full pipeline，不直接正式推进 Step5 OPD，先做 Step4.1 targeted-feature / auxiliary-loss 深化。
 
 如果 Step4：
 
@@ -701,3 +816,7 @@ low-margin oracle rows
 ## 本计划状态
 
 2026-05-20 已实现第一版 `deep` Sequential Pointer Selector：默认只使用 `h_i_pair`、`H_i_ctx`、`P_t`、乘积/差分/cosine/bilinear 深层交互；targeted/shallow profile 暂锁为 `none/off`，保留接口用于后续扩展。训练脚本已加入 SwanLab 上传和 `val_history.jsonl`，用于观察 train loss、validation selection metrics、controls 与 step diagnostics 曲线。
+
+2026-05-21 已完成 `deberta_sequential_deep` 完整运行结果复盘。最佳 checkpoint 为 step 2500，`oracle_rank_ndcg@5=0.3306`，较 Step3 有 order-level 增益，但 `recall@5=0.3852`、`jaccard@5=0.2615` 未突破 gate。当前阶段性结论：Step4 deep-only 结构保留，但不直接进入正式 Step5 OPD；下一步优先做 Step4.1 的 set auxiliary loss、claim aspect coverage、stance utility semantics 和 graph-lite alignment 消融。
+
+2026-05-21 已实现 Step4.1-A：`scripts/selectors/run_sequential_step4.sh` 现在显式暴露 `SEQ_LOSS_WEIGHT` 与 `MASK_LOSS_WEIGHT`；新增 `scripts/selectors/run_sequential_step4_1_mask_bce.sh` 作为默认 mask BCE 实验入口。`sequential_teacher_forcing_loss` 已修正为 `seq_loss_weight * CE + mask_loss_weight * L_mask`，其中 `L_mask` 在每个 teacher-forced prefix 下把尚未选择的 oracle selected candidates 作为正例。

@@ -10,6 +10,7 @@ from fact_checking.selectors.sequential import (
     normalize_semantic_feature_profile,
     normalize_shallow_feature_profile,
     normalize_targeted_feature_profile,
+    remaining_selected_bce_targets,
     sequential_teacher_forcing_loss,
 )
 
@@ -41,6 +42,49 @@ class SequentialSelectorTest(unittest.TestCase):
         self.assertLess(float(good_loss), float(bad_loss))
         self.assertEqual(good_parts["n_steps"], 2.0)
         self.assertGreater(bad_parts["sequence_ce_loss"], good_parts["sequence_ce_loss"])
+
+    def test_mask_bce_labels_all_remaining_selected_candidates(self) -> None:
+        candidate_mask = torch.tensor([[True, True, True, True]], dtype=torch.bool)
+        labels, valid = remaining_selected_bce_targets(
+            [[1, 3]],
+            candidate_mask,
+            steps=2,
+            max_candidates=4,
+            top_k=2,
+        )
+
+        self.assertTrue(bool(valid[0, 0, 0]))
+        self.assertTrue(bool(valid[0, 0, 1]))
+        self.assertTrue(bool(valid[0, 0, 3]))
+        self.assertEqual(float(labels[0, 0, 1]), 1.0)
+        self.assertEqual(float(labels[0, 0, 3]), 1.0)
+        self.assertFalse(bool(valid[0, 1, 1]))
+        self.assertEqual(float(labels[0, 1, 3]), 1.0)
+
+    def test_mask_bce_weight_adds_to_sequence_ce(self) -> None:
+        logits = torch.tensor(
+            [
+                [
+                    [0.0, 3.0, 0.2, 1.0],
+                    [0.0, -1.0e4, 0.5, 2.5],
+                ]
+            ],
+            dtype=torch.float32,
+        )
+        candidate_mask = torch.tensor([[True, True, True, True]], dtype=torch.bool)
+
+        loss, parts = sequential_teacher_forcing_loss(
+            logits,
+            [[1, 3]],
+            candidate_mask=candidate_mask,
+            top_k=2,
+            seq_loss_weight=1.0,
+            mask_loss_weight=0.2,
+        )
+
+        expected = parts["sequence_ce_loss"] + 0.2 * parts["mask_loss"]
+        self.assertGreater(parts["mask_loss"], 0.0)
+        self.assertAlmostEqual(float(loss), expected, places=5)
 
     def test_mask_step_logits_blocks_selected_and_padding(self) -> None:
         logits = torch.tensor([[0.1, 0.2, 0.3, 0.4]], dtype=torch.float32)

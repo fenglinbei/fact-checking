@@ -432,6 +432,7 @@ def sequential_teacher_forcing_loss(
     *,
     candidate_mask: torch.Tensor | None = None,
     top_k: int = DEFAULT_SELECTOR_TOP_K,
+    seq_loss_weight: float = 1.0,
     mask_loss_weight: float = 0.0,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     if logits.ndim != 3:
@@ -461,28 +462,65 @@ def sequential_teacher_forcing_loss(
     )
     mask_loss = logits.sum() * 0.0
     if mask_loss_weight > 0.0 and candidate_mask is not None:
-        labels = torch.zeros_like(logits)
-        valid = torch.zeros_like(logits, dtype=torch.bool)
-        for row, indices in enumerate(selected_indices[:batch_size]):
-            for step in range(steps):
-                valid[row, step] = candidate_mask[row]
-                for prev in indices[:step]:
-                    prev = int(prev)
-                    if 0 <= prev < max_candidates:
-                        valid[row, step, prev] = False
-                if step < len(indices):
-                    idx = int(indices[step])
-                    if 0 <= idx < max_candidates:
-                        labels[row, step, idx] = 1.0
+        labels, valid = remaining_selected_bce_targets(
+            selected_indices[:batch_size],
+            candidate_mask,
+            steps=steps,
+            max_candidates=max_candidates,
+            top_k=top_k,
+        )
         if bool(valid.any().item()):
             mask_loss = F.binary_cross_entropy_with_logits(logits[valid], labels[valid])
-    total = ce_loss + float(mask_loss_weight) * mask_loss
+    total = float(seq_loss_weight) * ce_loss + float(mask_loss_weight) * mask_loss
     return total, {
         "loss": float(total.detach().cpu()),
         "sequence_ce_loss": float(ce_loss.detach().cpu()),
         "mask_loss": float(mask_loss.detach().cpu()),
+        "seq_loss_weight": float(seq_loss_weight),
+        "mask_loss_weight": float(mask_loss_weight),
         "n_steps": float(n_steps),
     }
+
+
+def remaining_selected_bce_targets(
+    selected_indices: list[list[int]],
+    candidate_mask: torch.Tensor,
+    *,
+    steps: int,
+    max_candidates: int,
+    top_k: int = DEFAULT_SELECTOR_TOP_K,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build order-agnostic BCE labels for remaining oracle-selected candidates.
+
+    At teacher-forced step t, previously selected oracle actions are invalid.
+    Every remaining oracle-selected candidate is positive, so the auxiliary loss
+    teaches set utility instead of only reweighting the next-action CE target.
+    """
+    labels = torch.zeros(
+        (int(candidate_mask.shape[0]), int(steps), int(max_candidates)),
+        dtype=torch.float32,
+        device=candidate_mask.device,
+    )
+    valid = torch.zeros_like(labels, dtype=torch.bool)
+    for row, indices in enumerate(selected_indices):
+        if row >= labels.shape[0]:
+            break
+        clean_indices = [
+            int(idx)
+            for idx in indices[: int(top_k)]
+            if 0 <= int(idx) < int(max_candidates)
+        ]
+        selected_set = set(clean_indices)
+        prefix_set: set[int] = set()
+        for step in range(int(steps)):
+            valid[row, step] = candidate_mask[row]
+            for prev in prefix_set:
+                valid[row, step, prev] = False
+            for idx in selected_set - prefix_set:
+                labels[row, step, idx] = 1.0
+            if step < len(clean_indices):
+                prefix_set.add(clean_indices[step])
+    return labels, valid
 
 
 @torch.inference_mode()

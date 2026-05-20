@@ -232,9 +232,9 @@ def main() -> None:
                 [example.selected_indices for example in batch],
                 candidate_mask=output.candidate_mask,
                 top_k=int(args.top_k),
+                seq_loss_weight=float(args.seq_loss_weight),
                 mask_loss_weight=float(args.mask_loss_weight),
             )
-            loss = float(args.seq_loss_weight) * loss
             scaled_loss = loss / max(int(args.gradient_accumulation_steps), 1)
             scaled_loss.backward()
 
