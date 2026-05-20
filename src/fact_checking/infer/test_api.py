@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from fact_checking.infer.api import (
+    _MERGED_LORA_CACHE_VERSION,
+    _MERGED_LORA_IMPL,
     _VLLMServerHandle,
     _argmax_label_logprobs,
     _cleanup_vllm_server,
@@ -75,7 +77,11 @@ def test_merge_lora_to_cache_creates_persistent_cache(tmp_path: Path, monkeypatc
     )
 
     assert _merged_lora_cache_complete(result)
-    assert (result / "merge_cache.json").exists()
+    meta_path = result / "merge_cache.json"
+    assert meta_path.exists()
+    metadata = meta_path.read_text(encoding="utf-8")
+    assert f'"cache_version": {_MERGED_LORA_CACHE_VERSION}' in metadata
+    assert f'"merge_impl": "{_MERGED_LORA_IMPL}"' in metadata
 
 
 def test_cleanup_does_not_delete_persistent_merged_cache(tmp_path: Path) -> None:

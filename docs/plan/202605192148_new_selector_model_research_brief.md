@@ -6,14 +6,15 @@
 
 ## 一句话任务定义
 
-给定一条 fact-checking claim 和固定候选池中的最多 15 条 sentence-level evidence candidates，训练一个可部署的 selector，从候选池中选出最多 5 条 evidence，使下游 verifier 的输入尽量接近 Stage2 oracle evidence set。
+给定一条 fact-checking claim 和固定候选池中的最多 15 条 sentence-level evidence candidates，训练一个可部署的 selector，从候选池中输出最多 5 条有序 evidence list，使下游 verifier 的输入尽量接近 Stage2 oracle evidence set 与 oracle greedy order。
 
 形式化地说：
 
 ```text
 input:  claim c, candidate pool C = {d_1, ..., d_N}, N <= 15
-output: selected evidence S_5, |S_5| <= 5
-goal:   S_5 should approximate oracle selected_indices and improve verifier accuracy/F1
+output: ordered evidence list L_5, |L_5| <= 5
+goal:   L_5 should approximate oracle selected_indices and oracle greedy order,
+        then improve verifier accuracy/F1
 ```
 
 当前不要继续调研“预测 MMR scalar lambda”的方法；该路线已多轮失败。新方向是 evidence set selector / reranker / listwise set selection。
@@ -44,6 +45,18 @@ jaccard@5 = 0.2536
 ```
 
 所以当前瓶颈不是 verifier、decode、checkpoint 或 prompt budget，而是 selector 没有选到接近 oracle evidence distribution 的证据。
+
+补充的 order-sensitivity 诊断显示：即使固定同一组 oracle evidence，只改变 evidence 在 prompt 中的顺序，也会显著改变 verifier 输出。当前 API inference 口径下：
+
+| oracle-selected evidence order | val accuracy | val macro-F1 | 说明 |
+|---|---:|---:|---|
+| oracle greedy order | 0.6327 | 0.6430 | Stage2 oracle search 保存的选择顺序 |
+| hybrid / candidate_pool order | 0.4639 | 0.4721 | 同一组 evidence，按 retrieval / pool 顺序重排 |
+| random order mean, seed0-4 | 0.4739 | 0.4829 | 同一组 evidence，随机重排均值 |
+
+这张表只用于同一 API inference 口径内比较顺序影响，不替代 train-time label-token eval 的 `0.7111 / 0.7169` upper-bound。
+
+因此当前主线不能把 oracle evidence 简化成无序集合。新 selector 需要同时学习“选哪些 evidence”和“以什么顺序给 verifier”。
 
 ## 必须固定的候选池口径
 
@@ -238,7 +251,7 @@ score(claim, positive) > score(claim, negative)
 claim + all 15 candidate texts
 ```
 
-输出 15 个候选的排序或 top5。训练目标可以是 ListNet / ListMLE / soft target distribution / selected mask。
+输出 15 个候选的排序或有序 top5。训练目标可以是 ListNet / ListMLE / soft target distribution / selected mask。
 
 优点：
 
@@ -319,15 +332,17 @@ score = neural_relevance - beta * redundancy_to_selected
 
 ## Selection-only Gate
 
-任何新 selector 先跑 selection-only eval，再跑 full pipeline。
+任何新 selector 先跑 selection-only eval，再跑 full pipeline。这里的 selector 输出必须被视为 **有序 top5 list**，不能只当成无序集合。
 
 评估口径必须是：
 
 ```text
 candidate pool = dedup -> hybrid top15
-gold set       = oracle selected_indices
-prediction     = selector top5
-metrics        = recall@5, precision@5, jaccard@5, macro by label
+gold list      = oracle selected_indices in Stage2 greedy order
+prediction     = selector ordered top5
+set metrics    = recall@5, precision@5, jaccard@5, macro by label
+order metrics  = top1_match, prefix_match@k, oracle_rank_ndcg@5,
+                 pairwise_order_acc@5, ordered_exact_match@5
 ```
 
 当前 pointwise baseline：
@@ -339,15 +354,38 @@ macro_recall@5  = 0.3780
 macro_jaccard@5 = 0.2555
 ```
 
+当前 pointwise baseline 还需要补齐排序指标；以后任何 selection-only baseline 都必须同时记录 set-level 和 order-level 指标。
+
+但这些 set-level 指标无法区分“选中同一批 evidence 但顺序错误”的情况。由于 order-sensitivity 实验已经证明 oracle-direct verifier 对顺序敏感，后续 selection-only 报告必须额外包含以下排序指标：
+
+| metric | 定义 | 捕捉的问题 |
+|---|---|---|
+| `top1_match` | `prediction[0] == gold_list[0]` 的比例 | oracle 第一条证据是否被放在最前 |
+| `prefix_match@k` | 前 k 个位置逐位相同的比例，可报告 `k=1/3/5` | 是否恢复 oracle greedy prefix |
+| `ordered_hit@5` | `sum_i 1[prediction[i] == gold_list[i]] / min(5, len(gold_list))` | 位置级恢复，不只看集合重合 |
+| `oracle_rank_ndcg@5` | 用 oracle rank 生成 graded relevance，例如对 `i=0..4` 设 `rel(gold_list[i]) = 5 - i`，对 selector 排序算 NDCG@5 | 高价值 oracle 证据是否排在前面 |
+| `pairwise_order_acc@5` | 对同时出现在 prediction 和 gold_list 中的 oracle evidence pair，统计相对顺序一致比例，并同时报告有效 pair 数 | 集合选对后，内部相对顺序是否正确 |
+| `ordered_exact_match@5` | ordered prediction 与 gold_list 完全一致的比例 | 严格恢复完整 oracle order |
+
+实现时要注意：
+
+1. `pairwise_order_acc@5` 必须和 `overlap_pair_count` 一起报告；如果一个样本只重合 0-1 条 evidence，pairwise order 没有意义。
+2. `oracle_rank_ndcg@5` 不能把所有 oracle evidence 都设成同一 relevance，否则它会退化成普通 positive NDCG，仍然捕捉不到 oracle greedy order。
+3. hybrid-order / candidate_pool-order / random-order control 应在同一个 predicted set 上重排后计算，用来判断收益是否真的来自 selector 的输出顺序。
+4. selection-only trace 中必须保存 `selector_ordered_indices`、`oracle_ordered_indices`、`selector_scores`，不要在 eval 前按 hybrid score 或 candidate_pool index 重排。
+
 建议初始 gate：
 
 ```text
 must beat current pointwise by a clear margin
-target recall@5  >= 0.50
-target jaccard@5 >= 0.35
+target recall@5          >= 0.50
+target jaccard@5         >= 0.35
+target oracle_rank_ndcg@5 improves over current pointwise and over hybrid-order control
+target pairwise_order_acc@5 improves over current pointwise, with enough overlap_pair_count support
+target top1_match        improves over current pointwise
 ```
 
-如果新 selector 连 selection-only 都不能明显超过当前 pointwise，不应进入完整 verifier pipeline。
+如果新 selector 连 selection-only set metrics 都不能明显超过当前 pointwise，不应进入完整 verifier pipeline。若 set metrics 过关但 ordering metrics 接近 hybrid / random order control，也不应直接进入主线 full pipeline；应先修正训练目标或后处理，确认 selector 输出顺序能接近 oracle greedy order。
 
 ## Full Pipeline Gate
 
@@ -403,9 +441,9 @@ semantic-level oracle paired subset 明显弱于 sentence-level。除非是专�
 1. 模型方案说明：pointwise / pairwise / listwise / sequential，输入输出和推理成本。
 2. 数据构造说明：正负样本、pair 采样、过滤规则、是否使用 all oracle rows。
 3. 训练配置：base model、loss、batch size、max length、负例比例。
-4. selection-only 报告：recall@5、jaccard@5、macro by label、与 current pointwise 对照。
+4. selection-only 报告：recall@5、jaccard@5、macro by label、top1_match、oracle_rank_ndcg@5、pairwise_order_acc@5、ordered_exact_match@5，并与 current pointwise / hybrid-order / random-order control 对照。
 5. full pipeline 报告：至少 val split，先不跑 test。
-6. trace 文件：每条 claim 的 candidate pool、selector score、selected indices、oracle selected indices。
+6. trace 文件：每条 claim 的 candidate pool、selector score、selector ordered indices、oracle ordered indices、set overlap、rank-aware order metrics。
 7. fingerprint 审计：明确 `chunk_mmr_fingerprint=432dfc970e75`。
 
 ## 推荐的第一轮实验顺序

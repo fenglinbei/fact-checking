@@ -34,6 +34,9 @@ from sft.runtime.adapters import checkpoint_has_hf_artifacts, checkpoint_has_pef
 
 logger = logging.getLogger(__name__)
 
+_MERGED_LORA_CACHE_VERSION = 2
+_MERGED_LORA_IMPL = "peft_from_pretrained_merge_and_unload"
+
 
 @dataclass
 class _VLLMServerHandle:
@@ -586,7 +589,8 @@ def _merged_lora_cache_key(
     if not adapter_config_path.exists():
         raise FileNotFoundError(f"LoRA adapter config not found in {adapter_dir}")
     payload = {
-        "version": 1,
+        "version": _MERGED_LORA_CACHE_VERSION,
+        "merge_impl": _MERGED_LORA_IMPL,
         "base_model": str(base_model),
         "adapter_dir": str(adapter_dir.resolve()),
         "adapter_weights": _file_signature(adapter_path),
@@ -611,12 +615,43 @@ def _write_merge_cache_metadata(
 ) -> None:
     metadata = {
         "cache_key": cache_key,
+        "cache_version": _MERGED_LORA_CACHE_VERSION,
+        "merge_impl": _MERGED_LORA_IMPL,
         "base_model": str(base_model),
         "adapter_dir": str(Path(adapter_dir).resolve()),
         "dtype": str(dtype),
         "created_at": int(time.time()),
     }
     (path / "merge_cache.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _torch_dtype_for_merge(dtype: str):
+    import torch
+
+    normalized = str(dtype).strip().lower()
+    if normalized in {"bfloat16", "bf16"}:
+        return torch.bfloat16
+    if normalized in {"float16", "fp16", "half"}:
+        return torch.float16
+    if normalized in {"float32", "fp32"}:
+        return torch.float32
+    return "auto"
+
+
+def _load_adapter_state_for_validation(adapter_path: Path) -> dict[str, object]:
+    if adapter_path.suffix == ".safetensors":
+        import safetensors.torch
+
+        return dict(safetensors.torch.load_file(str(adapter_path)))
+
+    import torch
+
+    state = torch.load(str(adapter_path), map_location="cpu")
+    if isinstance(state, dict) and isinstance(state.get("state_dict"), dict):
+        state = state["state_dict"]
+    if not isinstance(state, dict):
+        raise RuntimeError(f"Unsupported LoRA adapter checkpoint format: {adapter_path}")
+    return state
 
 
 def _merge_lora_to_dir(
@@ -627,25 +662,15 @@ def _merge_lora_to_dir(
     dtype: str,
     output_dir: Path,
 ) -> Path:
-    import safetensors.torch
-    import torch
-    from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
+    from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     adapter_dir = Path(adapter_dir)
     tokenizer_dir = Path(tokenizer_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    torch_dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}.get(dtype, "auto")
-    model = AutoModelForCausalLM.from_pretrained(base_model, torch_dtype=torch_dtype, trust_remote_code=True)
 
     adapter_path = _adapter_weight_path(adapter_dir)
-    adapter_config = LoraConfig.from_pretrained(adapter_dir)
-    if adapter_path.suffix == ".safetensors":
-        adapter_state = safetensors.torch.load_file(str(adapter_path))
-    else:
-        adapter_state = torch.load(str(adapter_path), map_location="cpu")
-        if isinstance(adapter_state, dict) and isinstance(adapter_state.get("state_dict"), dict):
-            adapter_state = adapter_state["state_dict"]
+    adapter_state = _load_adapter_state_for_validation(adapter_path)
     saved_lora_keys = _filter_lora_state_keys(adapter_state.keys())
     if not saved_lora_keys:
         sample_keys = sorted(str(key) for key in adapter_state.keys())[:10]
@@ -654,34 +679,20 @@ def _merge_lora_to_dir(
             f"First saved tensor keys: {sample_keys}"
         )
 
-    peft_model = get_peft_model(model, adapter_config)
-    common_prefix = _find_adapter_key_prefix(
-        adapter_state.keys(),
-        (name for name, _ in peft_model.named_parameters()),
-    )
-    if common_prefix:
-        adapter_state = {k.removeprefix(common_prefix): v for k, v in adapter_state.items()}
-        saved_lora_keys = _filter_lora_state_keys(adapter_state.keys())
-        logger.info("Stripped adapter key prefix %r for %d tensors", common_prefix, len(adapter_state))
-
-    load_result = set_peft_model_state_dict(peft_model, adapter_state)
-    missing, unexpected = _unpack_incompatible_keys(load_result)
-    missing_lora = _filter_lora_state_keys(missing)
-    unexpected_lora = _filter_lora_state_keys(unexpected)
+    torch_dtype = _torch_dtype_for_merge(dtype)
+    model = AutoModelForCausalLM.from_pretrained(base_model, torch_dtype=torch_dtype, trust_remote_code=True)
+    peft_model = PeftModel.from_pretrained(model, str(adapter_dir), is_trainable=False)
+    peft_model.eval()
     model_lora_keys = _filter_lora_state_keys(name for name, _ in peft_model.named_parameters())
     logger.info(
-        "LoRA adapter load check: checkpoint_lora_tensors=%d model_lora_tensors=%d "
-        "missing_lora=%d unexpected_lora=%d non_lora_missing=%d",
+        "LoRA adapter load check: merge_impl=%s checkpoint_lora_tensors=%d model_lora_tensors=%d",
+        _MERGED_LORA_IMPL,
         len(saved_lora_keys),
         len(model_lora_keys),
-        len(missing_lora),
-        len(unexpected_lora),
-        len(missing) - len(missing_lora),
     )
-    if missing_lora or unexpected_lora:
+    if not model_lora_keys:
         raise RuntimeError(
-            "Failed to load LoRA adapter tensors: "
-            f"missing_lora={missing_lora[:5]} unexpected_lora={unexpected_lora[:5]}"
+            f"PEFT loaded adapter from {adapter_dir}, but no LoRA tensors are present in the model."
         )
 
     merged = peft_model.merge_and_unload()

@@ -1501,6 +1501,41 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
             pointwise_model.metadata.get("chunk_mmr_fingerprint", ""),
         )
 
+    # ---- Optional: Stage2 cross-encoder selector ----
+    cross_encoder_selector = None
+    cross_encoder_cfg = dict(retrieval_cfg.get("cross_encoder_selector", {}) or {})
+    if selection_method in {"cross_encoder_selector", "cross_encoder_oracle", "cross_encoder_pairwise"}:
+        from fact_checking.selectors.cross_encoder import (
+            CrossEncoderSelector,
+            CrossEncoderSelectorConfig,
+        )
+
+        cross_encoder_model_dir = str(
+            cross_encoder_cfg.get("model_dir")
+            or cross_encoder_cfg.get("model_path")
+            or ""
+        ).strip()
+        if not cross_encoder_model_dir:
+            raise ValueError(
+                "build.retrieval.cross_encoder_selector.model_dir is required when "
+                "build.retrieval.selection_method=cross_encoder_selector."
+            )
+        cross_encoder_selector = CrossEncoderSelector(
+            CrossEncoderSelectorConfig(
+                model_dir=cross_encoder_model_dir,
+                device=str(cross_encoder_cfg.get("device", retrieval_cfg.get("device", "cuda"))),
+                max_length=int(cross_encoder_cfg.get("max_length", 384)),
+                batch_size=int(cross_encoder_cfg.get("batch_size", 32)),
+                strict_fingerprint=bool(cross_encoder_cfg.get("strict_fingerprint", True)),
+                expected_chunk_mmr_fingerprint=chunk_mmr_fp,
+            )
+        )
+        logger.info(
+            "Loaded cross-encoder selector: model=%s chunk_mmr_fp=%s",
+            cross_encoder_selector.model_dir,
+            cross_encoder_selector.metadata.get("chunk_mmr_fingerprint", ""),
+        )
+
     # ---- Optional: learned λ predictor (MMR path only) ----
     learned_lambda_cfg = retrieval_cfg.get("learned_lambda", {}) or {}
     use_learned_lambda = bool(learned_lambda_cfg.get("enabled", False))
@@ -1565,6 +1600,48 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                     for trace in trace_rows:
                         trace_writer.write(json.dumps(trace, ensure_ascii=False) + "\n")
                 logger.info("Wrote pointwise oracle trace: %s", trace_path)
+        elif selection_method in {"cross_encoder_selector", "cross_encoder_oracle", "cross_encoder_pairwise"}:
+            from fact_checking.selectors.cross_encoder import select_candidates_cross_encoder
+
+            if cross_encoder_selector is None:
+                raise RuntimeError("Cross-encoder selector model was not loaded.")
+
+            raw_pool_size = cross_encoder_cfg.get("candidate_pool_size", 15)
+            candidate_pool_size = None
+            if raw_pool_size not in (None, "", 0, "0"):
+                candidate_pool_size = int(raw_pool_size)
+            dump_trace = bool(cross_encoder_cfg.get("dump_trace", True))
+            trace_rows: list[dict[str, Any]] = []
+
+            with output_path.open("w", encoding="utf-8") as writer:
+                cross_encoder_pbar = tqdm(
+                    chunk_samples,
+                    desc=f"Cross-encoder selector [{split_name}]",
+                    unit="sample",
+                    dynamic_ncols=True,
+                )
+                for sample in cross_encoder_pbar:
+                    row, trace = select_candidates_cross_encoder(
+                        sample,
+                        cross_encoder_selector,
+                        top_k=run_summary["top_k"],
+                        alpha_dense=run_summary["alpha_dense"],
+                        alpha_lexical=run_summary["alpha_lexical"],
+                        alpha_bm25=run_summary["alpha_bm25"],
+                        candidate_pool_size=candidate_pool_size,
+                    )
+                    if dump_trace:
+                        trace_rows.append(trace)
+                    training_row = _build_training_row(row, tokenizer, prompt_cfg_local)
+                    writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
+                cross_encoder_pbar.close()
+
+            if dump_trace:
+                trace_path = target_dir / f"cross_encoder_selector_trace_{split_name}.jsonl"
+                with trace_path.open("w", encoding="utf-8") as trace_writer:
+                    for trace in trace_rows:
+                        trace_writer.write(json.dumps(trace, ensure_ascii=False) + "\n")
+                logger.info("Wrote cross-encoder selector trace: %s", trace_path)
         else:
             lambda_overrides: dict[str, float] | None = None
             if use_learned_lambda:
