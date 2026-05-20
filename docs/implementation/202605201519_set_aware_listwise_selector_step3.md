@@ -166,6 +166,25 @@ EPOCHS=2 \
 scripts/selectors/run_listwise_step3.sh
 ```
 
+4 卡 DDP 训练：
+
+```bash
+NPROC_PER_NODE=4 \
+MODEL_NAME=microsoft/deberta-v3-base \
+OUTPUT_DIR=outputs/selectors/stage2_sentence_listwise/deberta_listwise \
+BATCH_SIZE=2 \
+EPOCHS=2 \
+scripts/selectors/run_listwise_step3.sh
+```
+
+`BATCH_SIZE` 是每张 GPU 的 micro-batch。4 卡时有效 batch 约为：
+
+```text
+effective_batch = BATCH_SIZE * NPROC_PER_NODE * gradient_accumulation_steps
+```
+
+训练脚本会按 rank 对 train examples 做 padding 后均匀切分，只有 rank0 执行 val selection-only eval 与模型保存。
+
 shuffle augmentation ablation：
 
 ```bash
@@ -222,6 +241,7 @@ PYTHONPATH=src python -m compileall -q src/fact_checking/selectors scripts/selec
 PYTHONPATH=src python -m unittest src/fact_checking/selectors/test_metrics.py src/fact_checking/selectors/test_listwise.py
 PYTHONPATH=src python scripts/selectors/train_listwise_selector.py --help
 PYTHONPATH=src python scripts/selectors/eval_listwise_selector.py --help
+bash -n scripts/selectors/run_listwise_step3.sh
 ```
 
 本次未实际训练 Step3 模型；真实 go/no-go 以后续 `eval_val/selection_metrics.json` 为准。

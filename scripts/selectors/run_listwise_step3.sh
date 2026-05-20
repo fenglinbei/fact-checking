@@ -22,13 +22,16 @@ LR="${LR:-2e-5}"
 HEAD_LR="${HEAD_LR:-1e-4}"
 FILTER_POLICY="${FILTER_POLICY:-all}"
 SHUFFLE_PROBABILITY="${SHUFFLE_PROBABILITY:-0.0}"
+NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
 
 echo "[listwise-step3] model=${MODEL_NAME}"
 echo "[listwise-step3] output=${OUTPUT_DIR}"
 echo "[listwise-step3] train=${TRAIN_ORACLE_RESULTS}"
 echo "[listwise-step3] val=${VAL_ORACLE_RESULTS}"
+echo "[listwise-step3] nproc_per_node=${NPROC_PER_NODE}"
 
-python scripts/selectors/train_listwise_selector.py \
+TRAIN_CMD=(
+    scripts/selectors/train_listwise_selector.py
     --model-name "${MODEL_NAME}" \
     --train-oracle-results "${TRAIN_ORACLE_RESULTS}" \
     --val-oracle-results "${VAL_ORACLE_RESULTS}" \
@@ -41,6 +44,13 @@ python scripts/selectors/train_listwise_selector.py \
     --filter-policy "${FILTER_POLICY}" \
     --shuffle-probability "${SHUFFLE_PROBABILITY}" \
     "$@"
+)
+
+if [[ "${NPROC_PER_NODE}" -gt 1 ]]; then
+    torchrun --standalone --nproc_per_node="${NPROC_PER_NODE}" "${TRAIN_CMD[@]}"
+else
+    python "${TRAIN_CMD[@]}"
+fi
 
 python scripts/selectors/eval_listwise_selector.py \
     --model-dir "${OUTPUT_DIR}" \

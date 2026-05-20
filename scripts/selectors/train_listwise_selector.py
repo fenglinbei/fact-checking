@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import random
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
@@ -37,6 +40,15 @@ from fact_checking.selectors.stage2_oracle import (
     write_json,
     write_jsonl,
 )
+
+
+@dataclass(frozen=True)
+class DistributedState:
+    enabled: bool
+    rank: int
+    local_rank: int
+    world_size: int
+    device: torch.device
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,15 +87,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--eval-every", type=int, default=500, help="Optimizer steps between validation passes.")
     p.add_argument("--early-stopping-patience", type=int, default=4)
     p.add_argument("--early-stopping-metric", default="jaccard@5")
+    p.add_argument("--ddp-find-unused-parameters", action="store_true")
     p.add_argument("--no-progress", action="store_true")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    _set_seed(args.seed)
+    distributed = _init_distributed(args)
+    is_main = distributed.rank == 0
+    _set_seed(int(args.seed) + distributed.rank)
     out_dir = Path(args.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if is_main:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    _barrier(distributed)
 
     train_examples = load_stage2_oracle_examples(
         args.train_oracle_results,
@@ -108,9 +125,9 @@ def main() -> None:
     if not val_examples:
         raise ValueError("No val examples after Stage2 audit/filtering.")
 
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    device = distributed.device
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
-    model = SetAwareListwiseSelectorModel(
+    raw_model = SetAwareListwiseSelectorModel(
         args.model_name,
         hidden_size=int(args.list_hidden_size),
         num_layers=int(args.list_layers),
@@ -119,12 +136,21 @@ def main() -> None:
         max_candidates=int(args.max_candidates),
     )
     if bool(args.freeze_pair_encoder):
-        for param in model.encoder.parameters():
+        for param in raw_model.encoder.parameters():
             param.requires_grad = False
-    model.to(device)
+    raw_model.to(device)
 
-    optimizer = _build_optimizer(model, args)
-    micro_batches_per_epoch = max(math.ceil(len(train_examples) / max(int(args.batch_size), 1)), 1)
+    optimizer = _build_optimizer(raw_model, args)
+    model: torch.nn.Module = raw_model
+    if distributed.enabled:
+        model = DDP(
+            raw_model,
+            device_ids=[distributed.local_rank] if device.type == "cuda" else None,
+            output_device=distributed.local_rank if device.type == "cuda" else None,
+            find_unused_parameters=bool(args.ddp_find_unused_parameters),
+        )
+    local_train_size = _local_epoch_size(len(train_examples), distributed.world_size)
+    micro_batches_per_epoch = max(math.ceil(local_train_size / max(int(args.batch_size), 1)), 1)
     total_optimizer_steps = max(
         math.ceil(micro_batches_per_epoch * int(args.epochs) / max(int(args.gradient_accumulation_steps), 1)),
         1,
@@ -142,14 +168,20 @@ def main() -> None:
     optimizer.zero_grad(set_to_none=True)
 
     for epoch in range(1, int(args.epochs) + 1):
-        random.shuffle(train_examples)
+        epoch_examples = _distributed_epoch_examples(
+            train_examples,
+            epoch=epoch,
+            seed=int(args.seed),
+            rank=distributed.rank,
+            world_size=distributed.world_size,
+        )
         iterator = tqdm(
-            _batches(train_examples, int(args.batch_size)),
+            _batches(epoch_examples, int(args.batch_size)),
             total=micro_batches_per_epoch,
             desc=f"listwise train epoch {epoch}",
             unit="batch",
             dynamic_ncols=True,
-            disable=args.no_progress,
+            disable=args.no_progress or not is_main,
         )
         for micro_step, raw_batch in enumerate(iterator, start=1):
             model.train()
@@ -188,20 +220,25 @@ def main() -> None:
                 global_step += 1
                 parts["epoch"] = epoch
                 parts["global_step"] = global_step
-                history.append(parts)
-                iterator.set_postfix(loss=f"{parts['loss']:.4f}", pl=f"{parts['listmle_loss']:.4f}")
+                if is_main:
+                    history.append(parts)
+                    iterator.set_postfix(loss=f"{parts['loss']:.4f}", pl=f"{parts['listmle_loss']:.4f}")
 
                 if int(args.eval_every) > 0 and global_step % int(args.eval_every) == 0:
-                    metric_value = _validate_and_maybe_save(
-                        model,
-                        tokenizer,
-                        val_examples,
-                        args,
-                        out_dir,
-                        history,
-                        global_step=global_step,
-                        best_metric=best_metric,
-                    )
+                    _barrier(distributed)
+                    metric_value = -1.0
+                    if is_main:
+                        metric_value = _validate_and_maybe_save(
+                            raw_model,
+                            tokenizer,
+                            val_examples,
+                            args,
+                            out_dir,
+                            history,
+                            global_step=global_step,
+                            best_metric=best_metric,
+                        )
+                    metric_value = _broadcast_float(metric_value, distributed)
                     if metric_value > best_metric + 1e-8:
                         best_metric = metric_value
                         stale = 0
@@ -212,19 +249,24 @@ def main() -> None:
         if stale >= int(args.early_stopping_patience):
             break
 
-    final_metric = _validate_and_maybe_save(
-        model,
-        tokenizer,
-        val_examples,
-        args,
-        out_dir,
-        history,
-        global_step=global_step,
-        best_metric=best_metric,
-        force_save=best_metric < 0,
-    )
-    print(f"Best/Final {args.early_stopping_metric}: {max(best_metric, final_metric):.4f}")
-    print(f"Saved listwise selector under: {out_dir}")
+    _barrier(distributed)
+    final_metric = -1.0
+    if is_main:
+        final_metric = _validate_and_maybe_save(
+            raw_model,
+            tokenizer,
+            val_examples,
+            args,
+            out_dir,
+            history,
+            global_step=global_step,
+            best_metric=best_metric,
+            force_save=best_metric < 0,
+        )
+        print(f"Best/Final {args.early_stopping_metric}: {max(best_metric, final_metric):.4f}")
+        print(f"Saved listwise selector under: {out_dir}")
+    _barrier(distributed)
+    _cleanup_distributed(distributed)
 
 
 def _validate_and_maybe_save(
@@ -405,6 +447,68 @@ def _build_optimizer(model: SetAwareListwiseSelectorModel, args: argparse.Namesp
     if head_params:
         groups.append({"params": head_params, "lr": float(args.head_learning_rate)})
     return torch.optim.AdamW(groups, weight_decay=float(args.weight_decay))
+
+
+def _init_distributed(args: argparse.Namespace) -> DistributedState:
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    rank = int(os.environ.get("RANK", "0"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    if world_size <= 1:
+        device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+        return DistributedState(False, 0, 0, 1, device)
+
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+        device = torch.device("cuda", local_rank)
+        backend = "nccl"
+    else:
+        device = torch.device("cpu")
+        backend = "gloo"
+    dist.init_process_group(backend=backend)
+    return DistributedState(True, rank, local_rank, world_size, device)
+
+
+def _cleanup_distributed(distributed: DistributedState) -> None:
+    if distributed.enabled and dist.is_initialized():
+        dist.destroy_process_group()
+
+
+def _barrier(distributed: DistributedState) -> None:
+    if distributed.enabled and dist.is_initialized():
+        dist.barrier()
+
+
+def _broadcast_float(value: float, distributed: DistributedState) -> float:
+    if not distributed.enabled:
+        return float(value)
+    tensor = torch.tensor([float(value)], dtype=torch.float32, device=distributed.device)
+    dist.broadcast(tensor, src=0)
+    return float(tensor.item())
+
+
+def _local_epoch_size(n_examples: int, world_size: int) -> int:
+    return max(math.ceil(max(int(n_examples), 1) / max(int(world_size), 1)), 1)
+
+
+def _distributed_epoch_examples(
+    examples: list[Stage2OracleExample],
+    *,
+    epoch: int,
+    seed: int,
+    rank: int,
+    world_size: int,
+) -> list[Stage2OracleExample]:
+    items = list(examples)
+    rng = random.Random(int(seed) + int(epoch))
+    rng.shuffle(items)
+    if world_size <= 1:
+        return items
+
+    target_size = _local_epoch_size(len(items), world_size) * world_size
+    if len(items) < target_size:
+        repeat = target_size - len(items)
+        items.extend(items[:repeat])
+    return items[int(rank) : target_size : int(world_size)]
 
 
 def _maybe_permute_batch(
