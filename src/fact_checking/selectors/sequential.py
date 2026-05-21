@@ -90,18 +90,16 @@ class DeepInteractionPointerHead(nn.Module):
     ) -> torch.Tensor:
         has_prefix = selected_mask.any(dim=1)
         dtype = context_embeddings.dtype
+        start = self.start_prefix.to(dtype=dtype).unsqueeze(0)  # [1, H]
         if not has_prefix.any():
             if claim_start is not None:
-                return claim_start.to(dtype=dtype)
-            start = self.start_prefix.to(dtype=dtype).unsqueeze(0)
+                return claim_start.to(dtype=dtype) + start
             return start.expand(context_embeddings.shape[0], -1)
         selected = selected_mask.to(dtype=dtype).unsqueeze(-1)
         counts = selected.sum(dim=1).clamp_min(1.0)
         pooled = (context_embeddings * selected).sum(dim=1) / counts
-        start = self.start_prefix.to(dtype=dtype).unsqueeze(0)
-        # Per-sample: use pooled where has_prefix, else fallback
         if claim_start is not None:
-            fallback = claim_start.to(dtype=dtype)
+            fallback = claim_start.to(dtype=dtype) + start
         else:
             fallback = start.expand_as(pooled)
         return torch.where(has_prefix.unsqueeze(-1), pooled, fallback)
