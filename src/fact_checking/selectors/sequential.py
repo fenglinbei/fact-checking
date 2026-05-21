@@ -55,6 +55,7 @@ class SequentialSelectorConfig:
 class SequentialForwardOutput:
     context_embeddings: torch.Tensor
     candidate_mask: torch.Tensor
+    claim_start: torch.Tensor | None = None
 
 
 class DeepInteractionPointerHead(nn.Module):
@@ -84,21 +85,38 @@ class DeepInteractionPointerHead(nn.Module):
         self,
         context_embeddings: torch.Tensor,
         selected_mask: torch.Tensor,
+        *,
+        claim_start: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        selected = selected_mask.to(dtype=context_embeddings.dtype).unsqueeze(-1)
+        has_prefix = selected_mask.any(dim=1)
+        dtype = context_embeddings.dtype
+        if not has_prefix.any():
+            if claim_start is not None:
+                return claim_start.to(dtype=dtype)
+            start = self.start_prefix.to(dtype=dtype).unsqueeze(0)
+            return start.expand(context_embeddings.shape[0], -1)
+        selected = selected_mask.to(dtype=dtype).unsqueeze(-1)
         counts = selected.sum(dim=1).clamp_min(1.0)
         pooled = (context_embeddings * selected).sum(dim=1) / counts
-        has_prefix = selected_mask.any(dim=1).unsqueeze(-1)
-        start = self.start_prefix.to(dtype=context_embeddings.dtype).unsqueeze(0)
-        return torch.where(has_prefix, pooled, start.expand_as(pooled))
+        start = self.start_prefix.to(dtype=dtype).unsqueeze(0)
+        # Per-sample: use pooled where has_prefix, else fallback
+        if claim_start is not None:
+            fallback = claim_start.to(dtype=dtype)
+        else:
+            fallback = start.expand_as(pooled)
+        return torch.where(has_prefix.unsqueeze(-1), pooled, fallback)
 
     def score_step(
         self,
         context_embeddings: torch.Tensor,
         candidate_mask: torch.Tensor,
         selected_mask: torch.Tensor,
+        *,
+        claim_start: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        prefix = self.prefix_representation(context_embeddings, selected_mask)
+        prefix = self.prefix_representation(
+            context_embeddings, selected_mask, claim_start=claim_start,
+        )
         prefix_expanded = prefix.unsqueeze(1).expand_as(context_embeddings)
         product = context_embeddings * prefix_expanded
         difference = torch.abs(context_embeddings - prefix_expanded)
@@ -118,6 +136,7 @@ class DeepInteractionPointerHead(nn.Module):
         selected_indices: list[list[int]],
         *,
         top_k: int,
+        claim_start: torch.Tensor | None = None,
     ) -> torch.Tensor:
         batch_size, max_candidates = candidate_mask.shape
         max_steps = _max_teacher_steps(selected_indices, top_k=top_k)
@@ -128,7 +147,9 @@ class DeepInteractionPointerHead(nn.Module):
         )
         step_logits: list[torch.Tensor] = []
         for step in range(max_steps):
-            logits = self.score_step(context_embeddings, candidate_mask, selected_mask)
+            logits = self.score_step(
+                context_embeddings, candidate_mask, selected_mask, claim_start=claim_start,
+            )
             step_logits.append(logits)
             for row, indices in enumerate(selected_indices):
                 if step < len(indices):
@@ -146,6 +167,7 @@ class DeepInteractionPointerHead(nn.Module):
         candidate_mask: torch.Tensor,
         *,
         top_k: int,
+        claim_start: torch.Tensor | None = None,
     ) -> list[SelectorPrediction]:
         batch_size, max_candidates = candidate_mask.shape
         selected_mask = torch.zeros(
@@ -162,7 +184,9 @@ class DeepInteractionPointerHead(nn.Module):
         )
 
         for step in range(int(top_k)):
-            logits = self.score_step(context_embeddings, candidate_mask, selected_mask)
+            logits = self.score_step(
+                context_embeddings, candidate_mask, selected_mask, claim_start=claim_start,
+            )
             next_idx = torch.argmax(logits, dim=1)
             valid = torch.isfinite(logits.gather(1, next_idx.unsqueeze(1)).squeeze(1))
             valid &= logits.gather(1, next_idx.unsqueeze(1)).squeeze(1) > -1.0e3
@@ -223,10 +247,12 @@ class SequentialPointerSelectorModel(nn.Module):
         self.shallow_feature_profile = normalize_shallow_feature_profile(shallow_feature_profile)
 
         self.item_projection = nn.Sequential(
-            nn.Linear(encoder_hidden, self.hidden_size),
+            nn.Linear(encoder_hidden, self.hidden_size * 2),
             nn.GELU(),
             nn.Dropout(self.dropout),
+            nn.Linear(self.hidden_size * 2, self.hidden_size),
         )
+        self.proj_residual = nn.Linear(encoder_hidden, self.hidden_size)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.hidden_size,
             nhead=self.num_attention_heads,
@@ -247,15 +273,21 @@ class SequentialPointerSelectorModel(nn.Module):
     ) -> SequentialForwardOutput:
         outputs = self.encoder(**encoded_inputs)
         pair_embeddings = pool_pair_embeddings(outputs, encoded_inputs.get("attention_mask"))
-        item_embeddings = self.item_projection(pair_embeddings)
+        projected = self.item_projection(pair_embeddings)
+        residual = self.proj_residual(pair_embeddings)
+        item_embeddings = F.gelu(projected + residual)
         padded_items, mask = pad_flat_items(item_embeddings, group_sizes)
         context = self.set_encoder(padded_items, src_key_padding_mask=~mask)
         context = self.output_norm(context)
-        return SequentialForwardOutput(context_embeddings=context, candidate_mask=mask)
+        claim_start = _build_claim_start(item_embeddings, group_sizes)
+        return SequentialForwardOutput(
+            context_embeddings=context, candidate_mask=mask, claim_start=claim_start,
+        )
 
     def selector_head_state_dict(self) -> dict[str, Any]:
         return {
             "item_projection": self.item_projection.state_dict(),
+            "proj_residual": self.proj_residual.state_dict(),
             "set_encoder": self.set_encoder.state_dict(),
             "output_norm": self.output_norm.state_dict(),
             "pointer_head": self.pointer_head.state_dict(),
@@ -263,6 +295,8 @@ class SequentialPointerSelectorModel(nn.Module):
 
     def load_selector_head_state_dict(self, payload: dict[str, Any]) -> None:
         self.item_projection.load_state_dict(payload["item_projection"])
+        if "proj_residual" in payload:
+            self.proj_residual.load_state_dict(payload["proj_residual"])
         self.set_encoder.load_state_dict(payload["set_encoder"])
         self.output_norm.load_state_dict(payload["output_norm"])
         self.pointer_head.load_state_dict(payload["pointer_head"])
@@ -277,6 +311,9 @@ class SequentialPointerSelectorModel(nn.Module):
             "semantic_feature_profile": self.semantic_feature_profile,
             "targeted_feature_profile": self.targeted_feature_profile,
             "shallow_feature_profile": self.shallow_feature_profile,
+            "proj_num_layers": 2,
+            "proj_residual": True,
+            "claim_start": "candidate_pool_mean",
             "deep_interaction_features": [
                 "h_i_pair",
                 "H_i_ctx",
@@ -423,6 +460,7 @@ def teacher_forcing_sequential_logits(
         output.candidate_mask,
         selected_indices,
         top_k=top_k,
+        claim_start=output.claim_start,
     )
 
 
@@ -567,6 +605,7 @@ def predict_sequential_groups(
         output.context_embeddings,
         output.candidate_mask,
         top_k=top_k,
+        claim_start=output.claim_start,
     )
 
 
@@ -826,6 +865,23 @@ def _default_candidate_scores(
         row.setdefault("hybrid_rank", row.get("candidate_pool_rank", idx))
         rows.append(row)
     return rows
+
+
+def _build_claim_start(
+    item_embeddings: torch.Tensor, group_sizes: list[int]
+) -> torch.Tensor | None:
+    if not group_sizes:
+        return None
+    starts = []
+    offset = 0
+    for size in group_sizes:
+        size = int(size)
+        if size <= 0:
+            starts.append(torch.zeros(item_embeddings.shape[-1], device=item_embeddings.device))
+        else:
+            starts.append(item_embeddings[offset : offset + size].mean(dim=0))
+        offset += size
+    return torch.stack(starts, dim=0)
 
 
 def _base_model(model: nn.Module) -> SequentialPointerSelectorModel:
