@@ -8,6 +8,8 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PYTHONPATH:-}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
+export NCCL_CUMEM_HOST_ENABLE=0
 
 MODEL_NAME="${MODEL_NAME:-/data/models/deberta-v3-base/}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/selectors/stage2_sentence_sequential/deberta_sequential_deep}"
