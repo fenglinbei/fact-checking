@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--train-sample-limit", type=int, default=None)
     p.add_argument("--val-sample-limit", type=int, default=None)
     p.add_argument("--eval-every", type=int, default=250, help="Optimizer steps between validation passes.")
-    p.add_argument("--early-stopping-patience", type=int, default=6)
+    p.add_argument("--early-stopping-patience", type=int, default=10)
     p.add_argument("--early-stopping-metric", default="oracle_rank_ndcg@5")
     p.add_argument("--ddp-find-unused-parameters", action="store_true")
     p.add_argument("--no-progress", action="store_true")
