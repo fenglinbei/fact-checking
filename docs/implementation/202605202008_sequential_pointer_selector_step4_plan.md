@@ -79,8 +79,8 @@ deep + graph_lite alignment
 |---:|---|---|---:|---|
 | 1 | Step4.1-A: `deep + selected-mask BCE` | set utility 辅助监督能否提升 `recall@5 / jaccard@5` | 低 | 已实现 |
 | 2 | Step4.1-B: `deep + selected-mask BCE + first-step weighting` | 能否针对 step0 accuracy 低的问题提升首条 evidence 判断 | 低-中 | 待实现 |
-| 3 | Step4.1-C: `deep + claim aspect coverage` | aspect coverage 能否补足 evidence 覆盖不足 | 中 | 待实现 |
-| 4 | Step4.2: `deep + stance_utility_semantics` | support / refute / qualify / insufficient 证据作用是否改善 utility 判断 | 中-高 | 待实现 |
+| 3 | Step4.1-C: `deep + claim aspect coverage` | aspect coverage 能否补足 evidence 覆盖不足 | 中 | `rule_aspect_v1` val no-go；LLM decomp+ 上界诊断工具已实现，待跑 |
+| 4 | Step4.2: `deep + stance_utility_semantics` | support / refute / qualify / insufficient 证据作用是否改善 utility 判断 | 中-高 | 当前 NLI 诊断 no-go，待校准 |
 | 5 | Step4.3: `deep + graph_lite alignment` | 实体、时间、数字、关系结构对齐是否改善 fact-checking 证据选择 | 高 | 待实现 |
 | 6 | hard-subset OPD probe | on-policy prefix drift 是否是主要剩余瓶颈 | 中 | 仅作诊断 |
 | 7 | full Step5 OPD | 正式 on-policy distillation | 高 | 暂不建议 |
@@ -702,8 +702,8 @@ git diff --check
 | `deberta_sequential_deep_mask02` | Step4.1-A 主线：检查 selected-mask BCE 是否提升 set utility | all | deep | none | off | `recall@5>=0.40`、`jaccard@5>=0.275`，且 order 不明显回落 |
 | `deberta_sequential_deep_mask05` | Step4.1-A 强 mask loss 对照 | all | deep | none | off | 若 mask02 有益，检查更强 set loss 是否继续改善 |
 | `deberta_sequential_deep_mask02_stepweight` | Step4.1-B：补 step0/step1 权重 | all | deep | none | off | step0 accuracy 与 top1 上升 |
-| `deberta_sequential_aspect` | Step4.1-C：检查 claim 分解与 aspect coverage 的价值 | all | deep | aspect | off | recall/jaccard 或 prefix_match 上升 |
-| `deberta_sequential_stance_utility` | Step4.2：检查辩护视角证据作用特征 | all | deep | aspect_stance | off | top1/order 或 label-specific failures 改善 |
+| `deberta_sequential_aspect` | Step4.1-C：检查 claim 分解与 aspect coverage 的价值 | all | deep | aspect | off | `rule_aspect_v1` 未过线；仅在 Qwen decomp+ 上界诊断过线后训练 |
+| `deberta_sequential_stance_utility` | Step4.2：检查辩护视角证据作用特征 | all | deep | aspect_stance | off | 当前 NLI scalar 诊断未过阈值；需先校准 stance 模型 |
 | `deberta_sequential_graph_lite` | Step4.3：检查结构一致性特征 | all | deep | aspect_stance_graph | off | 数字/时间/实体错误 bucket 改善 |
 | `deberta_sequential_shallow_control` | 诊断浅层特征是否 shortcut | all | shallow_control | none | full_shallow | 若只提升 top1 但 set/order 不稳，不进主线 |
 
@@ -820,3 +820,11 @@ low-margin oracle rows
 2026-05-21 已完成 `deberta_sequential_deep` 完整运行结果复盘。最佳 checkpoint 为 step 2500，`oracle_rank_ndcg@5=0.3306`，较 Step3 有 order-level 增益，但 `recall@5=0.3852`、`jaccard@5=0.2615` 未突破 gate。当前阶段性结论：Step4 deep-only 结构保留，但不直接进入正式 Step5 OPD；下一步优先做 Step4.1 的 set auxiliary loss、claim aspect coverage、stance utility semantics 和 graph-lite alignment 消融。
 
 2026-05-21 已实现 Step4.1-A：`scripts/selectors/run_sequential_step4.sh` 现在显式暴露 `SEQ_LOSS_WEIGHT` 与 `MASK_LOSS_WEIGHT`；新增 `scripts/selectors/run_sequential_step4_1_mask_bce.sh` 作为默认 mask BCE 实验入口。`sequential_teacher_forcing_loss` 已修正为 `seq_loss_weight * CE + mask_loss_weight * L_mask`，其中 `L_mask` 在每个 teacher-forced prefix 下把尚未选择的 oracle selected candidates 作为正例。
+
+2026-05-21 已完成 Step4.2 前置 NLI stance 诊断，产物位于 `outputs/selectors/stance_nli/deberta_v3_base_mnli_fever_anli_val/`。结论是当前 `MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli` 的 `support/refute/neutral` scalar 不应直接接入 selector：oracle selected 与 pool 的 `support/refute` 占比差异为 `-0.60pp`，最佳 stance feature 的 selected-vs-nonselected `separability_auc=0.5090`，均未达到 go 阈值。step0 虽有弱信号（`support_score` AUROC 约 `0.5338`），但与 hybrid score 同量级，无法支撑 `deep + stance_nli_scalar` 作为主线训练。Step4.2 暂时转为 NLI/stance 校准问题，主线优先级回到 claim/aspect coverage 或其他能显著增强 candidate utility 表示的特征。
+
+2026-05-21 已实现 Step4.1-C 前置诊断工具：新增 `src/fact_checking/selectors/aspects.py` 与 `scripts/selectors/analyze_oracle_aspect_coverage.py`。当前 `rule_aspect_v1` 用规则抽取 atomic / retrievable / decontextualized claim aspects，并用 encoder embedding 计算 candidate-aspect alignment、step-wise `uncovered_gain` 与 oracle-vs-hybrid top5 coverage。该阶段仍不直接训练 `deberta_sequential_aspect`；只有当 `uncovered_gain AUROC >= 0.57` 或 oracle top5 coverage 比 hybrid top5 高至少 `3pp`，才把 `targeted_feature_profile=aspect` 接入 selector。
+
+2026-05-21 已完成 Step4.1-C `rule_aspect_v1` 完整 val 诊断，产物位于 `outputs/selectors/aspect_coverage/rule_v1_deberta_val/`。结果未过线且低于随机方向：`uncovered_gain AUROC=0.4820`，`oracle_vs_hybrid_coverage_lift=-0.07pp`，`max_aspect_score AUROC=0.5051`，`mean_aspect_score AUROC=0.5030`。结论：不要把当前规则 aspect coverage 直接接入 `deberta_sequential_aspect`。下一步若继续 aspect 路线，只做 LLM-aspect 上界诊断，即让 LLM 生成 self-contained check questions / atomic aspects，再复用同一 coverage gate；若仍不过线，则停止 claim-aspect coverage 主线，转向 verifier-aware utility 或 prefix-level evidence contribution。
+
+2026-05-21 已实现 LLM decomp+ 上界诊断工具：新增 `scripts/selectors/generate_llm_claim_decomp_aspects.py`、`scripts/selectors/run_llm_decomp_plus_aspect_coverage.sh` 与实现说明 `docs/implementation/202605212359_llm_decomp_plus_aspect_coverage.md`。该工具使用 `cppo` 环境中的本地 vLLM 加载 Qwen2.5-7B-Instruct，将 claim 分解为 2-5 个 self-contained / atomic / verifiable sub-claims，并写出 `llm_decomp_plus_v1` 的 `claim_aspects.jsonl`。`analyze_oracle_aspect_coverage.py` 已支持 `--claim-aspects-input`，可复用该缓存跑 BGE/DeBERTa 等 encoder 的 coverage gate。当前仍不训练 `deberta_sequential_aspect`；只有 Qwen decomp+ cache 过同一 stop/go 阈值后才进入 selector ablation。
