@@ -453,6 +453,8 @@ item_embeddings = F.gelu(projected + residual)
 
 `selector_head_state_dict` 和 `load_selector_head_state_dict` 同步新增 `proj_residual`，后者通过 `"proj_residual" in payload` 做向后兼容。`model_config` 新增 `"proj_num_layers": 2, "proj_residual": True`。
 
+**实验结果 (2026-05-21)**：与 claim_start 修改打包为 `deberta_sequential_deep_proj2_v2`（mask_weight=0.5），训练 6000 步。全指标倒退，recall@5 从 0.3852→0.3717（-1.35pp），top1_match 从 0.1664→0.1523。详见 [实验对比](#proj2-v2-实验对比-2026-05-21)。
+
 ---
 
 ### 4. Set Encoder 深度与宽度不足
@@ -513,6 +515,55 @@ def prefix_representation(self, context_embeddings, selected_mask, *, claim_star
 `score_step`、`teacher_forcing_logits`、`greedy_decode` 均新增 `claim_start` 参数并透传至 `prefix_representation`。`teacher_forcing_sequential_logits` 和 `predict_sequential_groups` 从 `output.claim_start` 提取并传递。
 
 `model_config` 新增 `"claim_start": "candidate_pool_mean"`。
+
+**实验结果 (2026-05-21)**：与 proj2 修改打包为 `deberta_sequential_deep_proj2_v2`（mask_weight=0.5），训练 6000 步。step0 accuracy 不升反降（0.1664→0.1523），说明 candidate pool mean 作为 claim 参照可能引入噪声（坏候选稀释有用信号）。详见 [实验对比](#proj2-v2-实验对比-2026-05-21)。
+
+#### proj2_v2 实验对比 (2026-05-21)
+
+实验 `OUTPUT_DIR=deberta_sequential_deep_proj2_v2 MASK_LOSS_WEIGHT=0.5`，同时包含 proj2 残差投影 + claim_start + mask=0.5。训练完成 6000 步，24 个 validation 点，未触发早停（oracle_rank_ndcg@5 从 0.2569 缓慢爬升至 0.3297），最佳 checkpoint 在最终步。
+
+对比 deep baseline（mask=0, best step=2500）、mask05（best step=3250）：
+
+| 指标 | deep (mask=0) | mask05 | proj2_v2 | vs baseline |
+|---|---|---|---|---|
+| recall@5 | 0.3852 | 0.3662 | **0.3717** | -1.35 pp |
+| jaccard@5 | 0.2615 | 0.2472 | **0.2509** | -1.06 pp |
+| top1_match | 0.1664 | 0.1499 | **0.1523** | -1.41 pp |
+| prefix_match@3 | 0.0055 | 0.0039 | **0.0024** | — |
+| prefix_match@5 | 0.0000 | 0.0000 | **0.0000** | — |
+| oracle_rank_ndcg@5 | 0.3306 | 0.3270 | **0.3297** | -0.09 pp |
+| pairwise_order_acc@5 | 0.5871 | 0.5764 | **0.5776** | -0.95 pp |
+| ordered_exact_match@5 | 0.0078 | 0.0063 | **0.0047** | — |
+| ordered_hit@5 | 0.1020 | 0.0920 | **0.0929** | — |
+
+Step-wise 诊断：
+
+| step | deep acc | deep ent | mask05 acc | mask05 ent | proj2_v2 acc | proj2_v2 ent |
+|-----:|---------:|---------:|-----------:|-----------:|-------------:|-------------:|
+| 0 | 0.1664 | 2.5699 | 0.1499 | 2.5890 | **0.1523** | 2.5323 |
+| 1 | 0.0921 | 2.5844 | 0.0740 | 2.5552 | **0.0748** | 2.3606 |
+| 2 | 0.0797 | 2.5020 | 0.0678 | 2.4828 | **0.0710** | 2.2640 |
+| 3 | 0.0714 | 2.4294 | 0.0714 | 2.4109 | **0.0674** | 2.1826 |
+| 4 | 0.0794 | 2.3414 | 0.0770 | 2.3192 | **0.0826** | 2.0965 |
+| fws_mean | 0.1954 | — | 0.1688 | — | **0.1735** | — |
+
+**结论**：proj2_v2 在所有指标上均未超越 deep baseline。
+
+三个关键发现：
+
+1. **全指标倒退**。两个修改打包后无任何改善。尤其 step0 accuracy（claim_start 最应改善的指标）反而从 0.1664 跌到 0.1523。
+
+2. **熵降但方向错**。proj2_v2 在所有 step 上 entropy 都更低（如 step0: 2.53 vs 2.57），说明模型更"自信"，但 accuracy 同时下降——自信在了错误的方向。新增特征可能让某些 spurious pattern 更容易被捕捉。
+
+3. **学习更慢**。oracle_rank_ndcg@5 从 step 500 的 0.2569 缓慢爬到 step 6000 的 0.3297，而 baseline 在 step 2500 就达到了 0.3306。新增 460K 参数没有加速收敛，反而拖慢。
+
+**归因推断**（打包实验无法分离贡献，以下为推测）：
+
+- **claim_start 的 candidate pool mean 可能有噪声**：15 个候选（含坏候选）等权平均，坏候选的噪声直接进入 prefix。更干净的做法是用 claim-only embedding
+- **proj2 深层投影可能需要更多训练或调学习率**：参数量翻 3 倍，但 LR 不变，最终步才接近 baseline
+- **`start_prefix` 的 learnable bias 设计可能不当**：`claim_start + start` 假设 start_prefix 对所有 claim 施加同一偏置，但各 claim 可能需要不同的方向
+
+**后续建议**：分离消融——proj2 单独、claim_start（改为 claim-only embedding）单独，分别归因。
 
 ---
 

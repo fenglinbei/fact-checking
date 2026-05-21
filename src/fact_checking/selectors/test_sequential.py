@@ -5,8 +5,20 @@ import unittest
 import torch
 
 from fact_checking.selectors.sequential import (
+    CLAIM_FEATURE_MODE_CLAIM_ONLY,
+    CLAIM_FEATURE_MODE_OFF,
+    CLAIM_START_MODE_CANDIDATE_POOL_MEAN,
+    CLAIM_START_MODE_LEARNED,
     DeepInteractionPointerHead,
+    PROJECTION_MODE_LINEAR,
+    PROJECTION_MODE_MLP_RESIDUAL,
+    infer_claim_feature_mode_from_model_config,
+    infer_claim_start_mode_from_model_config,
+    infer_projection_mode_from_model_config,
     mask_step_logits,
+    normalize_claim_feature_mode,
+    normalize_claim_start_mode,
+    normalize_projection_mode,
     normalize_semantic_feature_profile,
     normalize_shallow_feature_profile,
     normalize_targeted_feature_profile,
@@ -118,6 +130,35 @@ class SequentialSelectorTest(unittest.TestCase):
         self.assertEqual(len(set(predictions[1].ordered_indices)), 2)
         self.assertTrue(all(idx in {0, 1} for idx in predictions[1].ordered_indices))
 
+    def test_pointer_head_claim_feature_requires_claim_embedding(self) -> None:
+        torch.manual_seed(11)
+        head = DeepInteractionPointerHead(
+            hidden_size=8,
+            dropout=0.0,
+            claim_feature_mode=CLAIM_FEATURE_MODE_CLAIM_ONLY,
+        )
+        context = torch.randn(2, 4, 8)
+        candidate_mask = torch.tensor(
+            [
+                [True, True, True, True],
+                [True, True, False, False],
+            ]
+        )
+        selected_mask = torch.zeros_like(candidate_mask)
+        with self.assertRaises(ValueError):
+            head.score_step(context, candidate_mask, selected_mask)
+
+        claim_embedding = torch.randn(2, 8)
+        logits = head.score_step(
+            context,
+            candidate_mask,
+            selected_mask,
+            claim_embedding=claim_embedding,
+        )
+
+        self.assertEqual(tuple(logits.shape), (2, 4))
+        self.assertLess(float(logits[1, 2].detach()), -1000.0)
+
     def test_feature_profile_normalizers_lock_first_version(self) -> None:
         self.assertEqual(normalize_semantic_feature_profile("deep"), "deep")
         self.assertEqual(normalize_targeted_feature_profile("none"), "none")
@@ -128,6 +169,77 @@ class SequentialSelectorTest(unittest.TestCase):
             normalize_targeted_feature_profile("aspect")
         with self.assertRaises(ValueError):
             normalize_shallow_feature_profile("hybrid_only")
+
+    def test_architecture_mode_normalizers_accept_legacy_aliases(self) -> None:
+        self.assertEqual(normalize_projection_mode(None), PROJECTION_MODE_LINEAR)
+        self.assertEqual(normalize_projection_mode("deep"), PROJECTION_MODE_LINEAR)
+        self.assertEqual(normalize_projection_mode("proj2"), PROJECTION_MODE_MLP_RESIDUAL)
+        self.assertEqual(normalize_projection_mode("mlp-residual"), PROJECTION_MODE_MLP_RESIDUAL)
+        self.assertEqual(normalize_claim_start_mode(None), CLAIM_START_MODE_LEARNED)
+        self.assertEqual(normalize_claim_start_mode("none"), CLAIM_START_MODE_LEARNED)
+        self.assertEqual(
+            normalize_claim_start_mode("candidate-pool-mean"),
+            CLAIM_START_MODE_CANDIDATE_POOL_MEAN,
+        )
+        self.assertEqual(normalize_claim_feature_mode(None), CLAIM_FEATURE_MODE_OFF)
+        self.assertEqual(normalize_claim_feature_mode("h-claim"), CLAIM_FEATURE_MODE_CLAIM_ONLY)
+        self.assertEqual(normalize_claim_feature_mode("claim_text"), CLAIM_FEATURE_MODE_CLAIM_ONLY)
+        with self.assertRaises(ValueError):
+            normalize_projection_mode("wide")
+        with self.assertRaises(ValueError):
+            normalize_claim_start_mode("claim_only")
+        with self.assertRaises(ValueError):
+            normalize_claim_feature_mode("candidate_pool_mean")
+
+    def test_architecture_mode_inference_keeps_old_checkpoints_compatible(self) -> None:
+        self.assertEqual(infer_projection_mode_from_model_config({}), PROJECTION_MODE_LINEAR)
+        self.assertEqual(
+            infer_projection_mode_from_model_config({"proj_residual": True}),
+            PROJECTION_MODE_MLP_RESIDUAL,
+        )
+        self.assertEqual(
+            infer_projection_mode_from_model_config({"proj_num_layers": 2}),
+            PROJECTION_MODE_MLP_RESIDUAL,
+        )
+        self.assertEqual(
+            infer_projection_mode_from_model_config(
+                {},
+                selector_state={
+                    "item_projection": {
+                        "0.weight": torch.zeros(512, 768),
+                        "3.weight": torch.zeros(256, 512),
+                    },
+                    "proj_residual": {"weight": torch.zeros(256, 768)},
+                },
+            ),
+            PROJECTION_MODE_MLP_RESIDUAL,
+        )
+        self.assertEqual(infer_claim_start_mode_from_model_config({}), CLAIM_START_MODE_LEARNED)
+        self.assertEqual(
+            infer_claim_start_mode_from_model_config({"claim_start": "candidate_pool_mean"}),
+            CLAIM_START_MODE_CANDIDATE_POOL_MEAN,
+        )
+        self.assertEqual(
+            infer_claim_start_mode_from_model_config({"claim_start_mode": "learned"}),
+            CLAIM_START_MODE_LEARNED,
+        )
+        self.assertEqual(infer_claim_feature_mode_from_model_config({}), CLAIM_FEATURE_MODE_OFF)
+        self.assertEqual(
+            infer_claim_feature_mode_from_model_config({"claim_feature_mode": "claim_only"}),
+            CLAIM_FEATURE_MODE_CLAIM_ONLY,
+        )
+        self.assertEqual(
+            infer_claim_feature_mode_from_model_config(
+                {},
+                selector_state={
+                    "pointer_head": {
+                        "scorer.0.weight": torch.zeros(256, 49),
+                    },
+                },
+                hidden_size=8,
+            ),
+            CLAIM_FEATURE_MODE_CLAIM_ONLY,
+        )
 
 
 if __name__ == "__main__":

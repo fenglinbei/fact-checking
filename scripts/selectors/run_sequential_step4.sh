@@ -26,6 +26,10 @@ FILTER_POLICY="${FILTER_POLICY:-all}"
 SEMANTIC_FEATURE_PROFILE="${SEMANTIC_FEATURE_PROFILE:-deep}"
 TARGETED_FEATURE_PROFILE="${TARGETED_FEATURE_PROFILE:-none}"
 SHALLOW_FEATURE_PROFILE="${SHALLOW_FEATURE_PROFILE:-off}"
+PROJECTION_MODE="${PROJECTION_MODE:-linear}"
+PROJECTION_HIDDEN_MULTIPLIER="${PROJECTION_HIDDEN_MULTIPLIER:-2}"
+CLAIM_START_MODE="${CLAIM_START_MODE:-learned}"
+CLAIM_FEATURE_MODE="${CLAIM_FEATURE_MODE:-off}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 SWANLAB_PROJECT="${SWANLAB_PROJECT:-fact-checking-stage2-sequential}"
 SWANLAB_EXPERIMENT_NAME="${SWANLAB_EXPERIMENT_NAME:-$(basename "${OUTPUT_DIR}")}"
@@ -44,6 +48,10 @@ echo "[sequential-step4] nproc_per_node=${NPROC_PER_NODE}"
 echo "[sequential-step4] semantic_feature_profile=${SEMANTIC_FEATURE_PROFILE}"
 echo "[sequential-step4] targeted_feature_profile=${TARGETED_FEATURE_PROFILE}"
 echo "[sequential-step4] shallow_feature_profile=${SHALLOW_FEATURE_PROFILE}"
+echo "[sequential-step4] projection_mode=${PROJECTION_MODE}"
+echo "[sequential-step4] projection_hidden_multiplier=${PROJECTION_HIDDEN_MULTIPLIER}"
+echo "[sequential-step4] claim_start_mode=${CLAIM_START_MODE}"
+echo "[sequential-step4] claim_feature_mode=${CLAIM_FEATURE_MODE}"
 echo "[sequential-step4] seq_loss_weight=${SEQ_LOSS_WEIGHT}"
 echo "[sequential-step4] mask_loss_weight=${MASK_LOSS_WEIGHT}"
 echo "[sequential-step4] swanlab_project=${SWANLAB_PROJECT}"
@@ -66,6 +74,10 @@ TRAIN_CMD=(
     --semantic-feature-profile "${SEMANTIC_FEATURE_PROFILE}" \
     --targeted-feature-profile "${TARGETED_FEATURE_PROFILE}" \
     --shallow-feature-profile "${SHALLOW_FEATURE_PROFILE}" \
+    --projection-mode "${PROJECTION_MODE}" \
+    --projection-hidden-multiplier "${PROJECTION_HIDDEN_MULTIPLIER}" \
+    --claim-start-mode "${CLAIM_START_MODE}" \
+    --claim-feature-mode "${CLAIM_FEATURE_MODE}" \
     --swanlab-project "${SWANLAB_PROJECT}" \
     --swanlab-experiment-name "${SWANLAB_EXPERIMENT_NAME}" \
     --swanlab-tags "${SWANLAB_TAGS}" \

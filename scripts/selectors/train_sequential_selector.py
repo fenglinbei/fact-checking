@@ -26,6 +26,12 @@ from fact_checking.selectors.metrics import (
     summarize_ordered_selection,
 )
 from fact_checking.selectors.sequential import (
+    CLAIM_FEATURE_MODE_CHOICES,
+    CLAIM_FEATURE_MODE_OFF,
+    CLAIM_START_MODE_CHOICES,
+    CLAIM_START_MODE_LEARNED,
+    PROJECTION_MODE_CHOICES,
+    PROJECTION_MODE_LINEAR,
     SEMANTIC_FEATURE_PROFILE_CHOICES,
     SEQUENTIAL_HEAD_FILENAME,
     SHALLOW_FEATURE_PROFILE_CHOICES,
@@ -33,6 +39,9 @@ from fact_checking.selectors.sequential import (
     SequentialPointerSelectorModel,
     build_sequential_selection_trace,
     forward_sequential_examples,
+    normalize_claim_feature_mode,
+    normalize_claim_start_mode,
+    normalize_projection_mode,
     predict_sequential_examples,
     sequential_teacher_forcing_loss,
     summarize_sequential_step_diagnostics,
@@ -93,6 +102,25 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--semantic-feature-profile", default="deep", choices=SEMANTIC_FEATURE_PROFILE_CHOICES)
     p.add_argument("--targeted-feature-profile", default="none", choices=TARGETED_FEATURE_PROFILE_CHOICES)
     p.add_argument("--shallow-feature-profile", default="off", choices=SHALLOW_FEATURE_PROFILE_CHOICES)
+    p.add_argument(
+        "--projection-mode",
+        default=PROJECTION_MODE_LINEAR,
+        type=normalize_projection_mode,
+        choices=PROJECTION_MODE_CHOICES,
+    )
+    p.add_argument("--projection-hidden-multiplier", type=int, default=2)
+    p.add_argument(
+        "--claim-start-mode",
+        default=CLAIM_START_MODE_LEARNED,
+        type=normalize_claim_start_mode,
+        choices=CLAIM_START_MODE_CHOICES,
+    )
+    p.add_argument(
+        "--claim-feature-mode",
+        default=CLAIM_FEATURE_MODE_OFF,
+        type=normalize_claim_feature_mode,
+        choices=CLAIM_FEATURE_MODE_CHOICES,
+    )
     p.add_argument("--max-grad-norm", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", default="cuda")
@@ -161,6 +189,10 @@ def main() -> None:
         semantic_feature_profile=str(args.semantic_feature_profile),
         targeted_feature_profile=str(args.targeted_feature_profile),
         shallow_feature_profile=str(args.shallow_feature_profile),
+        projection_mode=str(args.projection_mode),
+        projection_hidden_multiplier=int(args.projection_hidden_multiplier),
+        claim_start_mode=str(args.claim_start_mode),
+        claim_feature_mode=str(args.claim_feature_mode),
     )
     if bool(args.freeze_pair_encoder):
         for param in raw_model.encoder.parameters():
@@ -382,6 +414,10 @@ def _validate_and_maybe_save(
             "semantic_feature_profile": str(args.semantic_feature_profile),
             "targeted_feature_profile": str(args.targeted_feature_profile),
             "shallow_feature_profile": str(args.shallow_feature_profile),
+            "projection_mode": str(args.projection_mode),
+            "projection_hidden_multiplier": int(args.projection_hidden_multiplier),
+            "claim_start_mode": str(args.claim_start_mode),
+            "claim_feature_mode": str(args.claim_feature_mode),
             "freeze_pair_encoder": bool(args.freeze_pair_encoder),
             "seed": int(args.seed),
             "best_metric": args.early_stopping_metric,
