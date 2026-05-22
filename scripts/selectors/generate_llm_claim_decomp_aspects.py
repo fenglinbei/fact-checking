@@ -85,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-trust-remote-code", dest="trust_remote_code", action="store_false")
 
     p.add_argument("--generation-batch-size", type=int, default=128)
-    p.add_argument("--max-tokens", type=int, default=512)
+    p.add_argument("--max-tokens", type=int, default=256)
     p.add_argument("--temperature", type=float, default=0.0)
     p.add_argument("--top-p", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=20260521)
@@ -166,11 +166,15 @@ def main() -> None:
 
             for example, prompt, output in zip(batch_examples, batch_prompts, outputs):
                 raw_text = _output_text(output)
-                subclaims, parse_status, parse_error = parse_subclaims_from_generation(raw_text)
+                raw_subclaims, parse_status, parse_error = parse_subclaims_from_generation(raw_text)
+                subclaims, rejected_subclaims = filter_valid_subclaims(raw_subclaims)
+                if parse_status not in {"empty_generation", "parse_failed"}:
+                    if not subclaims:
+                        parse_status = "invalid_subclaims"
+                    elif len(subclaims) < int(args.min_subclaims):
+                        parse_status = "fewer_than_min_valid_subclaims"
                 if not subclaims:
                     n_parse_failures += 1
-                if subclaims and len(subclaims) < int(args.min_subclaims):
-                    parse_status = "fewer_than_min_subclaims"
                 bundle = build_claim_aspect_bundle_from_texts(
                     example.claim,
                     subclaims,
@@ -187,7 +191,10 @@ def main() -> None:
                     "model": str(args.model),
                     "parse_status": parse_status,
                     "parse_error": parse_error,
-                    "n_raw_subclaims": len(subclaims),
+                    "n_raw_subclaims": len(raw_subclaims),
+                    "n_valid_subclaims": len(subclaims),
+                    "n_rejected_subclaims": len(rejected_subclaims),
+                    "rejected_subclaims": rejected_subclaims,
                     "min_subclaims": int(args.min_subclaims),
                     "max_subclaims": int(args.max_subclaims),
                 }
@@ -198,6 +205,8 @@ def main() -> None:
                     "parse_status": parse_status,
                     "parse_error": parse_error,
                     "subclaims": subclaims,
+                    "raw_subclaims": raw_subclaims,
+                    "rejected_subclaims": rejected_subclaims,
                     "raw_text": raw_text,
                 }
                 if args.store_prompts:
@@ -331,6 +340,53 @@ def parse_subclaims_from_generation(text: str) -> tuple[list[str], str, str | No
     if subclaims:
         return subclaims, "fallback_numbered_lines", None
     return [], "parse_failed", "could not parse JSON or numbered sub-claims"
+
+
+def filter_valid_subclaims(subclaims: list[str]) -> tuple[list[str], list[dict[str, str]]]:
+    valid: list[str] = []
+    rejected: list[dict[str, str]] = []
+    for text in subclaims:
+        normalized = _normalize_subclaim(text)
+        reason = _invalid_subclaim_reason(normalized)
+        if reason:
+            rejected.append({"text": normalized, "reason": reason})
+            continue
+        valid.append(normalized)
+    return _dedupe_preserve_order(valid), rejected
+
+
+def _invalid_subclaim_reason(text: str) -> str | None:
+    if not text:
+        return "empty"
+    if re.search(r"[\{\}\[\]<>]", text):
+        return "contains_structural_marker"
+    if re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", text):
+        return "contains_control_char"
+    if re.search(r"[\u4e00-\u9fff]", text):
+        return "contains_non_english_cjk"
+    if re.search(
+        r"(?i)\b(?:analyze|decompose|decomposition|json|schema|valid json|"
+        r"news claim|output requirements|logical decomposition|user:|assistant:|system:)\b",
+        text,
+    ):
+        return "prompt_or_schema_artifact"
+    if re.search(r"(?i)^(?:sub[_ -]?(?:claim|claims)?|claim[_ -]?cl|sub[_ -]?cl)\b", text):
+        return "subclaim_label_artifact"
+    tokens = re.findall(r"[A-Za-z0-9$%][A-Za-z0-9$%'.-]*", text)
+    if len(tokens) < 3:
+        return "too_few_content_tokens"
+    if len(tokens) > 60:
+        return "too_many_content_tokens"
+    lowered = [token.lower() for token in tokens]
+    if len(lowered) >= 12 and len(set(lowered)) / len(lowered) < 0.35:
+        return "low_unique_token_ratio"
+    for token in set(lowered):
+        if token and lowered.count(token) >= 5:
+            return "repeated_token_artifact"
+    alpha_chars = sum(ch.isalpha() for ch in text)
+    if alpha_chars and alpha_chars / max(len(text), 1) < 0.45:
+        return "low_alpha_ratio"
+    return None
 
 
 def _subclaims_from_payload(payload: Any) -> list[str]:
@@ -472,10 +528,14 @@ def _raw_generation_summary(path: Path) -> dict[str, Any]:
     rows = read_jsonl(path) if path.exists() else []
     status_counts: Counter[str] = Counter(str(row.get("parse_status") or "unknown") for row in rows)
     subclaim_counts = [len(row.get("subclaims") or []) for row in rows]
+    raw_subclaim_counts = [len(row.get("raw_subclaims") or row.get("subclaims") or []) for row in rows]
+    rejected_counts = [len(row.get("rejected_subclaims") or []) for row in rows]
     return {
         "n_rows": len(rows),
         "parse_status_counts": dict(sorted(status_counts.items())),
-        "raw_subclaims_per_claim": _numeric_summary(subclaim_counts),
+        "valid_subclaims_per_claim": _numeric_summary(subclaim_counts),
+        "raw_subclaims_per_claim": _numeric_summary(raw_subclaim_counts),
+        "rejected_subclaims_per_claim": _numeric_summary(rejected_counts),
     }
 
 

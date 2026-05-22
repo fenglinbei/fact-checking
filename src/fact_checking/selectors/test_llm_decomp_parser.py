@@ -37,6 +37,24 @@ class LLMDecompParserTest(unittest.TestCase):
         self.assertEqual(len(subclaims), 2)
         self.assertTrue(subclaims[1].startswith("The unemployment decline"))
 
+    def test_filter_rejects_prompt_artifacts(self) -> None:
+        valid, rejected = _MODULE.filter_valid_subclaims(
+            [
+                "Logical decomposition: separate the claim.",
+                "The Senate immigration bill includes immediate legalization.",
+                "sub-claim 1",
+                "The bill includes border security measures.",
+            ]
+        )
+        self.assertEqual(
+            valid,
+            [
+                "The Senate immigration bill includes immediate legalization.",
+                "The bill includes border security measures.",
+            ],
+        )
+        self.assertEqual(len(rejected), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

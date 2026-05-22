@@ -16,9 +16,10 @@ GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 DTYPE="${DTYPE:-auto}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
 GENERATION_BATCH_SIZE="${GENERATION_BATCH_SIZE:-128}"
-MAX_TOKENS="${MAX_TOKENS:-512}"
+MAX_TOKENS="${MAX_TOKENS:-256}"
 MIN_SUBCLAIMS="${MIN_SUBCLAIMS:-2}"
 MAX_SUBCLAIMS="${MAX_SUBCLAIMS:-5}"
+GUIDED_JSON="${GUIDED_JSON:-1}"
 
 ASPECT_ENCODER="${ASPECT_ENCODER:-BAAI/bge-base-en-v1.5}"
 ENCODER_BATCH_SIZE="${ENCODER_BATCH_SIZE:-128}"
@@ -37,6 +38,11 @@ echo "[llm-decomp] coverage output    : ${COVERAGE_OUTPUT_DIR}"
 echo "[llm-decomp] qwen model         : ${QWEN_MODEL}"
 echo "[llm-decomp] aspect encoder     : ${ASPECT_ENCODER}"
 
+GUIDED_JSON_ARGS=()
+if [[ "${GUIDED_JSON}" == "0" || "${GUIDED_JSON}" == "false" || "${GUIDED_JSON}" == "False" ]]; then
+  GUIDED_JSON_ARGS=(--no-guided-json)
+fi
+
 conda run -n "${CONDA_ENV}" env PYTHONPATH=src python scripts/selectors/generate_llm_claim_decomp_aspects.py \
   --oracle-results "${ORACLE_RESULTS}" \
   --split "${SPLIT}" \
@@ -50,6 +56,7 @@ conda run -n "${CONDA_ENV}" env PYTHONPATH=src python scripts/selectors/generate
   --max-tokens "${MAX_TOKENS}" \
   --min-subclaims "${MIN_SUBCLAIMS}" \
   --max-subclaims "${MAX_SUBCLAIMS}" \
+  "${GUIDED_JSON_ARGS[@]}" \
   "${SAMPLE_LIMIT_ARGS[@]}" \
   "$@"
 
