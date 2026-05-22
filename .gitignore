@@ -223,26 +223,8 @@ data/raw/LIAR-RAW/
 # artifacts that are useful for Git sync.
 outputs/
 **/outputs/
-!outputs/
 outputs/*
-!outputs/runs/
 outputs/runs/**
-!outputs/runs/**/
-
-# Training evaluation and inference artifacts.
-!outputs/runs/**/train/eval/**/*.json
-!outputs/runs/**/train/eval/**/*.jsonl
-!outputs/runs/**/train/eval/**/*.png
-!outputs/runs/**/infer/**/*.json
-!outputs/runs/**/infer/**/*.jsonl
-!outputs/runs/**/infer/**/*.png
-outputs/runs/**/test_predictions.jsonl
-
-# Run metadata and summaries.
-!outputs/runs/**/manifest.json
-!outputs/runs/**/configs/*
-!outputs/runs/**/prompt_stats/*
-!outputs/runs/overall_run_analysis/*
 
 wandb/
 multirun/

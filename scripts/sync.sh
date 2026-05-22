@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-REMOTE="fenglin@yd.frp-ski.com:/home/fenglin/project/fact-checking/outputs/selectors/"
+REMOTE="fenglin@yd.frp-ski.com:/home/fenglin/project/fact-checking/outputs/"
 SSH_PORT=16880
 ALL=false
-DRY_RUN=""
-SUB=""
+DRY_RUN="1"
+SUB="runs"
 
 for arg in "${@}"; do
     case "$arg" in
@@ -15,7 +15,7 @@ for arg in "${@}"; do
     esac
 done
 
-SRC="outputs/selectors/${SUB}"
+SRC="outputs/${SUB}"
 
 EXCLUDES=()
 if [ "$ALL" != true ]; then
