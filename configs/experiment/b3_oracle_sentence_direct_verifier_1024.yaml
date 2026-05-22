@@ -13,6 +13,10 @@ baseline:
   variant: b3_oracle_sentence_direct_verifier_1024
   chunking_strategy: sentence_oracle_direct
 
+sft_train:
+  num_train_epochs: 5
+  early_stopping_patience: 6
+
 swanlab:
   project: fact-checking-oracle-direct-verifier
   experiment_name: b3_oracle_sentence_direct_verifier_1024
