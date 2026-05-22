@@ -196,6 +196,17 @@ scripts/selectors/generate_llm_claim_decomp_aspects.py
 scripts/selectors/run_llm_decomp_plus_aspect_coverage.sh
 ```
 
+2026-05-22 已核查 Qwen decomp+ plain full-val 结果，产物位于：
+
+```text
+outputs/selectors/aspect_coverage/llm_decomp_plus_qwen25_7b_val_plain/
+outputs/selectors/aspect_coverage/llm_decomp_plus_qwen25_7b_val_plain_coverage/
+```
+
+这次生成缓存质量已足以作为 gate 判定依据：`parse_failures=1/1274`，`claims_with_no_local_aspects=1/1274`，`n_local_aspects=2962`，valid subclaims 均值 `2.33`。但 coverage 仍 no-go：`uncovered_gain AUROC=0.4730`，`oracle_vs_hybrid_coverage_lift=-1.51pp`，oracle coverage mean `0.8743` 低于 hybrid top5 `0.8893`。
+
+因此 LLM-aspect 上界诊断也未支持 claim-aspect coverage 主线。除非做一个很小的 cross-encoder / NLI scorer sanity check，否则不应继续通过更强 claim decomposition、闭源 API 或规则增强投入该方向；下一步应转向 verifier-aware utility、prefix-level evidence contribution 或 oracle-margin distillation。
+
 ## 已验证
 
 轻量验证已通过：

@@ -79,11 +79,12 @@ deep + graph_lite alignment
 |---:|---|---|---:|---|
 | 1 | Step4.1-A: `deep + selected-mask BCE` | set utility 辅助监督能否提升 `recall@5 / jaccard@5` | 低 | 已实现 |
 | 2 | Step4.1-B: `deep + selected-mask BCE + first-step weighting` | 能否针对 step0 accuracy 低的问题提升首条 evidence 判断 | 低-中 | 待实现 |
-| 3 | Step4.1-C: `deep + claim aspect coverage` | aspect coverage 能否补足 evidence 覆盖不足 | 中 | `rule_aspect_v1` val no-go；LLM decomp+ 上界诊断工具已实现，待跑 |
-| 4 | Step4.2: `deep + stance_utility_semantics` | support / refute / qualify / insufficient 证据作用是否改善 utility 判断 | 中-高 | 当前 NLI 诊断 no-go，待校准 |
-| 5 | Step4.3: `deep + graph_lite alignment` | 实体、时间、数字、关系结构对齐是否改善 fact-checking 证据选择 | 高 | 待实现 |
-| 6 | hard-subset OPD probe | on-policy prefix drift 是否是主要剩余瓶颈 | 中 | 仅作诊断 |
-| 7 | full Step5 OPD | 正式 on-policy distillation | 高 | 暂不建议 |
+| 3 | Step4.1-C: `deep + claim aspect coverage` | aspect coverage 能否补足 evidence 覆盖不足 | 中 | `rule_aspect_v1` 与 Qwen decomp+ plain full-val 均 no-go；停止主线 |
+| 4 | Step4.1-D: `VIG utility analysis` | oracle margin gain 能否被可解释 feature groups 解释 | 中-高 | 已实现诊断工具，待跑 |
+| 5 | Step4.2: `deep + stance_utility_semantics` | support / refute / qualify / insufficient 证据作用是否改善 utility 判断 | 中-高 | 当前 NLI 诊断 no-go，待校准 |
+| 6 | Step4.3: `deep + graph_lite alignment` | 实体、时间、数字、关系结构对齐是否改善 fact-checking 证据选择 | 高 | 待实现；不建议先于 VIG |
+| 7 | hard-subset OPD probe | on-policy prefix drift 是否是主要剩余瓶颈 | 中 | 仅作诊断 |
+| 8 | full Step5 OPD | 正式 on-policy distillation | 高 | 暂不建议 |
 
 Step4.1-A 的实现要求：
 
@@ -830,3 +831,7 @@ low-margin oracle rows
 2026-05-21 已实现 LLM decomp+ 上界诊断工具：新增 `scripts/selectors/generate_llm_claim_decomp_aspects.py`、`scripts/selectors/run_llm_decomp_plus_aspect_coverage.sh` 与实现说明 `docs/implementation/202605212359_llm_decomp_plus_aspect_coverage.md`。该工具使用 `cppo` 环境中的本地 vLLM 加载 Qwen2.5-7B-Instruct，将 claim 分解为 2-5 个 self-contained / atomic / verifiable sub-claims，并写出 `llm_decomp_plus_v1` 的 `claim_aspects.jsonl`。`analyze_oracle_aspect_coverage.py` 已支持 `--claim-aspects-input`，可复用该缓存跑 BGE/DeBERTa 等 encoder 的 coverage gate。当前仍不训练 `deberta_sequential_aspect`；只有 Qwen decomp+ cache 过同一 stop/go 阈值后才进入 selector ablation。
 
 2026-05-22 已核查同步的 Qwen decomp+ 结果：`outputs/selectors/aspect_coverage/llm_decomp_plus_qwen25_7b_val_coverage/` 未过 gate（`uncovered_gain AUROC=0.4760`，`oracle_vs_hybrid_coverage_lift=-1.45pp`），但根因是生成缓存质量失效，而不是 LLM decomp+ 语义路线已被证伪。`outputs/selectors/aspect_coverage/llm_decomp_plus_qwen25_7b_val/` 中 `parse_failed=655/1274`、`claims_with_no_local_aspects=886/1274`，且大量 JSON 解析成功的 `sub_claims` 实际是 prompt/schema 残片。结论：不要进入 `deberta_sequential_aspect` 训练；先重跑 decomp cache。生成脚本已加入 `filter_valid_subclaims` 质量过滤、`invalid_subclaims` 状态、`rejected_subclaims` 记录，并将默认 `max_tokens` 从 512 下调到 256；下一次先做 `GUIDED_JSON=1` 与 `GUIDED_JSON=0` 的 100 条 smoke 对照，再决定是否完整 val。
+
+2026-05-22 后续已核查完整 val plain JSON 重跑，产物位于 `outputs/selectors/aspect_coverage/llm_decomp_plus_qwen25_7b_val_plain/` 与 `outputs/selectors/aspect_coverage/llm_decomp_plus_qwen25_7b_val_plain_coverage/`。这次生成质量已达到 stop/go 判定线：`parse_failures=1/1274`，`claims_with_no_local_aspects=1/1274`，`n_local_aspects=2962`，valid subclaims 均值为 `2.33`。但 coverage gate 仍明确 no-go：`uncovered_gain AUROC=0.4730`，`oracle_vs_hybrid_coverage_lift=-1.51pp`，oracle coverage mean `0.8743` 低于 hybrid top5 `0.8893`，oracle 只在 `8.16%` 样本上超过 hybrid。该结果应视为当前 claim-aspect coverage 公式的有效 no-go，而不是缓存问题。结论：不要继续投入更强 LLM / 闭源 API / 规则增强作为 Step4 主线；至多做一个小样本 cross-encoder/NLI coverage scorer sanity check，否则转向 verifier-aware utility、prefix-level evidence contribution 或 oracle-margin distillation。
+
+2026-05-22 已实现 Step4.1-D `VIG utility analysis` 诊断链路：新增 `scripts/selectors/generate_oracle_vig_cache.py`、`scripts/selectors/analyze_oracle_vig_utility.py`、`scripts/selectors/run_oracle_vig_utility_analysis.sh` 与说明文档 `docs/implementation/202605221430_oracle_vig_utility_analysis.md`。这版不直接做黑盒 distillation，而是先重新打分每个 oracle prefix 下的所有 remaining candidates，记录 `delta_margin / delta_gold_logprob / delta_best_wrong_logprob`，再用 retrieval、text_overlap、prefix_state、single_verifier 等可解释 feature groups 做 ridge probe、permutation importance 和 step top1 分析。由于目标服务器 4 卡 vLLM 成本可接受，默认还生成 final-set counterfactual：移除每条 selected evidence，或用 non-selected candidate 替换 selected evidence，以评估 greedy oracle 的必要性、可替代性和局部最优问题。下一步优先跑该诊断；只有当 VIG cache 与原 oracle self-check 对齐，并且可解释 feature groups 明显超过 retrieval baseline 时，再进入 utility distillation selector。

@@ -184,6 +184,58 @@ valid local aspects mean >= 2.0
 人工抽查 30 条中明显 prompt/schema 残片 <= 2 条
 ```
 
+## 2026-05-22 plain full-val 重跑结论
+
+后续已核查完整 val plain JSON 重跑：
+
+```text
+outputs/selectors/aspect_coverage/llm_decomp_plus_qwen25_7b_val_plain/
+outputs/selectors/aspect_coverage/llm_decomp_plus_qwen25_7b_val_plain_coverage/
+```
+
+该版本关闭 guided JSON，使用 `/data/models/Qwen2.5-7B-Instruct`，`tensor_parallel_size=2`，`max_tokens=256`，全量生成 `1274/1274` 条。生成质量已满足 stop/go 判定线：
+
+```text
+parse_failures = 1 / 1274
+claims_with_no_local_aspects = 1 / 1274
+n_local_aspects = 2962
+valid_subclaims_per_claim_mean = 2.33
+parse_status.ok = 1192 / 1274
+fewer_than_min_valid_subclaims = 81 / 1274
+```
+
+但同一 coverage gate 仍明确 no-go：
+
+```text
+decision = stop_or_refine_aspects
+uncovered_gain AUROC = 0.4730
+oracle_vs_hybrid_coverage_lift_pp = -1.51
+oracle coverage mean = 0.8743
+hybrid top5 coverage mean = 0.8893
+oracle_beats_hybrid_rate = 8.16%
+```
+
+step-wise probe 也没有可用选择信号：
+
+```text
+uncovered_gain positive_mean = 0.1759
+uncovered_gain negative_mean = 0.2034
+covered_overlap AUROC = 0.5127
+max_aspect_score AUROC = 0.4983
+mean_aspect_score AUROC = 0.4953
+```
+
+这次不再是解析或缓存失败。Qwen decomp+ plain 生成已经基本可用，但 claim-aspect semantic coverage 仍不能解释 Stage2 oracle selected evidence；oracle set 在该 proxy 下反而比 hybrid top5 覆盖更低。因此当前结论更新为：
+
+```text
+停止 claim-aspect coverage 作为 Step4 主线；
+不进入 deberta_sequential_aspect 训练；
+不建议继续投入更强 LLM、闭源 API 或规则增强作为主线优化；
+只保留一个可选的小样本 sanity check：把 aspect-candidate alignment 从 embedding cosine 换成 cross-encoder / NLI entailment scorer。
+```
+
+下一步主线应转向更贴近 oracle 构造目标的 verifier-aware utility、prefix-level evidence contribution 或 oracle-margin distillation，而不是继续优化 claim decomposition 本身。
+
 已完成轻量验证：
 
 ```text
