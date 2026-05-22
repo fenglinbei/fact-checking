@@ -3,7 +3,6 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-CONDA_ENV="${CONDA_ENV:-cppo}"
 ORACLE_RESULTS="${ORACLE_RESULTS:-outputs/oracle_evidence/stage2_margin_val_20260518_111721/oracle_results_val.jsonl}"
 SPLIT="${SPLIT:-val}"
 
@@ -31,7 +30,6 @@ if [[ -n "${SAMPLE_LIMIT:-}" ]]; then
   SAMPLE_LIMIT_ARGS=(--sample-limit "${SAMPLE_LIMIT}")
 fi
 
-echo "[llm-decomp] conda env          : ${CONDA_ENV}"
 echo "[llm-decomp] oracle results     : ${ORACLE_RESULTS}"
 echo "[llm-decomp] decomp output      : ${DECOMP_OUTPUT_DIR}"
 echo "[llm-decomp] coverage output    : ${COVERAGE_OUTPUT_DIR}"
@@ -43,7 +41,7 @@ if [[ "${GUIDED_JSON}" == "0" || "${GUIDED_JSON}" == "false" || "${GUIDED_JSON}"
   GUIDED_JSON_ARGS=(--no-guided-json)
 fi
 
-conda run -n "${CONDA_ENV}" env PYTHONPATH=src python scripts/selectors/generate_llm_claim_decomp_aspects.py \
+PYTHONPATH=src python scripts/selectors/generate_llm_claim_decomp_aspects.py \
   --oracle-results "${ORACLE_RESULTS}" \
   --split "${SPLIT}" \
   --output-dir "${DECOMP_OUTPUT_DIR}" \
@@ -60,7 +58,7 @@ conda run -n "${CONDA_ENV}" env PYTHONPATH=src python scripts/selectors/generate
   "${SAMPLE_LIMIT_ARGS[@]}" \
   "$@"
 
-conda run -n "${CONDA_ENV}" env PYTHONPATH=src python scripts/selectors/analyze_oracle_aspect_coverage.py \
+PYTHONPATH=src python scripts/selectors/analyze_oracle_aspect_coverage.py \
   --oracle-results "${ORACLE_RESULTS}" \
   --split "${SPLIT}" \
   --output-dir "${COVERAGE_OUTPUT_DIR}" \
