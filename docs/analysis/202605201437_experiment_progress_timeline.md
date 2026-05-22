@@ -1,6 +1,6 @@
 # 实验总进度时间线与文档索引
 
-文档更新时间：2026-05-22 09:36 CST
+文档更新时间：2026-05-22 23:59 CST
 
 本文整理 `docs/` 目录下的计划、分析、实现与运维文档，按实验线程归纳总体进度。本文只汇总已有文档与已记录结果，不新增实验结论。
 
@@ -15,7 +15,7 @@
 | [C. MMR λ 与 Learned-λ](#4c-mmr-λ-扫描与-learned-λ05-11--05-16) | 05-11 ~ 05-16 | adaptive λ 能否提升 verifier 准确率 | 已停止 | oracle λ 有 +3pp 上界，但无法从文本特征预测；scalar λ 路线全部失败 |
 | [D. Oracle Evidence Set 与 Verifier 校准](#4d-oracle-evidence-set-与-verifier-校准05-16--05-19) | 05-16 ~ 05-19 | 最优证据集上界多大，verifier 能否吸收 | 进行中 | oracle set gap +18.76pp；direct verifier 在 oracle evidence 上 accuracy 0.7111 |
 | [E. Selector 实验 Step1-4](#4e-selector-实验-step1-405-19--05-22) | 05-19 ~ 05-22 | 能否训练模型选出 oracle 级证据 | 继续诊断 | Step1/3 No-Go；Step4 sequential pointer 改善 order 但 set metrics 未过 gate |
-| [F. Targeted Feature 前置诊断](#4f-targeted-feature-前置诊断05-21--05-22) | 05-21 ~ 05-22 | stance/aspect 特征能否辅助 selector | 诊断中 | NLI / rule_aspect 均未过 stop/go；LLM decomp+ 待重跑质量对照 |
+| [F. Targeted Feature 前置诊断](#4f-targeted-feature-前置诊断05-21--05-22) | 05-21 ~ 05-22 | stance/aspect 特征能否辅助 selector | 已停止 | NLI / rule_aspect / LLM decomp+ 三者均 No-Go；claim-aspect coverage 主线关闭 |
 
 ## 2. 全局时间线概览
 
@@ -35,7 +35,7 @@
 | 05-20 | Step1 cross-encoder pairwise 三种模型均 No-Go | E | recall@5 最高 0.3739，远低于 0.50 gate |
 | 05-20 | Step3 listwise selector No-Go | E | 最好 recall@5=0.3826；rank prior 非唯一问题 |
 | 05-20~21 | Step4 sequential pointer：order 改善但 set 未过 | E | top1_match 0.1664, recall@5=0.3852；不进入 full pipeline |
-| 05-21~22 | stance NLI / rule aspect / LLM decomp+ 前置诊断 | F | NLI 和 rule aspect 均 stop；LLM decomp+ 生成缓存失效需重跑 |
+| 05-21~22 | stance NLI / rule aspect / LLM decomp+ 前置诊断 | F | NLI / rule_aspect 均 stop；LLM decomp+ plain 重跑生成质量合格但 coverage No-Go，claim-aspect 主线关闭 |
 
 ## 3. 系统基础设施
 
@@ -327,6 +327,15 @@ order metrics: top1_match, oracle_rank_ndcg@5, pairwise_order_acc@5
 controls: hybrid_score top5, candidate_pool_order top5, random-order seeds
 ```
 
+**对照基线**（所有 Step 共用，1274 claim val set）：
+
+| 对照 | recall@5 | jaccard@5 | top1_match | oracle_rank_ndcg@5 | pairwise_order_acc@5 | 说明 |
+|---|---|---|---|---|---|---|
+| `hybrid_score_top5` | 0.3435 | 0.2294 | 0.1028 | 0.2872 | 0.5271 | 按 hybrid_score 降序取 top-5，纯检索基线 |
+| `candidate_pool_order_top5` | 0.3435 | 0.2294 | 0.1028 | 0.2872 | 0.5271 | 与 hybrid_score_top5 等价（候选池本身按 hybrid_score 降序存储） |
+
+`same_set_random_order_mean`：将模型预测的 evidence **集合**用 5 个随机种子（0-4）重排后取平均。其 recall@5 / jaccard@5 等于模型自身的 set metrics（因为是同一集合），order metrics 反映"给定模型选出的集合，随机排序 vs 模型排序的差距"——用于衡量模型的排序能力是否超过随机。
+
 #### 4.E.1 Step1 Cross-encoder Pairwise → No-Go（05-20）
 
 [`../implementation/202605201045_cross_encoder_pairwise_selector_step1.md`](../implementation/202605201045_cross_encoder_pairwise_selector_step1.md) 实现了三种 cross-encoder pairwise selector：
@@ -337,19 +346,39 @@ controls: hybrid_score top5, candidate_pool_order top5, random-order seeds
 | `modernbert_pairwise` | 0.3733 | 0.2536 | 0.2635 | 0.0659 | No-Go |
 | `bge_reranker_base_pairwise` | 0.3736 | 0.2528 | 0.2593 | 0.0667 | No-Go |
 
-对照：hybrid_score_top5 recall@5=0.3435, Jaccard@5=0.2294。三组 cross-encoder 在所有 gate 条件上均不达标。
+对照（同一候选池，1274 claim）：
+
+| 对照 | recall@5 | jaccard@5 | oracle_rank_ndcg@5 | top1_match | pairwise_order_acc@5 |
+|---|---|---|---|---|---|
+| `hybrid_score_top5` | 0.3435 | 0.2294 | 0.2872 | 0.1028 | 0.5271 |
+| `same_set_random_order_mean` (deberta) | 0.3739 | 0.2522 | 0.2574 | 0.0647 | 0.5033 |
+| `same_set_random_order_mean` (modernbert) | 0.3744 | 0.2546 | 0.2685 | 0.0747 | 0.5101 |
+| `same_set_random_order_mean` (bge) | 0.3736 | 0.2528 | 0.2545 | 0.0666 | 0.5089 |
+
+三组 cross-encoder 在所有 gate 条件上均不达标。set metrics 略高于 hybrid_score_top5（+0.03 recall@5），但远低于 0.50 gate。order metrics 中 top1_match 全部低于 hybrid_score（0.103），模型未能可靠识别最优证据；pairwise_order_acc@5 与 hybrid_score（0.5271）接近甚至略低，说明模型学到的排序信号不比纯 hybrid_score 强。`same_set_random_order_mean` 的 order metrics 全部低于 hybrid_score_top5——即使用模型选的集合，随机排序也比 hybrid_score 排序差，说明模型集合的"可排序性"不如 hybrid_score 集合。
 
 #### 4.E.2 Step3 Listwise Selector → No-Go（05-20）
 
 [`../implementation/202605201519_set_aware_listwise_selector_step3.md`](../implementation/202605201519_set_aware_listwise_selector_step3.md) 实现了 set-aware listwise 15-candidate reranker：
 
-| 模型 | recall@5 | jaccard@5 | top1_match | oracle_rank_ndcg@5 | Gate |
-|---|---|---|---|---|---|
-| `deberta_listwise` | 0.3689 | 0.2484 | 0.1162 | 0.3072 | No-Go |
-| `deberta_listwise_shuffle03` | 0.3732 | 0.2518 | 0.1279 | 0.3131 | No-Go |
-| `deberta_listwise_rank_ablation` | 0.3826 | 0.2588 | 0.1122 | 0.3108 | No-Go |
+| 模型 | recall@5 | jaccard@5 | top1_match | oracle_rank_ndcg@5 | pairwise_order_acc@5 | Gate |
+|---|---|---|---|---|---|---|
+| `deberta_listwise` | 0.3689 | 0.2484 | 0.1162 | 0.3072 | 0.5633 | No-Go |
+| `deberta_listwise_shuffle03` | 0.3732 | 0.2518 | 0.1279 | 0.3131 | 0.5592 | No-Go |
+| `deberta_listwise_rank_ablation` | 0.3826 | 0.2588 | 0.1122 | 0.3108 | 0.5168 | No-Go |
 
 去掉 rank prior 后仅小幅改善（recall@5 从 0.3689→0.3826），说明 rank shortcut 不是唯一问题。listwise set encoder 本身仍没学到足够强的 oracle set utility。
+
+对照：
+
+| 对照 | recall@5 | jaccard@5 | oracle_rank_ndcg@5 | top1_match | pairwise_order_acc@5 |
+|---|---|---|---|---|---|
+| `hybrid_score_top5` | 0.3435 | 0.2294 | 0.2872 | 0.1028 | 0.5271 |
+| `same_set_random_order_mean` (listwise) | 0.3689 | 0.2484 | 0.2919 | 0.0785 | 0.4941 |
+| `same_set_random_order_mean` (shuffle03) | 0.3732 | 0.2518 | 0.2974 | 0.0912 | 0.5018 |
+| `same_set_random_order_mean` (rank_ablation) | 0.3826 | 0.2588 | 0.2922 | 0.0738 | 0.4857 |
+
+三种 listwise 模型的 pairwise_order_acc@5 均高于其对应的 random 基线（如 rank_ablation 0.5168 vs random 0.4857），说明模型学到了一定的排序能力；但与 hybrid_score_top5（0.5271）相比增量有限，且 top1_match 全部低于 hybrid_score（0.1028）。
 
 #### 4.E.3 Step4 Sequential Pointer Selector（05-20 ~ 05-21）
 
@@ -362,6 +391,17 @@ controls: hybrid_score top5, candidate_pool_order top5, random-order seeds
 | `deberta_sequential_deep_mask05` | 0.3662 | 0.2472 | 0.1499 | 0.3270 | 0.5764 | 0.1499 | No-Go |
 
 **相对 Step3 的改善在 order metrics**：top1_match 从 0.1122 → 0.1664，oracle_rank_ndcg@5 从 0.3108 → 0.3306，pairwise_order_acc@5 从 0.5168 → 0.5871。但 set metrics 仍停在 recall@5≈0.385、Jaccard@5≈0.262，离 gate 很远。
+
+对照：
+
+| 对照 | recall@5 | jaccard@5 | oracle_rank_ndcg@5 | top1_match | pairwise_order_acc@5 |
+|---|---|---|---|---|---|
+| `hybrid_score_top5` | 0.3435 | 0.2294 | 0.2872 | 0.1028 | 0.5271 |
+| `same_set_random_order_mean` (deep) | 0.3852 | 0.2615 | 0.3005 | 0.0724 | 0.4862 |
+| `same_set_random_order_mean` (mask02) | 0.3758 | 0.2531 | 0.2996 | 0.0683 | 0.4706 |
+| `same_set_random_order_mean` (mask05) | 0.3662 | 0.2472 | 0.3001 | 0.0760 | 0.4890 |
+
+Sequential pointer 的 pairwise_order_acc@5（deep 0.5871）显著高于 random 基线（0.4862）和 hybrid_score（0.5271），说明 sequential modeling 确实学到了有意义的 evidence ordering——这也是 Step4 相对 Step3 的核心增益。top1_match（0.1664）已超过 hybrid_score（0.1028），，且 set metrics 未突破。关键在于：模型排序能力在改善，但第一步就选错（step0 acc=0.1664），后续步骤受 prefix drift 影响进一步偏离。
 
 Step4.1-A 的 mask BCE 变体（mask02/mask05）均未超过 deep-only set metrics，也未达到低成本参考线（recall@5≥0.40 / jaccard@5≥0.275）。
 
@@ -395,15 +435,45 @@ Step4.1-A 的 mask BCE 变体（mask02/mask05）均未超过 deep-only set metri
 
 更换为 BGE encoder 的 100 条 sample probe 也未打开信号（AUROC=0.4670），说明问题不只是裸 DeBERTa encoder。
 
-#### 4.F.3 LLM decomp+ aspect coverage → 缓存质量失效，待重跑
+#### 4.F.3 LLM decomp+ aspect coverage → No-Go（05-22 最终结论）
 
-[`../implementation/202605212359_llm_decomp_plus_aspect_coverage.md`](../implementation/202605212359_llm_decomp_plus_aspect_coverage.md) 用 Qwen2.5-7B-Instruct + vLLM 做 claim decomposition 生成 sub-claims，再计算 coverage：
+[`../implementation/202605212359_llm_decomp_plus_aspect_coverage.md`](../implementation/202605212359_llm_decomp_plus_aspect_coverage.md) 用 Qwen2.5-7B-Instruct + vLLM 做 claim decomposition 生成 sub-claims，再计算 coverage。
 
-第一次尝试（guided JSON）：parse_failed=655/1274，大量输出为 prompt/schema 残片。
+**第一次尝试（guided JSON）**：parse_failed=655/1274，大量输出为 prompt/schema 残片，生成质量严重失效。
 
-第二次尝试（plain JSON, reduced max_tokens）：parse_failures=1/1274，mean valid sub-claims=2.33。但 coverage 指标仍未过线（uncovered_gain AUROC=0.4730, oracle vs hybrid lift=-1.51pp）。而且 LLM 分解的 aspects 中 oracle coverage mean (0.8743) 实际低于 hybrid top5 (0.8893)，只有 8.16% 的样本 oracle 超过 hybrid。
+**第二次尝试（plain JSON, max_tokens=256, tensor_parallel_size=2）**：全量生成 1274/1274 条，生成质量已满足 stop/go 判定线：
 
-**当前结论**：LLM decomp+ coverage 指标不能直接判定语义路线失败，因为首次生成缓存质量严重失效。需要先重跑小样本质量对照（`SAMPLE_LIMIT=100`），满足生成质量最低线（parse_failed≤5%、no-aspect≤10%、人工抽查通过）后，coverage 指标才可作为 stop/go 依据。
+```text
+parse_failures = 1 / 1274
+claims_with_no_local_aspects = 1 / 1274
+n_local_aspects = 2962
+valid_subclaims_per_claim_mean = 2.33
+parse_status.ok = 1192 / 1274
+fewer_than_min_valid_subclaims = 81 / 1274
+```
+
+但 coverage gate 仍明确 No-Go：
+
+| 指标 | 当前值 | Go 阈值 |
+|---|---|---|
+| uncovered_gain AUROC | 0.4730 | ≥ 0.57 |
+| oracle vs hybrid coverage lift | -1.51 pp | ≥ +3 pp |
+| oracle coverage mean | 0.8743 | — |
+| hybrid top5 coverage mean | 0.8893 | — |
+| oracle_beats_hybrid_rate | 8.16% | — |
+
+step-wise probe 也没有可用选择信号：
+
+| 指标 | 当前值 |
+|---|---|
+| uncovered_gain positive_mean | 0.1759 |
+| covered_overlap AUROC | 0.5127 |
+| max_aspect_score AUROC | 0.4983 |
+| mean_aspect_score AUROC | 0.4953 |
+
+oracle set 在该 proxy 下反而比 hybrid top5 覆盖更低（0.8743 vs 0.8893），只有 8.16% 的样本 oracle 超过 hybrid。
+
+**最终决策**：这次不是解析或缓存失败——Qwen decomp+ plain 生成已经基本可用，但 claim-aspect semantic coverage 仍不能解释 Stage2 oracle selected evidence。**停止 claim-aspect coverage 作为 Step4 主线，不进入 `deberta_sequential_aspect` 训练。** 不建议继续投入更强 LLM、闭源 API 或规则增强作为主线优化。只保留可选的小样本 sanity check（把 aspect-candidate alignment 从 embedding cosine 换成 cross-encoder / NLI entailment scorer）。下一步主线转向 verifier-aware utility、prefix-level evidence contribution 或 oracle-margin distillation。
 
 ---
 
@@ -425,7 +495,7 @@ Step4.1-A 的 mask BCE 变体（mask02/mask05）均未超过 deep-only set metri
 
 8. **Step4 sequential pointer 改善 order 但 set 未突破**：top1_match 0.1664、recall@5=0.3852。当前 priority 是 evidence utility 表示而非 exposure bias（OPD）。
 
-9. **Stance/aspect targeted features 未通过前置诊断**：NLI stance 过度 neutral（AUROC=0.5090），rule aspect coverage 信号接近随机（AUROC=0.4820），LLM decomp+ 生成质量待修复。
+9. **Stance/aspect targeted features 全部 No-Go**：NLI stance 过度 neutral（AUROC=0.5090）；rule aspect coverage 信号接近随机（AUROC=0.4820）；LLM decomp+ plain 重跑生成质量合格但 coverage 仍 No-Go（AUROC=0.4730, oracle 覆盖率反低于 hybrid）。claim-aspect coverage 主线已关闭。
 
 10. **sentence-level 优于 semantic-level**：paired 对比 +7.85pp。后续主线使用 sentence-level oracle evidence supervision。
 
@@ -448,7 +518,7 @@ Step4.1-A 的 mask BCE 变体（mask02/mask05）均未超过 deep-only set metri
 | Step4.1-A mask BCE | 停止当前变体 | 未超过 deep-only set metrics |
 | Stance NLI scalar | 暂停，先校准 | AUROC=0.5090，过度 neutral |
 | Rule-based aspect coverage | 停止，先 refine | AUROC=0.4820，负 lift |
-| LLM decomp+ aspect coverage | 重跑质量对照 | 生成缓存失效，不能判定语义路线失败 |
+| LLM decomp+ aspect coverage | 停止 | plain 重跑生成质量合格，但 coverage 指标全部未过 gate（AUROC=0.4730，oracle 覆盖率反低于 hybrid）；claim-aspect 主线关闭 |
 | Oracle-set supervision | 继续，sentence-level | direct verifier 已验证可吸收 |
 | Oracle sentence direct verifier | Upper-bound probe | 非 oracle evidence 回到 0.26-0.27 |
 | Semantic-level oracle | 诊断保留 | paired 低于 sentence +7.85pp |
@@ -466,10 +536,11 @@ Step4.1-A 的 mask BCE 变体（mask02/mask05）均未超过 deep-only set metri
 - [x] Step1 cross-encoder pairwise selector（三组模型 No-Go）
 - [x] Step3 set-aware listwise selector（No-Go）
 - [x] Step4 supervised sequential pointer selector（第一轮完成，order 改善但 set gate 未过）
+- [x] LLM decomp+ full-val plain 重跑并给出最终结论（生成质量合格，coverage 全部 No-Go，claim-aspect 主线关闭）
 
 ### 7.2 当前活跃事项
 
-1. **[P0]** 重跑 LLM decomp+ 小样本质量对照：`SAMPLE_LIMIT=100 GUIDED_JSON=1` 与 `GUIDED_JSON=0` plain JSON 各跑一次。满足 `parse_failed≤5%`、`no-aspect≤10%`、valid aspects mean≥2.0、人工抽查 30 条残片≤2 条后，再看 coverage gate。
+1. **[P0]** 转向 verifier-aware utility 或 oracle-margin distillation 作为 selector 的监督信号。当前 claim-aspect coverage 主线已关闭（NLI/rule_aspect/LLM decomp+ 三者均 No-Go），应直接从 oracle 构造目标（margin objective）出发定义 evidence utility。
 
 2. **[P1]** 修正 eval metric 去重：`val_predictions.jsonl` / distributed gather 输出按唯一 `sample_idx` 去重后再算正式 eval 指标，避免 padding 样本影响 checkpoint 选择与报告口径。
 
