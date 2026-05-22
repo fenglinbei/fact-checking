@@ -517,6 +517,8 @@ def _build_train_config(
     train_model = train_model_name_or_path or str((cfg.get("train", {}) or {}).get("model_name_or_path", ""))
     if model_base_path and train_model:
         train_model = _resolve_model_path(train_model, model_base_path)
+    sft_train = dict(cfg.get("sft_train", {}) or {})
+    sft_train["resolved_output_dir"] = True
     train_cfg = {
         "output_dir": str(output_dir / "train"),
         "data": {
@@ -526,7 +528,7 @@ def _build_train_config(
         },
         "model_name_or_path": train_model,
         "baseline": dict(cfg.get("baseline", {}) or {}),
-        "sft_train": dict(cfg.get("sft_train", {}) or {}),
+        "sft_train": sft_train,
     }
     for key in ("tracking", "wandb", "swanlab"):
         if key in cfg:

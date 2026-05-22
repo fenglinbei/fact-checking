@@ -139,6 +139,38 @@ require_path() {
   fi
 }
 
+resolve_train_run_dir() {
+  local train_root="$1"
+  local checkpoint="$2"
+  if [[ -d "${train_root}/${checkpoint}" ]]; then
+    printf "%s" "${train_root}"
+    return 0
+  fi
+
+  local resolved=""
+  if [[ -d "${train_root}" ]]; then
+    resolved="$(
+      find "${train_root}" -mindepth 2 -maxdepth 2 -type d -name "${checkpoint}" -printf '%T@ %h\n' 2>/dev/null \
+        | sort -nr \
+        | head -n 1 \
+        | cut -d' ' -f2-
+    )"
+  fi
+  if [[ -n "${resolved}" ]]; then
+    printf "%s" "${resolved}"
+    return 0
+  fi
+
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    printf "%s" "${train_root}"
+    return 0
+  fi
+
+  echo "[selector-trace-full] checkpoint ${checkpoint} not found under ${train_root}" >&2
+  echo "[selector-trace-full] expected either ${train_root}/${checkpoint} or ${train_root}/*/${checkpoint}" >&2
+  exit 1
+}
+
 append_case() {
   local label="$1"
   local source_type="$2"
@@ -361,7 +393,8 @@ run_infer_case() {
   checkpoint_slug="$(slugify "${checkpoint}")"
   local run_dir="${RUN_ROOT}/${label}_${checkpoint_slug}"
   local config_path="${build_dir}/train.resolved.yaml"
-  local train_dir="${build_dir}/train"
+  local train_dir=""
+  train_dir="$(resolve_train_run_dir "${build_dir}/train" "${checkpoint}")"
 
   if [[ "${RUN_INFER}" != "true" ]]; then
     echo "[selector-trace-full] skip infer case=${label} RUN_INFER=${RUN_INFER}"
@@ -391,7 +424,7 @@ run_infer_case() {
     "infer.merge_lora_cache.force_rebuild=${MERGE_LORA_CACHE_FORCE_REBUILD}"
   )
 
-  echo "[selector-trace-full] infer case=${label} checkpoint=${checkpoint} port=${port} run_dir=${run_dir}"
+  echo "[selector-trace-full] infer case=${label} checkpoint=${checkpoint} train_dir=${train_dir} port=${port} run_dir=${run_dir}"
   if [[ "${DRY_RUN}" == "true" ]]; then
     printf '[selector-trace-full] dry-run infer:'
     printf ' %q' "${cmd[@]}"
