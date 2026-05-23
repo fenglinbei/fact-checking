@@ -28,7 +28,19 @@ from fact_checking.selectors.llm_action import (
     score_action_choices,
     softmax_deltas,
 )
-from fact_checking.selectors.stage2_oracle import read_jsonl, write_json
+from fact_checking.selectors.llm_action_eval import (
+    evaluate_llm_action_selection,
+    selection_history_record,
+    write_selection_eval_outputs,
+)
+from fact_checking.selectors.stage2_oracle import (
+    DEFAULT_SELECTOR_TOP_K,
+    EXPECTED_STAGE2_CHUNK_MMR_FINGERPRINT,
+    Stage2OracleExample,
+    load_stage2_oracle_examples,
+    read_jsonl,
+    write_json,
+)
 from sft.runtime.adapters import DEFAULT_LORA_TARGET_MODULES, apply_lora_if_enabled
 from sft.runtime.deps import flash_attn2_available
 
@@ -72,6 +84,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--logging-steps", type=int, default=20)
     p.add_argument("--eval-every", type=int, default=500)
     p.add_argument("--eval-sample-limit", type=int, default=None)
+    p.add_argument("--selection-eval-oracle-results", default=None)
+    p.add_argument("--selection-eval-mode", default="none", choices=["none", "best", "every_eval", "final"])
+    p.add_argument("--selection-eval-sample-limit", type=int, default=128)
+    p.add_argument("--selection-eval-top-k", type=int, default=DEFAULT_SELECTOR_TOP_K)
+    p.add_argument("--selection-eval-max-candidate-chars", type=int, default=180)
+    p.add_argument("--selection-eval-output-dir", default=None)
     p.add_argument("--dataloader-num-workers", type=int, default=0)
     p.add_argument("--seed", type=int, default=20260523)
     p.add_argument("--bf16", action="store_true", default=True)
@@ -111,8 +129,10 @@ def main() -> None:
     _set_seed(int(args.seed) + accelerator.process_index)
 
     out_dir = Path(args.output_dir)
+    metrics_dir = _metrics_dir(out_dir)
     if accelerator.is_main_process:
         out_dir.mkdir(parents=True, exist_ok=True)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
     accelerator.wait_for_everyone()
     logger = _init_run_logger(out_dir, enabled=accelerator.is_main_process)
 
@@ -127,6 +147,27 @@ def main() -> None:
     if logger is not None:
         logger.info("Loaded action samples: train=%d val=%d", len(train_rows), len(val_rows))
         logger.info("score_mode=%s max_length=%d choice_batch_size=%d", args.score_mode, args.max_length, args.choice_batch_size)
+
+    selection_examples: list[Stage2OracleExample] | None = None
+    if str(args.selection_eval_mode) != "none":
+        if not args.selection_eval_oracle_results:
+            raise ValueError("--selection-eval-oracle-results is required when --selection-eval-mode is not none.")
+        if accelerator.is_main_process:
+            selection_examples = load_stage2_oracle_examples(
+                args.selection_eval_oracle_results,
+                expected_fingerprint=EXPECTED_STAGE2_CHUNK_MMR_FINGERPRINT,
+                top_k=int(args.selection_eval_top_k),
+                sample_limit=int(args.selection_eval_sample_limit),
+            )
+            if not selection_examples:
+                raise ValueError("No examples available for training-time selection eval.")
+            if logger is not None:
+                logger.info(
+                    "Loaded selection eval examples: n=%d mode=%s sample_limit=%s",
+                    len(selection_examples),
+                    args.selection_eval_mode,
+                    args.selection_eval_sample_limit,
+                )
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -209,12 +250,15 @@ def main() -> None:
         write_json(out_dir / "selector_metadata.json", metadata)
         train_history_path = out_dir / "train_history.jsonl"
         val_history_path = out_dir / "val_history.jsonl"
+        selection_history_path = out_dir / "selection_history.jsonl"
         _reset_jsonl(train_history_path)
         _reset_jsonl(val_history_path)
+        _reset_jsonl(selection_history_path)
         _log_swanlab(swanlab_run, _metadata_metrics(metadata), step=0)
     else:
         train_history_path = out_dir / "train_history.jsonl"
         val_history_path = out_dir / "val_history.jsonl"
+        selection_history_path = out_dir / "selection_history.jsonl"
 
     best_accuracy = float("-inf")
     history: list[dict[str, Any]] = []
@@ -257,6 +301,7 @@ def main() -> None:
                     )
                     if accelerator.is_main_process:
                         _append_jsonl(train_history_path, train_record)
+                        write_json(metrics_dir / "latest_train.json", train_record)
                         _log_swanlab(swanlab_run, _train_swanlab_payload(train_record), step=global_step)
                         message = (
                             "step={step} loss={loss:.4f} hard={hard:.4f} soft={soft:.4f} acc={acc:.4f}".format(
@@ -281,18 +326,7 @@ def main() -> None:
                         epoch=epoch,
                     )
                     history.append(result)
-                    if accelerator.is_main_process:
-                        _append_jsonl(val_history_path, result)
-                        _log_swanlab(swanlab_run, _val_swanlab_payload(result), step=global_step)
-                        if logger is not None:
-                            logger.info(
-                                "eval step=%d loss=%.4f acc=%.4f",
-                                global_step,
-                                float(result["val_loss"]),
-                                float(result["val_action_accuracy"]),
-                            )
-                    previous_best = best_accuracy
-                    best_accuracy = _maybe_save_best(
+                    best_accuracy = _process_action_eval_result(
                         result,
                         best_accuracy=best_accuracy,
                         accelerator=accelerator,
@@ -300,9 +334,13 @@ def main() -> None:
                         tokenizer=tokenizer,
                         output_dir=out_dir,
                         metadata=metadata,
+                        args=args,
+                        val_history_path=val_history_path,
+                        selection_history_path=selection_history_path,
+                        selection_examples=selection_examples,
+                        swanlab_run=swanlab_run,
+                        logger=logger,
                     )
-                    if accelerator.is_main_process and best_accuracy > previous_best:
-                        _log_swanlab(swanlab_run, {"best/action_accuracy": best_accuracy}, step=global_step)
 
         result = _evaluate(
             model,
@@ -314,18 +352,7 @@ def main() -> None:
             epoch=epoch,
         )
         history.append(result)
-        if accelerator.is_main_process:
-            _append_jsonl(val_history_path, result)
-            _log_swanlab(swanlab_run, _val_swanlab_payload(result), step=global_step)
-            if logger is not None:
-                logger.info(
-                    "eval step=%d loss=%.4f acc=%.4f",
-                    global_step,
-                    float(result["val_loss"]),
-                    float(result["val_action_accuracy"]),
-                )
-        previous_best = best_accuracy
-        best_accuracy = _maybe_save_best(
+        best_accuracy = _process_action_eval_result(
             result,
             best_accuracy=best_accuracy,
             accelerator=accelerator,
@@ -333,11 +360,31 @@ def main() -> None:
             tokenizer=tokenizer,
             output_dir=out_dir,
             metadata=metadata,
+            args=args,
+            val_history_path=val_history_path,
+            selection_history_path=selection_history_path,
+            selection_examples=selection_examples,
+            swanlab_run=swanlab_run,
+            logger=logger,
         )
-        if accelerator.is_main_process and best_accuracy > previous_best:
-            _log_swanlab(swanlab_run, {"best/action_accuracy": best_accuracy}, step=global_step)
 
     progress.close()
+    if str(args.selection_eval_mode) == "final":
+        final_selection = _run_training_selection_eval(
+            model,
+            tokenizer,
+            selection_examples,
+            accelerator=accelerator,
+            args=args,
+            output_dir=out_dir,
+            selection_history_path=selection_history_path,
+            global_step=global_step,
+            epoch=epochs - 1,
+            reason="final",
+            logger=logger,
+        )
+        if accelerator.is_main_process and final_selection is not None:
+            _log_swanlab(swanlab_run, _selection_swanlab_payload(final_selection), step=global_step)
     if accelerator.is_main_process:
         payload = {
             "metadata": metadata,
@@ -493,19 +540,212 @@ def _maybe_save_best(
     tokenizer: Any,
     output_dir: Path,
     metadata: dict[str, Any],
-) -> float:
+) -> tuple[float, bool, Path]:
+    del metadata
     current = float(result["val_action_accuracy"])
+    checkpoint_dir = _best_checkpoint_dir(output_dir)
     if current <= best_accuracy:
-        return best_accuracy
+        return best_accuracy, False, checkpoint_dir
     from sft.data.io import save_model
 
-    save_model(accelerator, model, tokenizer, output_dir)
+    save_model(accelerator, model, tokenizer, checkpoint_dir)
     if accelerator.is_main_process:
-        metadata = dict(metadata)
-        metadata["best"] = result
-        write_json(output_dir / "selector_metadata.json", metadata)
-        print(f"Saved best action selector checkpoint: {output_dir}")
-    return current
+        print(f"Saved best action selector checkpoint: {checkpoint_dir}")
+    return current, True, checkpoint_dir
+
+
+def _process_action_eval_result(
+    result: dict[str, Any],
+    *,
+    best_accuracy: float,
+    accelerator: Accelerator,
+    model: torch.nn.Module,
+    tokenizer: Any,
+    output_dir: Path,
+    metadata: dict[str, Any],
+    args: argparse.Namespace,
+    val_history_path: Path,
+    selection_history_path: Path,
+    selection_examples: list[Stage2OracleExample] | None,
+    swanlab_run: SwanLabRun,
+    logger: logging.Logger | None,
+) -> float:
+    best_accuracy, best_updated, checkpoint_dir = _maybe_save_best(
+        result,
+        best_accuracy=best_accuracy,
+        accelerator=accelerator,
+        model=model,
+        tokenizer=tokenizer,
+        output_dir=output_dir,
+        metadata=metadata,
+    )
+    selection_record: dict[str, Any] | None = None
+    if _should_run_selection_eval(str(args.selection_eval_mode), best_updated=best_updated):
+        selection_record = _run_training_selection_eval(
+            model,
+            tokenizer,
+            selection_examples,
+            accelerator=accelerator,
+            args=args,
+            output_dir=output_dir,
+            selection_history_path=selection_history_path,
+            global_step=int(result["global_step"]),
+            epoch=int(result["epoch"]),
+            reason="best" if best_updated else "every_eval",
+            logger=logger,
+        )
+
+    if accelerator.is_main_process:
+        if selection_record is not None:
+            result["selection"] = selection_record
+        _append_jsonl(val_history_path, result)
+        write_json(_metrics_dir(output_dir) / "latest_val.json", result)
+        _log_swanlab(swanlab_run, _val_swanlab_payload(result), step=int(result["global_step"]))
+        if logger is not None:
+            logger.info(
+                "eval step=%d loss=%.4f acc=%.4f",
+                int(result["global_step"]),
+                float(result["val_loss"]),
+                float(result["val_action_accuracy"]),
+            )
+        if best_updated:
+            _write_best_metadata(
+                output_dir=output_dir,
+                checkpoint_dir=checkpoint_dir,
+                metadata=metadata,
+                result=result,
+            )
+            _log_swanlab(swanlab_run, {"best/action_accuracy": best_accuracy}, step=int(result["global_step"]))
+    return best_accuracy
+
+
+def _run_training_selection_eval(
+    model: torch.nn.Module,
+    tokenizer: Any,
+    examples: list[Stage2OracleExample] | None,
+    *,
+    accelerator: Accelerator,
+    args: argparse.Namespace,
+    output_dir: Path,
+    selection_history_path: Path,
+    global_step: int,
+    epoch: int,
+    reason: str,
+    logger: logging.Logger | None,
+) -> dict[str, Any] | None:
+    if str(args.selection_eval_mode) == "none":
+        return None
+    accelerator.wait_for_everyone()
+    record: dict[str, Any] | None = None
+    if accelerator.is_main_process:
+        if examples is None:
+            raise ValueError("Selection eval examples were not loaded on the main process.")
+        step_dir = Path(args.selection_eval_output_dir or (output_dir / "evals" / "during_train")) / f"step_{int(global_step):06d}"
+        eval_model = accelerator.unwrap_model(model)
+        was_training = bool(eval_model.training)
+        eval_model.eval()
+        if logger is not None:
+            logger.info(
+                "selection eval start reason=%s step=%d n_claims=%d",
+                reason,
+                int(global_step),
+                len(examples),
+            )
+        result = evaluate_llm_action_selection(
+            eval_model,
+            tokenizer,
+            examples,
+            device=accelerator.device,
+            split="val",
+            top_k=int(args.selection_eval_top_k),
+            max_length=int(args.max_length),
+            score_mode=str(args.score_mode),
+            choice_batch_size=int(args.choice_batch_size),
+            max_candidate_chars=int(args.selection_eval_max_candidate_chars),
+            include_retrieval_scores=True,
+            disable_progress=bool(args.no_progress),
+        )
+        metrics = {
+            **result["metrics"],
+            "global_step": int(global_step),
+            "epoch": int(epoch),
+            "reason": str(reason),
+            "oracle_results": str(args.selection_eval_oracle_results),
+            "eval_output_dir": str(step_dir),
+        }
+        result["metrics"] = metrics
+        write_selection_eval_outputs(step_dir, result)
+        record = selection_history_record(
+            metrics,
+            global_step=int(global_step),
+            epoch=int(epoch),
+            output_dir=str(step_dir),
+            reason=str(reason),
+        )
+        record["selection_metrics_path"] = str(step_dir / "selection_metrics.json")
+        _append_jsonl(selection_history_path, record)
+        write_json(_metrics_dir(output_dir) / "latest_selection_val.json", record)
+        if logger is not None:
+            logger.info(
+                "selection eval done reason=%s step=%d recall@5=%.4f jaccard@5=%.4f ndcg@5=%.4f elapsed=%.3fs",
+                reason,
+                int(global_step),
+                float(record.get("recall@5") or 0.0),
+                float(record.get("jaccard@5") or 0.0),
+                float(record.get("oracle_rank_ndcg@5") or 0.0),
+                float(record.get("elapsed_seconds") or 0.0),
+            )
+        if was_training:
+            eval_model.train()
+    accelerator.wait_for_everyone()
+    model.train()
+    return record
+
+
+def _should_run_selection_eval(mode: str, *, best_updated: bool) -> bool:
+    if mode == "every_eval":
+        return True
+    if mode == "best" and bool(best_updated):
+        return True
+    return False
+
+
+def _metrics_dir(output_dir: Path) -> Path:
+    return Path(output_dir) / "metrics"
+
+
+def _best_checkpoint_dir(output_dir: Path) -> Path:
+    return Path(output_dir) / "checkpoints" / "best"
+
+
+def _write_best_metadata(
+    *,
+    output_dir: Path,
+    checkpoint_dir: Path,
+    metadata: dict[str, Any],
+    result: dict[str, Any],
+) -> None:
+    best_rel = checkpoint_dir.relative_to(output_dir).as_posix()
+    run_metadata = dict(metadata)
+    run_metadata.update(
+        {
+            "checkpoint_layout_version": 2,
+            "best_checkpoint_dir": best_rel,
+            "metrics_dir": "metrics",
+            "best": result,
+        }
+    )
+    write_json(output_dir / "selector_metadata.json", run_metadata)
+    checkpoint_metadata = dict(run_metadata)
+    checkpoint_metadata.update(
+        {
+            "checkpoint_role": "best",
+            "run_output_dir": str(output_dir),
+            "checkpoint_dir": str(checkpoint_dir),
+        }
+    )
+    write_json(checkpoint_dir / "selector_metadata.json", checkpoint_metadata)
+    write_json(_metrics_dir(output_dir) / "best_val.json", result)
 
 
 def _metadata(
@@ -523,6 +763,15 @@ def _metadata(
         "max_length": int(args.max_length),
         "choice_batch_size": int(args.choice_batch_size),
         "score_mode": str(args.score_mode),
+        "checkpoint_layout_version": 2,
+        "best_checkpoint_dir": "checkpoints/best",
+        "metrics_dir": "metrics",
+        "selection_eval_mode": str(args.selection_eval_mode),
+        "selection_eval_oracle_results": str(args.selection_eval_oracle_results) if args.selection_eval_oracle_results else None,
+        "selection_eval_sample_limit": int(args.selection_eval_sample_limit),
+        "selection_eval_top_k": int(args.selection_eval_top_k),
+        "selection_eval_max_candidate_chars": int(args.selection_eval_max_candidate_chars),
+        "selection_eval_output_dir": str(args.selection_eval_output_dir) if args.selection_eval_output_dir else None,
         "n_train_samples": int(n_train),
         "n_val_samples": int(n_val),
         "max_train_steps": int(max_train_steps),
@@ -700,12 +949,24 @@ def _train_swanlab_payload(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def _val_swanlab_payload(result: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "val/loss": result.get("val_loss"),
         "val/hard_loss": result.get("val_hard_loss"),
         "val/soft_loss": result.get("val_soft_loss"),
         "val/action_accuracy": result.get("val_action_accuracy"),
         "val/n_samples": result.get("n_val_samples"),
+    }
+    payload.update(_selection_swanlab_payload(result.get("selection") or {}))
+    return payload
+
+
+def _selection_swanlab_payload(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "val/selection/recall@5": record.get("recall@5"),
+        "val/selection/jaccard@5": record.get("jaccard@5"),
+        "val/selection/ndcg@5": record.get("oracle_rank_ndcg@5"),
+        "val/selection/top1_match": record.get("top1_match"),
+        "val/selection/n_claims": record.get("n_claims"),
     }
 
 
@@ -713,6 +974,8 @@ def _metadata_metrics(metadata: dict[str, Any]) -> dict[str, Any]:
     return {
         "config/max_length": metadata.get("max_length"),
         "config/choice_batch_size": metadata.get("choice_batch_size"),
+        "config/selection_eval_sample_limit": metadata.get("selection_eval_sample_limit"),
+        "config/selection_eval_top_k": metadata.get("selection_eval_top_k"),
         "config/n_train_samples": metadata.get("n_train_samples"),
         "config/n_val_samples": metadata.get("n_val_samples"),
     }

@@ -12,6 +12,7 @@ from fact_checking.selectors.llm_action import (
     score_action_choices,
     softmax_deltas,
 )
+from fact_checking.selectors.llm_action_eval import evaluate_llm_action_selection
 from fact_checking.selectors.stage2_oracle import Stage2OracleExample
 
 
@@ -153,6 +154,28 @@ class LLMActionSelectorTest(unittest.TestCase):
                 score_mode="action_token",
             )
 
+    def test_selection_eval_summarizes_rollout_metrics(self) -> None:
+        result = evaluate_llm_action_selection(
+            _FakeChoiceModel(vocab_size=8, preferred_action_id=3),
+            _FakeTokenizer(),
+            [_example()],
+            device=torch.device("cpu"),
+            split="val",
+            top_k=2,
+            max_length=16,
+            score_mode="action_token",
+            choice_batch_size=8,
+            max_candidate_chars=80,
+            include_retrieval_scores=True,
+            disable_progress=True,
+        )
+
+        metrics = result["metrics"]
+        self.assertEqual(metrics["n_claims"], 1)
+        self.assertEqual(metrics["estimated_forward_steps"], 2)
+        self.assertEqual(result["traces"][0]["selector_ordered_indices"], [1, 0])
+        self.assertIn("jaccard@5", metrics["selector"])
+
 
 def _example() -> Stage2OracleExample:
     candidates = [
@@ -188,6 +211,8 @@ class _FakeTokenizer:
             return {"input_ids": [2]}
         if text == "B":
             return {"input_ids": [3]}
+        if text == "C":
+            return {"input_ids": [5]}
         return {"input_ids": [4, 4]}
 
 

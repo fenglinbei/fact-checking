@@ -19,7 +19,9 @@ TRAIN_VIG_CACHE="${TRAIN_VIG_CACHE:-outputs/selectors/vig_utility/saved_step_tra
 VAL_VIG_CACHE="${VAL_VIG_CACHE:-outputs/selectors/vig_utility/saved_step_val/vig_records_val.jsonl}"
 TRAIN_DATA="${TRAIN_DATA:-${DATA_DIR}/action_samples_train.jsonl}"
 VAL_DATA="${VAL_DATA:-${DATA_DIR}/action_samples_val.jsonl}"
-EVAL_OUTPUT_DIR="${EVAL_OUTPUT_DIR:-${OUTPUT_DIR}/eval_val}"
+EVAL_OUTPUT_DIR="${EVAL_OUTPUT_DIR:-${OUTPUT_DIR}/evals/val}"
+EVAL_SPLIT="${EVAL_SPLIT:-val}"
+EVAL_LOG_FILE="${EVAL_LOG_FILE:-${OUTPUT_DIR}/logs/eval_llm_action_selector.log}"
 MAX_LENGTH="${MAX_LENGTH:-1024}"
 MAX_CANDIDATE_CHARS="${MAX_CANDIDATE_CHARS:-180}"
 TRAIN_SAMPLE_LIMIT="${TRAIN_SAMPLE_LIMIT:-}"
@@ -43,6 +45,10 @@ NO_PROGRESS="${NO_PROGRESS:-false}"
 RUN_BUILD_DATA="${RUN_BUILD_DATA:-true}"
 RUN_TRAIN="${RUN_TRAIN:-true}"
 RUN_EVAL="${RUN_EVAL:-true}"
+TRAIN_SELECTION_EVAL_MODE="${TRAIN_SELECTION_EVAL_MODE:-best}"
+SELECTION_EVAL_SAMPLE_LIMIT="${SELECTION_EVAL_SAMPLE_LIMIT:-128}"
+SELECTION_EVAL_TOP_K="${SELECTION_EVAL_TOP_K:-5}"
+SELECTION_EVAL_OUTPUT_DIR="${SELECTION_EVAL_OUTPUT_DIR:-${OUTPUT_DIR}/evals/during_train}"
 SWANLAB_PROJECT="${SWANLAB_PROJECT:-fact-checking-llm-action-selector}"
 SWANLAB_EXPERIMENT_NAME="${SWANLAB_EXPERIMENT_NAME:-$(basename "${OUTPUT_DIR}")}"
 SWANLAB_WORKSPACE="${SWANLAB_WORKSPACE:-}"
@@ -54,7 +60,7 @@ SWANLAB_DISABLED="${SWANLAB_DISABLED:-0}"
 REFERENCE_RANKER_METRICS="${REFERENCE_RANKER_METRICS:-outputs/selectors/vig_utility/saved_step_train_to_val/ranker_eval/selection_metrics.json}"
 REFERENCE_SEQUENTIAL_METRICS="${REFERENCE_SEQUENTIAL_METRICS:-outputs/selectors/stage2_sentence_sequential/deberta_sequential_deep/eval_val/selection_metrics.json}"
 
-mkdir -p "${DATA_DIR}" "${OUTPUT_DIR}"
+mkdir -p "${DATA_DIR}" "${OUTPUT_DIR}" "$(dirname "${EVAL_LOG_FILE}")"
 
 progress_arg=()
 if [[ "${NO_PROGRESS}" == "true" || "${NO_PROGRESS}" == "1" ]]; then
@@ -111,6 +117,12 @@ train_cmd=(
   --soft-loss-weight "${SOFT_LOSS_WEIGHT}"
   --soft-tau "${SOFT_TAU}"
   --eval-every "${EVAL_EVERY}"
+  --selection-eval-oracle-results "${VAL_ORACLE_RESULTS}"
+  --selection-eval-mode "${TRAIN_SELECTION_EVAL_MODE}"
+  --selection-eval-sample-limit "${SELECTION_EVAL_SAMPLE_LIMIT}"
+  --selection-eval-top-k "${SELECTION_EVAL_TOP_K}"
+  --selection-eval-max-candidate-chars "${MAX_CANDIDATE_CHARS}"
+  --selection-eval-output-dir "${SELECTION_EVAL_OUTPUT_DIR}"
   --swanlab-project "${SWANLAB_PROJECT}"
   --swanlab-experiment-name "${SWANLAB_EXPERIMENT_NAME}"
   --swanlab-tags "${SWANLAB_TAGS}"
@@ -157,16 +169,23 @@ if [[ "${RUN_EVAL}" == "true" || "${RUN_EVAL}" == "1" ]]; then
   if [[ -n "${REFERENCE_SEQUENTIAL_METRICS}" && -f "${REFERENCE_SEQUENTIAL_METRICS}" ]]; then
     references+=("${REFERENCE_SEQUENTIAL_METRICS}")
   fi
+  eval_extra=()
+  if [[ -n "${EVAL_SAMPLE_LIMIT}" ]]; then
+    eval_extra+=(--sample-limit "${EVAL_SAMPLE_LIMIT}")
+  fi
 
   python scripts/selectors/eval_llm_action_selector.py \
     --model-dir "${OUTPUT_DIR}" \
     --model-name "${MODEL_NAME}" \
     --oracle-results "${VAL_ORACLE_RESULTS}" \
     --output-dir "${EVAL_OUTPUT_DIR}" \
+    --split "${EVAL_SPLIT}" \
     --max-length "${MAX_LENGTH}" \
     --score-mode "${SCORE_MODE}" \
     --choice-batch-size "${CHOICE_BATCH_SIZE}" \
     --max-candidate-chars "${MAX_CANDIDATE_CHARS}" \
+    --log-file "${EVAL_LOG_FILE}" \
     --reference-metrics "${references[@]}" \
+    "${eval_extra[@]}" \
     "${progress_arg[@]}"
 fi

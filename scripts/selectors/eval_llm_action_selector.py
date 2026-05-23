@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
+import logging
 import sys
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import torch
-from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -21,28 +21,28 @@ if str(_REPO_ROOT) not in sys.path:
 from fact_checking.selectors.llm_action import (
     SCORE_MODE_ACTION_TOKEN,
     SCORE_MODE_CONTINUATION,
-    action_token,
-    build_action_prompt,
-    score_action_choices,
 )
-from fact_checking.selectors.metrics import (
-    build_order_control_trace,
-    build_selection_trace,
-    ranked_indices_from_candidate_pool,
-    ranked_indices_from_hybrid,
-    random_order_controls,
-    reorder_predicted_set,
-    summarize_ordered_selection,
+from fact_checking.selectors.llm_action_eval import (
+    evaluate_llm_action_selection,
+    selection_history_record,
+    write_selection_eval_outputs,
 )
 from fact_checking.selectors.stage2_oracle import (
     DEFAULT_CANDIDATE_POOL_SIZE,
     DEFAULT_SELECTOR_TOP_K,
     EXPECTED_STAGE2_CHUNK_MMR_FINGERPRINT,
-    Stage2OracleExample,
     load_stage2_oracle_examples,
     write_json,
-    write_jsonl,
 )
+
+
+@dataclass(frozen=True)
+class ModelDirResolution:
+    model_dir_input: Path
+    resolved_model_dir: Path
+    run_dir: Path | None
+    metadata: dict[str, Any]
+    layout: str
 
 
 def parse_args() -> argparse.Namespace:
@@ -66,19 +66,30 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-retrieval-scores", action="store_true")
     p.add_argument("--reference-metrics", nargs="*", default=None)
     p.add_argument("--no-progress", action="store_true")
+    p.add_argument("--log-file", default=None)
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    started_at = time.time()
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    logger = _init_eval_logger(Path(args.log_file) if args.log_file else None)
 
-    metadata = _load_metadata(Path(args.model_dir))
+    resolution = _resolve_model_dir(Path(args.model_dir))
+    metadata = resolution.metadata
     max_length = int(args.max_length or metadata.get("max_length") or 1024)
     score_mode = str(args.score_mode or metadata.get("score_mode") or SCORE_MODE_ACTION_TOKEN)
+    if logger is not None:
+        logger.info(
+            "Starting selection eval model_dir_input=%s resolved_model_dir=%s output_dir=%s",
+            resolution.model_dir_input,
+            resolution.resolved_model_dir,
+            out_dir,
+        )
     model, tokenizer = _load_model_and_tokenizer(
-        model_dir=Path(args.model_dir),
+        model_dir=resolution.resolved_model_dir,
         model_name=args.model_name or metadata.get("base_model_name_or_path"),
         device=str(args.device),
     )
@@ -95,190 +106,64 @@ def main() -> None:
     if not examples:
         raise ValueError("No evaluation examples after Stage2 audit/filtering.")
 
-    traces: list[dict[str, Any]] = []
-    hybrid_traces: list[dict[str, Any]] = []
-    candidate_order_traces: list[dict[str, Any]] = []
-    same_set_hybrid_traces: list[dict[str, Any]] = []
-    same_set_candidate_traces: list[dict[str, Any]] = []
-    random_traces: list[dict[str, Any]] = []
-
-    model.eval()
     device = torch.device(args.device if torch.cuda.is_available() or str(args.device) == "cpu" else "cpu")
-    for example in tqdm(
+    result = evaluate_llm_action_selection(
+        model,
+        tokenizer,
         examples,
-        desc=f"llm action eval [{args.split}]",
-        disable=bool(args.no_progress),
-        dynamic_ncols=True,
-    ):
-        prediction = _rollout_example(
-            model,
-            tokenizer,
-            example,
-            device=device,
-            top_k=int(args.top_k),
-            max_length=max_length,
-            score_mode=score_mode,
-            choice_batch_size=int(args.choice_batch_size),
-            max_candidate_chars=int(args.max_candidate_chars),
-            include_retrieval_scores=not bool(args.no_retrieval_scores),
-        )
-        trace = build_selection_trace(
-            example,
-            _rank_vector_from_order(len(example.candidates), prediction["ordered_indices"]),
-            selector_name="llm_action_selector",
-            top_k=int(args.top_k),
-        )
-        trace["selector_ordered_indices"] = [int(idx) for idx in prediction["ordered_indices"]]
-        trace["per_step_action_scores"] = prediction["per_step_action_scores"]
-        traces.append(trace)
-
-        hybrid_traces.append(
-            build_order_control_trace(
-                trace,
-                ranked_indices_from_hybrid(example, top_k=int(args.top_k)),
-                selector_name="hybrid_score_top5",
-                top_k=int(args.top_k),
-            )
-        )
-        candidate_order_traces.append(
-            build_order_control_trace(
-                trace,
-                ranked_indices_from_candidate_pool(example, top_k=int(args.top_k)),
-                selector_name="candidate_pool_order_top5",
-                top_k=int(args.top_k),
-            )
-        )
-        predicted = [int(idx) for idx in trace["selector_ordered_indices"]]
-        same_set_hybrid_traces.append(
-            build_order_control_trace(
-                trace,
-                reorder_predicted_set(predicted, example=example, mode="hybrid_order"),
-                selector_name="same_set_hybrid_order",
-                top_k=int(args.top_k),
-            )
-        )
-        same_set_candidate_traces.append(
-            build_order_control_trace(
-                trace,
-                reorder_predicted_set(predicted, example=example, mode="candidate_pool_order"),
-                selector_name="same_set_candidate_pool_order",
-                top_k=int(args.top_k),
-            )
-        )
-        random_traces.extend(
-            random_order_controls(
-                predicted,
-                example=example,
-                seeds=[0, 1, 2, 3, 4],
-                top_k=int(args.top_k),
-            )
-        )
-
-    selector_metrics = summarize_ordered_selection(traces)
-    controls = {
-        "hybrid_score_top5": summarize_ordered_selection(hybrid_traces),
-        "candidate_pool_order_top5": summarize_ordered_selection(candidate_order_traces),
-        "same_set_hybrid_order": summarize_ordered_selection(same_set_hybrid_traces),
-        "same_set_candidate_pool_order": summarize_ordered_selection(same_set_candidate_traces),
-        "same_set_random_order_mean": summarize_ordered_selection(random_traces),
-    }
+        device=device,
+        split=str(args.split),
+        top_k=int(args.top_k),
+        max_length=max_length,
+        score_mode=score_mode,
+        choice_batch_size=int(args.choice_batch_size),
+        max_candidate_chars=int(args.max_candidate_chars),
+        include_retrieval_scores=not bool(args.no_retrieval_scores),
+        disable_progress=bool(args.no_progress),
+    )
+    selector_metrics = result["metrics"]["selector"]
+    controls = result["metrics"]["controls"]
     metrics = {
-        "model_dir": str(args.model_dir),
+        **result["metrics"],
+        "model_dir_input": str(resolution.model_dir_input),
+        "resolved_model_dir": str(resolution.resolved_model_dir),
+        "run_dir": str(resolution.run_dir) if resolution.run_dir is not None else None,
+        "model_dir": str(resolution.resolved_model_dir),
+        "model_dir_layout": str(resolution.layout),
+        "eval_output_dir": str(out_dir),
         "oracle_results": str(args.oracle_results),
-        "split": str(args.split),
         "filter_policy": str(args.filter_policy),
         "chunk_mmr_fingerprint": str(args.expected_chunk_mmr_fingerprint),
-        "n_claims": len(examples),
-        "max_length": max_length,
-        "score_mode": score_mode,
-        "selector": selector_metrics,
-        "controls": controls,
         "reference_metrics": _reference_metrics(args.reference_metrics or []),
         "selector_metadata": metadata,
+        "total_elapsed_seconds": round(time.time() - started_at, 3),
     }
-    write_json(out_dir / "selection_metrics.json", metrics)
-    write_jsonl(out_dir / "selection_trace.jsonl", traces)
-    write_jsonl(out_dir / "control_hybrid_trace.jsonl", hybrid_traces)
-    write_jsonl(out_dir / "control_candidate_pool_trace.jsonl", candidate_order_traces)
-    _write_markdown(out_dir / "analysis.md", metrics)
+    result["metrics"] = metrics
+    write_selection_eval_outputs(out_dir, result)
+    _write_run_eval_summary(resolution.run_dir, metrics, out_dir)
 
     print(f"Wrote selection metrics: {out_dir / 'selection_metrics.json'}")
     print(
         "LLM-action Recall@5={rec:.4f}, Jaccard@5={jac:.4f}, NDCG@5={ndcg:.4f}; "
         "Hybrid Jaccard@5={hjac:.4f}".format(
-            rec=float(selector_metrics.get("recall@5", np.nan)),
-            jac=float(selector_metrics.get("jaccard@5", np.nan)),
-            ndcg=float(selector_metrics.get("oracle_rank_ndcg@5", np.nan)),
-            hjac=float(controls["hybrid_score_top5"].get("jaccard@5", np.nan)),
+            rec=float(selector_metrics.get("recall@5", float("nan"))),
+            jac=float(selector_metrics.get("jaccard@5", float("nan"))),
+            ndcg=float(selector_metrics.get("oracle_rank_ndcg@5", float("nan"))),
+            hjac=float(controls["hybrid_score_top5"].get("jaccard@5", float("nan"))),
         )
     )
-
-
-def _rollout_example(
-    model: torch.nn.Module,
-    tokenizer: Any,
-    example: Stage2OracleExample,
-    *,
-    device: torch.device,
-    top_k: int,
-    max_length: int,
-    score_mode: str,
-    choice_batch_size: int,
-    max_candidate_chars: int,
-    include_retrieval_scores: bool,
-) -> dict[str, Any]:
-    selected: list[int] = []
-    per_step: list[dict[str, Any]] = []
-    for step in range(int(top_k)):
-        remaining = [idx for idx in range(len(example.candidates)) if idx not in selected]
-        if not remaining:
-            break
-        prompt = build_action_prompt(
-            example,
-            prefix_indices=selected,
-            remaining_indices=remaining,
-            max_candidate_chars=int(max_candidate_chars),
-            include_retrieval_scores=bool(include_retrieval_scores),
+    if logger is not None:
+        logger.info(
+            "Finished selection eval n_claims=%d top_k=%d score_mode=%s elapsed_seconds=%.3f "
+            "claims_per_second=%.6f estimated_forward_steps=%d output_dir=%s",
+            int(metrics.get("n_claims", 0)),
+            int(metrics.get("top_k", 0)),
+            str(metrics.get("score_mode")),
+            float(metrics.get("elapsed_seconds", 0.0)),
+            float(metrics.get("claims_per_second", 0.0)),
+            int(metrics.get("estimated_forward_steps", 0)),
+            out_dir,
         )
-        sample = {
-            "prompt": prompt,
-            "choices": [
-                {"candidate_idx": int(idx), "action": action_token(idx)}
-                for idx in remaining
-            ],
-        }
-        with torch.inference_mode():
-            scored = score_action_choices(
-                model,
-                tokenizer,
-                [sample],
-                device=device,
-                max_length=int(max_length),
-                score_mode=str(score_mode),
-                choice_batch_size=int(choice_batch_size),
-            )
-        scores = scored.scores[0]
-        best_pos = int(torch.argmax(scores).detach().cpu().item())
-        best_idx = int(scored.candidate_indices[0][best_pos])
-        selected.append(best_idx)
-        per_step.append(
-            {
-                "step": int(step),
-                "selected_idx": int(best_idx),
-                "selected_action": action_token(best_idx),
-                "selected_score": float(scores[best_pos].detach().cpu().item()),
-                "oracle_idx": int(example.selected_indices[step]) if step < len(example.selected_indices) else None,
-                "choice_scores": [
-                    {
-                        "candidate_idx": int(idx),
-                        "action": action_token(idx),
-                        "score": float(score.detach().cpu().item()),
-                    }
-                    for idx, score in zip(scored.candidate_indices[0], scores)
-                ],
-            }
-        )
-    return {"ordered_indices": selected[: int(top_k)], "per_step_action_scores": per_step}
 
 
 def _load_model_and_tokenizer(
@@ -326,12 +211,123 @@ def _load_metadata(model_dir: Path) -> dict[str, Any]:
         return json.load(fh)
 
 
-def _rank_vector_from_order(n_candidates: int, ordered: list[int]) -> np.ndarray:
-    scores = np.full((int(n_candidates),), -1.0e9, dtype=np.float32)
-    for rank, idx in enumerate(ordered):
-        if 0 <= int(idx) < scores.size:
-            scores[int(idx)] = float(len(ordered) - rank)
-    return scores
+def _resolve_model_dir(model_dir: Path) -> ModelDirResolution:
+    model_dir = Path(model_dir)
+    input_metadata = _load_metadata(model_dir)
+    if not model_dir.exists():
+        raise ValueError(f"--model-dir does not exist: {model_dir}")
+
+    best_rel = input_metadata.get("best_checkpoint_dir")
+    if best_rel and not _is_default_best_dir(model_dir):
+        best_dir = model_dir / str(best_rel)
+        if _is_checkpoint_dir(best_dir):
+            metadata = _merge_metadata(input_metadata, _load_metadata(best_dir))
+            return ModelDirResolution(
+                model_dir_input=model_dir,
+                resolved_model_dir=best_dir,
+                run_dir=model_dir,
+                metadata=metadata,
+                layout="run_dir_best_checkpoint",
+            )
+        raise ValueError(
+            f"selector_metadata.json points to best_checkpoint_dir={best_rel!r}, "
+            f"but no checkpoint marker was found under {best_dir}."
+        )
+
+    if _is_checkpoint_dir(model_dir):
+        run_dir = _infer_run_dir(model_dir, input_metadata)
+        run_metadata = _load_metadata(run_dir) if run_dir is not None and run_dir != model_dir else {}
+        metadata = _merge_metadata(run_metadata, input_metadata)
+        return ModelDirResolution(
+            model_dir_input=model_dir,
+            resolved_model_dir=model_dir,
+            run_dir=run_dir,
+            metadata=metadata,
+            layout="direct_checkpoint",
+        )
+
+    fallback_best = model_dir / "checkpoints" / "best"
+    if _is_checkpoint_dir(fallback_best):
+        metadata = _merge_metadata(input_metadata, _load_metadata(fallback_best))
+        return ModelDirResolution(
+            model_dir_input=model_dir,
+            resolved_model_dir=fallback_best,
+            run_dir=model_dir,
+            metadata=metadata,
+            layout="run_dir_default_best_checkpoint",
+        )
+
+    if input_metadata:
+        raise ValueError(
+            f"{model_dir} looks like an LLM action selector run directory, but no best checkpoint was found. "
+            "Expected adapter_config.json/config.json at the run root for legacy runs or under checkpoints/best."
+        )
+    raise ValueError(
+        f"--model-dir must be a checkpoint directory or an LLM action selector run directory: {model_dir}"
+    )
+
+
+def _is_checkpoint_dir(path: Path) -> bool:
+    return (path / "adapter_config.json").exists() or (path / "config.json").exists()
+
+
+def _is_default_best_dir(path: Path) -> bool:
+    return path.name == "best" and path.parent.name == "checkpoints"
+
+
+def _infer_run_dir(model_dir: Path, metadata: dict[str, Any]) -> Path | None:
+    raw_run_dir = metadata.get("run_output_dir")
+    if raw_run_dir:
+        return Path(str(raw_run_dir))
+    if _is_default_best_dir(model_dir):
+        return model_dir.parent.parent
+    if metadata:
+        return model_dir
+    return None
+
+
+def _merge_metadata(*items: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for item in items:
+        merged.update(dict(item or {}))
+    return merged
+
+
+def _write_run_eval_summary(run_dir: Path | None, metrics: dict[str, Any], out_dir: Path) -> None:
+    if run_dir is None:
+        return
+    record = selection_history_record(
+        metrics,
+        output_dir=str(out_dir),
+        reason="post_train_eval",
+    )
+    record["eval_output_dir"] = str(out_dir)
+    record["resolved_model_dir"] = str(metrics.get("resolved_model_dir"))
+    record["model_dir_input"] = str(metrics.get("model_dir_input"))
+    metrics_dir = Path(run_dir) / "metrics"
+    write_json(metrics_dir / "latest_selection_eval.json", record)
+    _append_jsonl(Path(run_dir) / "eval_history.jsonl", record)
+
+
+def _init_eval_logger(path: Path | None) -> logging.Logger | None:
+    if path is None:
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger(f"llm_action_selector_eval.{path.resolve()}")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    logger.handlers.clear()
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    handler = logging.FileHandler(path, encoding="utf-8")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    return logger
+
+
+def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def _reference_metrics(paths: list[str]) -> dict[str, Any]:
@@ -358,28 +354,6 @@ def _reference_metrics(paths: list[str]) -> dict[str, Any]:
         if "selector" in payload and "deberta_sequential" in source:
             out["deberta_sequential_deep"] = {"source": source, "metrics": payload["selector"]}
     return out
-
-
-def _write_markdown(path: Path, metrics: dict[str, Any]) -> None:
-    selector = metrics.get("selector", {})
-    controls = metrics.get("controls", {})
-    refs = metrics.get("reference_metrics", {})
-    lines = [
-        "# LLM Action Selector Eval",
-        "",
-        f"- n_claims: {metrics.get('n_claims')}",
-        f"- selector Jaccard@5: {float(selector.get('jaccard@5', math.nan)):.4f}",
-        f"- selector NDCG@5: {float(selector.get('oracle_rank_ndcg@5', math.nan)):.4f}",
-        f"- selector pairwise_order_acc@5: {float(selector.get('pairwise_order_acc@5', math.nan)):.4f}",
-        f"- hybrid Jaccard@5: {float(controls.get('hybrid_score_top5', {}).get('jaccard@5', math.nan)):.4f}",
-    ]
-    single = refs.get("single_margin_step0_static", {}).get("metrics", {})
-    if single:
-        delta = float(selector.get("jaccard@5", math.nan)) - float(single.get("jaccard@5", math.nan))
-        lines.append(f"- single_margin_step0_static Jaccard@5: {float(single.get('jaccard@5', math.nan)):.4f}")
-        lines.append(f"- delta_vs_single_margin_step0_static: {delta:.4f}")
-        lines.append(f"- decision: {'go' if delta > 0 else 'no_go'}")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
