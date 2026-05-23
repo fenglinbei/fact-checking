@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from tqdm.auto import tqdm
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -45,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--allow-missing-vig", action="store_true")
     p.add_argument("--tokenizer", default=None, help="Optional tokenizer path for prompt length statistics.")
     p.add_argument("--max-length", type=int, default=1024)
+    p.add_argument("--no-progress", action="store_true")
     return p.parse_args()
 
 
@@ -74,6 +77,7 @@ def main() -> None:
         max_candidate_chars=int(args.max_candidate_chars),
         include_retrieval_scores=not bool(args.no_retrieval_scores),
         strict=not bool(args.allow_missing_vig),
+        show_progress=not bool(args.no_progress),
     )
     if not samples:
         raise ValueError("No action selector samples were generated.")
@@ -92,6 +96,7 @@ def main() -> None:
             samples,
             tokenizer_name=str(args.tokenizer),
             max_length=int(args.max_length),
+            show_progress=not bool(args.no_progress),
         )
 
     write_jsonl(args.output_jsonl, samples)
@@ -110,13 +115,21 @@ def _prompt_length_stats(
     *,
     tokenizer_name: str,
     max_length: int,
+    show_progress: bool,
 ) -> dict[str, Any]:
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
     lengths: list[int] = []
     over_budget = 0
-    for sample in samples:
+    iterator = tqdm(
+        samples,
+        desc="prompt length stats",
+        unit="sample",
+        dynamic_ncols=True,
+        disable=not bool(show_progress),
+    )
+    for sample in iterator:
         text = str(sample["prompt"]) + str(sample["target_action"])
         ids = tokenizer(text, add_special_tokens=True, truncation=False)["input_ids"]
         length = len(ids)

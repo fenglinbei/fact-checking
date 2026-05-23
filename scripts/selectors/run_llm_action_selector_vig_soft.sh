@@ -75,6 +75,7 @@ if [[ "${RUN_BUILD_DATA}" == "true" || "${RUN_BUILD_DATA}" == "1" ]]; then
     --max-candidate-chars "${MAX_CANDIDATE_CHARS}" \
     --tokenizer "${MODEL_NAME}" \
     --max-length "${MAX_LENGTH}" \
+    "${progress_arg[@]}" \
     "${build_extra[@]}"
 
   val_extra=()
@@ -89,6 +90,7 @@ if [[ "${RUN_BUILD_DATA}" == "true" || "${RUN_BUILD_DATA}" == "1" ]]; then
     --max-candidate-chars "${MAX_CANDIDATE_CHARS}" \
     --tokenizer "${MODEL_NAME}" \
     --max-length "${MAX_LENGTH}" \
+    "${progress_arg[@]}" \
     "${val_extra[@]}"
 fi
 

@@ -10,7 +10,7 @@
 
 ```text
 输入 = claim + selected prefix + remaining candidates
-输出 = 下一条 evidence action，例如 E04
+输出 = 下一条 evidence action，例如 E
 ```
 
 训练目标：

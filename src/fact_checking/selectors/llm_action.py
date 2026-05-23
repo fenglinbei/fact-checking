@@ -7,11 +7,13 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+from tqdm.auto import tqdm
 
 from fact_checking.selectors.stage2_oracle import Stage2OracleExample, candidate_text
 
 
-ACTION_RE = re.compile(r"\bE(\d{2})\b")
+ACTION_LABELS = tuple("ABCDEFGHIJKLMNO")
+ACTION_RE = re.compile(r"\b([A-O])\b")
 SCORE_MODE_ACTION_TOKEN = "action_token"
 SCORE_MODE_CONTINUATION = "continuation"
 SCORE_MODES = {SCORE_MODE_ACTION_TOKEN, SCORE_MODE_CONTINUATION}
@@ -26,16 +28,16 @@ class ChoiceScoreBatch:
 
 def action_token(candidate_idx: int) -> str:
     idx = int(candidate_idx)
-    if idx < 0 or idx > 99:
-        raise ValueError(f"candidate_idx must be in [0, 99], got {candidate_idx!r}.")
-    return f"E{idx:02d}"
+    if idx < 0 or idx >= len(ACTION_LABELS):
+        raise ValueError(f"candidate_idx must be in [0, {len(ACTION_LABELS) - 1}], got {candidate_idx!r}.")
+    return ACTION_LABELS[idx]
 
 
 def parse_action(text: str) -> int | None:
     match = ACTION_RE.search(str(text).strip())
     if not match:
         return None
-    return int(match.group(1))
+    return ACTION_LABELS.index(match.group(1))
 
 
 def softmax_deltas(deltas: list[float], *, tau: float) -> list[float]:
@@ -51,9 +53,20 @@ def softmax_deltas(deltas: list[float], *, tau: float) -> list[float]:
     return [float(x / denom) for x in exps]
 
 
-def build_vig_index(rows: list[dict[str, Any]]) -> dict[str, dict[int, dict[int, dict[str, Any]]]]:
+def build_vig_index(
+    rows: list[dict[str, Any]],
+    *,
+    show_progress: bool = False,
+) -> dict[str, dict[int, dict[int, dict[str, Any]]]]:
     out: dict[str, dict[int, dict[int, dict[str, Any]]]] = defaultdict(lambda: defaultdict(dict))
-    for row in rows:
+    iterator = tqdm(
+        rows,
+        desc="index VIG rows",
+        unit="row",
+        dynamic_ncols=True,
+        disable=not bool(show_progress),
+    )
+    for row in iterator:
         event_id = str(row.get("event_id") or "")
         if not event_id:
             continue
@@ -113,14 +126,22 @@ def build_action_samples(
     max_candidate_chars: int = 180,
     include_retrieval_scores: bool = True,
     strict: bool = True,
+    show_progress: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    vig_index = build_vig_index(vig_rows)
+    vig_index = build_vig_index(vig_rows, show_progress=bool(show_progress))
     samples: list[dict[str, Any]] = []
     missing_vig_steps = 0
     missing_vig_candidates = 0
     missing_targets = 0
 
-    for example in examples:
+    iterator = tqdm(
+        examples,
+        desc=f"build action samples [{split}]",
+        unit="claim",
+        dynamic_ncols=True,
+        disable=not bool(show_progress),
+    )
+    for example in iterator:
         selected = [int(idx) for idx in example.selected_indices[: int(top_k)]]
         prefix: list[int] = []
         for step, target_idx in enumerate(selected):

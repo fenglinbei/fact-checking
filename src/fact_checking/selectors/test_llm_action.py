@@ -16,14 +16,15 @@ from fact_checking.selectors.stage2_oracle import Stage2OracleExample
 
 
 class LLMActionSelectorTest(unittest.TestCase):
-    def test_action_token_and_parse_are_strict_two_digit_ids(self) -> None:
-        self.assertEqual(action_token(4), "E04")
-        self.assertEqual(action_token(14), "E14")
-        self.assertEqual(parse_action("E03"), 3)
-        self.assertEqual(parse_action("choose E12 now"), 12)
+    def test_action_token_and_parse_use_single_letter_ids(self) -> None:
+        self.assertEqual(action_token(4), "E")
+        self.assertEqual(action_token(14), "O")
+        self.assertEqual(parse_action("D"), 3)
+        self.assertEqual(parse_action("choose M now"), 12)
         self.assertIsNone(parse_action("candidate 3"))
+        self.assertIsNone(parse_action("E04"))
         with self.assertRaises(ValueError):
-            action_token(100)
+            action_token(15)
 
     def test_softmax_deltas_prefers_larger_delta(self) -> None:
         probs = softmax_deltas([0.0, 1.0, -1.0], tau=0.5)
@@ -69,11 +70,11 @@ class LLMActionSelectorTest(unittest.TestCase):
         )
 
         self.assertEqual(manifest["n_samples"], 2)
-        self.assertEqual(samples[0]["target_action"], "E02")
-        self.assertEqual(samples[1]["target_action"], "E00")
+        self.assertEqual(samples[0]["target_action"], "C")
+        self.assertEqual(samples[1]["target_action"], "A")
         self.assertIn(2, samples[0]["remaining_indices"])
         self.assertNotIn(2, samples[1]["remaining_indices"])
-        self.assertIn("E02", samples[0]["prompt"])
+        self.assertIn("- C:", samples[0]["prompt"])
         self.assertNotIn(example.gold_label, samples[0]["prompt"])
         self.assertEqual(samples[1]["prefix_indices"], [2])
 
@@ -83,8 +84,8 @@ class LLMActionSelectorTest(unittest.TestCase):
         sample = {
             "prompt": "prompt",
             "choices": [
-                {"candidate_idx": 0, "action": "E00"},
-                {"candidate_idx": 1, "action": "E01"},
+                {"candidate_idx": 0, "action": "A"},
+                {"candidate_idx": 1, "action": "B"},
             ],
         }
 
@@ -106,8 +107,8 @@ class LLMActionSelectorTest(unittest.TestCase):
         sample = {
             "prompt": "prompt",
             "choices": [
-                {"candidate_idx": 0, "action": "E00"},
-                {"candidate_idx": 1, "action": "E01"},
+                {"candidate_idx": 0, "action": "A"},
+                {"candidate_idx": 1, "action": "B"},
             ],
         }
 
@@ -139,7 +140,7 @@ class LLMActionSelectorTest(unittest.TestCase):
         model = _FakeChoiceModel(vocab_size=8, preferred_action_id=3)
         sample = {
             "prompt": "prompt",
-            "choices": [{"candidate_idx": 0, "action": "E00"}],
+            "choices": [{"candidate_idx": 0, "action": "A"}],
         }
 
         with self.assertRaisesRegex(ValueError, "SCORE_MODE=continuation"):
@@ -183,16 +184,16 @@ class _FakeTokenizer:
     eos_token_id = 1
 
     def __call__(self, text: str, **_: object) -> dict[str, list[int]]:
-        if text == "E00":
+        if text == "A":
             return {"input_ids": [2]}
-        if text == "E01":
+        if text == "B":
             return {"input_ids": [3]}
         return {"input_ids": [4, 4]}
 
 
 class _MultiTokenActionTokenizer(_FakeTokenizer):
     def __call__(self, text: str, **_: object) -> dict[str, list[int]]:
-        if text == "E00":
+        if text == "A":
             return {"input_ids": [2, 5]}
         return super().__call__(text, **_)
 

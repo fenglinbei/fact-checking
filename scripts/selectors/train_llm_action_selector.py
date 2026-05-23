@@ -528,7 +528,7 @@ def _metadata(
         "max_train_steps": int(max_train_steps),
         "soft_loss_weight": float(args.soft_loss_weight),
         "soft_tau": float(args.soft_tau),
-        "action_format": "E00..E14",
+        "action_format": "A..O",
         "lora": {
             "enabled": not bool(args.no_lora),
             "r": int(args.lora_r),
