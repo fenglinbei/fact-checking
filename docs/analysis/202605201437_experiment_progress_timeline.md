@@ -1,6 +1,6 @@
 # 实验总进度时间线与文档索引
 
-文档更新时间：2026-05-22 23:59 CST
+文档更新时间：2026-05-23 20:03 CST
 
 本文整理 `docs/` 目录下的计划、分析、实现与运维文档，按实验线程归纳总体进度。本文只汇总已有文档与已记录结果，不新增实验结论。
 
@@ -13,8 +13,8 @@
 | [A. 分块与基础设施](#4a-基础设施与分块05-08--05-13) | 05-08 ~ 05-13 | chunking 策略选择与 pipeline 固化 | 已固定 | sentence chunking 为主线，semantic 为对照；训练/推理范式已统一 |
 | [B. 分类器塌陷](#4b-分类器塌陷与证据质量瓶颈05-11) | 05-11 | 判别式分类器为何失败 | 已停止 | 证据质量而非损失函数是主要瓶颈 |
 | [C. MMR λ 与 Learned-λ](#4c-mmr-λ-扫描与-learned-λ05-11--05-16) | 05-11 ~ 05-16 | adaptive λ 能否提升 verifier 准确率 | 已停止 | oracle λ 有 +3pp 上界，但无法从文本特征预测；scalar λ 路线全部失败 |
-| [D. Oracle Evidence Set 与 Verifier 校准](#4d-oracle-evidence-set-与-verifier-校准05-16--05-19) | 05-16 ~ 05-19 | 最优证据集上界多大，verifier 能否吸收 | 进行中 | oracle set gap +18.76pp；direct verifier 在 oracle evidence 上 accuracy 0.7111 |
-| [E. Selector 实验 Step1-4](#4e-selector-实验-step1-405-19--05-22) | 05-19 ~ 05-22 | 能否训练模型选出 oracle 级证据 | 继续诊断 | Step1/3 No-Go；Step4 sequential pointer 改善 order，但 full pipeline 转化有限；VIG 仅部分运行 |
+| [D. Oracle Evidence Set 与 Verifier 校准](#4d-oracle-evidence-set-与-verifier-校准05-16--05-23) | 05-16 ~ 05-23 | 最优证据集上界多大，verifier 能否吸收 | 进行中 | raw is_evidence top-5 低于 fixed-MMR；direct verifier 在 oracle evidence 上 accuracy 0.7111 |
+| [E. Selector 实验 Step1-4](#4e-selector-实验-step1-405-19--05-23) | 05-19 ~ 05-23 | 能否训练模型选出 oracle 级证据 | 继续诊断 | Step1/3 No-Go；Step4 sequential pointer 改善 order；saved-score VIG-lite train/val 自检通过，但静态 utility ranker 未超过 single-margin teacher baseline |
 | [F. Targeted Feature 前置诊断](#4f-targeted-feature-前置诊断05-21--05-22) | 05-21 ~ 05-22 | stance/aspect 特征能否辅助 selector | 已停止 | NLI / rule_aspect / LLM decomp+ 三者均 No-Go；claim-aspect coverage 主线关闭 |
 
 ## 2. 全局时间线概览
@@ -36,7 +36,9 @@
 | 05-20 | Step3 listwise selector No-Go | E | 最好 recall@5=0.3826；rank prior 非唯一问题 |
 | 05-20~21 | Step4 sequential pointer：order 改善但 set 未过 | E | top1_match 0.1664, recall@5=0.3852；后续 full pipeline probe 转化有限 |
 | 05-22 | Selector trace full pipeline：hybrid vs sequential | E | sequential val 0.3132/0.3026 > hybrid 0.2834/0.2878；recall@5 +0.0418 未充分转成 macro-F1 |
-| 05-22 | Step4.1-D VIG utility analysis 部分运行 | E | 诊断链路已实现；当前产物不是最终版本，不据此做 Stop/Go |
+| 05-22 | no-vLLM saved-score VIG-lite（val）完成 | E | 1274 events / 80422 rows，missing step score=0，true_delta step_top1=1.0000；all-feature R2=0.4071、target AUROC=0.6021 |
+| 05-23 | train saved-score VIG-lite 与 train→val ranker eval 完成 | E | train 10065 events / 611439 rows，missing=0；train→val ridge_all Jaccard@5=0.3747 > hybrid 0.2294，但未超过 single_margin 0.3761 |
+| 05-23 | 原始 is_evidence top-5 verifier 对照完成 | D | hybrid 排序 test 0.2574/0.2351，original order test 0.2542/0.2271，均低于 fixed-MMR test 0.2702/0.2769 |
 | 05-21~22 | stance NLI / rule aspect / LLM decomp+ 前置诊断 | F | NLI / rule_aspect 均 stop；LLM decomp+ plain 重跑生成质量合格但 coverage No-Go，claim-aspect 主线关闭 |
 
 ## 3. 系统基础设施
@@ -229,7 +231,7 @@
 
 ---
 
-### 4.D Oracle Evidence Set 与 Verifier 校准（05-16 ~ 05-19）
+### 4.D Oracle Evidence Set 与 Verifier 校准（05-16 ~ 05-23）
 
 **动机**：Oracle λ 仍受 MMR greedy selection 约束；最优 evidence set 可能无法被任何单一 λ 的 MMR 选中。Oracle evidence set 直接回答"哪个 K-子集最好"。
 
@@ -299,7 +301,20 @@ true-side 未退化：mostly-true F1=0.3419、true F1=0.3298，为全部 6 类�
 
 sentence-level 高出 +7.85 pp。**主线转回 sentence-level oracle evidence supervision。**
 
-#### 4.D.4 Oracle sentence direct verifier 强阳性（05-19）
+#### 4.D.4 原始 is_evidence top-5 verifier 对照（05-23）
+
+两个同步 run 直接使用 LIAR-RAW `reports[].tokenized[].is_evidence=1` 的句子级标签，筛出 positive evidence 后取 top-5 渲染给 label-token CE verifier。两组差异只在 positive 句子的排序方式：一种按 hybrid_score，另一种保留原始 report / sentence order。
+
+| Run | 选择方式 | run id | best val accuracy / macro-F1 | test accuracy / macro-F1 | parse error |
+|---|---|---|---:|---:|---:|
+| `b3_raw_top_evidence_hybrid_1024_2gpu` | `is_evidence=1` + hybrid_score top-5 | `b594b0a63eb4` | 0.2188 / 0.1622 | 0.2574 / 0.2351 | 0 |
+| `b3_raw_top_evidence_original_order_1024_2gpu` | `is_evidence=1` + original order top-5 | `33d5ea2e8b3d` | 0.2305 / 0.2034 | 0.2542 / 0.2271 | 0 |
+
+两组配置均为 `raw_top_evidence`、`positive_only=true`、`pad_to_top_k=false`，因此不是每个样本都有 5 条 evidence。prompt stats 显示 train `no_evidence=3897/10065`，val `no_evidence=413/1274`；val mean evidence count 为 2.4537，且无 prompt truncation。
+
+阶段结论：原始 `is_evidence` 标签更接近人工 relevance / support 标注，不等价于 verifier 所需的 evidence utility。直接用这些 gold evidence 训练 verifier 的 test 指标低于 fixed-MMR baseline（0.2702/0.2769），因此只作为负向对照和研究动机，不进入后续 selector 主线。
+
+#### 4.D.5 Oracle sentence direct verifier 强阳性（05-19）
 
 [`202605192113_oracle_direct_verifier_result_and_next_plan.md`](202605192113_oracle_direct_verifier_result_and_next_plan.md) 直接把 sentence-level Stage2 oracle selected evidence 渲染成 verifier 训练样本（不训练 selector）：
 
@@ -313,7 +328,7 @@ sentence-level 高出 +7.85 pp。**主线转回 sentence-level oracle evidence s
 
 ---
 
-### 4.E Selector 实验 Step1-4（05-19 ~ 05-22）
+### 4.E Selector 实验 Step1-4（05-19 ~ 05-23）
 
 **动机**：Oracle sentence direct verifier 已验证 evidence supervision 可被吸收。下一步是训练 selector 模型在正式候选池中选出接近 oracle 质量的 evidence。
 
@@ -422,9 +437,9 @@ Step4.1-A 的 mask BCE 变体（mask02/mask05）均未超过 deep-only set metri
 
 阶段结论：full pipeline probe 没有推翻 Step4 No-Go。Sequential pointer 的排序能力确实优于 hybrid baseline，但 recall@5≈0.385 仍太低，且新增 evidence overlap 未稳定转化为 verifier 可用的判别信息。下一步仍应转向 verifier-aware utility、oracle-margin distillation 或 prefix-level evidence contribution，而不是直接进入 OPD/GRPO。
 
-#### 4.E.5 Step4.1-D VIG Utility Analysis（05-22，部分运行）
+#### 4.E.5 Step4.1-D no-vLLM saved-score VIG-lite（05-22 ~ 05-23）
 
-[`../implementation/202605221430_oracle_vig_utility_analysis.md`](../implementation/202605221430_oracle_vig_utility_analysis.md) 实现了 VIG（verifier information gain / verifier-induced gain）诊断链路。该实验不把 oracle selected evidence 直接当黑盒 imitation target，而是重新打分 oracle prefix 下的候选 evidence，把 verifier margin 变化拆成可审计信号：
+[`../implementation/202605221430_oracle_vig_utility_analysis.md`](../implementation/202605221430_oracle_vig_utility_analysis.md) 实现了 VIG（verifier information gain / verifier-induced gain）诊断链路。原始目标是不把 oracle selected evidence 直接当黑盒 imitation target，而是重新打分 oracle prefix 下的候选 evidence，把 verifier margin 变化拆成可审计信号：
 
 ```text
 prefix marginal utility:
@@ -435,18 +450,40 @@ contribution(i) = margin_verifier(claim, oracle_final_set)
                 - margin_verifier(claim, oracle_final_set without / replaced i)
 ```
 
-新增入口为 `scripts/selectors/generate_oracle_vig_cache.py`、`scripts/selectors/analyze_oracle_vig_utility.py` 和 `scripts/selectors/run_oracle_vig_utility_analysis.sh`。默认输出目录为 `outputs/selectors/vig_utility/stage2_margin_val/`；完整 val 预期覆盖 1274 条 claim，约 82810 条 prefix marginal rows 与 70070 条 final-set counterfactual rows。
+运行前提发生过一次关键调整：目标服务器的 Python/Torch/Transformers/PEFT/vLLM 版本和 LoRA hash 未变，但实时 vLLM `prompt_logprobs` / LoRA 路径重算的 margin 与旧 scorer 差异很大（1280 条样本上 mean_abs_margin_diff 约 0.052，pred_changed 约 155-173）。因此本轮不再把 exact replay 依赖在实时 vLLM 重新推理上，而是改用 **no-vLLM saved-score VIG-lite**：直接读取 Stage2 oracle 输出中的 `search_steps[*].candidate_scores`，离线计算每一步候选相对当前 prefix 的 saved-score utility。这个口径能验证 oracle greedy step utility 和可解释特征信号，但不做 final-set counterfactual，也不验证替换/删除 evidence 的实时反事实。
 
-当前只记录为**部分运行**：已有产物不是最终版本，不能作为 Stop/Go 指标。最终全量版本需要至少核查以下口径后再写结论：
+VIG-lite 的前置条件是 oracle JSONL 必须保存逐步候选分数。val 侧使用 `outputs/oracle_evidence/stage2_margin_val_20260518_111721/oracle_results_val.jsonl`；train 侧原 `stage2_margin_train_sharded` 不含 `candidate_scores`，因此重新用 sentence-level Stage2 margin oracle、`SAVE_SEARCH_STEP_SCORES=true`、`chunk_mmr_fingerprint=432dfc970e75` 跑 4 shard 并合并到 `outputs/oracle_evidence/stage2_margin_train_stepscores/oracle_results_train.jsonl`。合并后 train 覆盖 10065 条，`duplicate_event_ids=0`，`missing_step_score_maps=0`。
 
-| 诊断口径 | 作用 | 判定口径 |
-|---|---|---|
-| `true_delta_margin_oracle_probe` | 检查 VIG 重新打分是否复现 Stage2 oracle 的 greedy choice | `step_top1_match >= 0.90` 才能认为 cache / prompt / LoRA / max length 基本对齐 |
-| Delta decomposition | 区分 evidence 是提高 gold logprob、压低 best-wrong logprob，还是二者同时发生 | 汇总 `delta_margin / delta_gold_logprob / delta_best_wrong_logprob` 的 target-vs-nontarget 差异 |
-| Feature-group probe | 判断 retrieval、text_overlap、prefix_state、single_verifier 等可解释特征能否解释 oracle margin gain | `all_feature target AUROC >= 0.60`，且 step_top1_match 比 hybrid-rank baseline 高至少 3pp 才考虑 utility distillation |
-| Final-set counterfactual | 判断 greedy oracle final set 中是否存在有害、冗余或可替代 evidence | 重点看 `selected_harmful_final_rate` 与 `selected_replaceable_rate` |
+新增入口为 `scripts/selectors/generate_oracle_saved_step_utility.py`、`scripts/selectors/run_oracle_saved_step_utility_analysis.sh`、`scripts/selectors/eval_saved_score_utility_ranker.py` 和 `scripts/selectors/run_saved_score_utility_ranker_eval.sh`。
 
-阶段结论：VIG 是下一步 verifier-aware utility / oracle-margin distillation 的必要诊断，但目前还没有最终全量结果。当前不能据部分运行结果推进新 selector 训练，也不能把 partial cache 的指标写成最终结论；全量 VIG self-check 通过后，再决定是否进入 utility feature distillation。
+**VIG-lite cache 与 probe 结果：**
+
+| split | 输出目录 | oracle 输入 | events / rows | self-check | all-feature probe | single_margin baseline | 决策 |
+|---|---|---|---:|---|---|---|---|
+| val | `outputs/selectors/vig_utility/saved_step_val` | `stage2_margin_val_20260518_111721` | 1274 / 80422 | missing=0, target_rank_misses=0, true_delta AUROC=0.8280, step_top1=1.0000 | R2=0.4071, target AUROC=0.6021, step_top1=0.2589 | step_top1=0.3185 | `go_utility_feature_distillation` |
+| train | `outputs/selectors/vig_utility/saved_step_train` | `stage2_margin_train_stepscores` | 10065 / 611439 | missing=0, target_rank_misses=0, true_delta AUROC=0.8185, step_top1=1.0000 | R2=0.4547, target AUROC=0.6098, step_top1=0.2601 | step_top1=0.3270 | `go_utility_feature_distillation` |
+
+**特征组重要性（R2 drop）：**
+
+| split | single_verifier | prefix_state | text_overlap | retrieval |
+|---|---:|---:|---:|---:|
+| val | 0.7308 | 0.2385 | 0.0473 | 0.0170 |
+| train | 0.8286 | 0.3142 | 0.0378 | 0.0104 |
+
+解释：saved-score target 自检完全通过，说明 VIG-lite 的 delta 目标与 Stage2 oracle greedy choice 对齐；但可解释静态特征主要依赖 single-candidate verifier score 和 prefix_state，retrieval/text overlap 本身几乎不能解释 oracle utility。这也解释了为什么纯 hybrid_score、pairwise/listwise selector 很难直接逼近 oracle set。
+
+**saved-score utility-ranker eval：**
+
+| 评估 | train/eval events | 方法 | recall@5 | Jaccard@5 | top1 | NDCG@5 | exact@5 |
+|---|---:|---|---:|---:|---:|---:|---:|
+| val internal split | 956 / 318 | `hybrid_score_top5` | — | 0.2291 | 0.1101 | — | — |
+| val internal split | 956 / 318 | `ridge_all_step0_static` | 0.5170 | 0.3725 | 0.6667 | 0.7017 | 0.0126 |
+| val internal split | 956 / 318 | `single_margin_step0_static` | 0.5226 | 0.3767 | 1.0000 | 0.8122 | 0.0126 |
+| train→val | 10065 / 1274 | `hybrid_score_top5` | 0.3435 | 0.2294 | 0.1028 | 0.2872 | 0.0047 |
+| train→val | 10065 / 1274 | `ridge_all_step0_static` | 0.5201 | 0.3747 | 0.6923 | 0.7130 | 0.0071 |
+| train→val | 10065 / 1274 | `single_margin_step0_static` | 0.5224 | 0.3761 | 1.0000 | 0.8082 | 0.0102 |
+
+阶段结论：no-vLLM saved-score VIG-lite 已经完成 val 与 train 两次运行，且自检通过；它支持继续做 verifier-aware / prefix-aware utility distillation。与此同时，轻量 ridge static ranker 虽显著强于 hybrid_score（train→val Jaccard@5 0.3747 vs 0.2294），但仍没有超过 `single_margin_step0_static` teacher baseline（0.3761），更不能直接替代 oracle step scorer。下一步应把 train saved-step rows 作为监督，训练 prefix-aware utility model 或更强的 oracle-margin distillation；不应把当前 ridge/static feature probe 当作可直接落地的 selector，也不应在这个前提下直接进入 OPD/GRPO。
 
 ---
 
@@ -522,7 +559,7 @@ oracle set 在该 proxy 下反而比 hybrid top5 覆盖更低（0.8743 vs 0.8893
 
 1. **Evidence selection 是核心瓶颈**：从 classifier collapse 到 direct verifier 对照实验，一致指向 evidence quality/distribution 而非模型结构或损失函数。
 
-2. **Fixed λ=0.7 是强 baseline**（test accuracy=0.2702, macro-F1=0.2769），不应被视为容易击败的弱方法。
+2. **Fixed λ=0.7 是强 baseline**（test accuracy=0.2702, macro-F1=0.2769），不应被视为容易击败的弱方法。原始 `is_evidence` top-5 对照（0.2574/0.2351 与 0.2542/0.2271）低于该 baseline，说明 gold relevance label 不能直接替代 verifier utility。
 
 3. **Scalar λ 路线已充分探索并关闭**：oracle λ 证明 adaptive λ 有约 3pp 理论收益，但 hard predictor（$R^2 \approx 0.01$）、soft-label（退化）、DPO step-wise（4 轮全坍缩）均无法形成可用策略。`log(n_candidates)`（+0.0064）和 sensitivity-gated（+0.0040）仅保留为弱 baseline。
 
@@ -534,7 +571,7 @@ oracle set 在该 proxy 下反而比 hybrid top5 覆盖更低（0.8743 vs 0.8893
 
 7. **Step1-3 Selector 均 No-Go**：cross-encoder pairwise 和 listwise 都停在 recall@5≈0.38、Jaccard@5≈0.26，远低于 0.50/0.35 gate。
 
-8. **Step4 sequential pointer 改善 order 但 set 未突破**：top1_match 0.1664、recall@5=0.3852。full pipeline probe 中 sequential evidence 训练出的 verifier 达到 0.3132/0.3026，高于 hybrid_score_top5 的 0.2834/0.2878，但增益仍远小于 oracle evidence 上界。当前 priority 是 evidence utility 表示而非 exposure bias（OPD）；VIG 诊断已启动但仅部分运行，尚未形成最终 utility 结论。
+8. **Step4 sequential pointer 改善 order 但 set 未突破，VIG-lite 支持转向 utility distillation**：top1_match 0.1664、recall@5=0.3852。full pipeline probe 中 sequential evidence 训练出的 verifier 达到 0.3132/0.3026，高于 hybrid_score_top5 的 0.2834/0.2878，但增益仍远小于 oracle evidence 上界。no-vLLM saved-score VIG-lite 已完成 val/train 两次运行并通过 self-check（step_top1=1.0000），train→val `ridge_all_step0_static` Jaccard@5=0.3747 明显高于 hybrid 0.2294，但未超过 `single_margin_step0_static` 0.3761。当前 priority 是 prefix-aware utility distillation，而不是 exposure bias（OPD）或直接部署静态 ridge ranker。
 
 9. **Stance/aspect targeted features 全部 No-Go**：NLI stance 过度 neutral（AUROC=0.5090）；rule aspect coverage 信号接近随机（AUROC=0.4820）；LLM decomp+ plain 重跑生成质量合格但 coverage 仍 No-Go（AUROC=0.4730, oracle 覆盖率反低于 hybrid）。claim-aspect coverage 主线已关闭。
 
@@ -553,11 +590,12 @@ oracle set 在该 proxy 下反而比 hybrid top5 覆盖更低（0.8743 vs 0.8893
 | `log(n)` / sensitivity-gated | 保留弱 baseline | +0.004-0.006，不继续深挖 |
 | multi-weight MMR | 待定 | re-oracle 后再决定 |
 | Pointwise oracle selector (V1a/V1b) | 停止 | downstream test 低于 fixed-MMR；旧 gate 无效 |
+| Raw is_evidence top-5 verifier | 停止，仅作负向对照 | hybrid/original-order test 分别为 0.2574/0.2351 和 0.2542/0.2271，低于 fixed-MMR 0.2702/0.2769 |
 | Cross-encoder pairwise (Step1) | 停止 | 三组模型均未过 gate |
 | Set-aware listwise (Step3) | 停止 | 最好 recall@5=0.3826，未接近 0.50 gate |
 | Sequential pointer (Step4) | 停止当前结构，保留诊断价值 | order 改善且 full pipeline 略升，但 recall@5 仍低、macro-F1 转化有限 |
 | Step4.1-A mask BCE | 停止当前变体 | 未超过 deep-only set metrics |
-| Step4.1-D VIG utility analysis | 部分运行，待全量 | 诊断链路已实现；partial 产物不是最终版本，需先过 true-delta self-check 再做 utility distillation |
+| Step4.1-D no-vLLM saved-score VIG-lite | 完成诊断，进入 utility distillation 设计 | val/train self-check step_top1=1.0000；train→val ridge_all Jaccard@5=0.3747 > hybrid 0.2294，但未超过 single_margin teacher 0.3761 |
 | Stance NLI scalar | 暂停，先校准 | AUROC=0.5090，过度 neutral |
 | Rule-based aspect coverage | 停止，先 refine | AUROC=0.4820，负 lift |
 | LLM decomp+ aspect coverage | 停止 | plain 重跑生成质量合格，但 coverage 指标全部未过 gate（AUROC=0.4730，oracle 覆盖率反低于 hybrid）；claim-aspect 主线关闭 |
@@ -573,21 +611,22 @@ oracle set 在该 proxy 下反而比 hybrid top5 覆盖更低（0.8743 vs 0.8893
 ### 7.1 已完成里程碑
 
 - [x] Stage 1 label-token CE verifier 的 val 指标确认（accuracy 0.3006, macro_f1 0.3015）
-- [x] Stage 2 粒度决策（sentence > semantic，主线使用 `outputs/oracle_evidence/stage2_margin_train_sharded`）
+- [x] Stage 2 粒度决策（sentence > semantic；VIG-lite 训练监督使用 `outputs/oracle_evidence/stage2_margin_train_stepscores`）
 - [x] Oracle sentence evidence direct verifier（val accuracy 0.7111, macro-F1 0.7169）
 - [x] Oracle-direct verifier 的非 oracle evidence 对照（fixed-MMR 0.2716, pointwise 0.2637）
+- [x] 原始 is_evidence top-5 verifier 对照完成（hybrid/original-order 两种排序均低于 fixed-MMR test baseline）
 - [x] Step1 cross-encoder pairwise selector（三组模型 No-Go）
 - [x] Step3 set-aware listwise selector（No-Go）
 - [x] Step4 supervised sequential pointer selector（第一轮完成，order 改善但 set gate 未过）
 - [x] Selector trace full pipeline probe（sequential 0.3132/0.3026 > hybrid 0.2834/0.2878，但转化有限）
-- [x] VIG utility analysis 诊断链路实现（当前仅部分运行，最终指标待全量产物）
+- [x] no-vLLM saved-score VIG-lite val/train 两次运行完成（self-check 通过，train→val ranker eval 完成）
 - [x] LLM decomp+ full-val plain 重跑并给出最终结论（生成质量合格，coverage 全部 No-Go，claim-aspect 主线关闭）
 
 ### 7.2 当前活跃事项
 
-1. **[P0]** 完成 VIG utility analysis 全量运行并先核查 `true_delta_margin_oracle_probe` self-check。当前 partial 产物不是最终版本；只有 cache / prompt / LoRA / max length 与 Stage2 oracle 对齐后，才解释 feature-group probe 和 final-set counterfactual。
+1. **[P0]** 基于 `outputs/selectors/vig_utility/saved_step_train/vig_records_train.jsonl` 设计 prefix-aware utility distillation。当前 train saved-step rows 已覆盖 10065 events / 611439 rows，适合作为第一版训练监督；不要再优先消耗时间重跑 vLLM exact replay。
 
-2. **[P0]** 转向 verifier-aware utility 或 oracle-margin distillation 作为 selector 的监督信号。当前 claim-aspect coverage 主线已关闭（NLI/rule_aspect/LLM decomp+ 三者均 No-Go），应直接从 oracle 构造目标（margin objective）出发定义 evidence utility；VIG 全量结果是是否进入 utility distillation 的前置依据。
+2. **[P0]** 把 utility ranker 的目标从静态 ridge probe 升级为 prefix-aware / verifier-aware 模型。当前 claim-aspect coverage 主线已关闭（NLI/rule_aspect/LLM decomp+ 三者均 No-Go）；VIG-lite 证明 oracle margin utility 可读、可监督，但静态特征还不足以超过 `single_margin_step0_static` teacher baseline。
 
 3. **[P1]** 修正 eval metric 去重：`val_predictions.jsonl` / distributed gather 输出按唯一 `sample_idx` 去重后再算正式 eval 指标，避免 padding 样本影响 checkpoint 选择与报告口径。
 
@@ -649,6 +688,10 @@ oracle set 在该 proxy 下反而比 hybrid top5 覆盖更低（0.8743 vs 0.8893
 | `scripts/selectors/analyze_oracle_stance_distribution.py` | Stance/NLI 诊断 |
 | `scripts/selectors/analyze_oracle_aspect_coverage.py` | Aspect coverage 诊断 |
 | `scripts/selectors/generate_llm_claim_decomp_aspects.py` | LLM decomp+ aspect 生成 |
+| `scripts/selectors/generate_oracle_saved_step_utility.py` | no-vLLM saved-score VIG-lite cache 生成 |
+| `scripts/selectors/run_oracle_saved_step_utility_analysis.sh` | saved-score VIG-lite 生成与分析 wrapper |
+| `scripts/selectors/eval_saved_score_utility_ranker.py` | saved-score utility-ranker eval |
+| `scripts/selectors/run_saved_score_utility_ranker_eval.sh` | utility-ranker eval wrapper |
 
 ### Verifier Calibration
 
@@ -674,6 +717,8 @@ oracle set 在该 proxy 下反而比 hybrid top5 覆盖更低（0.8743 vs 0.8893
 | `configs/experiment/mmr_lambda_sweep.yaml` | MMR λ sweep |
 | `configs/experiment/mmr_sensitivity_gated.yaml` | Sensitivity-gated MMR |
 | `configs/experiment/mmr_dpo_step_lambda.yaml` | DPO step-wise λ |
+| `configs/experiment/b3_raw_top_evidence_hybrid_1024.yaml` | 原始 `is_evidence` positive 句子按 hybrid_score top-5 的 verifier 对照 |
+| `configs/experiment/b3_raw_top_evidence_original_order_1024.yaml` | 原始 `is_evidence` positive 句子按 report / sentence 原始顺序 top-5 的 verifier 对照 |
 | `configs/experiment/b3_cross_encoder_stage2_sentence_1024.yaml` | Cross-encoder selector build 配置 |
 | `configs/experiment/b3_listwise_stage2_sentence_1024.yaml` | Listwise selector build 配置 |
 | `configs/experiment/b3_sequential_stage2_sentence_1024.yaml` | Sequential selector build 配置 |
@@ -688,5 +733,5 @@ oracle set 在该 proxy 下反而比 hybrid top5 覆盖更低（0.8743 vs 0.8893
 | B. 分类器塌陷 | [`202605111212_classifier-collapse-analysis.md`](202605111212_classifier-collapse-analysis.md) |
 | C. MMR / Learned-λ | [`../implementation/202605111255_mmr-lambda-sweep-pipeline.md`](../implementation/202605111255_mmr-lambda-sweep-pipeline.md), [`202605112128_val_test_Mismatch.md`](202605112128_val_test_Mismatch.md), [`202605131520_val-test-f1-gap-diagnosis.md`](202605131520_val-test-f1-gap-diagnosis.md), [`../learned_lambda/`](../learned_lambda/) (3 篇), [`../implementation/202605141531_sensitivity-gated-mmr.md`](../implementation/202605141531_sensitivity-gated-mmr.md), [`../plan/202605141828_soft_label_policy.md`](../plan/202605141828_soft_label_policy.md), [`202605141045_RL_MMR_research_review.md`](202605141045_RL_MMR_research_review.md), [`202605151453_RL_MMR_direction_summary.md`](202605151453_RL_MMR_direction_summary.md), 以及 `../plan/` 下的 RL-MMR / DPO 计划 (6 篇) |
 | D. Oracle Evidence Set + Verifier 校准 | [`../plan/202605161147_oracle_evidence_selection.md`](../plan/202605161147_oracle_evidence_selection.md), [`202605161449_oracle_set_gap_analysis.md`](202605161449_oracle_set_gap_analysis.md), [`202605161516_oracle_set_supervision_next_steps.md`](202605161516_oracle_set_supervision_next_steps.md), [`../implementation/202605171203_oracle_pointwise_supervision_v1.md`](../implementation/202605171203_oracle_pointwise_supervision_v1.md), [`../implementation/202605180045_pointwise_v1b_true_side_anchor.md`](../implementation/202605180045_pointwise_v1b_true_side_anchor.md), [`../plan/202605180118_oracle_calibration_reoracle_four_stage_plan.md`](../plan/202605180118_oracle_calibration_reoracle_four_stage_plan.md), [`../implementation/202605180118_label_token_ce_verifier_stage1.md`](../implementation/202605180118_label_token_ce_verifier_stage1.md), [`../implementation/202605181113_calibration_aware_reoracle_stage2.md`](../implementation/202605181113_calibration_aware_reoracle_stage2.md), [`202605191945_sentence_vs_semantic_stage2_oracle_decision.md`](202605191945_sentence_vs_semantic_stage2_oracle_decision.md), [`../implementation/202605192010_oracle_sentence_direct_verifier.md`](../implementation/202605192010_oracle_sentence_direct_verifier.md), [`202605192113_oracle_direct_verifier_result_and_next_plan.md`](202605192113_oracle_direct_verifier_result_and_next_plan.md), [`202605192141_oracle_direct_val_evidence_checks.md`](202605192141_oracle_direct_val_evidence_checks.md) |
-| E. Selector Step1-4 | [`../plan/202605192148_new_selector_model_research_brief.md`](../plan/202605192148_new_selector_model_research_brief.md), [`202605200004_oracle_direct_order_sensitivity.md`](202605200004_oracle_direct_order_sensitivity.md), [`202605200216_selector_experiment_plan_and_literature_review.md`](202605200216_selector_experiment_plan_and_literature_review.md), [`../implementation/202605201045_cross_encoder_pairwise_selector_step1.md`](../implementation/202605201045_cross_encoder_pairwise_selector_step1.md), [`../implementation/202605201519_set_aware_listwise_selector_step3.md`](../implementation/202605201519_set_aware_listwise_selector_step3.md), [`../implementation/202605202008_sequential_pointer_selector_step4_plan.md`](../implementation/202605202008_sequential_pointer_selector_step4_plan.md), [`../implementation/202605202145_sequential_pointer_selector_step4.md`](../implementation/202605202145_sequential_pointer_selector_step4.md), [`202605212200_sequential_selector_architecture_notes.md`](202605212200_sequential_selector_architecture_notes.md) |
+| E. Selector Step1-4 | [`../plan/202605192148_new_selector_model_research_brief.md`](../plan/202605192148_new_selector_model_research_brief.md), [`202605200004_oracle_direct_order_sensitivity.md`](202605200004_oracle_direct_order_sensitivity.md), [`202605200216_selector_experiment_plan_and_literature_review.md`](202605200216_selector_experiment_plan_and_literature_review.md), [`../implementation/202605201045_cross_encoder_pairwise_selector_step1.md`](../implementation/202605201045_cross_encoder_pairwise_selector_step1.md), [`../implementation/202605201519_set_aware_listwise_selector_step3.md`](../implementation/202605201519_set_aware_listwise_selector_step3.md), [`../implementation/202605202008_sequential_pointer_selector_step4_plan.md`](../implementation/202605202008_sequential_pointer_selector_step4_plan.md), [`../implementation/202605202145_sequential_pointer_selector_step4.md`](../implementation/202605202145_sequential_pointer_selector_step4.md), [`202605212200_sequential_selector_architecture_notes.md`](202605212200_sequential_selector_architecture_notes.md), [`../implementation/202605221430_oracle_vig_utility_analysis.md`](../implementation/202605221430_oracle_vig_utility_analysis.md) |
 | F. Targeted Feature 诊断 | [`../implementation/202605212330_oracle_stance_nli_diagnostic.md`](../implementation/202605212330_oracle_stance_nli_diagnostic.md), [`../implementation/202605212350_oracle_aspect_coverage_diagnostic.md`](../implementation/202605212350_oracle_aspect_coverage_diagnostic.md), [`../implementation/202605212359_llm_decomp_plus_aspect_coverage.md`](../implementation/202605212359_llm_decomp_plus_aspect_coverage.md) |
