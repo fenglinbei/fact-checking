@@ -14,7 +14,7 @@ for arg in "${@}"; do
     esac
 done
 
-SRC="outputs/oracle_evidence"
+SRC="outputs/selectors"
 
 EXCLUDES=()
 if [ "$ALL" != true ]; then
