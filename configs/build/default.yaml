@@ -15,7 +15,7 @@ build:
     alpha_lexical: 0.20
     alpha_bm25: 0.10
     mmr_lambda: 0.70
-    selection_method: mmr          # mmr | reranker
+    selection_method: mmr          # mmr | reranker | raw_top_evidence
     reranker:
       model_name: /data/models/Qwen3-Reranker-0.6B/
       device: cuda

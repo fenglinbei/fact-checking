@@ -93,6 +93,26 @@ def minmax_scale(values: np.ndarray) -> np.ndarray:
     return (values - vmin) / (vmax - vmin)
 
 
+def _sentence_reader_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    data_cfg = dict(cfg.get("data", {}) or {})
+    retrieval_cfg = dict(cfg.get("retrieval", {}) or {})
+    selection_method = str(retrieval_cfg.get("selection_method", "mmr")).strip().lower()
+    source = str(data_cfg.get("sentence_source") or data_cfg.get("source") or "").strip().lower()
+    if not source:
+        source = "tokenized" if selection_method in {"raw_top_evidence", "raw_label_topk", "raw_evidence"} else "content"
+    return {
+        "sentence_source": source,
+        "sentence_min_char_len": int(data_cfg.get("sentence_min_char_len", data_cfg.get("min_char_len", 10))),
+    }
+
+
+def _sentence_reader_fingerprint_payload(cfg: dict[str, Any]) -> dict[str, Any] | None:
+    reader = _sentence_reader_config(cfg)
+    if reader == {"sentence_source": "content", "sentence_min_char_len": 10}:
+        return None
+    return reader
+
+
 # ---------------------------------------------------------------------------
 # Pre-MMR cache helpers
 # ---------------------------------------------------------------------------
@@ -112,6 +132,9 @@ def _premmr_config_fingerprint(cfg: dict[str, Any]) -> str:
         "data": cfg.get("data", {}),
         "retrieval": retrieval,
     }
+    sentence_reader = _sentence_reader_fingerprint_payload(cfg)
+    if sentence_reader is not None:
+        payload["sentence_reader"] = sentence_reader
     return fingerprint(payload)
 
 
@@ -131,6 +154,9 @@ def _chunk_mmr_config_fingerprint(cfg: dict[str, Any]) -> str:
         "retrieval": retrieval,
         "chunking": retrieval_cfg.get("chunking", {}),
     }
+    sentence_reader = _sentence_reader_fingerprint_payload(cfg)
+    if sentence_reader is not None:
+        payload["sentence_reader"] = sentence_reader
     return fingerprint(payload)
 
 
@@ -198,6 +224,19 @@ def _can_reuse_chunk_embeddings(strategy: ChunkingStrategy, retrieval_cfg: dict[
     )
 
 
+def _visible_gpu_for_worker(gpu_id: int, run_summary: dict[str, Any]) -> str:
+    visible = str(run_summary.get("cuda_visible_devices") or "").strip()
+    if not visible:
+        return str(gpu_id)
+    devices = [part.strip() for part in visible.split(",") if part.strip()]
+    if gpu_id >= len(devices):
+        raise ValueError(
+            f"Requested worker gpu_id={gpu_id}, but cuda_visible_devices={visible!r} "
+            f"only exposes {len(devices)} device(s)."
+        )
+    return devices[gpu_id]
+
+
 def _chunk_embeddings_by_content(
     sents: list,
     sent_emb: np.ndarray,
@@ -224,9 +263,16 @@ def build_candidates_for_sample(
     mmr_lambda: float,
     chunking_strategy: ChunkingStrategy | None = None,
     reuse_chunk_embeddings: bool = False,
+    sentence_source: str = "content",
+    sentence_min_char_len: int = 10,
 ) -> dict[str, Any]:
     strategy = chunking_strategy if chunking_strategy is not None else SentenceChunking()
-    pre_sample = _compute_pre_mmr_batch([sample], embedder)[0]
+    pre_sample = _compute_pre_mmr_batch(
+        [sample],
+        embedder,
+        sentence_source=sentence_source,
+        sentence_min_char_len=sentence_min_char_len,
+    )[0]
     chunk_sample = _compute_chunk_mmr_batch(
         [pre_sample],
         embedder=embedder,
@@ -249,6 +295,22 @@ def _source_report(sent) -> dict[str, Any]:
         "link": sent.link,
         "domain": sent.domain,
     }
+
+
+def _raw_sentence_candidate_metadata(sent) -> dict[str, Any]:
+    raw = sent.raw if isinstance(sent.raw, dict) else {}
+    metadata: dict[str, Any] = {}
+    if "raw_is_evidence" in raw:
+        metadata["raw_is_evidence"] = bool(raw.get("raw_is_evidence"))
+    if "raw_evidence_label" in raw:
+        metadata["raw_evidence_label"] = raw.get("raw_evidence_label")
+    if "raw_report_order" in raw:
+        metadata["raw_report_order"] = int(raw.get("raw_report_order", 0))
+    if "raw_sent_order" in raw:
+        metadata["raw_sent_order"] = int(raw.get("raw_sent_order", sent.sent_idx))
+    if "raw_sentence_source" in raw:
+        metadata["raw_sentence_source"] = str(raw.get("raw_sentence_source") or "")
+    return metadata
 
 
 def _build_chunk_candidate_rows(
@@ -298,6 +360,7 @@ def _build_chunk_candidate_rows(
                     "chunk_sent_indices": list(chunk.sent_indices),
                     "text": text,
                     "source_report": _source_report(anchor),
+                    **_raw_sentence_candidate_metadata(anchor),
                 }
             )
 
@@ -312,6 +375,7 @@ def _build_chunk_candidate_rows(
                 "chunk_sent_indices": [int(sent.sent_idx)],
                 "text": text,
                 "source_report": _source_report(sent),
+                **_raw_sentence_candidate_metadata(sent),
             }
         )
 
@@ -526,6 +590,154 @@ def _select_candidates_reranker(
     }
 
 
+def _candidate_raw_order(candidate: dict[str, Any]) -> tuple[int, int, str, int]:
+    return (
+        int(candidate.get("raw_report_order", 0)),
+        int(candidate.get("raw_sent_order", candidate.get("sent_idx", 0))),
+        str(candidate.get("report_id", "")),
+        int(candidate.get("sent_idx", 0)),
+    )
+
+
+def _select_candidates_raw_top_evidence(
+    sample: ChunkMMRSample,
+    top_k: int,
+    alpha_dense: float,
+    alpha_lexical: float,
+    alpha_bm25: float,
+    method: str = "hybrid_topk",
+    positive_only: bool = True,
+    pad_to_top_k: bool = False,
+) -> dict[str, Any]:
+    scored = compute_hybrid_scores(sample, alpha_dense, alpha_lexical, alpha_bm25)
+    n = int(scored["n"])
+    base = {
+        "event_id": sample.event_id,
+        "claim": sample.claim,
+        "label": sample.label,
+        "explain": sample.explain,
+        "raw_top_method": method,
+        "raw_candidate_count": n,
+        "raw_positive_count": 0,
+        "raw_selected_positive_count": 0,
+        "selection_method": "raw_top_evidence",
+    }
+    if n == 0:
+        return {**base, "candidates": []}
+
+    dense_scores = scored["dense_scores"]
+    lexical_scores = scored["lexical_scores"]
+    bm25_scores = scored["bm25_scores"]
+    hybrid_scores = scored["hybrid_scores"]
+    method = str(method or "hybrid_topk").strip().lower()
+    if method not in {"hybrid_topk", "hybrid", "original_order", "order"}:
+        raise ValueError(
+            "build.retrieval.raw_top_evidence.method must be one of "
+            "hybrid_topk or original_order."
+        )
+
+    enriched: list[dict[str, Any]] = []
+    for idx, candidate_raw in enumerate(sample.candidates[:n]):
+        candidate = dict(candidate_raw)
+        candidate.update({
+            "dense_score": float(dense_scores[idx]),
+            "lexical_score": float(lexical_scores[idx]),
+            "bm25_score": float(bm25_scores[idx]),
+            "hybrid_score": float(hybrid_scores[idx]),
+            "source_candidate_index": int(idx),
+            "raw_is_evidence": bool(candidate.get("raw_is_evidence", False)),
+            "selection_method": "raw_top_evidence",
+            "raw_top_method": method,
+        })
+        enriched.append(candidate)
+
+    positives = [candidate for candidate in enriched if bool(candidate.get("raw_is_evidence", False))]
+    pool = positives if positive_only else list(enriched)
+
+    def _sort_key(candidate: dict[str, Any]):
+        if method in {"original_order", "order"}:
+            return _candidate_raw_order(candidate)
+        order = _candidate_raw_order(candidate)
+        return (-float(candidate.get("hybrid_score", 0.0)), order[0], order[1], order[2], order[3])
+
+    ranked = sorted(pool, key=_sort_key)
+
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _append_until_full(candidates: list[dict[str, Any]]) -> None:
+        for candidate in candidates:
+            if len(selected) >= top_k:
+                return
+            key = canonicalize_sentence(str(candidate.get("text", "")))
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            selected.append(dict(candidate))
+
+    _append_until_full(ranked)
+
+    if pad_to_top_k and len(selected) < top_k:
+        selected_source_indices = {int(c.get("source_candidate_index", -1)) for c in selected}
+        fillers = [
+            candidate
+            for candidate in sorted(enriched, key=_sort_key)
+            if int(candidate.get("source_candidate_index", -1)) not in selected_source_indices
+        ]
+        _append_until_full(fillers)
+
+    for raw_rank, candidate in enumerate(selected, start=1):
+        candidate["raw_rank"] = raw_rank
+
+    return {
+        **base,
+        "raw_top_method": method,
+        "raw_positive_count": len(positives),
+        "raw_selected_positive_count": sum(1 for candidate in selected if candidate.get("raw_is_evidence")),
+        "candidates": selected,
+    }
+
+
+def _raw_top_evidence_phase_from_chunk_cache(
+    chunk_samples: list[ChunkMMRSample],
+    top_k: int,
+    alpha_dense: float,
+    alpha_lexical: float,
+    alpha_bm25: float,
+    raw_top_cfg: dict[str, Any],
+    tokenizer,
+    prompt_cfg: dict[str, Any],
+    output_path: Path,
+    show_progress: bool = False,
+    progress_desc: str | None = None,
+) -> None:
+    method = str(raw_top_cfg.get("method", "hybrid_topk")).strip().lower()
+    positive_only = bool(raw_top_cfg.get("positive_only", True))
+    pad_to_top_k = bool(raw_top_cfg.get("pad_to_top_k", False))
+
+    with output_path.open("w", encoding="utf-8") as writer:
+        for sample in tqdm(
+            chunk_samples,
+            desc=progress_desc or f"Raw top evidence [{method}]",
+            unit="sample",
+            dynamic_ncols=True,
+            disable=not show_progress,
+        ):
+            row = _select_candidates_raw_top_evidence(
+                sample,
+                top_k=top_k,
+                alpha_dense=alpha_dense,
+                alpha_lexical=alpha_lexical,
+                alpha_bm25=alpha_bm25,
+                method=method,
+                positive_only=positive_only,
+                pad_to_top_k=pad_to_top_k,
+            )
+            training_row = _build_training_row(row, tokenizer, prompt_cfg)
+            writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
+
+
 def _build_candidates_batch(
     samples: list,
     embedder: TextEmbedder,
@@ -537,10 +749,17 @@ def _build_candidates_batch(
     chunking_strategy: ChunkingStrategy | None = None,
     cpu_workers: int = 1,
     reuse_chunk_embeddings: bool = False,
+    sentence_source: str = "content",
+    sentence_min_char_len: int = 10,
 ) -> list[dict[str, Any]]:
     """Build candidates for multiple samples with batched embeddings."""
     strategy = chunking_strategy if chunking_strategy is not None else SentenceChunking()
-    pre_samples = _compute_pre_mmr_batch(samples, embedder)
+    pre_samples = _compute_pre_mmr_batch(
+        samples,
+        embedder,
+        sentence_source=sentence_source,
+        sentence_min_char_len=sentence_min_char_len,
+    )
     chunk_samples = _compute_chunk_mmr_batch(
         pre_samples,
         embedder=embedder,
@@ -576,7 +795,7 @@ def _build_worker(
     output_path: Path,
 ) -> None:
     """Load split data, process the slice for this GPU, and write results (runs in a child process)."""
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    os.environ["CUDA_VISIBLE_DEVICES"] = _visible_gpu_for_worker(gpu_id, run_summary)
     os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
     samples = load_split(data_cfg[f"{split_name}_path"])
@@ -630,6 +849,8 @@ def _build_worker(
                     chunking_strategy=chunking_strategy,
                     cpu_workers=cpu_workers,
                     reuse_chunk_embeddings=reuse_chunk_embeddings,
+                    sentence_source=str(run_summary.get("sentence_source", "content")),
+                    sentence_min_char_len=int(run_summary.get("sentence_min_char_len", 10)),
                 )
                 for row in rows:
                     training_row = _build_training_row(row, tokenizer, prompt_cfg)
@@ -647,6 +868,8 @@ def _build_worker(
                     mmr_lambda=run_summary["mmr_lambda"],
                     chunking_strategy=chunking_strategy,
                     reuse_chunk_embeddings=reuse_chunk_embeddings,
+                    sentence_source=str(run_summary.get("sentence_source", "content")),
+                    sentence_min_char_len=int(run_summary.get("sentence_min_char_len", 10)),
                 )
                 training_row = _build_training_row(row, tokenizer, prompt_cfg)
                 writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
@@ -828,6 +1051,22 @@ def _build_target(row: dict, gold_label: str, output_mode: str, label_format: st
     return f"Label: {target_label}"
 
 
+_OPTIONAL_BUILD_ROW_KEYS = (
+    "selection_method",
+    "raw_top_method",
+    "raw_candidate_count",
+    "raw_positive_count",
+    "raw_selected_positive_count",
+)
+
+
+def _copy_optional_build_row_metadata(output: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+    for key in _OPTIONAL_BUILD_ROW_KEYS:
+        if key in row:
+            output[key] = row[key]
+    return output
+
+
 def _auto_truncate_evidence(
     *,
     claim: str,
@@ -905,10 +1144,13 @@ def _build_training_row(
     row = retrieval_result
     gold_label = normalize_gold_label(row)
     if not gold_label:
-        return {**row, "gold_label": "", "gold_id": -1, "gold_explain": "",
-                "prompt": "", "target": "", "prompt_add_special_tokens": False,
-                "preserve_prompt_prefix": True, "prompt_token_count": 0,
-                "target_token_count": 0, "evidence_count": 0, "was_truncated": False}
+        return _copy_optional_build_row_metadata(
+            {**row, "gold_label": "", "gold_id": -1, "gold_explain": "",
+             "prompt": "", "target": "", "prompt_add_special_tokens": False,
+             "preserve_prompt_prefix": True, "prompt_token_count": 0,
+             "target_token_count": 0, "evidence_count": 0, "was_truncated": False},
+            row,
+        )
 
     candidates = row.get("candidates", [])
     evidence_texts = [str(c.get("text", "")).strip() for c in candidates if isinstance(c, dict)]
@@ -931,7 +1173,7 @@ def _build_training_row(
             gold_label=gold_label,
             label_format=label_format,
         )
-        return {
+        return _copy_optional_build_row_metadata({
             "event_id": row.get("event_id", ""),
             "claim": row.get("claim", ""),
             "label": row.get("label", ""),
@@ -950,7 +1192,7 @@ def _build_training_row(
             "evidence_count_before": result["evidence_count_before"],
             "was_truncated": result["was_truncated"],
             "evidence_text_truncated": result["evidence_text_truncated"],
-        }
+        }, row)
 
     # auto_length disabled: build prompt without truncation
     system_msg = _build_system_message(system_prompt)
@@ -961,7 +1203,7 @@ def _build_training_row(
     prompt_token_count = _count_tokens(prompt, tokenizer, add_special_tokens=False)
     no_evidence = len(evidence_texts) == 0
 
-    return {
+    return _copy_optional_build_row_metadata({
         "event_id": row.get("event_id", ""),
         "claim": row.get("claim", ""),
         "label": row.get("label", ""),
@@ -978,7 +1220,7 @@ def _build_training_row(
         "target_token_count": target_token_count,
         "evidence_count": len(evidence_texts),
         "was_truncated": False,
-    }
+    }, row)
 
 
 # ---------------------------------------------------------------------------
@@ -989,6 +1231,8 @@ def _build_training_row(
 def _compute_pre_mmr_batch(
     samples: list,
     embedder: TextEmbedder,
+    sentence_source: str = "content",
+    sentence_min_char_len: int = 10,
 ) -> list[PreMMRSample]:
     """Batch-embed all sentences and claims; return PreMMRSample list.
 
@@ -1000,7 +1244,13 @@ def _compute_pre_mmr_batch(
     per_sample: list[tuple[list, list[str]]] = []
 
     for sample in samples:
-        sents = list(iter_sentences(sample))
+        sents = list(
+            iter_sentences(
+                sample,
+                min_char_len=sentence_min_char_len,
+                source=sentence_source,
+            )
+        )
         if not sents:
             sample_boundaries.append((0, 0))
             claims.append(sample.claim)
@@ -1047,7 +1297,7 @@ def _premmr_worker(
     output_path: Path,
 ) -> None:
     """GPU worker: embed its chunk of the split, write PreMMRSample pickle."""
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    os.environ["CUDA_VISIBLE_DEVICES"] = _visible_gpu_for_worker(gpu_id, run_summary)
     os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
     samples = load_split(data_cfg[f"{split_name}_path"])
@@ -1069,17 +1319,33 @@ def _premmr_worker(
     )
 
     prefetch_size = run_summary["prefetch_size"]
+    sentence_source = str(run_summary.get("sentence_source", "content"))
+    sentence_min_char_len = int(run_summary.get("sentence_min_char_len", 10))
     results: list[PreMMRSample] = []
     if prefetch_size > 1:
         for start in tqdm(range(0, len(samples_chunk), prefetch_size),
                           desc=f"PreMMR [{split_name}] GPU {gpu_id}",
                           unit="batch"):
             batch = samples_chunk[start : start + prefetch_size]
-            results.extend(_compute_pre_mmr_batch(batch, embedder))
+            results.extend(
+                _compute_pre_mmr_batch(
+                    batch,
+                    embedder,
+                    sentence_source=sentence_source,
+                    sentence_min_char_len=sentence_min_char_len,
+                )
+            )
     else:
         for sample in tqdm(samples_chunk,
                            desc=f"PreMMR [{split_name}] GPU {gpu_id}"):
-            results.extend(_compute_pre_mmr_batch([sample], embedder))
+            results.extend(
+                _compute_pre_mmr_batch(
+                    [sample],
+                    embedder,
+                    sentence_source=sentence_source,
+                    sentence_min_char_len=sentence_min_char_len,
+                )
+            )
 
     _save_pickle_atomic(output_path, results)
 
@@ -1133,16 +1399,32 @@ def _compute_pre_mmr_split(
         )
         samples = load_split(data_cfg[f"{split_name}_path"])
         prefetch_size = run_summary["prefetch_size"]
+        sentence_source = str(run_summary.get("sentence_source", "content"))
+        sentence_min_char_len = int(run_summary.get("sentence_min_char_len", 10))
         results: list[PreMMRSample] = []
         if prefetch_size > 1:
             for start in tqdm(range(0, len(samples), prefetch_size),
                               desc=f"PreMMR [{split_name}]",
                               unit="batch"):
                 batch = samples[start : start + prefetch_size]
-                results.extend(_compute_pre_mmr_batch(batch, embedder))
+                results.extend(
+                    _compute_pre_mmr_batch(
+                        batch,
+                        embedder,
+                        sentence_source=sentence_source,
+                        sentence_min_char_len=sentence_min_char_len,
+                    )
+                )
         else:
             for sample in tqdm(samples, desc=f"PreMMR [{split_name}]"):
-                results.extend(_compute_pre_mmr_batch([sample], embedder))
+                results.extend(
+                    _compute_pre_mmr_batch(
+                        [sample],
+                        embedder,
+                        sentence_source=sentence_source,
+                        sentence_min_char_len=sentence_min_char_len,
+                    )
+                )
         _save_pickle_atomic(cache_path, results)
 
     return cache_path
@@ -1161,7 +1443,7 @@ def _chunk_mmr_worker(
     output_path: Path,
 ) -> None:
     """GPU worker: build chunk candidates, re-embed chunk texts, write ChunkMMRSamples."""
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    os.environ["CUDA_VISIBLE_DEVICES"] = _visible_gpu_for_worker(gpu_id, run_summary)
     os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
     if not pre_samples:
@@ -1366,6 +1648,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
     target_dir.mkdir(parents=True, exist_ok=True)
 
     num_gpus = int(retrieval_cfg.get("num_gpus", 1))
+    sentence_reader_cfg = _sentence_reader_config(cfg)
     run_summary = {
         "output_dir": str(target_dir),
         "embedder_model": retrieval_cfg["embedder_model"],
@@ -1382,6 +1665,9 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         "cpu_workers": int(retrieval_cfg.get("cpu_workers", 1)),
         "num_gpus": num_gpus,
         "selection_method": str(retrieval_cfg.get("selection_method", "mmr")).strip().lower(),
+        "cuda_visible_devices": str(retrieval_cfg.get("cuda_visible_devices", "") or ""),
+        "sentence_source": sentence_reader_cfg["sentence_source"],
+        "sentence_min_char_len": sentence_reader_cfg["sentence_min_char_len"],
         # Prompt config for workers
         "prompt_model_name_or_path": str(prompt_cfg.get("model_name_or_path", "")),
         "prompt_auto_length": bool(prompt_cfg.get("auto_length", True)),
@@ -1407,6 +1693,9 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         "prefetch_size": run_summary["prefetch_size"],
         "num_gpus": num_gpus,
         "device": run_summary["device"],
+        "cuda_visible_devices": run_summary["cuda_visible_devices"],
+        "sentence_source": run_summary["sentence_source"],
+        "sentence_min_char_len": run_summary["sentence_min_char_len"],
     }
 
     pre_mmr_split_paths: dict[str, Path] = {}
@@ -1433,6 +1722,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         "prefetch_size": run_summary["prefetch_size"],
         "num_gpus": num_gpus,
         "device": run_summary["device"],
+        "cuda_visible_devices": run_summary["cuda_visible_devices"],
     }
     chunk_mmr_split_paths: dict[str, Path] = {}
     for split_name in split_names:
@@ -1610,6 +1900,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
     learned_lambda_cfg = retrieval_cfg.get("learned_lambda", {}) or {}
     use_learned_lambda = bool(learned_lambda_cfg.get("enabled", False))
     learned_lambda_mode = str(learned_lambda_cfg.get("mode", "predictor")).strip().lower()
+    raw_top_cfg = dict(retrieval_cfg.get("raw_top_evidence", {}) or {})
 
     for split_name in split_names:
         chunk_samples = _load_pickle(chunk_mmr_split_paths[split_name])
@@ -1625,6 +1916,25 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                 output_path=output_path,
                 show_progress=True,
                 progress_desc=f"Reranker [{split_name}]",
+            )
+        elif selection_method in {"raw_top_evidence", "raw_label_topk", "raw_evidence"}:
+            if run_summary["sentence_source"] not in {"tokenized", "raw_tokenized", "raw"}:
+                raise ValueError(
+                    "build.retrieval.selection_method=raw_top_evidence requires "
+                    "build.data.sentence_source=tokenized."
+                )
+            _raw_top_evidence_phase_from_chunk_cache(
+                chunk_samples=chunk_samples,
+                top_k=run_summary["top_k"],
+                alpha_dense=run_summary["alpha_dense"],
+                alpha_lexical=run_summary["alpha_lexical"],
+                alpha_bm25=run_summary["alpha_bm25"],
+                raw_top_cfg=raw_top_cfg,
+                tokenizer=tokenizer,
+                prompt_cfg=prompt_cfg_local,
+                output_path=output_path,
+                show_progress=True,
+                progress_desc=f"Raw top evidence [{split_name}]",
             )
         elif selection_method in {"pointwise_oracle", "oracle_pointwise", "pointwise"}:
             from fact_checking.oracle_pointwise import select_candidates_pointwise_oracle

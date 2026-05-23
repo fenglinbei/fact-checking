@@ -6,13 +6,17 @@ import numpy as np
 
 from fact_checking.build.chunking import ChunkRecord, ChunkingStrategy
 from fact_checking.build.candidates import (
+    ChunkMMRSample,
     PreMMRSample,
     _auto_truncate_evidence,
     _chunk_mmr_config_fingerprint,
     _compute_chunk_mmr_batch,
     _premmr_config_fingerprint,
     _select_candidates_from_chunk_sample,
+    _select_candidates_raw_top_evidence,
 )
+from fact_checking.data.io import iter_sentences
+from fact_checking.data.types import SampleRecord
 
 
 class _FakeTokenizer:
@@ -148,6 +152,56 @@ def test_chunk_mmr_fingerprint_tracks_chunking_not_topk() -> None:
     assert _chunk_mmr_config_fingerprint(base) != _chunk_mmr_config_fingerprint(changed_chunking)
 
 
+def test_premmr_fingerprint_tracks_sentence_source() -> None:
+    base = _base_build_cfg()
+    changed = deepcopy(base)
+    changed["data"]["sentence_source"] = "tokenized"
+
+    assert _premmr_config_fingerprint(base) != _premmr_config_fingerprint(changed)
+
+
+def test_iter_sentences_can_read_tokenized_raw_evidence_labels() -> None:
+    sample = SampleRecord(
+        event_id="e1",
+        claim="claim",
+        label="true",
+        explain="",
+        reports=[
+            {
+                "report_id": "r1",
+                "link": "https://example.com",
+                "domain": "example.com",
+                "content": "Unused content.",
+                "tokenized": [
+                    {"sent": "too short", "is_evidence": 1},
+                    {"sent": "First positive evidence sentence.", "is_evidence": 1},
+                    {"sent": "Second negative sentence.", "is_evidence": 0},
+                ],
+            },
+            {
+                "report_id": "r2",
+                "tokenized": [
+                    {"sent": "Third positive evidence sentence.", "is_evidence": "true"},
+                ],
+            },
+        ],
+    )
+
+    rows = list(iter_sentences(sample, min_char_len=10, source="tokenized"))
+
+    assert [row.text for row in rows] == [
+        "First positive evidence sentence.",
+        "Second negative sentence.",
+        "Third positive evidence sentence.",
+    ]
+    assert [row.raw["raw_is_evidence"] for row in rows] == [True, False, True]
+    assert [(row.raw["raw_report_order"], row.raw["raw_sent_order"]) for row in rows] == [
+        (0, 1),
+        (0, 2),
+        (1, 0),
+    ]
+
+
 class _PairFirstTwoChunking(ChunkingStrategy):
     def chunk(self, content: str, sent_idx: int) -> str:
         del content, sent_idx
@@ -213,6 +267,105 @@ def test_mmr_selects_over_reembedded_chunks_not_pre_chunk_sentences() -> None:
 
     assert embedder.calls == [(("Alpha. Beta.", "Gamma."), False)]
     assert [candidate["text"] for candidate in row["candidates"]] == ["Alpha. Beta.", "Gamma."]
+
+
+def test_raw_top_evidence_hybrid_uses_only_positive_labels_without_padding() -> None:
+    sample = ChunkMMRSample(
+        event_id="e1",
+        claim="alpha",
+        label="true",
+        explain="",
+        candidates=[
+            {"text": "low positive", "report_id": "r1", "sent_idx": 0, "raw_is_evidence": True},
+            {"text": "high negative", "report_id": "r1", "sent_idx": 1, "raw_is_evidence": False},
+            {"text": "high positive", "report_id": "r1", "sent_idx": 2, "raw_is_evidence": True},
+        ],
+        chunk_emb=np.array(
+            [
+                [0.2, 0.0],
+                [1.0, 0.0],
+                [0.8, 0.0],
+            ],
+            dtype=np.float32,
+        ),
+        claim_emb=np.array([1.0, 0.0], dtype=np.float32),
+    )
+
+    row = _select_candidates_raw_top_evidence(
+        sample,
+        top_k=5,
+        alpha_dense=1.0,
+        alpha_lexical=0.0,
+        alpha_bm25=0.0,
+        method="hybrid_topk",
+        positive_only=True,
+        pad_to_top_k=False,
+    )
+
+    assert row["raw_positive_count"] == 2
+    assert row["raw_selected_positive_count"] == 2
+    assert [candidate["text"] for candidate in row["candidates"]] == ["high positive", "low positive"]
+    assert all(candidate["raw_is_evidence"] for candidate in row["candidates"])
+
+
+def test_raw_top_evidence_original_order_preserves_raw_order() -> None:
+    sample = ChunkMMRSample(
+        event_id="e1",
+        claim="alpha",
+        label="true",
+        explain="",
+        candidates=[
+            {
+                "text": "later positive",
+                "report_id": "r2",
+                "sent_idx": 0,
+                "raw_is_evidence": True,
+                "raw_report_order": 1,
+                "raw_sent_order": 0,
+            },
+            {
+                "text": "earlier positive",
+                "report_id": "r1",
+                "sent_idx": 5,
+                "raw_is_evidence": True,
+                "raw_report_order": 0,
+                "raw_sent_order": 5,
+            },
+            {
+                "text": "negative",
+                "report_id": "r1",
+                "sent_idx": 0,
+                "raw_is_evidence": False,
+                "raw_report_order": 0,
+                "raw_sent_order": 0,
+            },
+        ],
+        chunk_emb=np.array(
+            [
+                [0.9, 0.0],
+                [0.1, 0.0],
+                [1.0, 0.0],
+            ],
+            dtype=np.float32,
+        ),
+        claim_emb=np.array([1.0, 0.0], dtype=np.float32),
+    )
+
+    row = _select_candidates_raw_top_evidence(
+        sample,
+        top_k=5,
+        alpha_dense=1.0,
+        alpha_lexical=0.0,
+        alpha_bm25=0.0,
+        method="original_order",
+        positive_only=True,
+        pad_to_top_k=False,
+    )
+
+    assert [candidate["text"] for candidate in row["candidates"]] == [
+        "earlier positive",
+        "later positive",
+    ]
 
 
 def test_auto_truncate_evidence_trims_single_long_evidence_item() -> None:

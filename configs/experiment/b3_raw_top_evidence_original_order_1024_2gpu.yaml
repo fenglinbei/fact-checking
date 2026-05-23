@@ -1,0 +1,33 @@
+# @package _global_
+# 2-GPU variant for a partially occupied 4-GPU server.
+# Override GPU_DEVICES at launch, e.g. GPU_DEVICES=2,3.
+
+defaults:
+  - b3_raw_top_evidence_original_order_1024
+  - _self_
+
+experiment:
+  name: b3_raw_top_evidence_original_order_1024_2gpu
+
+baseline:
+  variant: b3_raw_top_evidence_original_order_1024_2gpu
+
+build:
+  retrieval:
+    num_gpus: 2
+    cuda_visible_devices: ${oc.env:GPU_DEVICES,"1,2"}
+
+train:
+  cuda_visible_devices: ${oc.env:GPU_DEVICES,"1,2"}
+  nproc_per_node: 2
+  deepspeed_config: configs/deepspeed_zero2_bsz8_ga2.json
+
+sft_train:
+  gradient_accumulation_steps: 2
+
+infer:
+  cuda_visible_devices: ${oc.env:GPU_DEVICES,"1,2"}
+  tensor_parallel_size: 2
+
+swanlab:
+  experiment_name: b3_raw_top_evidence_original_order_1024_2gpu
