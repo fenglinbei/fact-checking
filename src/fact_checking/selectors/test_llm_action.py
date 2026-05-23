@@ -100,6 +100,58 @@ class LLMActionSelectorTest(unittest.TestCase):
         self.assertEqual(scored.candidate_indices, [[0, 1]])
         self.assertGreater(float(scored.scores[0][1]), float(scored.scores[0][0]))
 
+    def test_action_token_score_matches_first_continuation_token(self) -> None:
+        model = _FakeChoiceModel(vocab_size=8, preferred_action_id=3)
+        tokenizer = _FakeTokenizer()
+        sample = {
+            "prompt": "prompt",
+            "choices": [
+                {"candidate_idx": 0, "action": "E00"},
+                {"candidate_idx": 1, "action": "E01"},
+            ],
+        }
+
+        action_token_scored = score_action_choices(
+            model,
+            tokenizer,
+            [sample],
+            device=torch.device("cpu"),
+            max_length=8,
+            score_mode="action_token",
+        )
+        continuation_scored = score_action_choices(
+            model,
+            tokenizer,
+            [sample],
+            device=torch.device("cpu"),
+            max_length=8,
+            choice_batch_size=8,
+            score_mode="continuation",
+            include_eos=False,
+        )
+
+        torch.testing.assert_close(
+            action_token_scored.scores[0] - action_token_scored.scores[0][0],
+            continuation_scored.scores[0] - continuation_scored.scores[0][0],
+        )
+
+    def test_action_token_score_requires_single_token_actions(self) -> None:
+        model = _FakeChoiceModel(vocab_size=8, preferred_action_id=3)
+        sample = {
+            "prompt": "prompt",
+            "choices": [{"candidate_idx": 0, "action": "E00"}],
+        }
+
+        with self.assertRaisesRegex(ValueError, "SCORE_MODE=continuation"):
+            score_action_choices(
+                model,
+                _MultiTokenActionTokenizer(),
+                [sample],
+                device=torch.device("cpu"),
+                max_length=8,
+                score_mode="action_token",
+            )
+
 
 def _example() -> Stage2OracleExample:
     candidates = [
@@ -138,6 +190,13 @@ class _FakeTokenizer:
         return {"input_ids": [4, 4]}
 
 
+class _MultiTokenActionTokenizer(_FakeTokenizer):
+    def __call__(self, text: str, **_: object) -> dict[str, list[int]]:
+        if text == "E00":
+            return {"input_ids": [2, 5]}
+        return super().__call__(text, **_)
+
+
 class _FakeChoiceModel(torch.nn.Module):
     def __init__(self, *, vocab_size: int, preferred_action_id: int) -> None:
         super().__init__()
@@ -154,7 +213,8 @@ class _FakeChoiceModel(torch.nn.Module):
         del attention_mask, use_cache
         logits = torch.zeros((*input_ids.shape, self.vocab_size), dtype=torch.float32)
         logits[:, 1, self.preferred_action_id] = 8.0
-        logits[:, 2, 1] = 8.0
+        if input_ids.shape[1] > 2:
+            logits[:, 2, 1] = 8.0
         return type("FakeOutput", (), {"logits": logits})()
 
 

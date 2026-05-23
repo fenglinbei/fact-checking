@@ -20,7 +20,7 @@ VAL_VIG_CACHE="${VAL_VIG_CACHE:-outputs/selectors/vig_utility/saved_step_val/vig
 TRAIN_DATA="${TRAIN_DATA:-${DATA_DIR}/action_samples_train.jsonl}"
 VAL_DATA="${VAL_DATA:-${DATA_DIR}/action_samples_val.jsonl}"
 EVAL_OUTPUT_DIR="${EVAL_OUTPUT_DIR:-${OUTPUT_DIR}/eval_val}"
-MAX_LENGTH="${MAX_LENGTH:-2048}"
+MAX_LENGTH="${MAX_LENGTH:-1024}"
 MAX_CANDIDATE_CHARS="${MAX_CANDIDATE_CHARS:-180}"
 TRAIN_SAMPLE_LIMIT="${TRAIN_SAMPLE_LIMIT:-}"
 VAL_SAMPLE_LIMIT="${VAL_SAMPLE_LIMIT:-}"
@@ -31,6 +31,7 @@ DEEPSPEED_CONFIG="${DEEPSPEED_CONFIG:-configs/deepspeed_zero2_bsz8_ga1.json}"
 PER_DEVICE_TRAIN_BATCH_SIZE="${PER_DEVICE_TRAIN_BATCH_SIZE:-1}"
 PER_DEVICE_EVAL_BATCH_SIZE="${PER_DEVICE_EVAL_BATCH_SIZE:-1}"
 CHOICE_BATCH_SIZE="${CHOICE_BATCH_SIZE:-64}"
+SCORE_MODE="${SCORE_MODE:-action_token}"
 EPOCHS="${EPOCHS:-2}"
 LR="${LR:-1.0e-5}"
 GRAD_ACCUM="${GRAD_ACCUM:-1}"
@@ -42,6 +43,14 @@ NO_PROGRESS="${NO_PROGRESS:-false}"
 RUN_BUILD_DATA="${RUN_BUILD_DATA:-true}"
 RUN_TRAIN="${RUN_TRAIN:-true}"
 RUN_EVAL="${RUN_EVAL:-true}"
+SWANLAB_PROJECT="${SWANLAB_PROJECT:-fact-checking-llm-action-selector}"
+SWANLAB_EXPERIMENT_NAME="${SWANLAB_EXPERIMENT_NAME:-$(basename "${OUTPUT_DIR}")}"
+SWANLAB_WORKSPACE="${SWANLAB_WORKSPACE:-}"
+SWANLAB_MODE="${SWANLAB_MODE:-}"
+SWANLAB_LOGDIR="${SWANLAB_LOGDIR:-}"
+SWANLAB_TAGS="${SWANLAB_TAGS:-selector,llm_action,vig_soft}"
+SWANLAB_DESCRIPTION="${SWANLAB_DESCRIPTION:-}"
+SWANLAB_DISABLED="${SWANLAB_DISABLED:-0}"
 REFERENCE_RANKER_METRICS="${REFERENCE_RANKER_METRICS:-outputs/selectors/vig_utility/saved_step_train_to_val/ranker_eval/selection_metrics.json}"
 REFERENCE_SEQUENTIAL_METRICS="${REFERENCE_SEQUENTIAL_METRICS:-outputs/selectors/stage2_sentence_sequential/deberta_sequential_deep/eval_val/selection_metrics.json}"
 
@@ -93,16 +102,35 @@ train_cmd=(
   --per-device-train-batch-size "${PER_DEVICE_TRAIN_BATCH_SIZE}"
   --per-device-eval-batch-size "${PER_DEVICE_EVAL_BATCH_SIZE}"
   --choice-batch-size "${CHOICE_BATCH_SIZE}"
+  --score-mode "${SCORE_MODE}"
   --num-train-epochs "${EPOCHS}"
   --learning-rate "${LR}"
   --gradient-accumulation-steps "${GRAD_ACCUM}"
   --soft-loss-weight "${SOFT_LOSS_WEIGHT}"
   --soft-tau "${SOFT_TAU}"
   --eval-every "${EVAL_EVERY}"
+  --swanlab-project "${SWANLAB_PROJECT}"
+  --swanlab-experiment-name "${SWANLAB_EXPERIMENT_NAME}"
+  --swanlab-tags "${SWANLAB_TAGS}"
   "${progress_arg[@]}"
 )
 if [[ -n "${EVAL_SAMPLE_LIMIT}" ]]; then
   train_cmd+=(--eval-sample-limit "${EVAL_SAMPLE_LIMIT}")
+fi
+if [[ -n "${SWANLAB_WORKSPACE}" ]]; then
+  train_cmd+=(--swanlab-workspace "${SWANLAB_WORKSPACE}")
+fi
+if [[ -n "${SWANLAB_MODE}" ]]; then
+  train_cmd+=(--swanlab-mode "${SWANLAB_MODE}")
+fi
+if [[ -n "${SWANLAB_LOGDIR}" ]]; then
+  train_cmd+=(--swanlab-logdir "${SWANLAB_LOGDIR}")
+fi
+if [[ -n "${SWANLAB_DESCRIPTION}" ]]; then
+  train_cmd+=(--swanlab-description "${SWANLAB_DESCRIPTION}")
+fi
+if [[ "${SWANLAB_DISABLED}" == "1" || "${SWANLAB_DISABLED}" == "true" || "${SWANLAB_DISABLED}" == "TRUE" ]]; then
+  train_cmd+=(--no-swanlab)
 fi
 
 if [[ "${RUN_TRAIN}" == "true" || "${RUN_TRAIN}" == "1" ]]; then
@@ -134,6 +162,7 @@ if [[ "${RUN_EVAL}" == "true" || "${RUN_EVAL}" == "1" ]]; then
     --oracle-results "${VAL_ORACLE_RESULTS}" \
     --output-dir "${EVAL_OUTPUT_DIR}" \
     --max-length "${MAX_LENGTH}" \
+    --score-mode "${SCORE_MODE}" \
     --choice-batch-size "${CHOICE_BATCH_SIZE}" \
     --max-candidate-chars "${MAX_CANDIDATE_CHARS}" \
     --reference-metrics "${references[@]}" \

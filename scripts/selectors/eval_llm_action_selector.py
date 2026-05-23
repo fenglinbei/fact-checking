@@ -18,7 +18,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from fact_checking.selectors.llm_action import action_token, build_action_prompt, score_action_choices
+from fact_checking.selectors.llm_action import (
+    SCORE_MODE_ACTION_TOKEN,
+    SCORE_MODE_CONTINUATION,
+    action_token,
+    build_action_prompt,
+    score_action_choices,
+)
 from fact_checking.selectors.metrics import (
     build_order_control_trace,
     build_selection_trace,
@@ -54,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sample-limit", type=int, default=None)
     p.add_argument("--device", default="cuda")
     p.add_argument("--max-length", type=int, default=None)
+    p.add_argument("--score-mode", default=None, choices=[SCORE_MODE_ACTION_TOKEN, SCORE_MODE_CONTINUATION])
     p.add_argument("--choice-batch-size", type=int, default=64)
     p.add_argument("--max-candidate-chars", type=int, default=180)
     p.add_argument("--no-retrieval-scores", action="store_true")
@@ -68,7 +75,8 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     metadata = _load_metadata(Path(args.model_dir))
-    max_length = int(args.max_length or metadata.get("max_length") or 2048)
+    max_length = int(args.max_length or metadata.get("max_length") or 1024)
+    score_mode = str(args.score_mode or metadata.get("score_mode") or SCORE_MODE_ACTION_TOKEN)
     model, tokenizer = _load_model_and_tokenizer(
         model_dir=Path(args.model_dir),
         model_name=args.model_name or metadata.get("base_model_name_or_path"),
@@ -109,6 +117,7 @@ def main() -> None:
             device=device,
             top_k=int(args.top_k),
             max_length=max_length,
+            score_mode=score_mode,
             choice_batch_size=int(args.choice_batch_size),
             max_candidate_chars=int(args.max_candidate_chars),
             include_retrieval_scores=not bool(args.no_retrieval_scores),
@@ -180,6 +189,8 @@ def main() -> None:
         "filter_policy": str(args.filter_policy),
         "chunk_mmr_fingerprint": str(args.expected_chunk_mmr_fingerprint),
         "n_claims": len(examples),
+        "max_length": max_length,
+        "score_mode": score_mode,
         "selector": selector_metrics,
         "controls": controls,
         "reference_metrics": _reference_metrics(args.reference_metrics or []),
@@ -211,6 +222,7 @@ def _rollout_example(
     device: torch.device,
     top_k: int,
     max_length: int,
+    score_mode: str,
     choice_batch_size: int,
     max_candidate_chars: int,
     include_retrieval_scores: bool,
@@ -242,6 +254,7 @@ def _rollout_example(
                 [sample],
                 device=device,
                 max_length=int(max_length),
+                score_mode=str(score_mode),
                 choice_batch_size=int(choice_batch_size),
             )
         scores = scored.scores[0]

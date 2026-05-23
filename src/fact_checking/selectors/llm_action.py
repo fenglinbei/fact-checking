@@ -12,6 +12,9 @@ from fact_checking.selectors.stage2_oracle import Stage2OracleExample, candidate
 
 
 ACTION_RE = re.compile(r"\bE(\d{2})\b")
+SCORE_MODE_ACTION_TOKEN = "action_token"
+SCORE_MODE_CONTINUATION = "continuation"
+SCORE_MODES = {SCORE_MODE_ACTION_TOKEN, SCORE_MODE_CONTINUATION}
 
 
 @dataclass(frozen=True)
@@ -209,8 +212,41 @@ def score_action_choices(
     device: torch.device | str,
     max_length: int,
     choice_batch_size: int = 64,
+    score_mode: str = SCORE_MODE_ACTION_TOKEN,
     include_eos: bool = True,
     length_normalize: bool = True,
+) -> ChoiceScoreBatch:
+    mode = _normalize_score_mode(score_mode)
+    if mode == SCORE_MODE_ACTION_TOKEN:
+        return _score_action_choices_action_token(
+            model,
+            tokenizer,
+            samples,
+            device=device,
+            max_length=int(max_length),
+        )
+    return _score_action_choices_continuation(
+        model,
+        tokenizer,
+        samples,
+        device=device,
+        max_length=int(max_length),
+        choice_batch_size=int(choice_batch_size),
+        include_eos=bool(include_eos),
+        length_normalize=bool(length_normalize),
+    )
+
+
+def _score_action_choices_continuation(
+    model: torch.nn.Module,
+    tokenizer: Any,
+    samples: list[dict[str, Any]],
+    *,
+    device: torch.device | str,
+    max_length: int,
+    choice_batch_size: int,
+    include_eos: bool,
+    length_normalize: bool,
 ) -> ChoiceScoreBatch:
     flat: list[tuple[int, str, int, str]] = []
     actions: list[list[str]] = []
@@ -261,6 +297,88 @@ def score_action_choices(
     return ChoiceScoreBatch(scores=[torch.stack(items) if items else torch.empty(0, device=device) for items in grouped], actions=actions, candidate_indices=candidate_indices)
 
 
+def _score_action_choices_action_token(
+    model: torch.nn.Module,
+    tokenizer: Any,
+    samples: list[dict[str, Any]],
+    *,
+    device: torch.device | str,
+    max_length: int,
+) -> ChoiceScoreBatch:
+    actions: list[list[str]] = []
+    candidate_indices: list[list[int]] = []
+    active_prompts: list[str] = []
+    active_action_ids: list[list[int]] = []
+    active_sample_indices: list[int] = []
+
+    for sample_idx, sample in enumerate(samples):
+        sample_actions: list[str] = []
+        sample_indices: list[int] = []
+        sample_action_ids: list[int] = []
+        for choice in sample.get("choices") or []:
+            action = str(choice["action"])
+            idx = int(choice["candidate_idx"])
+            sample_actions.append(action)
+            sample_indices.append(idx)
+            sample_action_ids.append(_single_action_token_id(tokenizer, action))
+        actions.append(sample_actions)
+        candidate_indices.append(sample_indices)
+        if sample_action_ids:
+            active_prompts.append(str(sample["prompt"]))
+            active_action_ids.append(sample_action_ids)
+            active_sample_indices.append(sample_idx)
+
+    if active_prompts:
+        tensors = _encode_prompt_batch(
+            tokenizer,
+            active_prompts,
+            max_length=int(max_length),
+            reserved_action_tokens=1,
+        )
+        tensors = {key: value.to(device) for key, value in tensors.items()}
+        outputs = model(
+            input_ids=tensors["input_ids"],
+            attention_mask=tensors["attention_mask"],
+            use_cache=False,
+        )
+        last_positions = tensors["attention_mask"].sum(dim=1).clamp_min(1) - 1
+        row_positions = torch.arange(tensors["input_ids"].shape[0], device=tensors["input_ids"].device)
+        last_logits = outputs.logits[row_positions, last_positions, :].float()
+    else:
+        last_logits = torch.empty((0, 0), dtype=torch.float32, device=torch.device(device))
+
+    grouped: list[torch.Tensor | None] = [None for _ in samples]
+    for row_idx, sample_idx in enumerate(active_sample_indices):
+        ids = torch.tensor(active_action_ids[row_idx], dtype=torch.long, device=last_logits.device)
+        grouped[sample_idx] = last_logits[row_idx].index_select(dim=0, index=ids)
+
+    scores = [
+        items if items is not None else torch.empty(0, dtype=torch.float32, device=torch.device(device))
+        for items in grouped
+    ]
+    return ChoiceScoreBatch(scores=scores, actions=actions, candidate_indices=candidate_indices)
+
+
+def _normalize_score_mode(value: str) -> str:
+    mode = str(value or SCORE_MODE_ACTION_TOKEN).strip().lower()
+    if mode not in SCORE_MODES:
+        raise ValueError(
+            f"Unsupported score_mode={value!r}. Use '{SCORE_MODE_ACTION_TOKEN}' or '{SCORE_MODE_CONTINUATION}'."
+        )
+    return mode
+
+
+def _single_action_token_id(tokenizer: Any, action: str) -> int:
+    ids = tokenizer(str(action).strip(), add_special_tokens=False, truncation=False)["input_ids"]
+    if len(ids) != 1:
+        raise ValueError(
+            f"score_mode='{SCORE_MODE_ACTION_TOKEN}' requires each action id to be a single tokenizer token; "
+            f"action={action!r} encoded to {ids}. Set SCORE_MODE={SCORE_MODE_CONTINUATION} to use the "
+            "slower continuation likelihood path."
+        )
+    return int(ids[0])
+
+
 def _encode_choice_chunk(
     tokenizer: Any,
     pairs: list[tuple[str, str]],
@@ -308,6 +426,49 @@ def _encode_choice_chunk(
         "input_ids": torch.tensor(input_ids, dtype=torch.long),
         "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
         "labels": torch.tensor(labels, dtype=torch.long),
+    }
+
+
+def _encode_prompt_batch(
+    tokenizer: Any,
+    prompts: list[str],
+    *,
+    max_length: int,
+    reserved_action_tokens: int,
+) -> dict[str, torch.Tensor]:
+    max_prompt_len = int(max_length) - int(reserved_action_tokens)
+    if max_prompt_len <= 0:
+        raise ValueError(
+            f"max_length={max_length} is too small for score_mode='{SCORE_MODE_ACTION_TOKEN}'; "
+            "it must leave room for at least one action token."
+        )
+
+    pad_id = tokenizer.pad_token_id
+    if pad_id is None:
+        pad_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
+
+    encoded: list[dict[str, list[int]]] = []
+    for prompt in prompts:
+        prompt_ids = tokenizer(str(prompt), add_special_tokens=True, truncation=False)["input_ids"]
+        if len(prompt_ids) > max_prompt_len:
+            prompt_ids = prompt_ids[-max_prompt_len:]
+        encoded.append(
+            {
+                "input_ids": prompt_ids,
+                "attention_mask": [1] * len(prompt_ids),
+            }
+        )
+
+    width = max(len(row["input_ids"]) for row in encoded) if encoded else 0
+    input_ids: list[list[int]] = []
+    attention_mask: list[list[int]] = []
+    for row in encoded:
+        pad_len = width - len(row["input_ids"])
+        input_ids.append(row["input_ids"] + [int(pad_id)] * pad_len)
+        attention_mask.append(row["attention_mask"] + [0] * pad_len)
+    return {
+        "input_ids": torch.tensor(input_ids, dtype=torch.long),
+        "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
     }
 
 

@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-retrieval-scores", action="store_true")
     p.add_argument("--allow-missing-vig", action="store_true")
     p.add_argument("--tokenizer", default=None, help="Optional tokenizer path for prompt length statistics.")
-    p.add_argument("--max-length", type=int, default=2048)
+    p.add_argument("--max-length", type=int, default=1024)
     return p.parse_args()
 
 
