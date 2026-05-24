@@ -19,6 +19,10 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from fact_checking.selectors.llm_action import (
+    ACTION_LABEL_MODE_GLOBAL_INDEX,
+    ACTION_LABEL_MODES,
+    CANDIDATE_ORDER_CANDIDATE_POOL,
+    CANDIDATE_ORDER_MODES,
     SCORE_MODE_ACTION_TOKEN,
     SCORE_MODE_CONTINUATION,
 )
@@ -67,6 +71,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--reference-metrics", nargs="*", default=None)
     p.add_argument("--no-progress", action="store_true")
     p.add_argument("--log-file", default=None)
+    p.add_argument("--summary-output", default=None)
+    p.add_argument("--action-label-mode", default=None, choices=sorted(ACTION_LABEL_MODES))
+    p.add_argument("--candidate-order-mode", default=CANDIDATE_ORDER_CANDIDATE_POOL, choices=sorted(CANDIDATE_ORDER_MODES))
+    p.add_argument("--candidate-order-seed", type=int, default=20260524)
     return p.parse_args()
 
 
@@ -81,6 +89,12 @@ def main() -> None:
     metadata = resolution.metadata
     max_length = int(args.max_length or metadata.get("max_length") or 1024)
     score_mode = str(args.score_mode or metadata.get("score_mode") or SCORE_MODE_ACTION_TOKEN)
+    action_label_mode = str(
+        args.action_label_mode
+        or metadata.get("action_label_mode")
+        or metadata.get("train_action_label_mode")
+        or ACTION_LABEL_MODE_GLOBAL_INDEX
+    )
     if logger is not None:
         logger.info(
             "Starting selection eval model_dir_input=%s resolved_model_dir=%s output_dir=%s",
@@ -119,6 +133,9 @@ def main() -> None:
         choice_batch_size=int(args.choice_batch_size),
         max_candidate_chars=int(args.max_candidate_chars),
         include_retrieval_scores=not bool(args.no_retrieval_scores),
+        action_label_mode=action_label_mode,
+        candidate_order_mode=str(args.candidate_order_mode),
+        candidate_order_seed=int(args.candidate_order_seed),
         disable_progress=bool(args.no_progress),
     )
     selector_metrics = result["metrics"]["selector"]
@@ -141,6 +158,12 @@ def main() -> None:
     result["metrics"] = metrics
     write_selection_eval_outputs(out_dir, result)
     _write_run_eval_summary(resolution.run_dir, metrics, out_dir)
+    if args.summary_output:
+        record = selection_history_record(metrics, output_dir=str(out_dir), reason="selection_eval")
+        record["eval_output_dir"] = str(out_dir)
+        record["resolved_model_dir"] = str(resolution.resolved_model_dir)
+        record["model_dir_input"] = str(resolution.model_dir_input)
+        write_json(args.summary_output, record)
 
     print(f"Wrote selection metrics: {out_dir / 'selection_metrics.json'}")
     print(
@@ -154,11 +177,14 @@ def main() -> None:
     )
     if logger is not None:
         logger.info(
-            "Finished selection eval n_claims=%d top_k=%d score_mode=%s elapsed_seconds=%.3f "
-            "claims_per_second=%.6f estimated_forward_steps=%d output_dir=%s",
+            "Finished selection eval n_claims=%d top_k=%d score_mode=%s action_label_mode=%s "
+            "candidate_order_mode=%s elapsed_seconds=%.3f claims_per_second=%.6f "
+            "estimated_forward_steps=%d output_dir=%s",
             int(metrics.get("n_claims", 0)),
             int(metrics.get("top_k", 0)),
             str(metrics.get("score_mode")),
+            str(metrics.get("action_label_mode")),
+            str(metrics.get("candidate_order_mode")),
             float(metrics.get("elapsed_seconds", 0.0)),
             float(metrics.get("claims_per_second", 0.0)),
             int(metrics.get("estimated_forward_steps", 0)),

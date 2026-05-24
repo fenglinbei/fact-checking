@@ -8,6 +8,8 @@ from fact_checking.selectors.llm_action import (
     action_token,
     build_action_samples,
     build_vig_index,
+    choice_action_labels,
+    order_candidate_indices,
     parse_action,
     score_action_choices,
     softmax_deltas,
@@ -78,6 +80,43 @@ class LLMActionSelectorTest(unittest.TestCase):
         self.assertIn("- C:", samples[0]["prompt"])
         self.assertNotIn(example.gold_label, samples[0]["prompt"])
         self.assertEqual(samples[1]["prefix_indices"], [2])
+
+    def test_local_choice_labels_are_position_local(self) -> None:
+        first = choice_action_labels([2, 0, 1], action_label_mode="local_choice")
+        second = choice_action_labels([0, 1, 2], action_label_mode="local_choice")
+        self.assertEqual(first[2], "A")
+        self.assertEqual(second[2], "C")
+        self.assertEqual(choice_action_labels([2, 0, 1], action_label_mode="global_index")[2], "C")
+
+    def test_random_candidate_order_is_seeded_and_reproducible(self) -> None:
+        base = [0, 1, 2, 3, 4]
+        first = order_candidate_indices(base, mode="random", seed=7, event_id="evt", step=1)
+        second = order_candidate_indices(base, mode="random", seed=7, event_id="evt", step=1)
+        other = order_candidate_indices(base, mode="random", seed=8, event_id="evt", step=1)
+        self.assertEqual(first, second)
+        self.assertCountEqual(first, base)
+        self.assertNotEqual(first, other)
+
+    def test_build_action_samples_local_choice_maps_target_action(self) -> None:
+        example = _example()
+        vig_rows = _vig_rows_for_example(example)
+        samples, manifest = build_action_samples(
+            [example],
+            vig_rows=vig_rows,
+            split="train",
+            top_k=1,
+            max_candidate_chars=80,
+            include_retrieval_scores=False,
+            strict=True,
+            action_label_mode="local_choice",
+            candidate_order_mode="candidate_pool",
+        )
+
+        self.assertEqual(manifest["action_label_mode"], "local_choice")
+        self.assertEqual(samples[0]["target_idx"], 2)
+        self.assertEqual(samples[0]["target_action"], "C")
+        self.assertEqual(samples[0]["choices"][2]["candidate_idx"], 2)
+        self.assertEqual(samples[0]["choices"][2]["action"], "C")
 
     def test_score_action_choices_uses_constrained_action_likelihood(self) -> None:
         model = _FakeChoiceModel(vocab_size=8, preferred_action_id=3)
@@ -176,6 +215,27 @@ class LLMActionSelectorTest(unittest.TestCase):
         self.assertEqual(result["traces"][0]["selector_ordered_indices"], [1, 0])
         self.assertIn("jaccard@5", metrics["selector"])
 
+    def test_selection_eval_local_choice_restores_candidate_idx(self) -> None:
+        result = evaluate_llm_action_selection(
+            _FakeChoiceModel(vocab_size=8, preferred_action_id=5),
+            _FakeTokenizer(),
+            [_example()],
+            device=torch.device("cpu"),
+            split="val",
+            top_k=1,
+            max_length=16,
+            score_mode="action_token",
+            choice_batch_size=8,
+            max_candidate_chars=80,
+            include_retrieval_scores=True,
+            action_label_mode="local_choice",
+            candidate_order_mode="candidate_pool",
+            disable_progress=True,
+        )
+
+        self.assertEqual(result["traces"][0]["selector_ordered_indices"], [2])
+        self.assertEqual(result["traces"][0]["per_step_action_scores"][0]["selected_action"], "C")
+
 
 def _example() -> Stage2OracleExample:
     candidates = [
@@ -200,6 +260,25 @@ def _example() -> Stage2OracleExample:
         is_correct=True,
         raw={},
     )
+
+
+def _vig_rows_for_example(example: Stage2OracleExample) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for step, selected in enumerate(example.selected_indices):
+        prefix = set(example.selected_indices[:step])
+        for idx in range(len(example.candidates)):
+            if idx in prefix:
+                continue
+            rows.append(
+                {
+                    "event_id": example.event_id,
+                    "step": step,
+                    "candidate_idx": idx,
+                    "delta_margin": 2.0 if idx == selected else -1.0,
+                    "after_margin": 2.0 if idx == selected else -1.0,
+                }
+            )
+    return rows
 
 
 class _FakeTokenizer:

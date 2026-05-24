@@ -15,7 +15,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from fact_checking.selectors.llm_action import build_action_samples
+from fact_checking.selectors.llm_action import (
+    ACTION_LABEL_MODE_LOCAL_CHOICE,
+    ACTION_LABEL_MODES,
+    CANDIDATE_ORDER_CANDIDATE_POOL,
+    CANDIDATE_ORDER_MODES,
+    build_action_samples,
+)
 from fact_checking.selectors.stage2_oracle import (
     DEFAULT_CANDIDATE_POOL_SIZE,
     DEFAULT_SELECTOR_TOP_K,
@@ -48,6 +54,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--tokenizer", default=None, help="Optional tokenizer path for prompt length statistics.")
     p.add_argument("--max-length", type=int, default=1024)
     p.add_argument("--no-progress", action="store_true")
+    p.add_argument("--action-label-mode", default=ACTION_LABEL_MODE_LOCAL_CHOICE, choices=sorted(ACTION_LABEL_MODES))
+    p.add_argument("--candidate-order-mode", default=CANDIDATE_ORDER_CANDIDATE_POOL, choices=sorted(CANDIDATE_ORDER_MODES))
+    p.add_argument("--candidate-order-seed", type=int, default=20260524)
     return p.parse_args()
 
 
@@ -78,6 +87,9 @@ def main() -> None:
         include_retrieval_scores=not bool(args.no_retrieval_scores),
         strict=not bool(args.allow_missing_vig),
         show_progress=not bool(args.no_progress),
+        action_label_mode=str(args.action_label_mode),
+        candidate_order_mode=str(args.candidate_order_mode),
+        candidate_order_seed=int(args.candidate_order_seed),
     )
     if not samples:
         raise ValueError("No action selector samples were generated.")
