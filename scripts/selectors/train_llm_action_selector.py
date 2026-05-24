@@ -23,6 +23,10 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from fact_checking.selectors.llm_action import (
+    ACTION_LABEL_MODE_GLOBAL_INDEX,
+    ACTION_LABEL_MODES,
+    CANDIDATE_ORDER_CANDIDATE_POOL,
+    CANDIDATE_ORDER_MODES,
     SCORE_MODE_ACTION_TOKEN,
     SCORE_MODE_CONTINUATION,
     score_action_choices,
@@ -90,6 +94,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--selection-eval-top-k", type=int, default=DEFAULT_SELECTOR_TOP_K)
     p.add_argument("--selection-eval-max-candidate-chars", type=int, default=180)
     p.add_argument("--selection-eval-output-dir", default=None)
+    p.add_argument("--initial-eval", action="store_true")
+    p.add_argument("--action-label-mode", default=None, choices=sorted(ACTION_LABEL_MODES))
+    p.add_argument("--candidate-order-mode", default=CANDIDATE_ORDER_CANDIDATE_POOL, choices=sorted(CANDIDATE_ORDER_MODES))
+    p.add_argument("--candidate-order-seed", type=int, default=20260524)
     p.add_argument("--dataloader-num-workers", type=int, default=0)
     p.add_argument("--seed", type=int, default=20260523)
     p.add_argument("--bf16", action="store_true", default=True)
@@ -144,9 +152,17 @@ def main() -> None:
         raise ValueError("No train action samples.")
     if not val_rows:
         raise ValueError("No val action samples.")
+    sample_label_mode = _sample_settings(train_rows).get("action_label_mode") or ACTION_LABEL_MODE_GLOBAL_INDEX
+    args.action_label_mode = str(args.action_label_mode or sample_label_mode)
     if logger is not None:
         logger.info("Loaded action samples: train=%d val=%d", len(train_rows), len(val_rows))
         logger.info("score_mode=%s max_length=%d choice_batch_size=%d", args.score_mode, args.max_length, args.choice_batch_size)
+        logger.info(
+            "action_label_mode=%s selection_candidate_order_mode=%s candidate_order_seed=%d",
+            args.action_label_mode,
+            args.candidate_order_mode,
+            int(args.candidate_order_seed),
+        )
 
     selection_examples: list[Stage2OracleExample] | None = None
     if str(args.selection_eval_mode) != "none":
@@ -227,13 +243,13 @@ def main() -> None:
     optimizer = AdamW(trainable, lr=float(args.learning_rate), weight_decay=float(args.weight_decay))
 
     epochs = int(math.ceil(float(args.num_train_epochs)))
-    steps_per_epoch = max(math.ceil(len(train_dl) / max(int(args.gradient_accumulation_steps), 1)), 1)
-    max_train_steps = max(steps_per_epoch * epochs, 1)
+    scheduler_steps_per_epoch = max(math.ceil(len(train_dl) / max(int(args.gradient_accumulation_steps), 1)), 1)
+    scheduler_num_training_steps = max(scheduler_steps_per_epoch * epochs, 1)
     scheduler = get_scheduler(
         name="cosine",
         optimizer=optimizer,
-        num_warmup_steps=int(max_train_steps * float(args.warmup_ratio)),
-        num_training_steps=max_train_steps,
+        num_warmup_steps=int(scheduler_num_training_steps * float(args.warmup_ratio)),
+        num_training_steps=scheduler_num_training_steps,
     )
 
     model, optimizer, train_dl, val_dl, scheduler = accelerator.prepare(
@@ -244,7 +260,41 @@ def main() -> None:
         scheduler,
     )
 
-    metadata = _metadata(args, n_train=len(train_rows), n_val=len(val_rows), max_train_steps=max_train_steps)
+    actual_steps_per_epoch = max(math.ceil(len(train_dl) / max(int(args.gradient_accumulation_steps), 1)), 1)
+    runtime_max_train_steps = max(actual_steps_per_epoch * epochs, 1)
+    runtime_info = {
+        "actual_steps_per_epoch": int(actual_steps_per_epoch),
+        "runtime_max_train_steps": int(runtime_max_train_steps),
+        "scheduler_steps_per_epoch": int(scheduler_steps_per_epoch),
+        "scheduler_num_training_steps": int(scheduler_num_training_steps),
+        "world_size": int(accelerator.num_processes),
+        "effective_global_batch_size": int(
+            int(args.per_device_train_batch_size)
+            * max(int(accelerator.num_processes), 1)
+            * max(int(args.gradient_accumulation_steps), 1)
+        ),
+    }
+    if logger is not None:
+        logger.info(
+            "runtime steps: actual_steps_per_epoch=%d runtime_max_train_steps=%d "
+            "scheduler_steps_per_epoch=%d scheduler_num_training_steps=%d world_size=%d "
+            "effective_global_batch_size=%d",
+            int(runtime_info["actual_steps_per_epoch"]),
+            int(runtime_info["runtime_max_train_steps"]),
+            int(runtime_info["scheduler_steps_per_epoch"]),
+            int(runtime_info["scheduler_num_training_steps"]),
+            int(runtime_info["world_size"]),
+            int(runtime_info["effective_global_batch_size"]),
+        )
+
+    metadata = _metadata(
+        args,
+        n_train=len(train_rows),
+        n_val=len(val_rows),
+        runtime_info=runtime_info,
+        train_rows=train_rows,
+        val_rows=val_rows,
+    )
     swanlab_run = _init_swanlab(args, out_dir, is_main=accelerator.is_main_process, config=metadata)
     if accelerator.is_main_process:
         write_json(out_dir / "selector_metadata.json", metadata)
@@ -260,11 +310,49 @@ def main() -> None:
         val_history_path = out_dir / "val_history.jsonl"
         selection_history_path = out_dir / "selection_history.jsonl"
 
-    best_accuracy = float("-inf")
     history: list[dict[str, Any]] = []
+    best_accuracy = float("-inf")
     global_step = 0
     log_every = max(int(args.logging_steps), 1)
-    progress = tqdm(total=max_train_steps, disable=not accelerator.is_local_main_process or bool(args.no_progress))
+    progress = tqdm(total=runtime_max_train_steps, disable=not accelerator.is_local_main_process or bool(args.no_progress))
+
+    if bool(args.initial_eval):
+        result = _evaluate(
+            model,
+            tokenizer,
+            val_dl,
+            accelerator=accelerator,
+            args=args,
+            global_step=0,
+            epoch=0,
+        )
+        selection_record = _run_training_selection_eval(
+            model,
+            tokenizer,
+            selection_examples,
+            accelerator=accelerator,
+            args=args,
+            output_dir=out_dir,
+            selection_history_path=selection_history_path,
+            global_step=0,
+            epoch=0,
+            reason="initial",
+            logger=logger,
+        )
+        if accelerator.is_main_process:
+            if selection_record is not None:
+                result["selection"] = selection_record
+            history.append(result)
+            _append_jsonl(val_history_path, result)
+            write_json(metrics_dir / "initial_val.json", result)
+            write_json(metrics_dir / "latest_val.json", result)
+            _log_swanlab(swanlab_run, _val_swanlab_payload(result), step=0)
+            if logger is not None:
+                logger.info(
+                    "initial eval loss=%.4f acc=%.4f",
+                    float(result["val_loss"]),
+                    float(result["val_action_accuracy"]),
+                )
 
     for epoch in range(epochs):
         model.train()
@@ -390,6 +478,7 @@ def main() -> None:
             "metadata": metadata,
             "history": history,
             "best_action_accuracy": best_accuracy,
+            "runtime": runtime_info,
             "elapsed_seconds": round(time.time() - started_at, 3),
         }
         write_json(out_dir / "training_metrics.json", payload)
@@ -663,6 +752,9 @@ def _run_training_selection_eval(
             choice_batch_size=int(args.choice_batch_size),
             max_candidate_chars=int(args.selection_eval_max_candidate_chars),
             include_retrieval_scores=True,
+            action_label_mode=str(args.action_label_mode),
+            candidate_order_mode=str(args.candidate_order_mode),
+            candidate_order_seed=int(args.candidate_order_seed),
             disable_progress=bool(args.no_progress),
         )
         metrics = {
@@ -753,8 +845,12 @@ def _metadata(
     *,
     n_train: int,
     n_val: int,
-    max_train_steps: int,
+    runtime_info: dict[str, Any],
+    train_rows: list[dict[str, Any]],
+    val_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    train_sample_settings = _sample_settings(train_rows)
+    val_sample_settings = _sample_settings(val_rows)
     return {
         "selector_type": "llm_action_selector",
         "base_model_name_or_path": str(args.model_name),
@@ -763,9 +859,13 @@ def _metadata(
         "max_length": int(args.max_length),
         "choice_batch_size": int(args.choice_batch_size),
         "score_mode": str(args.score_mode),
+        "action_label_mode": str(args.action_label_mode),
+        "candidate_order_mode": str(args.candidate_order_mode),
+        "candidate_order_seed": int(args.candidate_order_seed),
         "checkpoint_layout_version": 2,
         "best_checkpoint_dir": "checkpoints/best",
         "metrics_dir": "metrics",
+        "initial_eval": bool(args.initial_eval),
         "selection_eval_mode": str(args.selection_eval_mode),
         "selection_eval_oracle_results": str(args.selection_eval_oracle_results) if args.selection_eval_oracle_results else None,
         "selection_eval_sample_limit": int(args.selection_eval_sample_limit),
@@ -774,7 +874,19 @@ def _metadata(
         "selection_eval_output_dir": str(args.selection_eval_output_dir) if args.selection_eval_output_dir else None,
         "n_train_samples": int(n_train),
         "n_val_samples": int(n_val),
-        "max_train_steps": int(max_train_steps),
+        "max_train_steps": int(runtime_info["runtime_max_train_steps"]),
+        "runtime_max_train_steps": int(runtime_info["runtime_max_train_steps"]),
+        "actual_steps_per_epoch": int(runtime_info["actual_steps_per_epoch"]),
+        "scheduler_num_training_steps": int(runtime_info["scheduler_num_training_steps"]),
+        "scheduler_steps_per_epoch": int(runtime_info["scheduler_steps_per_epoch"]),
+        "world_size": int(runtime_info["world_size"]),
+        "effective_global_batch_size": int(runtime_info["effective_global_batch_size"]),
+        "train_action_label_mode": train_sample_settings.get("action_label_mode"),
+        "val_action_label_mode": val_sample_settings.get("action_label_mode"),
+        "train_candidate_order_mode": train_sample_settings.get("candidate_order_mode"),
+        "val_candidate_order_mode": val_sample_settings.get("candidate_order_mode"),
+        "train_candidate_order_seed": train_sample_settings.get("candidate_order_seed"),
+        "val_candidate_order_seed": val_sample_settings.get("candidate_order_seed"),
         "soft_loss_weight": float(args.soft_loss_weight),
         "soft_tau": float(args.soft_tau),
         "action_format": "A..O",
@@ -786,6 +898,31 @@ def _metadata(
             "target_modules": [item.strip() for item in str(args.lora_target_modules).split(",") if item.strip()],
         },
     }
+
+
+def _sample_settings(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    keys = ["action_label_mode", "candidate_order_mode", "candidate_order_seed"]
+    settings: dict[str, Any] = {}
+    for key in keys:
+        values = []
+        seen = set()
+        for row in rows:
+            if key not in row:
+                continue
+            value = row.get(key)
+            marker = json.dumps(_json_safe_value(value), sort_keys=True, ensure_ascii=False)
+            if marker not in seen:
+                seen.add(marker)
+                values.append(value)
+            if len(values) > 1:
+                break
+        if not values:
+            settings[key] = None
+        elif len(values) == 1:
+            settings[key] = values[0]
+        else:
+            settings[key] = "mixed"
+    return settings
 
 
 def _init_run_logger(out_dir: Path, *, enabled: bool) -> logging.Logger | None:
@@ -978,6 +1115,10 @@ def _metadata_metrics(metadata: dict[str, Any]) -> dict[str, Any]:
         "config/selection_eval_top_k": metadata.get("selection_eval_top_k"),
         "config/n_train_samples": metadata.get("n_train_samples"),
         "config/n_val_samples": metadata.get("n_val_samples"),
+        "config/runtime_max_train_steps": metadata.get("runtime_max_train_steps"),
+        "config/scheduler_num_training_steps": metadata.get("scheduler_num_training_steps"),
+        "config/world_size": metadata.get("world_size"),
+        "config/effective_global_batch_size": metadata.get("effective_global_batch_size"),
     }
 
 

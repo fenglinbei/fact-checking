@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import hashlib
+import random
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -17,6 +19,12 @@ ACTION_RE = re.compile(r"\b([A-O])\b")
 SCORE_MODE_ACTION_TOKEN = "action_token"
 SCORE_MODE_CONTINUATION = "continuation"
 SCORE_MODES = {SCORE_MODE_ACTION_TOKEN, SCORE_MODE_CONTINUATION}
+ACTION_LABEL_MODE_GLOBAL_INDEX = "global_index"
+ACTION_LABEL_MODE_LOCAL_CHOICE = "local_choice"
+ACTION_LABEL_MODES = {ACTION_LABEL_MODE_GLOBAL_INDEX, ACTION_LABEL_MODE_LOCAL_CHOICE}
+CANDIDATE_ORDER_CANDIDATE_POOL = "candidate_pool"
+CANDIDATE_ORDER_RANDOM = "random"
+CANDIDATE_ORDER_MODES = {CANDIDATE_ORDER_CANDIDATE_POOL, CANDIDATE_ORDER_RANDOM}
 
 
 @dataclass(frozen=True)
@@ -31,6 +39,42 @@ def action_token(candidate_idx: int) -> str:
     if idx < 0 or idx >= len(ACTION_LABELS):
         raise ValueError(f"candidate_idx must be in [0, {len(ACTION_LABELS) - 1}], got {candidate_idx!r}.")
     return ACTION_LABELS[idx]
+
+
+def order_candidate_indices(
+    candidate_indices: list[int],
+    *,
+    mode: str = CANDIDATE_ORDER_CANDIDATE_POOL,
+    seed: int = 20260524,
+    event_id: str = "",
+    step: int = 0,
+) -> list[int]:
+    order_mode = _normalize_candidate_order_mode(mode)
+    ordered = [int(idx) for idx in candidate_indices]
+    if order_mode == CANDIDATE_ORDER_CANDIDATE_POOL:
+        return ordered
+
+    material = f"{int(seed)}\n{event_id}\n{int(step)}\n{','.join(str(idx) for idx in ordered)}"
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()
+    rng = random.Random(int(digest[:16], 16))
+    rng.shuffle(ordered)
+    return ordered
+
+
+def choice_action_labels(
+    ordered_candidate_indices: list[int],
+    *,
+    action_label_mode: str = ACTION_LABEL_MODE_GLOBAL_INDEX,
+) -> dict[int, str]:
+    label_mode = _normalize_action_label_mode(action_label_mode)
+    labels: dict[int, str] = {}
+    for position, candidate_idx in enumerate(ordered_candidate_indices):
+        idx = int(candidate_idx)
+        if label_mode == ACTION_LABEL_MODE_GLOBAL_INDEX:
+            labels[idx] = action_token(idx)
+        else:
+            labels[idx] = action_token(position)
+    return labels
 
 
 def parse_action(text: str) -> int | None:
@@ -86,7 +130,11 @@ def build_action_prompt(
     remaining_indices: list[int],
     max_candidate_chars: int = 180,
     include_retrieval_scores: bool = True,
+    action_labels: dict[int, str] | None = None,
+    action_label_mode: str = ACTION_LABEL_MODE_GLOBAL_INDEX,
 ) -> str:
+    label_mode = _normalize_action_label_mode(action_label_mode)
+    labels = {int(idx): str(label) for idx, label in (action_labels or {}).items()}
     lines: list[str] = [
         "You are selecting evidence for fact checking.",
         "Choose exactly one next evidence id from the remaining candidates.",
@@ -96,13 +144,18 @@ def build_action_prompt(
     ]
     if prefix_indices:
         for idx in prefix_indices:
-            lines.append(f"- {action_token(idx)}: {_trim(candidate_text(example.candidates[idx]), max_candidate_chars)}")
+            if label_mode == ACTION_LABEL_MODE_LOCAL_CHOICE:
+                prefix_label = f"candidate_idx={int(idx)}"
+            else:
+                prefix_label = action_token(idx)
+            lines.append(f"- {prefix_label}: {_trim(candidate_text(example.candidates[idx]), max_candidate_chars)}")
     else:
         lines.append("- None")
 
     lines.extend(["", "Remaining candidates:"])
     for idx in remaining_indices:
-        line = f"- {action_token(idx)}: {_trim(candidate_text(example.candidates[idx]), max_candidate_chars)}"
+        label = labels.get(int(idx), action_token(idx))
+        line = f"- {label}: {_trim(candidate_text(example.candidates[idx]), max_candidate_chars)}"
         if include_retrieval_scores:
             score_row = example.candidate_scores[idx] if idx < len(example.candidate_scores) else {}
             rank = _safe_float(score_row.get("hybrid_rank"), float(idx))
@@ -127,7 +180,13 @@ def build_action_samples(
     include_retrieval_scores: bool = True,
     strict: bool = True,
     show_progress: bool = False,
+    action_label_mode: str = ACTION_LABEL_MODE_GLOBAL_INDEX,
+    candidate_order_mode: str = CANDIDATE_ORDER_CANDIDATE_POOL,
+    candidate_order_seed: int = 20260524,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    label_mode = _normalize_action_label_mode(action_label_mode)
+    order_mode = _normalize_candidate_order_mode(candidate_order_mode)
+    order_seed = int(candidate_order_seed)
     vig_index = build_vig_index(vig_rows, show_progress=bool(show_progress))
     samples: list[dict[str, Any]] = []
     missing_vig_steps = 0
@@ -146,6 +205,14 @@ def build_action_samples(
         prefix: list[int] = []
         for step, target_idx in enumerate(selected):
             expected_remaining = [idx for idx in range(len(example.candidates)) if idx not in prefix]
+            ordered_remaining = order_candidate_indices(
+                expected_remaining,
+                mode=order_mode,
+                seed=order_seed,
+                event_id=example.event_id,
+                step=step,
+            )
+            action_labels = choice_action_labels(ordered_remaining, action_label_mode=label_mode)
             step_rows = vig_index.get(example.event_id, {}).get(step, {})
             if not step_rows:
                 missing_vig_steps += 1
@@ -155,7 +222,7 @@ def build_action_samples(
                 continue
 
             choices: list[dict[str, Any]] = []
-            for idx in expected_remaining:
+            for position, idx in enumerate(ordered_remaining):
                 row = step_rows.get(idx)
                 if row is None:
                     missing_vig_candidates += 1
@@ -168,7 +235,8 @@ def build_action_samples(
                 choices.append(
                     {
                         "candidate_idx": int(idx),
-                        "action": action_token(idx),
+                        "action": action_labels[int(idx)],
+                        "choice_position": int(position),
                         "delta_margin": _safe_float(row.get("delta_margin"), 0.0),
                         "after_margin": _safe_float(row.get("after_margin"), 0.0),
                         "hybrid_rank": _safe_float(score_row.get("hybrid_rank"), float(idx)),
@@ -191,7 +259,10 @@ def build_action_samples(
                 remaining_indices=[int(choice["candidate_idx"]) for choice in choices],
                 max_candidate_chars=int(max_candidate_chars),
                 include_retrieval_scores=bool(include_retrieval_scores),
+                action_labels={int(choice["candidate_idx"]): str(choice["action"]) for choice in choices},
+                action_label_mode=label_mode,
             )
+            target_action = action_labels.get(int(target_idx), action_token(int(target_idx)))
             samples.append(
                 {
                     "event_id": example.event_id,
@@ -202,10 +273,13 @@ def build_action_samples(
                     "prefix_indices": [int(idx) for idx in prefix],
                     "remaining_indices": [int(choice["candidate_idx"]) for choice in choices],
                     "target_idx": int(target_idx),
-                    "target_action": action_token(target_idx),
+                    "target_action": target_action,
                     "prompt": prompt,
                     "choices": choices,
                     "fingerprint": example.fingerprint,
+                    "action_label_mode": label_mode,
+                    "candidate_order_mode": order_mode,
+                    "candidate_order_seed": order_seed,
                 }
             )
             prefix.append(target_idx)
@@ -218,6 +292,9 @@ def build_action_samples(
         "max_candidate_chars": int(max_candidate_chars),
         "include_retrieval_scores": bool(include_retrieval_scores),
         "strict": bool(strict),
+        "action_label_mode": label_mode,
+        "candidate_order_mode": order_mode,
+        "candidate_order_seed": order_seed,
         "missing_vig_steps": int(missing_vig_steps),
         "missing_vig_candidates": int(missing_vig_candidates),
         "missing_targets": int(missing_targets),
@@ -385,6 +462,26 @@ def _normalize_score_mode(value: str) -> str:
     if mode not in SCORE_MODES:
         raise ValueError(
             f"Unsupported score_mode={value!r}. Use '{SCORE_MODE_ACTION_TOKEN}' or '{SCORE_MODE_CONTINUATION}'."
+        )
+    return mode
+
+
+def _normalize_action_label_mode(value: str) -> str:
+    mode = str(value or ACTION_LABEL_MODE_GLOBAL_INDEX).strip().lower()
+    if mode not in ACTION_LABEL_MODES:
+        raise ValueError(
+            f"Unsupported action_label_mode={value!r}. Use '{ACTION_LABEL_MODE_GLOBAL_INDEX}' "
+            f"or '{ACTION_LABEL_MODE_LOCAL_CHOICE}'."
+        )
+    return mode
+
+
+def _normalize_candidate_order_mode(value: str) -> str:
+    mode = str(value or CANDIDATE_ORDER_CANDIDATE_POOL).strip().lower()
+    if mode not in CANDIDATE_ORDER_MODES:
+        raise ValueError(
+            f"Unsupported candidate_order_mode={value!r}. Use '{CANDIDATE_ORDER_CANDIDATE_POOL}' "
+            f"or '{CANDIDATE_ORDER_RANDOM}'."
         )
     return mode
 

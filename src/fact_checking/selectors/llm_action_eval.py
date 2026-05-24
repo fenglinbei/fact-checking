@@ -10,8 +10,11 @@ import torch
 from tqdm.auto import tqdm
 
 from fact_checking.selectors.llm_action import (
-    action_token,
+    ACTION_LABEL_MODE_GLOBAL_INDEX,
+    CANDIDATE_ORDER_CANDIDATE_POOL,
     build_action_prompt,
+    choice_action_labels,
+    order_candidate_indices,
     score_action_choices,
 )
 from fact_checking.selectors.metrics import (
@@ -43,6 +46,9 @@ def evaluate_llm_action_selection(
     choice_batch_size: int,
     max_candidate_chars: int,
     include_retrieval_scores: bool,
+    action_label_mode: str = ACTION_LABEL_MODE_GLOBAL_INDEX,
+    candidate_order_mode: str = CANDIDATE_ORDER_CANDIDATE_POOL,
+    candidate_order_seed: int = 20260524,
     disable_progress: bool = False,
     selector_name: str = "llm_action_selector",
 ) -> dict[str, Any]:
@@ -72,6 +78,9 @@ def evaluate_llm_action_selection(
             choice_batch_size=int(choice_batch_size),
             max_candidate_chars=int(max_candidate_chars),
             include_retrieval_scores=bool(include_retrieval_scores),
+            action_label_mode=str(action_label_mode),
+            candidate_order_mode=str(candidate_order_mode),
+            candidate_order_seed=int(candidate_order_seed),
         )
         trace = build_selection_trace(
             example,
@@ -143,6 +152,9 @@ def evaluate_llm_action_selection(
         "choice_batch_size": int(choice_batch_size),
         "max_candidate_chars": int(max_candidate_chars),
         "include_retrieval_scores": bool(include_retrieval_scores),
+        "action_label_mode": str(action_label_mode),
+        "candidate_order_mode": str(candidate_order_mode),
+        "candidate_order_seed": int(candidate_order_seed),
         "elapsed_seconds": round(float(elapsed), 3),
         "claims_per_second": float(len(examples) / elapsed) if elapsed > 0 else 0.0,
         "estimated_forward_steps": int(sum(min(int(top_k), len(example.candidates)) for example in examples)),
@@ -169,6 +181,9 @@ def rollout_llm_action_example(
     choice_batch_size: int,
     max_candidate_chars: int,
     include_retrieval_scores: bool,
+    action_label_mode: str = ACTION_LABEL_MODE_GLOBAL_INDEX,
+    candidate_order_mode: str = CANDIDATE_ORDER_CANDIDATE_POOL,
+    candidate_order_seed: int = 20260524,
 ) -> dict[str, Any]:
     selected: list[int] = []
     per_step: list[dict[str, Any]] = []
@@ -176,18 +191,32 @@ def rollout_llm_action_example(
         remaining = [idx for idx in range(len(example.candidates)) if idx not in selected]
         if not remaining:
             break
+        ordered_remaining = order_candidate_indices(
+            remaining,
+            mode=str(candidate_order_mode),
+            seed=int(candidate_order_seed),
+            event_id=example.event_id,
+            step=step,
+        )
+        action_labels = choice_action_labels(ordered_remaining, action_label_mode=str(action_label_mode))
         prompt = build_action_prompt(
             example,
             prefix_indices=selected,
-            remaining_indices=remaining,
+            remaining_indices=ordered_remaining,
             max_candidate_chars=int(max_candidate_chars),
             include_retrieval_scores=bool(include_retrieval_scores),
+            action_labels=action_labels,
+            action_label_mode=str(action_label_mode),
         )
         sample = {
             "prompt": prompt,
             "choices": [
-                {"candidate_idx": int(idx), "action": action_token(idx)}
-                for idx in remaining
+                {
+                    "candidate_idx": int(idx),
+                    "action": action_labels[int(idx)],
+                    "choice_position": int(position),
+                }
+                for position, idx in enumerate(ordered_remaining)
             ],
         }
         with torch.inference_mode():
@@ -208,16 +237,18 @@ def rollout_llm_action_example(
             {
                 "step": int(step),
                 "selected_idx": int(best_idx),
-                "selected_action": action_token(best_idx),
+                "selected_action": str(scored.actions[0][best_pos]),
                 "selected_score": float(scores[best_pos].detach().cpu().item()),
                 "oracle_idx": int(example.selected_indices[step]) if step < len(example.selected_indices) else None,
+                "action_label_mode": str(action_label_mode),
+                "candidate_order_mode": str(candidate_order_mode),
                 "choice_scores": [
                     {
                         "candidate_idx": int(idx),
-                        "action": action_token(idx),
+                        "action": str(action),
                         "score": float(score.detach().cpu().item()),
                     }
-                    for idx, score in zip(scored.candidate_indices[0], scores)
+                    for idx, action, score in zip(scored.candidate_indices[0], scored.actions[0], scores)
                 ],
             }
         )
@@ -251,6 +282,9 @@ def selection_history_record(
         "elapsed_seconds": float(metrics.get("elapsed_seconds", 0.0)),
         "claims_per_second": float(metrics.get("claims_per_second", 0.0)),
         "estimated_forward_steps": int(metrics.get("estimated_forward_steps", 0)),
+        "action_label_mode": metrics.get("action_label_mode"),
+        "candidate_order_mode": metrics.get("candidate_order_mode"),
+        "candidate_order_seed": metrics.get("candidate_order_seed"),
         "recall@5": selector.get("recall@5"),
         "jaccard@5": selector.get("jaccard@5"),
         "oracle_rank_ndcg@5": selector.get("oracle_rank_ndcg@5"),
