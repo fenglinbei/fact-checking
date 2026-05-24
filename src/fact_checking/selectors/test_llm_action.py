@@ -5,12 +5,15 @@ import unittest
 import torch
 
 from fact_checking.selectors.llm_action import (
+    action_completion,
     action_token,
     build_action_samples,
+    build_action_prompt,
     build_vig_index,
     choice_action_labels,
     order_candidate_indices,
     parse_action,
+    prompt_action_token_boundary,
     score_action_choices,
     softmax_deltas,
 )
@@ -22,6 +25,7 @@ class LLMActionSelectorTest(unittest.TestCase):
     def test_action_token_and_parse_use_single_letter_ids(self) -> None:
         self.assertEqual(action_token(4), "E")
         self.assertEqual(action_token(14), "O")
+        self.assertEqual(action_completion("E"), " E")
         self.assertEqual(parse_action("D"), 3)
         self.assertEqual(parse_action("choose M now"), 12)
         self.assertIsNone(parse_action("candidate 3"))
@@ -73,11 +77,13 @@ class LLMActionSelectorTest(unittest.TestCase):
         )
 
         self.assertEqual(manifest["n_samples"], 2)
-        self.assertEqual(samples[0]["target_action"], "C")
-        self.assertEqual(samples[1]["target_action"], "A")
+        self.assertEqual(samples[0]["target_action"], " C")
+        self.assertEqual(samples[0]["target_action_label"], "C")
+        self.assertEqual(samples[1]["target_action"], " A")
         self.assertIn(2, samples[0]["remaining_indices"])
         self.assertNotIn(2, samples[1]["remaining_indices"])
         self.assertIn("- C:", samples[0]["prompt"])
+        self.assertFalse(samples[0]["prompt"].endswith(" "))
         self.assertNotIn(example.gold_label, samples[0]["prompt"])
         self.assertEqual(samples[1]["prefix_indices"], [2])
 
@@ -114,9 +120,26 @@ class LLMActionSelectorTest(unittest.TestCase):
 
         self.assertEqual(manifest["action_label_mode"], "local_choice")
         self.assertEqual(samples[0]["target_idx"], 2)
-        self.assertEqual(samples[0]["target_action"], "C")
+        self.assertEqual(samples[0]["target_action"], " C")
+        self.assertEqual(samples[0]["target_action_label"], "C")
         self.assertEqual(samples[0]["choices"][2]["candidate_idx"], 2)
-        self.assertEqual(samples[0]["choices"][2]["action"], "C")
+        self.assertEqual(samples[0]["choices"][2]["action"], " C")
+        self.assertEqual(samples[0]["choices"][2]["action_label"], "C")
+
+    def test_prompt_action_token_boundary_matches_completion_action(self) -> None:
+        prompt = build_action_prompt(
+            _example(),
+            prefix_indices=[],
+            remaining_indices=[0, 1, 2],
+            max_candidate_chars=80,
+            include_retrieval_scores=False,
+        )
+        self.assertTrue(prompt.endswith("Next evidence id:"))
+        self.assertFalse(prompt.endswith(" "))
+        boundary = prompt_action_token_boundary(_BoundaryTokenizer(), prompt, " A")
+        self.assertTrue(boundary["matches"])
+        bad_boundary = prompt_action_token_boundary(_BoundaryTokenizer(), prompt + " ", "A")
+        self.assertFalse(bad_boundary["matches"])
 
     def test_score_action_choices_uses_constrained_action_likelihood(self) -> None:
         model = _FakeChoiceModel(vocab_size=8, preferred_action_id=3)
@@ -124,8 +147,8 @@ class LLMActionSelectorTest(unittest.TestCase):
         sample = {
             "prompt": "prompt",
             "choices": [
-                {"candidate_idx": 0, "action": "A"},
-                {"candidate_idx": 1, "action": "B"},
+                {"candidate_idx": 0, "action": " A"},
+                {"candidate_idx": 1, "action": " B"},
             ],
         }
 
@@ -147,8 +170,8 @@ class LLMActionSelectorTest(unittest.TestCase):
         sample = {
             "prompt": "prompt",
             "choices": [
-                {"candidate_idx": 0, "action": "A"},
-                {"candidate_idx": 1, "action": "B"},
+                {"candidate_idx": 0, "action": " A"},
+                {"candidate_idx": 1, "action": " B"},
             ],
         }
 
@@ -180,7 +203,7 @@ class LLMActionSelectorTest(unittest.TestCase):
         model = _FakeChoiceModel(vocab_size=8, preferred_action_id=3)
         sample = {
             "prompt": "prompt",
-            "choices": [{"candidate_idx": 0, "action": "A"}],
+            "choices": [{"candidate_idx": 0, "action": " A"}],
         }
 
         with self.assertRaisesRegex(ValueError, "SCORE_MODE=continuation"):
@@ -286,19 +309,34 @@ class _FakeTokenizer:
     eos_token_id = 1
 
     def __call__(self, text: str, **_: object) -> dict[str, list[int]]:
-        if text == "A":
+        if text in {"A", " A"}:
             return {"input_ids": [2]}
-        if text == "B":
+        if text in {"B", " B"}:
             return {"input_ids": [3]}
-        if text == "C":
+        if text in {"C", " C"}:
             return {"input_ids": [5]}
         return {"input_ids": [4, 4]}
 
 
 class _MultiTokenActionTokenizer(_FakeTokenizer):
     def __call__(self, text: str, **_: object) -> dict[str, list[int]]:
-        if text == "A":
+        if text in {"A", " A"}:
             return {"input_ids": [2, 5]}
+        return super().__call__(text, **_)
+
+
+class _BoundaryTokenizer(_FakeTokenizer):
+    def __call__(self, text: str, **_: object) -> dict[str, list[int]]:
+        if text == " A":
+            return {"input_ids": [2]}
+        if text.endswith("Next evidence id:"):
+            return {"input_ids": [7]}
+        if text.endswith("Next evidence id: A"):
+            return {"input_ids": [7, 2]}
+        if text.endswith("Next evidence id: "):
+            return {"input_ids": [7, 8]}
+        if text.endswith("Next evidence id: A") or text.endswith("Next evidence id:  A"):
+            return {"input_ids": [7, 8, 9]}
         return super().__call__(text, **_)
 
 

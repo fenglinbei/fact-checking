@@ -12,6 +12,7 @@ from tqdm.auto import tqdm
 from fact_checking.selectors.llm_action import (
     ACTION_LABEL_MODE_GLOBAL_INDEX,
     CANDIDATE_ORDER_CANDIDATE_POOL,
+    action_completion,
     build_action_prompt,
     choice_action_labels,
     order_candidate_indices,
@@ -213,7 +214,8 @@ def rollout_llm_action_example(
             "choices": [
                 {
                     "candidate_idx": int(idx),
-                    "action": action_labels[int(idx)],
+                    "action": action_completion(action_labels[int(idx)]),
+                    "action_label": action_labels[int(idx)],
                     "choice_position": int(position),
                 }
                 for position, idx in enumerate(ordered_remaining)
@@ -237,7 +239,7 @@ def rollout_llm_action_example(
             {
                 "step": int(step),
                 "selected_idx": int(best_idx),
-                "selected_action": str(scored.actions[0][best_pos]),
+                "selected_action": str(sample["choices"][best_pos]["action_label"]),
                 "selected_score": float(scores[best_pos].detach().cpu().item()),
                 "oracle_idx": int(example.selected_indices[step]) if step < len(example.selected_indices) else None,
                 "action_label_mode": str(action_label_mode),
@@ -245,10 +247,10 @@ def rollout_llm_action_example(
                 "choice_scores": [
                     {
                         "candidate_idx": int(idx),
-                        "action": str(action),
+                        "action": str(sample["choices"][pos]["action_label"]),
                         "score": float(score.detach().cpu().item()),
                     }
-                    for idx, action, score in zip(scored.candidate_indices[0], scored.actions[0], scores)
+                    for pos, (idx, action, score) in enumerate(zip(scored.candidate_indices[0], scored.actions[0], scores))
                 ],
             }
         )

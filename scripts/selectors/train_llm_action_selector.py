@@ -313,6 +313,7 @@ def main() -> None:
     history: list[dict[str, Any]] = []
     best_accuracy = float("-inf")
     global_step = 0
+    last_eval_step: int | None = None
     log_every = max(int(args.logging_steps), 1)
     progress = tqdm(total=runtime_max_train_steps, disable=not accelerator.is_local_main_process or bool(args.no_progress))
 
@@ -353,6 +354,7 @@ def main() -> None:
                     float(result["val_loss"]),
                     float(result["val_action_accuracy"]),
                 )
+        last_eval_step = 0
 
     for epoch in range(epochs):
         model.train()
@@ -429,32 +431,37 @@ def main() -> None:
                         swanlab_run=swanlab_run,
                         logger=logger,
                     )
+                    last_eval_step = int(global_step)
 
-        result = _evaluate(
-            model,
-            tokenizer,
-            val_dl,
-            accelerator=accelerator,
-            args=args,
-            global_step=global_step,
-            epoch=epoch,
-        )
-        history.append(result)
-        best_accuracy = _process_action_eval_result(
-            result,
-            best_accuracy=best_accuracy,
-            accelerator=accelerator,
-            model=model,
-            tokenizer=tokenizer,
-            output_dir=out_dir,
-            metadata=metadata,
-            args=args,
-            val_history_path=val_history_path,
-            selection_history_path=selection_history_path,
-            selection_examples=selection_examples,
-            swanlab_run=swanlab_run,
-            logger=logger,
-        )
+        if last_eval_step != int(global_step):
+            result = _evaluate(
+                model,
+                tokenizer,
+                val_dl,
+                accelerator=accelerator,
+                args=args,
+                global_step=global_step,
+                epoch=epoch,
+            )
+            history.append(result)
+            best_accuracy = _process_action_eval_result(
+                result,
+                best_accuracy=best_accuracy,
+                accelerator=accelerator,
+                model=model,
+                tokenizer=tokenizer,
+                output_dir=out_dir,
+                metadata=metadata,
+                args=args,
+                val_history_path=val_history_path,
+                selection_history_path=selection_history_path,
+                selection_examples=selection_examples,
+                swanlab_run=swanlab_run,
+                logger=logger,
+            )
+            last_eval_step = int(global_step)
+        elif accelerator.is_main_process and logger is not None:
+            logger.info("skip duplicate epoch-end eval step=%d", int(global_step))
 
     progress.close()
     if str(args.selection_eval_mode) == "final":

@@ -41,6 +41,20 @@ def action_token(candidate_idx: int) -> str:
     return ACTION_LABELS[idx]
 
 
+def action_completion(label: str) -> str:
+    token = str(label).strip()
+    if token not in ACTION_LABELS:
+        raise ValueError(f"action label must be one of {''.join(ACTION_LABELS)}, got {label!r}.")
+    return f" {token}"
+
+
+def action_label_from_completion(action: str) -> str:
+    token = str(action).strip()
+    if token not in ACTION_LABELS:
+        raise ValueError(f"action completion must contain one of {''.join(ACTION_LABELS)}, got {action!r}.")
+    return token
+
+
 def order_candidate_indices(
     candidate_indices: list[int],
     *,
@@ -167,7 +181,7 @@ def build_action_prompt(
         lines.append(line)
 
     lines.extend(["", "Next evidence id:"])
-    return "\n".join(lines) + " "
+    return "\n".join(lines)
 
 
 def build_action_samples(
@@ -235,7 +249,8 @@ def build_action_samples(
                 choices.append(
                     {
                         "candidate_idx": int(idx),
-                        "action": action_labels[int(idx)],
+                        "action": action_completion(action_labels[int(idx)]),
+                        "action_label": action_labels[int(idx)],
                         "choice_position": int(position),
                         "delta_margin": _safe_float(row.get("delta_margin"), 0.0),
                         "after_margin": _safe_float(row.get("after_margin"), 0.0),
@@ -259,10 +274,10 @@ def build_action_samples(
                 remaining_indices=[int(choice["candidate_idx"]) for choice in choices],
                 max_candidate_chars=int(max_candidate_chars),
                 include_retrieval_scores=bool(include_retrieval_scores),
-                action_labels={int(choice["candidate_idx"]): str(choice["action"]) for choice in choices},
+                action_labels={int(choice["candidate_idx"]): str(choice["action_label"]) for choice in choices},
                 action_label_mode=label_mode,
             )
-            target_action = action_labels.get(int(target_idx), action_token(int(target_idx)))
+            target_action_label = action_labels.get(int(target_idx), action_token(int(target_idx)))
             samples.append(
                 {
                     "event_id": example.event_id,
@@ -273,7 +288,8 @@ def build_action_samples(
                     "prefix_indices": [int(idx) for idx in prefix],
                     "remaining_indices": [int(choice["candidate_idx"]) for choice in choices],
                     "target_idx": int(target_idx),
-                    "target_action": target_action,
+                    "target_action": action_completion(target_action_label),
+                    "target_action_label": target_action_label,
                     "prompt": prompt,
                     "choices": choices,
                     "fingerprint": example.fingerprint,
@@ -487,7 +503,7 @@ def _normalize_candidate_order_mode(value: str) -> str:
 
 
 def _single_action_token_id(tokenizer: Any, action: str) -> int:
-    ids = tokenizer(str(action).strip(), add_special_tokens=False, truncation=False)["input_ids"]
+    ids = tokenizer(str(action), add_special_tokens=False, truncation=False)["input_ids"]
     if len(ids) != 1:
         raise ValueError(
             f"score_mode='{SCORE_MODE_ACTION_TOKEN}' requires each action id to be a single tokenizer token; "
@@ -495,6 +511,20 @@ def _single_action_token_id(tokenizer: Any, action: str) -> int:
             "slower continuation likelihood path."
         )
     return int(ids[0])
+
+
+def prompt_action_token_boundary(tokenizer: Any, prompt: str, action: str) -> dict[str, Any]:
+    prompt_ids = tokenizer(str(prompt), add_special_tokens=True, truncation=False)["input_ids"]
+    action_ids = tokenizer(str(action), add_special_tokens=False, truncation=False)["input_ids"]
+    full_ids = tokenizer(str(prompt) + str(action), add_special_tokens=True, truncation=False)["input_ids"]
+    expected = list(prompt_ids) + list(action_ids)
+    return {
+        "matches": list(full_ids) == expected,
+        "prompt_ids": list(prompt_ids),
+        "action_ids": list(action_ids),
+        "full_ids": list(full_ids),
+        "expected_ids": expected,
+    }
 
 
 def _encode_choice_chunk(
@@ -511,7 +541,7 @@ def _encode_choice_chunk(
 
     for prompt, action in pairs:
         prompt_ids = tokenizer(str(prompt), add_special_tokens=True, truncation=False)["input_ids"]
-        action_ids = tokenizer(str(action).strip(), add_special_tokens=False, truncation=False)["input_ids"]
+        action_ids = tokenizer(str(action), add_special_tokens=False, truncation=False)["input_ids"]
         if include_eos and tokenizer.eos_token_id is not None:
             action_ids = action_ids + [int(tokenizer.eos_token_id)]
         max_prompt_len = int(max_length) - len(action_ids)

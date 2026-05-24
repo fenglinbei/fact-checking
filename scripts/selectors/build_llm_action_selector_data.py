@@ -21,6 +21,7 @@ from fact_checking.selectors.llm_action import (
     CANDIDATE_ORDER_CANDIDATE_POOL,
     CANDIDATE_ORDER_MODES,
     build_action_samples,
+    prompt_action_token_boundary,
 )
 from fact_checking.selectors.stage2_oracle import (
     DEFAULT_CANDIDATE_POOL_SIZE,
@@ -134,6 +135,8 @@ def _prompt_length_stats(
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
     lengths: list[int] = []
     over_budget = 0
+    boundary_mismatches = 0
+    first_boundary_mismatch: dict[str, Any] | None = None
     iterator = tqdm(
         samples,
         desc="prompt length stats",
@@ -147,6 +150,20 @@ def _prompt_length_stats(
         length = len(ids)
         lengths.append(length)
         over_budget += int(length > int(max_length))
+        boundary = prompt_action_token_boundary(tokenizer, str(sample["prompt"]), str(sample["target_action"]))
+        if not bool(boundary["matches"]):
+            boundary_mismatches += 1
+            if first_boundary_mismatch is None:
+                first_boundary_mismatch = {
+                    "event_id": sample.get("event_id"),
+                    "step": sample.get("step"),
+                    "target_action": sample.get("target_action"),
+                    "prompt_tail": str(sample.get("prompt", ""))[-80:],
+                    "prompt_ids_tail": list(boundary["prompt_ids"])[-8:],
+                    "action_ids": list(boundary["action_ids"]),
+                    "full_ids_tail": list(boundary["full_ids"])[-8:],
+                    "expected_ids_tail": list(boundary["expected_ids"])[-8:],
+                }
     arr = sorted(lengths)
     return {
         "tokenizer": tokenizer_name,
@@ -159,6 +176,8 @@ def _prompt_length_stats(
         "p99": _percentile(arr, 0.99),
         "max": int(arr[-1]) if arr else 0,
         "over_budget": int(over_budget),
+        "action_token_boundary_mismatches": int(boundary_mismatches),
+        "first_action_token_boundary_mismatch": first_boundary_mismatch,
     }
 
 
