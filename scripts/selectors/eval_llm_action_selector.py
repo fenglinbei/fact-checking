@@ -243,8 +243,20 @@ def _resolve_model_dir(model_dir: Path) -> ModelDirResolution:
     if not model_dir.exists():
         raise ValueError(f"--model-dir does not exist: {model_dir}")
 
+    if _is_checkpoint_dir(model_dir):
+        run_dir = _infer_run_dir(model_dir, input_metadata)
+        run_metadata = _load_metadata(run_dir) if run_dir is not None and run_dir != model_dir else {}
+        metadata = _merge_metadata(run_metadata, input_metadata)
+        return ModelDirResolution(
+            model_dir_input=model_dir,
+            resolved_model_dir=model_dir,
+            run_dir=run_dir,
+            metadata=metadata,
+            layout="direct_checkpoint",
+        )
+
     best_rel = input_metadata.get("best_checkpoint_dir")
-    if best_rel and not _is_default_best_dir(model_dir):
+    if best_rel:
         best_dir = model_dir / str(best_rel)
         if _is_checkpoint_dir(best_dir):
             metadata = _merge_metadata(input_metadata, _load_metadata(best_dir))
@@ -260,33 +272,23 @@ def _resolve_model_dir(model_dir: Path) -> ModelDirResolution:
             f"but no checkpoint marker was found under {best_dir}."
         )
 
-    if _is_checkpoint_dir(model_dir):
-        run_dir = _infer_run_dir(model_dir, input_metadata)
-        run_metadata = _load_metadata(run_dir) if run_dir is not None and run_dir != model_dir else {}
-        metadata = _merge_metadata(run_metadata, input_metadata)
-        return ModelDirResolution(
-            model_dir_input=model_dir,
-            resolved_model_dir=model_dir,
-            run_dir=run_dir,
-            metadata=metadata,
-            layout="direct_checkpoint",
-        )
-
-    fallback_best = model_dir / "checkpoints" / "best"
-    if _is_checkpoint_dir(fallback_best):
-        metadata = _merge_metadata(input_metadata, _load_metadata(fallback_best))
-        return ModelDirResolution(
-            model_dir_input=model_dir,
-            resolved_model_dir=fallback_best,
-            run_dir=model_dir,
-            metadata=metadata,
-            layout="run_dir_default_best_checkpoint",
-        )
+    for fallback_name in ("best_selection", "best_action", "best"):
+        fallback_best = model_dir / "checkpoints" / fallback_name
+        if _is_checkpoint_dir(fallback_best):
+            metadata = _merge_metadata(input_metadata, _load_metadata(fallback_best))
+            return ModelDirResolution(
+                model_dir_input=model_dir,
+                resolved_model_dir=fallback_best,
+                run_dir=model_dir,
+                metadata=metadata,
+                layout=f"run_dir_default_{fallback_name}_checkpoint",
+            )
 
     if input_metadata:
         raise ValueError(
             f"{model_dir} looks like an LLM action selector run directory, but no best checkpoint was found. "
-            "Expected adapter_config.json/config.json at the run root for legacy runs or under checkpoints/best."
+            "Expected adapter_config.json/config.json at the run root for legacy runs or under checkpoints/best_selection, "
+            "checkpoints/best_action, or checkpoints/best."
         )
     raise ValueError(
         f"--model-dir must be a checkpoint directory or an LLM action selector run directory: {model_dir}"
@@ -298,7 +300,7 @@ def _is_checkpoint_dir(path: Path) -> bool:
 
 
 def _is_default_best_dir(path: Path) -> bool:
-    return path.name == "best" and path.parent.name == "checkpoints"
+    return path.name in {"best_selection", "best_action", "best"} and path.parent.name == "checkpoints"
 
 
 def _infer_run_dir(model_dir: Path, metadata: dict[str, Any]) -> Path | None:

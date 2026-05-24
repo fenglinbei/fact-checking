@@ -268,6 +268,12 @@ def build_action_samples(
                         f"step={step}: target_idx={target_idx}."
                     )
 
+            prefix_set = {int(idx) for idx in prefix}
+            remaining_oracle_indices = [
+                int(idx)
+                for idx in selected
+                if int(idx) not in prefix_set and int(idx) in choice_indices
+            ]
             prompt = build_action_prompt(
                 example,
                 prefix_indices=prefix,
@@ -287,6 +293,8 @@ def build_action_samples(
                     "gold_label": example.gold_label,
                     "prefix_indices": [int(idx) for idx in prefix],
                     "remaining_indices": [int(choice["candidate_idx"]) for choice in choices],
+                    "oracle_selected_indices": [int(idx) for idx in selected],
+                    "remaining_oracle_indices": remaining_oracle_indices,
                     "target_idx": int(target_idx),
                     "target_action": action_completion(target_action_label),
                     "target_action_label": target_action_label,

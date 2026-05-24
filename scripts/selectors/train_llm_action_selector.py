@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import math
+import random
 import sys
 import time
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
@@ -60,6 +62,18 @@ class ActionSampleDataset(Dataset):
         return self.rows[idx]
 
 
+def _sample_eval_rows(rows: list[dict[str, Any]], *, limit: int, mode: str, seed: int) -> list[dict[str, Any]]:
+    if int(limit) <= 0 or int(limit) >= len(rows):
+        return rows
+    if mode == "head":
+        return rows[: int(limit)]
+    if mode != "random":
+        raise ValueError(f"Unsupported eval sample mode: {mode!r}")
+    rng = random.Random(int(seed))
+    indices = sorted(rng.sample(range(len(rows)), int(limit)))
+    return [rows[idx] for idx in indices]
+
+
 @dataclass(frozen=True)
 class SwanLabRun:
     enabled: bool
@@ -85,15 +99,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-grad-norm", type=float, default=1.0)
     p.add_argument("--soft-loss-weight", type=float, default=0.3)
     p.add_argument("--soft-tau", type=float, default=0.2)
+    p.add_argument("--set-loss-weight", type=float, default=0.0)
+    p.add_argument("--set-loss-type", default="multi_positive_ce", choices=["multi_positive_ce", "bce"])
     p.add_argument("--logging-steps", type=int, default=20)
     p.add_argument("--eval-every", type=int, default=500)
     p.add_argument("--eval-sample-limit", type=int, default=None)
+    p.add_argument("--eval-sample-mode", default="random", choices=["head", "random"])
+    p.add_argument("--eval-sample-seed", type=int, default=20260524)
     p.add_argument("--selection-eval-oracle-results", default=None)
     p.add_argument("--selection-eval-mode", default="none", choices=["none", "best", "every_eval", "final"])
     p.add_argument("--selection-eval-sample-limit", type=int, default=128)
     p.add_argument("--selection-eval-top-k", type=int, default=DEFAULT_SELECTOR_TOP_K)
     p.add_argument("--selection-eval-max-candidate-chars", type=int, default=180)
     p.add_argument("--selection-eval-output-dir", default=None)
+    p.add_argument("--best-selection-metric", default="jaccard@5", choices=["recall@5", "jaccard@5", "oracle_rank_ndcg@5", "top1_match"])
+    p.add_argument("--primary-checkpoint", default="selection", choices=["action", "selection"])
     p.add_argument("--initial-eval", action="store_true")
     p.add_argument("--action-label-mode", default=None, choices=sorted(ACTION_LABEL_MODES))
     p.add_argument("--candidate-order-mode", default=CANDIDATE_ORDER_CANDIDATE_POOL, choices=sorted(CANDIDATE_ORDER_MODES))
@@ -147,7 +167,12 @@ def main() -> None:
     train_rows = read_jsonl(args.train_data)
     val_rows = read_jsonl(args.val_data)
     if args.eval_sample_limit is not None:
-        val_rows = val_rows[: int(args.eval_sample_limit)]
+        val_rows = _sample_eval_rows(
+            val_rows,
+            limit=int(args.eval_sample_limit),
+            mode=str(args.eval_sample_mode),
+            seed=int(args.eval_sample_seed),
+        )
     if not train_rows:
         raise ValueError("No train action samples.")
     if not val_rows:
@@ -156,7 +181,21 @@ def main() -> None:
     args.action_label_mode = str(args.action_label_mode or sample_label_mode)
     if logger is not None:
         logger.info("Loaded action samples: train=%d val=%d", len(train_rows), len(val_rows))
-        logger.info("score_mode=%s max_length=%d choice_batch_size=%d", args.score_mode, args.max_length, args.choice_batch_size)
+        logger.info(
+            "score_mode=%s max_length=%d choice_batch_size=%d set_loss_weight=%.4f set_loss_type=%s",
+            args.score_mode,
+            args.max_length,
+            args.choice_batch_size,
+            float(args.set_loss_weight),
+            str(args.set_loss_type),
+        )
+        if args.eval_sample_limit is not None:
+            logger.info(
+                "eval sample: limit=%d mode=%s seed=%d",
+                int(args.eval_sample_limit),
+                str(args.eval_sample_mode),
+                int(args.eval_sample_seed),
+            )
         logger.info(
             "action_label_mode=%s selection_candidate_order_mode=%s candidate_order_seed=%d",
             args.action_label_mode,
@@ -311,7 +350,8 @@ def main() -> None:
         selection_history_path = out_dir / "selection_history.jsonl"
 
     history: list[dict[str, Any]] = []
-    best_accuracy = float("-inf")
+    best_action_accuracy = float("-inf")
+    best_selection_metric = float("-inf")
     global_step = 0
     last_eval_step: int | None = None
     log_every = max(int(args.logging_steps), 1)
@@ -350,8 +390,9 @@ def main() -> None:
             _log_swanlab(swanlab_run, _val_swanlab_payload(result), step=0)
             if logger is not None:
                 logger.info(
-                    "initial eval loss=%.4f acc=%.4f",
+                    "initial eval loss=%.4f set=%.4f acc=%.4f",
                     float(result["val_loss"]),
+                    float(result.get("val_set_loss") or 0.0),
                     float(result["val_action_accuracy"]),
                 )
         last_eval_step = 0
@@ -370,6 +411,8 @@ def main() -> None:
                     score_mode=str(args.score_mode),
                     soft_tau=float(args.soft_tau),
                     soft_loss_weight=float(args.soft_loss_weight),
+                    set_loss_weight=float(args.set_loss_weight),
+                    set_loss_type=str(args.set_loss_type),
                 )
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -394,11 +437,12 @@ def main() -> None:
                         write_json(metrics_dir / "latest_train.json", train_record)
                         _log_swanlab(swanlab_run, _train_swanlab_payload(train_record), step=global_step)
                         message = (
-                            "step={step} loss={loss:.4f} hard={hard:.4f} soft={soft:.4f} acc={acc:.4f}".format(
+                            "step={step} loss={loss:.4f} hard={hard:.4f} soft={soft:.4f} set={set_loss:.4f} acc={acc:.4f}".format(
                                 step=global_step,
                                 loss=float(train_record["loss"]),
                                 hard=float(train_record["hard_loss"]),
                                 soft=float(train_record["soft_loss"]),
+                                set_loss=float(train_record["set_loss"]),
                                 acc=float(train_record["accuracy"]),
                             )
                         )
@@ -416,9 +460,10 @@ def main() -> None:
                         epoch=epoch,
                     )
                     history.append(result)
-                    best_accuracy = _process_action_eval_result(
+                    best_action_accuracy, best_selection_metric = _process_action_eval_result(
                         result,
-                        best_accuracy=best_accuracy,
+                        best_action_accuracy=best_action_accuracy,
+                        best_selection_metric=best_selection_metric,
                         accelerator=accelerator,
                         model=model,
                         tokenizer=tokenizer,
@@ -444,9 +489,10 @@ def main() -> None:
                 epoch=epoch,
             )
             history.append(result)
-            best_accuracy = _process_action_eval_result(
+            best_action_accuracy, best_selection_metric = _process_action_eval_result(
                 result,
-                best_accuracy=best_accuracy,
+                best_action_accuracy=best_action_accuracy,
+                best_selection_metric=best_selection_metric,
                 accelerator=accelerator,
                 model=model,
                 tokenizer=tokenizer,
@@ -478,13 +524,48 @@ def main() -> None:
             reason="final",
             logger=logger,
         )
+        final_selection_metric = _broadcast_selection_metric(
+            final_selection,
+            metric_name=str(args.best_selection_metric),
+            accelerator=accelerator,
+        )
+        final_selection_updated = final_selection_metric > best_selection_metric
+        final_selection_checkpoint_dir = _checkpoint_dir(out_dir, "best_selection")
+        if final_selection_updated:
+            from sft.data.io import save_model
+
+            save_model(accelerator, model, tokenizer, final_selection_checkpoint_dir)
+            best_selection_metric = final_selection_metric
         if accelerator.is_main_process and final_selection is not None:
             _log_swanlab(swanlab_run, _selection_swanlab_payload(final_selection), step=global_step)
+            if final_selection_updated:
+                final_result = {
+                    "global_step": int(global_step),
+                    "epoch": int(epochs - 1),
+                    "selection": final_selection,
+                }
+                _write_checkpoint_metadata(
+                    output_dir=out_dir,
+                    checkpoint_dir=final_selection_checkpoint_dir,
+                    metadata=metadata,
+                    result=final_result,
+                    role="best_selection",
+                    metric_name=str(args.best_selection_metric),
+                    metric_value=best_selection_metric,
+                    make_primary=str(args.primary_checkpoint) == "selection",
+                )
+                _log_swanlab(
+                    swanlab_run,
+                    {f"best/selection/{str(args.best_selection_metric)}": best_selection_metric},
+                    step=global_step,
+                )
     if accelerator.is_main_process:
         payload = {
             "metadata": metadata,
             "history": history,
-            "best_action_accuracy": best_accuracy,
+            "best_action_accuracy": best_action_accuracy,
+            "best_selection_metric": best_selection_metric,
+            "best_selection_metric_name": str(args.best_selection_metric),
             "runtime": runtime_info,
             "elapsed_seconds": round(time.time() - started_at, 3),
         }
@@ -492,7 +573,8 @@ def main() -> None:
         _log_swanlab(
             swanlab_run,
             {
-                "best/action_accuracy": best_accuracy,
+                "best/action_accuracy": best_action_accuracy,
+                f"best/selection/{str(args.best_selection_metric)}": best_selection_metric,
                 **_cuda_memory_metrics(),
             },
             step=global_step,
@@ -514,6 +596,8 @@ def _batch_loss(
     score_mode: str,
     soft_tau: float,
     soft_loss_weight: float,
+    set_loss_weight: float,
+    set_loss_type: str,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     scored = score_action_choices(
         model,
@@ -527,6 +611,7 @@ def _batch_loss(
     losses: list[torch.Tensor] = []
     hard_losses: list[torch.Tensor] = []
     soft_losses: list[torch.Tensor] = []
+    set_losses: list[torch.Tensor] = []
     correct = 0
     count = 0
     for sample, scores, indices in zip(batch, scored.scores, scored.candidate_indices):
@@ -546,9 +631,17 @@ def _batch_loss(
             device=scores.device,
         )
         soft_loss = -(soft_probs * log_probs).sum()
-        losses.append(hard_loss + float(soft_loss_weight) * soft_loss)
+        set_loss = _set_aware_loss(
+            sample,
+            scores,
+            log_probs,
+            indices=indices,
+            set_loss_type=str(set_loss_type),
+        )
+        losses.append(hard_loss + float(soft_loss_weight) * soft_loss + float(set_loss_weight) * set_loss)
         hard_losses.append(hard_loss.detach())
         soft_losses.append(soft_loss.detach())
+        set_losses.append(set_loss.detach())
         correct += int(torch.argmax(scores.detach()).item() == target_pos)
         count += 1
     if not losses:
@@ -558,10 +651,46 @@ def _batch_loss(
         "loss": float(loss.detach().float().item()),
         "hard_loss": float(torch.stack(hard_losses).mean().float().item()),
         "soft_loss": float(torch.stack(soft_losses).mean().float().item()),
+        "set_loss": float(torch.stack(set_losses).mean().float().item()),
         "accuracy": float(correct / max(count, 1)),
         "n_samples": float(count),
     }
     return loss, parts
+
+
+def _set_aware_loss(
+    sample: dict[str, Any],
+    scores: torch.Tensor,
+    log_probs: torch.Tensor,
+    *,
+    indices: list[int],
+    set_loss_type: str,
+) -> torch.Tensor:
+    positive_indices = _remaining_oracle_indices(sample, indices)
+    positive_positions = [pos for pos, idx in enumerate(indices) if int(idx) in positive_indices]
+    if not positive_positions:
+        return scores.new_zeros(())
+    if set_loss_type == "multi_positive_ce":
+        target = torch.zeros_like(scores)
+        target[positive_positions] = 1.0 / float(len(positive_positions))
+        return -(target * log_probs).sum()
+    if set_loss_type == "bce":
+        target = torch.zeros_like(scores)
+        target[positive_positions] = 1.0
+        centered_scores = scores - scores.mean()
+        return F.binary_cross_entropy_with_logits(centered_scores, target)
+    raise ValueError(f"Unsupported set_loss_type={set_loss_type!r}")
+
+
+def _remaining_oracle_indices(sample: dict[str, Any], indices: list[int]) -> set[int]:
+    valid = {int(idx) for idx in indices}
+    if sample.get("remaining_oracle_indices") is not None:
+        return {int(idx) for idx in sample.get("remaining_oracle_indices") or [] if int(idx) in valid}
+    oracle_indices = sample.get("oracle_selected_indices")
+    if oracle_indices is not None:
+        prefix = {int(idx) for idx in sample.get("prefix_indices") or []}
+        return {int(idx) for idx in oracle_indices if int(idx) not in prefix and int(idx) in valid}
+    return {int(sample["target_idx"])}
 
 
 def _evaluate(
@@ -575,7 +704,7 @@ def _evaluate(
     epoch: int,
 ) -> dict[str, Any]:
     model.eval()
-    sums = torch.zeros((5,), dtype=torch.float64, device=accelerator.device)
+    sums = torch.zeros((6,), dtype=torch.float64, device=accelerator.device)
     for batch in tqdm(
         val_dl,
         desc="action val",
@@ -593,6 +722,8 @@ def _evaluate(
                 score_mode=str(args.score_mode),
                 soft_tau=float(args.soft_tau),
                 soft_loss_weight=float(args.soft_loss_weight),
+                set_loss_weight=float(args.set_loss_weight),
+                set_loss_type=str(args.set_loss_type),
             )
         n = float(parts["n_samples"])
         sums += torch.tensor(
@@ -600,6 +731,7 @@ def _evaluate(
                 float(loss.detach().item()) * n,
                 float(parts["hard_loss"]) * n,
                 float(parts["soft_loss"]) * n,
+                float(parts["set_loss"]) * n,
                 float(parts["accuracy"]) * n,
                 n,
             ],
@@ -607,19 +739,20 @@ def _evaluate(
             device=accelerator.device,
         )
     gathered = accelerator.gather_for_metrics(sums.unsqueeze(0)).sum(dim=0)
-    n_total = max(float(gathered[4].item()), 1.0)
+    n_total = max(float(gathered[5].item()), 1.0)
     result = {
         "global_step": int(global_step),
         "epoch": int(epoch),
         "val_loss": float(gathered[0].item() / n_total),
         "val_hard_loss": float(gathered[1].item() / n_total),
         "val_soft_loss": float(gathered[2].item() / n_total),
-        "val_action_accuracy": float(gathered[3].item() / n_total),
+        "val_set_loss": float(gathered[3].item() / n_total),
+        "val_action_accuracy": float(gathered[4].item() / n_total),
         "n_val_samples": int(n_total),
     }
     if accelerator.is_main_process:
         print(
-            "eval step={global_step} loss={val_loss:.4f} acc={val_action_accuracy:.4f}".format(
+            "eval step={global_step} loss={val_loss:.4f} set={val_set_loss:.4f} acc={val_action_accuracy:.4f}".format(
                 **result
             )
         )
@@ -627,33 +760,32 @@ def _evaluate(
     return result
 
 
-def _maybe_save_best(
+def _maybe_save_action_best(
     result: dict[str, Any],
     *,
-    best_accuracy: float,
+    best_action_accuracy: float,
     accelerator: Accelerator,
     model: torch.nn.Module,
     tokenizer: Any,
     output_dir: Path,
-    metadata: dict[str, Any],
 ) -> tuple[float, bool, Path]:
-    del metadata
     current = float(result["val_action_accuracy"])
-    checkpoint_dir = _best_checkpoint_dir(output_dir)
-    if current <= best_accuracy:
-        return best_accuracy, False, checkpoint_dir
+    checkpoint_dir = _checkpoint_dir(output_dir, "best_action")
+    if current <= best_action_accuracy:
+        return best_action_accuracy, False, checkpoint_dir
     from sft.data.io import save_model
 
     save_model(accelerator, model, tokenizer, checkpoint_dir)
     if accelerator.is_main_process:
-        print(f"Saved best action selector checkpoint: {checkpoint_dir}")
+        print(f"Saved best action-accuracy checkpoint: {checkpoint_dir}")
     return current, True, checkpoint_dir
 
 
 def _process_action_eval_result(
     result: dict[str, Any],
     *,
-    best_accuracy: float,
+    best_action_accuracy: float,
+    best_selection_metric: float,
     accelerator: Accelerator,
     model: torch.nn.Module,
     tokenizer: Any,
@@ -665,18 +797,17 @@ def _process_action_eval_result(
     selection_examples: list[Stage2OracleExample] | None,
     swanlab_run: SwanLabRun,
     logger: logging.Logger | None,
-) -> float:
-    best_accuracy, best_updated, checkpoint_dir = _maybe_save_best(
+) -> tuple[float, float]:
+    best_action_accuracy, action_updated, action_checkpoint_dir = _maybe_save_action_best(
         result,
-        best_accuracy=best_accuracy,
+        best_action_accuracy=best_action_accuracy,
         accelerator=accelerator,
         model=model,
         tokenizer=tokenizer,
         output_dir=output_dir,
-        metadata=metadata,
     )
     selection_record: dict[str, Any] | None = None
-    if _should_run_selection_eval(str(args.selection_eval_mode), best_updated=best_updated):
+    if _should_run_selection_eval(str(args.selection_eval_mode), best_updated=action_updated):
         selection_record = _run_training_selection_eval(
             model,
             tokenizer,
@@ -687,9 +818,26 @@ def _process_action_eval_result(
             selection_history_path=selection_history_path,
             global_step=int(result["global_step"]),
             epoch=int(result["epoch"]),
-            reason="best" if best_updated else "every_eval",
+            reason="best_action" if action_updated else "every_eval",
             logger=logger,
         )
+    selection_metric_value = _broadcast_selection_metric(
+        selection_record,
+        metric_name=str(args.best_selection_metric),
+        accelerator=accelerator,
+    )
+    selection_updated = selection_metric_value > best_selection_metric
+    selection_checkpoint_dir = _checkpoint_dir(output_dir, "best_selection")
+    if selection_updated:
+        from sft.data.io import save_model
+
+        save_model(accelerator, model, tokenizer, selection_checkpoint_dir)
+        best_selection_metric = selection_metric_value
+        if accelerator.is_main_process:
+            print(
+                "Saved best selection checkpoint: "
+                f"{selection_checkpoint_dir} ({args.best_selection_metric}={selection_metric_value:.4f})"
+            )
 
     if accelerator.is_main_process:
         if selection_record is not None:
@@ -699,20 +847,41 @@ def _process_action_eval_result(
         _log_swanlab(swanlab_run, _val_swanlab_payload(result), step=int(result["global_step"]))
         if logger is not None:
             logger.info(
-                "eval step=%d loss=%.4f acc=%.4f",
+                "eval step=%d loss=%.4f set=%.4f acc=%.4f",
                 int(result["global_step"]),
                 float(result["val_loss"]),
+                float(result.get("val_set_loss") or 0.0),
                 float(result["val_action_accuracy"]),
             )
-        if best_updated:
-            _write_best_metadata(
+        if action_updated:
+            _write_checkpoint_metadata(
                 output_dir=output_dir,
-                checkpoint_dir=checkpoint_dir,
+                checkpoint_dir=action_checkpoint_dir,
                 metadata=metadata,
                 result=result,
+                role="best_action",
+                metric_name="val_action_accuracy",
+                metric_value=best_action_accuracy,
+                make_primary=str(args.primary_checkpoint) == "action" or metadata.get("best_checkpoint_dir") is None,
             )
-            _log_swanlab(swanlab_run, {"best/action_accuracy": best_accuracy}, step=int(result["global_step"]))
-    return best_accuracy
+            _log_swanlab(swanlab_run, {"best/action_accuracy": best_action_accuracy}, step=int(result["global_step"]))
+        if selection_updated and selection_record is not None:
+            _write_checkpoint_metadata(
+                output_dir=output_dir,
+                checkpoint_dir=selection_checkpoint_dir,
+                metadata=metadata,
+                result=result,
+                role="best_selection",
+                metric_name=str(args.best_selection_metric),
+                metric_value=best_selection_metric,
+                make_primary=str(args.primary_checkpoint) == "selection",
+            )
+            _log_swanlab(
+                swanlab_run,
+                {f"best/selection/{str(args.best_selection_metric)}": best_selection_metric},
+                step=int(result["global_step"]),
+            )
+    return best_action_accuracy, best_selection_metric
 
 
 def _run_training_selection_eval(
@@ -813,38 +982,75 @@ def _metrics_dir(output_dir: Path) -> Path:
     return Path(output_dir) / "metrics"
 
 
-def _best_checkpoint_dir(output_dir: Path) -> Path:
-    return Path(output_dir) / "checkpoints" / "best"
+def _checkpoint_dir(output_dir: Path, role: str) -> Path:
+    if role not in {"best_action", "best_selection"}:
+        raise ValueError(f"Unsupported checkpoint role: {role!r}")
+    return Path(output_dir) / "checkpoints" / role
 
 
-def _write_best_metadata(
+def _broadcast_selection_metric(
+    record: dict[str, Any] | None,
+    *,
+    metric_name: str,
+    accelerator: Accelerator,
+) -> float:
+    value = float("-inf")
+    if accelerator.is_main_process and record is not None:
+        raw_value = record.get(metric_name)
+        if raw_value is not None:
+            value = float(raw_value)
+    tensor = torch.tensor([value], dtype=torch.float64, device=accelerator.device)
+    if (
+        int(accelerator.num_processes) > 1
+        and torch.distributed.is_available()
+        and torch.distributed.is_initialized()
+    ):
+        torch.distributed.broadcast(tensor, src=0)
+    return float(tensor.item())
+
+
+def _write_checkpoint_metadata(
     *,
     output_dir: Path,
     checkpoint_dir: Path,
     metadata: dict[str, Any],
     result: dict[str, Any],
+    role: str,
+    metric_name: str,
+    metric_value: float,
+    make_primary: bool,
 ) -> None:
-    best_rel = checkpoint_dir.relative_to(output_dir).as_posix()
-    run_metadata = dict(metadata)
-    run_metadata.update(
-        {
-            "checkpoint_layout_version": 2,
-            "best_checkpoint_dir": best_rel,
-            "metrics_dir": "metrics",
-            "best": result,
-        }
-    )
-    write_json(output_dir / "selector_metadata.json", run_metadata)
-    checkpoint_metadata = dict(run_metadata)
+    rel = checkpoint_dir.relative_to(output_dir).as_posix()
+    best_key = "best_action" if role == "best_action" else "best_selection"
+    metadata[f"{role}_checkpoint_dir"] = rel
+    metadata[best_key] = {
+        "metric_name": str(metric_name),
+        "metric_value": float(metric_value),
+        "checkpoint_dir": rel,
+        "result": result,
+    }
+    if make_primary:
+        metadata["best_checkpoint_dir"] = rel
+        metadata["best_checkpoint_role"] = str(role)
+        metadata["best"] = result
+    write_json(output_dir / "selector_metadata.json", metadata)
+    checkpoint_metadata = dict(metadata)
     checkpoint_metadata.update(
         {
-            "checkpoint_role": "best",
+            "checkpoint_role": str(role),
+            "checkpoint_metric_name": str(metric_name),
+            "checkpoint_metric_value": float(metric_value),
             "run_output_dir": str(output_dir),
             "checkpoint_dir": str(checkpoint_dir),
         }
     )
     write_json(checkpoint_dir / "selector_metadata.json", checkpoint_metadata)
-    write_json(_metrics_dir(output_dir) / "best_val.json", result)
+    metrics_dir = _metrics_dir(output_dir)
+    write_json(metrics_dir / f"{role}_val.json", result)
+    if role == "best_action":
+        write_json(metrics_dir / "best_val.json", result)
+    if make_primary:
+        write_json(metrics_dir / "best_primary_val.json", result)
 
 
 def _metadata(
@@ -870,15 +1076,23 @@ def _metadata(
         "candidate_order_mode": str(args.candidate_order_mode),
         "candidate_order_seed": int(args.candidate_order_seed),
         "checkpoint_layout_version": 2,
-        "best_checkpoint_dir": "checkpoints/best",
+        "best_checkpoint_dir": None,
+        "best_checkpoint_role": None,
+        "best_action_checkpoint_dir": "checkpoints/best_action",
+        "best_selection_checkpoint_dir": "checkpoints/best_selection",
         "metrics_dir": "metrics",
         "initial_eval": bool(args.initial_eval),
+        "eval_sample_limit": int(args.eval_sample_limit) if args.eval_sample_limit is not None else None,
+        "eval_sample_mode": str(args.eval_sample_mode),
+        "eval_sample_seed": int(args.eval_sample_seed),
         "selection_eval_mode": str(args.selection_eval_mode),
         "selection_eval_oracle_results": str(args.selection_eval_oracle_results) if args.selection_eval_oracle_results else None,
         "selection_eval_sample_limit": int(args.selection_eval_sample_limit),
         "selection_eval_top_k": int(args.selection_eval_top_k),
         "selection_eval_max_candidate_chars": int(args.selection_eval_max_candidate_chars),
         "selection_eval_output_dir": str(args.selection_eval_output_dir) if args.selection_eval_output_dir else None,
+        "best_selection_metric": str(args.best_selection_metric),
+        "primary_checkpoint": str(args.primary_checkpoint),
         "n_train_samples": int(n_train),
         "n_val_samples": int(n_val),
         "max_train_steps": int(runtime_info["runtime_max_train_steps"]),
@@ -896,6 +1110,8 @@ def _metadata(
         "val_candidate_order_seed": val_sample_settings.get("candidate_order_seed"),
         "soft_loss_weight": float(args.soft_loss_weight),
         "soft_tau": float(args.soft_tau),
+        "set_loss_weight": float(args.set_loss_weight),
+        "set_loss_type": str(args.set_loss_type),
         "action_format": "A..O",
         "lora": {
             "enabled": not bool(args.no_lora),
@@ -1040,6 +1256,7 @@ def _aggregate_train_parts(
             float(parts["loss"]) * n,
             float(parts["hard_loss"]) * n,
             float(parts["soft_loss"]) * n,
+            float(parts["set_loss"]) * n,
             float(parts["accuracy"]) * n,
             n,
         ],
@@ -1047,14 +1264,15 @@ def _aggregate_train_parts(
         device=accelerator.device,
     )
     gathered = accelerator.gather_for_metrics(sums.unsqueeze(0)).sum(dim=0)
-    n_total = max(float(gathered[4].item()), 1.0)
+    n_total = max(float(gathered[5].item()), 1.0)
     return {
         "global_step": int(global_step),
         "epoch": int(epoch),
         "loss": float(gathered[0].item() / n_total),
         "hard_loss": float(gathered[1].item() / n_total),
         "soft_loss": float(gathered[2].item() / n_total),
-        "accuracy": float(gathered[3].item() / n_total),
+        "set_loss": float(gathered[3].item() / n_total),
+        "accuracy": float(gathered[4].item() / n_total),
         "n_samples": int(n_total),
         "lr": float(lr),
         **_cuda_memory_metrics(),
@@ -1083,6 +1301,7 @@ def _train_swanlab_payload(record: dict[str, Any]) -> dict[str, Any]:
         "train/loss": record.get("loss"),
         "train/hard_loss": record.get("hard_loss"),
         "train/soft_loss": record.get("soft_loss"),
+        "train/set_loss": record.get("set_loss"),
         "train/action_accuracy": record.get("accuracy"),
         "train/lr": record.get("lr"),
         "train/epoch": record.get("epoch"),
@@ -1097,6 +1316,7 @@ def _val_swanlab_payload(result: dict[str, Any]) -> dict[str, Any]:
         "val/loss": result.get("val_loss"),
         "val/hard_loss": result.get("val_hard_loss"),
         "val/soft_loss": result.get("val_soft_loss"),
+        "val/set_loss": result.get("val_set_loss"),
         "val/action_accuracy": result.get("val_action_accuracy"),
         "val/n_samples": result.get("n_val_samples"),
     }
@@ -1118,8 +1338,12 @@ def _metadata_metrics(metadata: dict[str, Any]) -> dict[str, Any]:
     return {
         "config/max_length": metadata.get("max_length"),
         "config/choice_batch_size": metadata.get("choice_batch_size"),
+        "config/set_loss_weight": metadata.get("set_loss_weight"),
+        "config/set_loss_type": metadata.get("set_loss_type"),
+        "config/eval_sample_mode": metadata.get("eval_sample_mode"),
         "config/selection_eval_sample_limit": metadata.get("selection_eval_sample_limit"),
         "config/selection_eval_top_k": metadata.get("selection_eval_top_k"),
+        "config/best_selection_metric": metadata.get("best_selection_metric"),
         "config/n_train_samples": metadata.get("n_train_samples"),
         "config/n_val_samples": metadata.get("n_val_samples"),
         "config/runtime_max_train_steps": metadata.get("runtime_max_train_steps"),
