@@ -20,7 +20,9 @@ from fact_checking.selectors.llm_action import (
     ACTION_LABEL_MODES,
     CANDIDATE_ORDER_CANDIDATE_POOL,
     CANDIDATE_ORDER_MODES,
+    build_bad_prefix_action_samples,
     build_action_samples,
+    normalize_bad_prefix_sources,
     prompt_action_token_boundary,
 )
 from fact_checking.selectors.stage2_oracle import (
@@ -42,6 +44,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--vig-cache", required=True)
     p.add_argument("--output-jsonl", required=True)
     p.add_argument("--manifest", default=None)
+    p.add_argument("--bad-prefix-output-jsonl", default=None)
+    p.add_argument("--bad-prefix-manifest", default=None)
+    p.add_argument("--bad-prefix-sources", default="hybrid,random_corrupt")
+    p.add_argument("--bad-prefix-max-replacements", type=int, default=2)
+    p.add_argument("--bad-prefix-sample-ratio", type=float, default=1.0)
     p.add_argument("--split", default="train", choices=["train", "val", "test"])
     p.add_argument("--expected-chunk-mmr-fingerprint", default=EXPECTED_STAGE2_CHUNK_MMR_FINGERPRINT)
     p.add_argument("--max-candidates", type=int, default=DEFAULT_CANDIDATE_POOL_SIZE)
@@ -121,6 +128,48 @@ def main() -> None:
         "samples={n_samples} examples={n_examples} missing_steps={missing_vig_steps} "
         "missing_candidates={missing_vig_candidates}".format(**manifest)
     )
+    if args.bad_prefix_output_jsonl:
+        bad_samples, bad_manifest = build_bad_prefix_action_samples(
+            examples,
+            split=str(args.split),
+            top_k=int(args.top_k),
+            max_candidate_chars=int(args.max_candidate_chars),
+            include_retrieval_scores=not bool(args.no_retrieval_scores),
+            show_progress=not bool(args.no_progress),
+            action_label_mode=str(args.action_label_mode),
+            candidate_order_mode=str(args.candidate_order_mode),
+            candidate_order_seed=int(args.candidate_order_seed),
+            bad_prefix_sources=normalize_bad_prefix_sources(str(args.bad_prefix_sources)),
+            bad_prefix_max_replacements=int(args.bad_prefix_max_replacements),
+            bad_prefix_sample_ratio=float(args.bad_prefix_sample_ratio),
+        )
+        if not bad_samples:
+            raise ValueError("No bad-prefix action selector samples were generated.")
+        bad_manifest.update(
+            {
+                "oracle_results": str(args.oracle_results),
+                "output_jsonl": str(args.bad_prefix_output_jsonl),
+                "filter_policy": str(args.filter_policy),
+                "chunk_mmr_fingerprint": str(args.expected_chunk_mmr_fingerprint),
+            }
+        )
+        if args.tokenizer:
+            bad_manifest["prompt_length_stats"] = _prompt_length_stats(
+                bad_samples,
+                tokenizer_name=str(args.tokenizer),
+                max_length=int(args.max_length),
+                show_progress=not bool(args.no_progress),
+            )
+        write_jsonl(args.bad_prefix_output_jsonl, bad_samples)
+        bad_manifest_path = (
+            Path(args.bad_prefix_manifest)
+            if args.bad_prefix_manifest
+            else Path(args.bad_prefix_output_jsonl).with_suffix(".manifest.json")
+        )
+        write_json(bad_manifest_path, bad_manifest)
+        print(f"Wrote bad-prefix LLM action selector samples: {args.bad_prefix_output_jsonl}")
+        print(f"Wrote bad-prefix manifest: {bad_manifest_path}")
+        print("bad_prefix_samples={n_samples} examples={n_examples}".format(**bad_manifest))
 
 
 def _prompt_length_stats(

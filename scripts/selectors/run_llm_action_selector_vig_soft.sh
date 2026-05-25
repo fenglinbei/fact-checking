@@ -23,12 +23,15 @@ VAL_ORACLE_RESULTS="${VAL_ORACLE_RESULTS:-outputs/oracle_evidence/stage2_margin_
 TRAIN_VIG_CACHE="${TRAIN_VIG_CACHE:-outputs/selectors/vig_utility/saved_step_train/vig_records_train.jsonl}"
 VAL_VIG_CACHE="${VAL_VIG_CACHE:-outputs/selectors/vig_utility/saved_step_val/vig_records_val.jsonl}"
 TRAIN_DATA="${TRAIN_DATA:-${DATA_DIR}/action_samples_train.jsonl}"
+BAD_PREFIX_TRAIN_DATA="${BAD_PREFIX_TRAIN_DATA:-${DATA_DIR}/action_samples_train_bad_prefix.jsonl}"
 if [[ "${SANITY_MODE}" == "overfit_train_sample" ]]; then
   VAL_DATA="${VAL_DATA:-${TRAIN_DATA}}"
+  BAD_PREFIX_VAL_DATA="${BAD_PREFIX_VAL_DATA:-${BAD_PREFIX_TRAIN_DATA}}"
   EVAL_ORACLE_RESULTS="${EVAL_ORACLE_RESULTS:-${TRAIN_ORACLE_RESULTS}}"
   SELECTION_EVAL_ORACLE_RESULTS="${SELECTION_EVAL_ORACLE_RESULTS:-${TRAIN_ORACLE_RESULTS}}"
 else
   VAL_DATA="${VAL_DATA:-${DATA_DIR}/action_samples_val.jsonl}"
+  BAD_PREFIX_VAL_DATA="${BAD_PREFIX_VAL_DATA:-${DATA_DIR}/action_samples_val_bad_prefix.jsonl}"
   EVAL_ORACLE_RESULTS="${EVAL_ORACLE_RESULTS:-${VAL_ORACLE_RESULTS}}"
   SELECTION_EVAL_ORACLE_RESULTS="${SELECTION_EVAL_ORACLE_RESULTS:-${VAL_ORACLE_RESULTS}}"
 fi
@@ -61,12 +64,20 @@ if [[ "${SANITY_MODE}" == "overfit_train_sample" ]]; then
 else
   EPOCHS="${EPOCHS:-2}"
 fi
-LR="${LR:-1.0e-5}"
+LR="${LR:-1.0e-4}"
 GRAD_ACCUM="${GRAD_ACCUM:-1}"
-SOFT_LOSS_WEIGHT="${SOFT_LOSS_WEIGHT:-0.3}"
+SOFT_LOSS_WEIGHT="${SOFT_LOSS_WEIGHT:-0.01}"
 SOFT_TAU="${SOFT_TAU:-0.2}"
-SET_LOSS_WEIGHT="${SET_LOSS_WEIGHT:-0}"
+SET_LOSS_WEIGHT="${SET_LOSS_WEIGHT:-0.02}"
 SET_LOSS_TYPE="${SET_LOSS_TYPE:-multi_positive_ce}"
+HARD_LOSS_WEIGHT="${HARD_LOSS_WEIGHT:-1.0}"
+PAIRWISE_LOSS_WEIGHT="${PAIRWISE_LOSS_WEIGHT:-0.05}"
+BAD_PREFIX_HARD_LOSS_WEIGHT="${BAD_PREFIX_HARD_LOSS_WEIGHT:-0}"
+TRAIN_ORDER_AUGMENTATION="${TRAIN_ORDER_AUGMENTATION:-dynamic_random}"
+BUILD_BAD_PREFIX_DATA="${BUILD_BAD_PREFIX_DATA:-true}"
+BAD_PREFIX_SOURCES="${BAD_PREFIX_SOURCES:-hybrid,random_corrupt}"
+BAD_PREFIX_MAX_REPLACEMENTS="${BAD_PREFIX_MAX_REPLACEMENTS:-2}"
+BAD_PREFIX_SAMPLE_RATIO="${BAD_PREFIX_SAMPLE_RATIO:-1.0}"
 EVAL_SAMPLE_MODE="${EVAL_SAMPLE_MODE:-random}"
 EVAL_SAMPLE_SEED="${EVAL_SAMPLE_SEED:-20260524}"
 if [[ "${SANITY_MODE}" == "overfit_train_sample" ]]; then
@@ -122,6 +133,15 @@ if [[ -n "${TRAIN_SAMPLE_LIMIT}" ]]; then
 fi
 
 if [[ "${RUN_BUILD_DATA}" == "true" || "${RUN_BUILD_DATA}" == "1" ]]; then
+  train_bad_prefix_args=()
+  if [[ "${BUILD_BAD_PREFIX_DATA}" == "true" || "${BUILD_BAD_PREFIX_DATA}" == "1" ]]; then
+    train_bad_prefix_args+=(
+      --bad-prefix-output-jsonl "${BAD_PREFIX_TRAIN_DATA}"
+      --bad-prefix-sources "${BAD_PREFIX_SOURCES}"
+      --bad-prefix-max-replacements "${BAD_PREFIX_MAX_REPLACEMENTS}"
+      --bad-prefix-sample-ratio "${BAD_PREFIX_SAMPLE_RATIO}"
+    )
+  fi
   python scripts/selectors/build_llm_action_selector_data.py \
     --oracle-results "${TRAIN_ORACLE_RESULTS}" \
     --vig-cache "${TRAIN_VIG_CACHE}" \
@@ -134,6 +154,7 @@ if [[ "${RUN_BUILD_DATA}" == "true" || "${RUN_BUILD_DATA}" == "1" ]]; then
     --candidate-order-mode "${TRAIN_CANDIDATE_ORDER}" \
     --candidate-order-seed "${CANDIDATE_ORDER_SEED}" \
     "${progress_arg[@]}" \
+    "${train_bad_prefix_args[@]}" \
     "${build_extra[@]}"
 
   if [[ "${SANITY_MODE}" == "overfit_train_sample" ]]; then
@@ -142,6 +163,15 @@ if [[ "${RUN_BUILD_DATA}" == "true" || "${RUN_BUILD_DATA}" == "1" ]]; then
     val_extra=()
     if [[ -n "${VAL_SAMPLE_LIMIT}" ]]; then
       val_extra+=(--sample-limit "${VAL_SAMPLE_LIMIT}")
+    fi
+    val_bad_prefix_args=()
+    if [[ "${BUILD_BAD_PREFIX_DATA}" == "true" || "${BUILD_BAD_PREFIX_DATA}" == "1" ]]; then
+      val_bad_prefix_args+=(
+        --bad-prefix-output-jsonl "${BAD_PREFIX_VAL_DATA}"
+        --bad-prefix-sources "${BAD_PREFIX_SOURCES}"
+        --bad-prefix-max-replacements "${BAD_PREFIX_MAX_REPLACEMENTS}"
+        --bad-prefix-sample-ratio "${BAD_PREFIX_SAMPLE_RATIO}"
+      )
     fi
     python scripts/selectors/build_llm_action_selector_data.py \
       --oracle-results "${VAL_ORACLE_RESULTS}" \
@@ -155,6 +185,7 @@ if [[ "${RUN_BUILD_DATA}" == "true" || "${RUN_BUILD_DATA}" == "1" ]]; then
       --candidate-order-mode "${EVAL_CANDIDATE_ORDER}" \
       --candidate-order-seed "${CANDIDATE_ORDER_SEED}" \
       "${progress_arg[@]}" \
+      "${val_bad_prefix_args[@]}" \
       "${val_extra[@]}"
   fi
 fi
@@ -177,6 +208,10 @@ train_cmd=(
   --soft-tau "${SOFT_TAU}"
   --set-loss-weight "${SET_LOSS_WEIGHT}"
   --set-loss-type "${SET_LOSS_TYPE}"
+  --hard-loss-weight "${HARD_LOSS_WEIGHT}"
+  --pairwise-loss-weight "${PAIRWISE_LOSS_WEIGHT}"
+  --bad-prefix-hard-loss-weight "${BAD_PREFIX_HARD_LOSS_WEIGHT}"
+  --train-order-augmentation "${TRAIN_ORDER_AUGMENTATION}"
   --eval-every "${EVAL_EVERY}"
   --eval-sample-mode "${EVAL_SAMPLE_MODE}"
   --eval-sample-seed "${EVAL_SAMPLE_SEED}"
@@ -196,6 +231,10 @@ train_cmd=(
   --swanlab-tags "${SWANLAB_TAGS}"
   "${progress_arg[@]}"
 )
+if [[ "${BUILD_BAD_PREFIX_DATA}" == "true" || "${BUILD_BAD_PREFIX_DATA}" == "1" ]]; then
+  train_cmd+=(--bad-prefix-train-data "${BAD_PREFIX_TRAIN_DATA}")
+  train_cmd+=(--bad-prefix-val-data "${BAD_PREFIX_VAL_DATA}")
+fi
 if [[ -n "${EVAL_SAMPLE_LIMIT}" ]]; then
   train_cmd+=(--eval-sample-limit "${EVAL_SAMPLE_LIMIT}")
 fi

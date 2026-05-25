@@ -7,6 +7,7 @@ import torch
 from fact_checking.selectors.llm_action import (
     action_completion,
     action_token,
+    build_bad_prefix_action_samples,
     build_action_samples,
     build_action_prompt,
     build_vig_index,
@@ -14,11 +15,13 @@ from fact_checking.selectors.llm_action import (
     order_candidate_indices,
     parse_action,
     prompt_action_token_boundary,
+    rebuild_action_sample_with_order,
     score_action_choices,
     softmax_deltas,
 )
 from fact_checking.selectors.llm_action_eval import evaluate_llm_action_selection
 from fact_checking.selectors.stage2_oracle import Stage2OracleExample
+from scripts.selectors.train_llm_action_selector import _batch_loss
 
 
 class LLMActionSelectorTest(unittest.TestCase):
@@ -89,6 +92,10 @@ class LLMActionSelectorTest(unittest.TestCase):
         self.assertFalse(samples[0]["prompt"].endswith(" "))
         self.assertNotIn(example.gold_label, samples[0]["prompt"])
         self.assertEqual(samples[1]["prefix_indices"], [2])
+        self.assertIn("candidate_text_by_idx", samples[0])
+        self.assertIn("candidate_score_by_idx", samples[0])
+        self.assertTrue(samples[0]["has_hard_target"])
+        self.assertEqual(samples[0]["prefix_source"], "oracle")
 
     def test_local_choice_labels_are_position_local(self) -> None:
         first = choice_action_labels([2, 0, 1], action_label_mode="local_choice")
@@ -128,6 +135,120 @@ class LLMActionSelectorTest(unittest.TestCase):
         self.assertEqual(samples[0]["choices"][2]["candidate_idx"], 2)
         self.assertEqual(samples[0]["choices"][2]["action"], " C")
         self.assertEqual(samples[0]["choices"][2]["action_label"], "C")
+
+    def test_rebuild_action_sample_dynamic_order_is_epoch_seeded(self) -> None:
+        example = _example_many()
+        samples, _manifest = build_action_samples(
+            [example],
+            vig_rows=_vig_rows_for_example(example),
+            split="train",
+            top_k=1,
+            max_candidate_chars=80,
+            include_retrieval_scores=False,
+            strict=True,
+            action_label_mode="local_choice",
+            candidate_order_mode="candidate_pool",
+        )
+
+        first = rebuild_action_sample_with_order(
+            samples[0],
+            action_label_mode="local_choice",
+            candidate_order_mode="random",
+            candidate_order_seed=11,
+            epoch=0,
+            row_index=0,
+        )
+        second = rebuild_action_sample_with_order(
+            samples[0],
+            action_label_mode="local_choice",
+            candidate_order_mode="random",
+            candidate_order_seed=11,
+            epoch=0,
+            row_index=0,
+        )
+        next_epoch = rebuild_action_sample_with_order(
+            samples[0],
+            action_label_mode="local_choice",
+            candidate_order_mode="random",
+            candidate_order_seed=11,
+            epoch=1,
+            row_index=0,
+        )
+
+        self.assertEqual(first["remaining_indices"], second["remaining_indices"])
+        self.assertNotEqual(first["candidate_order_seed"], next_epoch["candidate_order_seed"])
+        self.assertCountEqual(first["remaining_indices"], samples[0]["remaining_indices"])
+        target_idx = int(first["target_idx"])
+        target_choice = [choice for choice in first["choices"] if int(choice["candidate_idx"]) == target_idx][0]
+        self.assertEqual(first["target_action"], target_choice["action"])
+
+    def test_rebuild_action_sample_requires_structured_candidate_text(self) -> None:
+        with self.assertRaisesRegex(ValueError, "candidate_text_by_idx"):
+            rebuild_action_sample_with_order(
+                {"event_id": "old", "step": 0, "remaining_indices": [0, 1], "choices": []},
+                action_label_mode="local_choice",
+                candidate_order_mode="random",
+                candidate_order_seed=11,
+            )
+
+    def test_build_bad_prefix_samples_track_remaining_oracle(self) -> None:
+        example = _example()
+        samples, manifest = build_bad_prefix_action_samples(
+            [example],
+            split="train",
+            top_k=2,
+            max_candidate_chars=80,
+            include_retrieval_scores=False,
+            action_label_mode="local_choice",
+            candidate_order_mode="candidate_pool",
+            bad_prefix_sources="hybrid",
+            bad_prefix_max_replacements=1,
+        )
+
+        self.assertEqual(manifest["n_samples"], 1)
+        sample = samples[0]
+        self.assertFalse(sample["has_hard_target"])
+        self.assertEqual(sample["prefix_source"], "hybrid")
+        self.assertTrue(sample["remaining_oracle_indices"])
+        self.assertTrue(set(sample["prefix_indices"]).isdisjoint(set(sample["remaining_indices"])))
+        self.assertTrue(set(sample["prefix_indices"]).isdisjoint(set(sample["remaining_oracle_indices"])))
+
+    def test_bad_prefix_batch_loss_skips_hard_ce_and_backprops_pairwise(self) -> None:
+        example = _example()
+        samples, _manifest = build_bad_prefix_action_samples(
+            [example],
+            split="train",
+            top_k=2,
+            max_candidate_chars=80,
+            include_retrieval_scores=False,
+            action_label_mode="local_choice",
+            candidate_order_mode="candidate_pool",
+            bad_prefix_sources="hybrid",
+            bad_prefix_max_replacements=1,
+        )
+        model = _TrainableChoiceModel(vocab_size=8)
+        loss, parts = _batch_loss(
+            model,
+            _FakeTokenizer(),
+            [samples[0]],
+            device=torch.device("cpu"),
+            max_length=16,
+            choice_batch_size=8,
+            score_mode="action_token",
+            soft_tau=0.2,
+            hard_loss_weight=1.0,
+            soft_loss_weight=0.0,
+            set_loss_weight=1.0,
+            set_loss_type="multi_positive_ce",
+            pairwise_loss_weight=1.0,
+            bad_prefix_hard_loss_weight=0.0,
+        )
+
+        self.assertEqual(parts["n_hard_samples"], 0.0)
+        self.assertEqual(parts["n_bad_prefix_samples"], 1.0)
+        self.assertGreater(parts["n_positive_samples"], 0.0)
+        loss.backward()
+        self.assertIsNotNone(model.bias.grad)
 
     def test_prompt_action_token_boundary_matches_completion_action(self) -> None:
         prompt = build_action_prompt(
@@ -288,6 +409,29 @@ def _example() -> Stage2OracleExample:
     )
 
 
+def _example_many() -> Stage2OracleExample:
+    candidates = [
+        {"candidate_idx": idx, "candidate_uid": f"c{idx}", "text": f"Evidence {idx} text."}
+        for idx in range(5)
+    ]
+    candidate_scores = [
+        {"candidate_idx": idx, "hybrid_rank": idx, "hybrid_score": 1.0 - idx * 0.1}
+        for idx in range(5)
+    ]
+    return Stage2OracleExample(
+        event_id="evt-many",
+        claim="A test claim with more candidates",
+        gold_label="true",
+        candidates=candidates,
+        candidate_scores=candidate_scores,
+        selected_indices=[4, 1],
+        fingerprint="432dfc970e75",
+        margin=1.0,
+        is_correct=True,
+        raw={},
+    )
+
+
 def _vig_rows_for_example(example: Stage2OracleExample) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for step, selected in enumerate(example.selected_indices):
@@ -361,6 +505,23 @@ class _FakeChoiceModel(torch.nn.Module):
         logits[:, 1, self.preferred_action_id] = 8.0
         if input_ids.shape[1] > 2:
             logits[:, 2, 1] = 8.0
+        return type("FakeOutput", (), {"logits": logits})()
+
+
+class _TrainableChoiceModel(torch.nn.Module):
+    def __init__(self, *, vocab_size: int) -> None:
+        super().__init__()
+        self.bias = torch.nn.Parameter(torch.zeros(vocab_size, dtype=torch.float32))
+
+    def forward(
+        self,
+        *,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        use_cache: bool,
+    ) -> object:
+        del attention_mask, use_cache
+        logits = self.bias.view(1, 1, -1).expand(input_ids.shape[0], input_ids.shape[1], -1)
         return type("FakeOutput", (), {"logits": logits})()
 
 

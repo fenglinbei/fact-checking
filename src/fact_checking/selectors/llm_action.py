@@ -25,6 +25,10 @@ ACTION_LABEL_MODES = {ACTION_LABEL_MODE_GLOBAL_INDEX, ACTION_LABEL_MODE_LOCAL_CH
 CANDIDATE_ORDER_CANDIDATE_POOL = "candidate_pool"
 CANDIDATE_ORDER_RANDOM = "random"
 CANDIDATE_ORDER_MODES = {CANDIDATE_ORDER_CANDIDATE_POOL, CANDIDATE_ORDER_RANDOM}
+PREFIX_SOURCE_ORACLE = "oracle"
+PREFIX_SOURCE_HYBRID = "hybrid"
+PREFIX_SOURCE_RANDOM_CORRUPT = "random_corrupt"
+BAD_PREFIX_SOURCES = {PREFIX_SOURCE_HYBRID, PREFIX_SOURCE_RANDOM_CORRUPT}
 
 
 @dataclass(frozen=True)
@@ -111,6 +115,24 @@ def softmax_deltas(deltas: list[float], *, tau: float) -> list[float]:
     return [float(x / denom) for x in exps]
 
 
+def normalize_bad_prefix_sources(value: str | list[str] | tuple[str, ...]) -> list[str]:
+    if isinstance(value, str):
+        raw_items = value.split(",")
+    else:
+        raw_items = list(value)
+    sources: list[str] = []
+    for raw in raw_items:
+        item = str(raw).strip().lower()
+        if not item:
+            continue
+        if item not in BAD_PREFIX_SOURCES:
+            choices = ", ".join(sorted(BAD_PREFIX_SOURCES))
+            raise ValueError(f"Unsupported bad-prefix source={item!r}. Use one of: {choices}.")
+        if item not in sources:
+            sources.append(item)
+    return sources
+
+
 def build_vig_index(
     rows: list[dict[str, Any]],
     *,
@@ -147,12 +169,51 @@ def build_action_prompt(
     action_labels: dict[int, str] | None = None,
     action_label_mode: str = ACTION_LABEL_MODE_GLOBAL_INDEX,
 ) -> str:
+    candidate_text_by_idx = {
+        int(idx): candidate_text(candidate)
+        for idx, candidate in enumerate(example.candidates)
+    }
+    candidate_score_by_idx = {
+        int(idx): dict(score)
+        for idx, score in enumerate(example.candidate_scores)
+    }
+    return build_action_prompt_from_fields(
+        claim=example.claim,
+        prefix_indices=prefix_indices,
+        remaining_indices=remaining_indices,
+        candidate_text_by_idx=candidate_text_by_idx,
+        candidate_score_by_idx=candidate_score_by_idx,
+        max_candidate_chars=int(max_candidate_chars),
+        include_retrieval_scores=bool(include_retrieval_scores),
+        action_labels=action_labels,
+        action_label_mode=action_label_mode,
+    )
+
+
+def build_action_prompt_from_fields(
+    *,
+    claim: str,
+    prefix_indices: list[int],
+    remaining_indices: list[int],
+    candidate_text_by_idx: dict[int | str, str],
+    candidate_score_by_idx: dict[int | str, dict[str, Any]] | None = None,
+    max_candidate_chars: int = 180,
+    include_retrieval_scores: bool = True,
+    action_labels: dict[int, str] | None = None,
+    action_label_mode: str = ACTION_LABEL_MODE_GLOBAL_INDEX,
+) -> str:
     label_mode = _normalize_action_label_mode(action_label_mode)
     labels = {int(idx): str(label) for idx, label in (action_labels or {}).items()}
+    text_by_idx = {int(idx): str(text) for idx, text in (candidate_text_by_idx or {}).items()}
+    score_by_idx = {
+        int(idx): dict(score)
+        for idx, score in (candidate_score_by_idx or {}).items()
+        if isinstance(score, dict)
+    }
     lines: list[str] = [
         "You are selecting evidence for fact checking.",
         "Choose exactly one next evidence id from the remaining candidates.",
-        f"Claim: {example.claim.strip()}",
+        f"Claim: {str(claim).strip()}",
         "",
         "Selected prefix:",
     ]
@@ -162,16 +223,16 @@ def build_action_prompt(
                 prefix_label = f"candidate_idx={int(idx)}"
             else:
                 prefix_label = action_token(idx)
-            lines.append(f"- {prefix_label}: {_trim(candidate_text(example.candidates[idx]), max_candidate_chars)}")
+            lines.append(f"- {prefix_label}: {_trim(text_by_idx.get(int(idx), ''), max_candidate_chars)}")
     else:
         lines.append("- None")
 
     lines.extend(["", "Remaining candidates:"])
     for idx in remaining_indices:
         label = labels.get(int(idx), action_token(idx))
-        line = f"- {label}: {_trim(candidate_text(example.candidates[idx]), max_candidate_chars)}"
+        line = f"- {label}: {_trim(text_by_idx.get(int(idx), ''), max_candidate_chars)}"
         if include_retrieval_scores:
-            score_row = example.candidate_scores[idx] if idx < len(example.candidate_scores) else {}
+            score_row = score_by_idx.get(int(idx), {})
             rank = _safe_float(score_row.get("hybrid_rank"), float(idx))
             score = _safe_float(score_row.get("hybrid_score"), float("nan"))
             if math.isfinite(score):
@@ -182,6 +243,66 @@ def build_action_prompt(
 
     lines.extend(["", "Next evidence id:"])
     return "\n".join(lines)
+
+
+def rebuild_action_sample_with_order(
+    sample: dict[str, Any],
+    *,
+    action_label_mode: str,
+    candidate_order_mode: str,
+    candidate_order_seed: int,
+    epoch: int = 0,
+    row_index: int = 0,
+) -> dict[str, Any]:
+    if not sample.get("candidate_text_by_idx"):
+        raise ValueError(
+            "Dynamic candidate-order augmentation requires action samples with candidate_text_by_idx. "
+            "Rebuild action selector data with the current build script."
+        )
+    label_mode = _normalize_action_label_mode(action_label_mode)
+    order_mode = _normalize_candidate_order_mode(candidate_order_mode)
+    base_remaining = [int(idx) for idx in sample.get("remaining_indices") or []]
+    effective_seed = int(candidate_order_seed) + int(epoch) * 1_000_003 + int(row_index) * 97
+    ordered_remaining = order_candidate_indices(
+        base_remaining,
+        mode=order_mode,
+        seed=effective_seed,
+        event_id=str(sample.get("event_id") or ""),
+        step=int(sample.get("step") or 0),
+    )
+    action_labels = choice_action_labels(ordered_remaining, action_label_mode=label_mode)
+    choices = _choices_for_remaining_indices(
+        sample,
+        ordered_remaining,
+        action_labels=action_labels,
+    )
+    rebuilt = dict(sample)
+    rebuilt["remaining_indices"] = [int(idx) for idx in ordered_remaining]
+    rebuilt["choices"] = choices
+    rebuilt["prompt"] = build_action_prompt_from_fields(
+        claim=str(sample.get("claim") or ""),
+        prefix_indices=[int(idx) for idx in sample.get("prefix_indices") or []],
+        remaining_indices=[int(choice["candidate_idx"]) for choice in choices],
+        candidate_text_by_idx=sample.get("candidate_text_by_idx") or {},
+        candidate_score_by_idx=sample.get("candidate_score_by_idx") or {},
+        max_candidate_chars=int(sample.get("max_candidate_chars") or 180),
+        include_retrieval_scores=bool(sample.get("include_retrieval_scores", True)),
+        action_labels={int(choice["candidate_idx"]): str(choice["action_label"]) for choice in choices},
+        action_label_mode=label_mode,
+    )
+    target_idx = _sample_target_idx(rebuilt)
+    if target_idx is not None and int(target_idx) in action_labels:
+        target_label = action_labels[int(target_idx)]
+        rebuilt["target_idx"] = int(target_idx)
+        rebuilt["target_action"] = action_completion(target_label)
+        rebuilt["target_action_label"] = target_label
+    rebuilt["action_label_mode"] = label_mode
+    rebuilt["candidate_order_mode"] = order_mode
+    rebuilt["candidate_order_seed"] = int(effective_seed)
+    rebuilt["base_candidate_order_seed"] = int(candidate_order_seed)
+    rebuilt["order_augmentation_epoch"] = int(epoch)
+    rebuilt["order_augmentation_row_index"] = int(row_index)
+    return rebuilt
 
 
 def build_action_samples(
@@ -292,14 +413,22 @@ def build_action_samples(
                     "claim": example.claim,
                     "gold_label": example.gold_label,
                     "prefix_indices": [int(idx) for idx in prefix],
+                    "prefix_source": PREFIX_SOURCE_ORACLE,
+                    "prefix_quality": _prefix_quality(prefix, selected, [], []),
                     "remaining_indices": [int(choice["candidate_idx"]) for choice in choices],
                     "oracle_selected_indices": [int(idx) for idx in selected],
                     "remaining_oracle_indices": remaining_oracle_indices,
                     "target_idx": int(target_idx),
                     "target_action": action_completion(target_action_label),
                     "target_action_label": target_action_label,
+                    "has_hard_target": True,
                     "prompt": prompt,
                     "choices": choices,
+                    "candidate_text_by_idx": _candidate_text_by_idx(example),
+                    "candidate_score_by_idx": _candidate_score_by_idx(example),
+                    "choice_source": "oracle_prefix_vig",
+                    "max_candidate_chars": int(max_candidate_chars),
+                    "include_retrieval_scores": bool(include_retrieval_scores),
                     "fingerprint": example.fingerprint,
                     "action_label_mode": label_mode,
                     "candidate_order_mode": order_mode,
@@ -324,6 +453,319 @@ def build_action_samples(
         "missing_targets": int(missing_targets),
     }
     return samples, manifest
+
+
+def build_bad_prefix_action_samples(
+    examples: list[Stage2OracleExample],
+    *,
+    split: str,
+    top_k: int,
+    max_candidate_chars: int = 180,
+    include_retrieval_scores: bool = True,
+    show_progress: bool = False,
+    action_label_mode: str = ACTION_LABEL_MODE_GLOBAL_INDEX,
+    candidate_order_mode: str = CANDIDATE_ORDER_CANDIDATE_POOL,
+    candidate_order_seed: int = 20260524,
+    bad_prefix_sources: str | list[str] | tuple[str, ...] = (PREFIX_SOURCE_HYBRID, PREFIX_SOURCE_RANDOM_CORRUPT),
+    bad_prefix_max_replacements: int = 2,
+    bad_prefix_sample_ratio: float = 1.0,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    label_mode = _normalize_action_label_mode(action_label_mode)
+    order_mode = _normalize_candidate_order_mode(candidate_order_mode)
+    order_seed = int(candidate_order_seed)
+    sources = normalize_bad_prefix_sources(bad_prefix_sources)
+    max_replacements = max(int(bad_prefix_max_replacements), 1)
+    sample_ratio = min(max(float(bad_prefix_sample_ratio), 0.0), 1.0)
+    samples: list[dict[str, Any]] = []
+    skipped_no_remaining_oracle = 0
+    skipped_no_replacement = 0
+    skipped_by_ratio = 0
+
+    iterator = tqdm(
+        examples,
+        desc=f"build bad-prefix action samples [{split}]",
+        unit="claim",
+        dynamic_ncols=True,
+        disable=not bool(show_progress),
+    )
+    for example in iterator:
+        selected = [int(idx) for idx in example.selected_indices[: int(top_k)]]
+        if len(selected) <= 1:
+            continue
+        all_indices = list(range(len(example.candidates)))
+        for step in range(1, len(selected)):
+            oracle_prefix = [int(idx) for idx in selected[:step]]
+            for source in sources:
+                if sample_ratio < 1.0 and _stable_unit_float(
+                    order_seed,
+                    example.event_id,
+                    step,
+                    source,
+                    "sample_ratio",
+                ) >= sample_ratio:
+                    skipped_by_ratio += 1
+                    continue
+                corrupted_prefix, replaced, replacements = _corrupt_prefix(
+                    oracle_prefix,
+                    all_indices=all_indices,
+                    oracle_selected=selected,
+                    candidate_scores=example.candidate_scores,
+                    source=source,
+                    max_replacements=max_replacements,
+                    seed=order_seed,
+                    event_id=example.event_id,
+                    step=step,
+                )
+                if not replacements:
+                    skipped_no_replacement += 1
+                    continue
+                remaining = [idx for idx in all_indices if idx not in set(corrupted_prefix)]
+                remaining_oracle_indices = [
+                    int(idx)
+                    for idx in selected
+                    if int(idx) not in set(corrupted_prefix) and int(idx) in set(remaining)
+                ]
+                if not remaining_oracle_indices:
+                    skipped_no_remaining_oracle += 1
+                    continue
+                ordered_remaining = order_candidate_indices(
+                    remaining,
+                    mode=order_mode,
+                    seed=order_seed,
+                    event_id=example.event_id,
+                    step=step,
+                )
+                action_labels = choice_action_labels(ordered_remaining, action_label_mode=label_mode)
+                target_idx = int(remaining_oracle_indices[0])
+                choices = _choices_for_example(
+                    example,
+                    ordered_remaining,
+                    action_labels=action_labels,
+                )
+                prompt = build_action_prompt(
+                    example,
+                    prefix_indices=corrupted_prefix,
+                    remaining_indices=[int(choice["candidate_idx"]) for choice in choices],
+                    max_candidate_chars=int(max_candidate_chars),
+                    include_retrieval_scores=bool(include_retrieval_scores),
+                    action_labels={int(choice["candidate_idx"]): str(choice["action_label"]) for choice in choices},
+                    action_label_mode=label_mode,
+                )
+                target_action_label = action_labels[int(target_idx)]
+                samples.append(
+                    {
+                        "event_id": example.event_id,
+                        "split": str(split),
+                        "step": int(step),
+                        "claim": example.claim,
+                        "gold_label": example.gold_label,
+                        "prefix_indices": [int(idx) for idx in corrupted_prefix],
+                        "prefix_source": source,
+                        "prefix_quality": _prefix_quality(corrupted_prefix, selected, replaced, replacements),
+                        "remaining_indices": [int(choice["candidate_idx"]) for choice in choices],
+                        "oracle_selected_indices": [int(idx) for idx in selected],
+                        "remaining_oracle_indices": remaining_oracle_indices,
+                        "target_idx": target_idx,
+                        "target_action": action_completion(target_action_label),
+                        "target_action_label": target_action_label,
+                        "has_hard_target": False,
+                        "prompt": prompt,
+                        "choices": choices,
+                        "candidate_text_by_idx": _candidate_text_by_idx(example),
+                        "candidate_score_by_idx": _candidate_score_by_idx(example),
+                        "choice_source": "bad_prefix",
+                        "max_candidate_chars": int(max_candidate_chars),
+                        "include_retrieval_scores": bool(include_retrieval_scores),
+                        "fingerprint": example.fingerprint,
+                        "action_label_mode": label_mode,
+                        "candidate_order_mode": order_mode,
+                        "candidate_order_seed": order_seed,
+                    }
+                )
+
+    manifest = {
+        "split": str(split),
+        "n_examples": int(len(examples)),
+        "n_samples": int(len(samples)),
+        "top_k": int(top_k),
+        "max_candidate_chars": int(max_candidate_chars),
+        "include_retrieval_scores": bool(include_retrieval_scores),
+        "action_label_mode": label_mode,
+        "candidate_order_mode": order_mode,
+        "candidate_order_seed": order_seed,
+        "bad_prefix_sources": sources,
+        "bad_prefix_max_replacements": int(max_replacements),
+        "bad_prefix_sample_ratio": float(sample_ratio),
+        "skipped_no_remaining_oracle": int(skipped_no_remaining_oracle),
+        "skipped_no_replacement": int(skipped_no_replacement),
+        "skipped_by_ratio": int(skipped_by_ratio),
+    }
+    return samples, manifest
+
+
+def _candidate_text_by_idx(example: Stage2OracleExample) -> dict[str, str]:
+    return {
+        str(idx): candidate_text(candidate)
+        for idx, candidate in enumerate(example.candidates)
+    }
+
+
+def _candidate_score_by_idx(example: Stage2OracleExample) -> dict[str, dict[str, Any]]:
+    return {
+        str(idx): dict(score)
+        for idx, score in enumerate(example.candidate_scores)
+    }
+
+
+def _choices_for_example(
+    example: Stage2OracleExample,
+    remaining_indices: list[int],
+    *,
+    action_labels: dict[int, str],
+) -> list[dict[str, Any]]:
+    choices: list[dict[str, Any]] = []
+    for position, idx in enumerate(remaining_indices):
+        score_row = example.candidate_scores[idx] if idx < len(example.candidate_scores) else {}
+        choices.append(
+            {
+                "candidate_idx": int(idx),
+                "action": action_completion(action_labels[int(idx)]),
+                "action_label": action_labels[int(idx)],
+                "choice_position": int(position),
+                "delta_margin": 0.0,
+                "after_margin": 0.0,
+                "hybrid_rank": _safe_float(score_row.get("hybrid_rank"), float(idx)),
+                "hybrid_score": _safe_float(score_row.get("hybrid_score"), 0.0),
+            }
+        )
+    return choices
+
+
+def _choices_for_remaining_indices(
+    sample: dict[str, Any],
+    remaining_indices: list[int],
+    *,
+    action_labels: dict[int, str],
+) -> list[dict[str, Any]]:
+    original_choices = {
+        int(choice.get("candidate_idx")): dict(choice)
+        for choice in sample.get("choices") or []
+        if choice.get("candidate_idx") is not None
+    }
+    candidate_scores = {
+        int(idx): dict(score)
+        for idx, score in (sample.get("candidate_score_by_idx") or {}).items()
+        if isinstance(score, dict)
+    }
+    choices: list[dict[str, Any]] = []
+    for position, idx in enumerate(remaining_indices):
+        base = dict(original_choices.get(int(idx)) or {})
+        score_row = candidate_scores.get(int(idx), {})
+        base.update(
+            {
+                "candidate_idx": int(idx),
+                "action": action_completion(action_labels[int(idx)]),
+                "action_label": action_labels[int(idx)],
+                "choice_position": int(position),
+                "delta_margin": _safe_float(base.get("delta_margin"), 0.0),
+                "after_margin": _safe_float(base.get("after_margin"), 0.0),
+                "hybrid_rank": _safe_float(score_row.get("hybrid_rank", base.get("hybrid_rank")), float(idx)),
+                "hybrid_score": _safe_float(score_row.get("hybrid_score", base.get("hybrid_score")), 0.0),
+            }
+        )
+        choices.append(base)
+    return choices
+
+
+def _sample_target_idx(sample: dict[str, Any]) -> int | None:
+    raw_target = sample.get("target_idx")
+    if raw_target is not None:
+        try:
+            return int(raw_target)
+        except (TypeError, ValueError):
+            pass
+    for raw in sample.get("remaining_oracle_indices") or []:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _prefix_quality(
+    prefix: list[int],
+    oracle_selected: list[int],
+    replaced: list[int],
+    replacements: list[int],
+) -> dict[str, Any]:
+    oracle_set = {int(idx) for idx in oracle_selected}
+    prefix_set = {int(idx) for idx in prefix}
+    return {
+        "n_prefix": int(len(prefix)),
+        "n_oracle_in_prefix": int(len(prefix_set & oracle_set)),
+        "n_non_oracle_in_prefix": int(len([idx for idx in prefix if int(idx) not in oracle_set])),
+        "replaced_indices": [int(idx) for idx in replaced],
+        "replacement_indices": [int(idx) for idx in replacements],
+    }
+
+
+def _corrupt_prefix(
+    oracle_prefix: list[int],
+    *,
+    all_indices: list[int],
+    oracle_selected: list[int],
+    candidate_scores: list[dict[str, Any]],
+    source: str,
+    max_replacements: int,
+    seed: int,
+    event_id: str,
+    step: int,
+) -> tuple[list[int], list[int], list[int]]:
+    if not oracle_prefix:
+        return [], [], []
+    n_replace = min(max(int(max_replacements), 1), len(oracle_prefix))
+    replace_positions = list(range(len(oracle_prefix) - n_replace, len(oracle_prefix)))
+    replaced = [int(oracle_prefix[pos]) for pos in replace_positions]
+    prefix_set = {int(idx) for idx in oracle_prefix}
+    oracle_set = {int(idx) for idx in oracle_selected}
+    pool = [
+        int(idx)
+        for idx in all_indices
+        if int(idx) not in oracle_set and int(idx) not in prefix_set
+    ]
+    if source == PREFIX_SOURCE_HYBRID:
+        pool = sorted(
+            pool,
+            key=lambda idx: (
+                _safe_float(
+                    candidate_scores[idx].get("hybrid_rank") if idx < len(candidate_scores) else None,
+                    float(idx),
+                ),
+                idx,
+            ),
+        )
+    elif source == PREFIX_SOURCE_RANDOM_CORRUPT:
+        rng = random.Random(_stable_int(seed, event_id, step, source))
+        rng.shuffle(pool)
+    else:
+        raise ValueError(f"Unsupported bad-prefix source: {source!r}")
+    replacements = pool[:n_replace]
+    if len(replacements) < n_replace:
+        return list(oracle_prefix), replaced, []
+    corrupted = [int(idx) for idx in oracle_prefix]
+    for pos, replacement in zip(replace_positions, replacements):
+        corrupted[pos] = int(replacement)
+    return corrupted, replaced, replacements
+
+
+def _stable_int(seed: int, event_id: str, step: int, *parts: str) -> int:
+    material = "\n".join([str(int(seed)), str(event_id), str(int(step)), *[str(part) for part in parts]])
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()
+    return int(digest[:16], 16)
+
+
+def _stable_unit_float(seed: int, event_id: str, step: int, *parts: str) -> float:
+    return _stable_int(seed, event_id, step, *parts) / float(16**16 - 1)
 
 
 def score_action_choices(
