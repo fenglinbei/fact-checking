@@ -20,6 +20,8 @@ from fact_checking.selectors.llm_action import (
     ACTION_LABEL_MODES,
     CANDIDATE_ORDER_CANDIDATE_POOL,
     CANDIDATE_ORDER_MODES,
+    TARGET_MODE_ORACLE,
+    TARGET_MODES,
     build_bad_prefix_action_samples,
     build_action_samples,
     normalize_bad_prefix_sources,
@@ -65,6 +67,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--action-label-mode", default=ACTION_LABEL_MODE_LOCAL_CHOICE, choices=sorted(ACTION_LABEL_MODES))
     p.add_argument("--candidate-order-mode", default=CANDIDATE_ORDER_CANDIDATE_POOL, choices=sorted(CANDIDATE_ORDER_MODES))
     p.add_argument("--candidate-order-seed", type=int, default=20260524)
+    p.add_argument("--target-mode", default=TARGET_MODE_ORACLE, choices=sorted(TARGET_MODES))
     return p.parse_args()
 
 
@@ -98,6 +101,7 @@ def main() -> None:
         action_label_mode=str(args.action_label_mode),
         candidate_order_mode=str(args.candidate_order_mode),
         candidate_order_seed=int(args.candidate_order_seed),
+        target_mode=str(args.target_mode),
     )
     if not samples:
         raise ValueError("No action selector samples were generated.")

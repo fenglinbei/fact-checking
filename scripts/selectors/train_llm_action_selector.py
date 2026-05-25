@@ -32,6 +32,8 @@ from fact_checking.selectors.llm_action import (
     CANDIDATE_ORDER_MODES,
     SCORE_MODE_ACTION_TOKEN,
     SCORE_MODE_CONTINUATION,
+    TARGET_MODE_ORACLE,
+    TARGET_MODES,
     rebuild_action_sample_with_order,
     score_action_choices,
     softmax_deltas,
@@ -174,6 +176,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--action-label-mode", default=None, choices=sorted(ACTION_LABEL_MODES))
     p.add_argument("--candidate-order-mode", default=CANDIDATE_ORDER_CANDIDATE_POOL, choices=sorted(CANDIDATE_ORDER_MODES))
     p.add_argument("--candidate-order-seed", type=int, default=20260524)
+    p.add_argument("--target-mode", default=TARGET_MODE_ORACLE, choices=sorted(TARGET_MODES))
     p.add_argument("--dataloader-num-workers", type=int, default=0)
     p.add_argument("--seed", type=int, default=20260523)
     p.add_argument("--bf16", action="store_true", default=True)
@@ -583,15 +586,17 @@ def main() -> None:
                         _log_swanlab(swanlab_run, _train_swanlab_payload(train_record), step=global_step)
                         message = (
                             "step={step} loss={loss:.4f} hard={hard:.4f} soft={soft:.4f} "
-                            "set={set_loss:.4f} pair={pairwise:.4f} acc={acc:.4f} hit1={hit1:.4f}".format(
+                            "set={set_loss:.4f} pair={pairwise:.4f} target_acc={acc:.4f} "
+                            "pos_hit1={pos_hit1:.4f} oracle_hit1={oracle_hit1:.4f}".format(
                                 step=global_step,
                                 loss=float(train_record["loss"]),
                                 hard=float(train_record["hard_loss"]),
                                 soft=float(train_record["soft_loss"]),
                                 set_loss=float(train_record["set_loss"]),
                                 pairwise=float(train_record["pairwise_loss"]),
-                                acc=float(train_record["accuracy"]),
-                                hit1=float(train_record["remaining_oracle_hit@1"]),
+                                acc=float(train_record["target_accuracy"]),
+                                pos_hit1=float(train_record["positive_hit@1"]),
+                                oracle_hit1=float(train_record["oracle_remaining_hit@1"]),
                             )
                         )
                         print(message)
@@ -786,20 +791,28 @@ def _batch_loss(
     set_losses: list[torch.Tensor] = []
     pairwise_losses: list[torch.Tensor] = []
     positive_probs: list[torch.Tensor] = []
-    correct = 0
+    target_correct = 0
     positive_hit = 0
+    oracle_remaining_hit = 0
     count = 0
     hard_count = 0
     soft_count = 0
     positive_count = 0
+    oracle_remaining_count = 0
     bad_prefix_count = 0
     for sample, scores, indices in zip(batch, scored.scores, scored.candidate_indices):
         if scores.numel() == 0:
             continue
         is_bad_prefix = _is_bad_prefix_sample(sample)
         bad_prefix_count += int(is_bad_prefix)
-        positive_indices = _remaining_oracle_indices(sample, indices)
+        positive_indices = _positive_candidate_indices(sample, indices)
+        negative_indices = _negative_candidate_indices(sample, indices, positive_indices)
+        oracle_remaining_indices = _remaining_oracle_indices(sample, indices)
         positive_positions = [pos for pos, idx in enumerate(indices) if int(idx) in positive_indices]
+        negative_positions = [pos for pos, idx in enumerate(indices) if int(idx) in negative_indices]
+        oracle_remaining_positions = [
+            pos for pos, idx in enumerate(indices) if int(idx) in oracle_remaining_indices
+        ]
         log_probs = torch.log_softmax(scores, dim=0)
         hard_loss = scores.new_zeros(())
         hard_target_weight = float(bad_prefix_hard_loss_weight) if is_bad_prefix else float(hard_loss_weight)
@@ -814,7 +827,7 @@ def _batch_loss(
                 ) from exc
             hard_loss = -log_probs[target_pos]
             hard_losses.append(hard_loss.detach())
-            correct += int(torch.argmax(scores.detach()).item() == target_pos)
+            target_correct += int(torch.argmax(scores.detach()).item() == target_pos)
             hard_count += 1
         soft_loss = scores.new_zeros(())
         soft_target_weight = 0.0 if is_bad_prefix else float(soft_loss_weight)
@@ -828,13 +841,16 @@ def _batch_loss(
             soft_loss = -(soft_probs * log_probs).sum()
             soft_losses.append(soft_loss.detach())
         set_loss = _set_aware_loss(
-            sample,
             scores,
             log_probs,
-            indices=indices,
+            positive_positions=positive_positions,
             set_loss_type=str(set_loss_type),
         )
-        pairwise_loss = _pairwise_positive_loss(scores, positive_positions=positive_positions)
+        pairwise_loss = _pairwise_positive_loss(
+            scores,
+            positive_positions=positive_positions,
+            negative_positions=negative_positions,
+        )
         losses.append(
             float(hard_target_weight) * hard_loss
             + soft_target_weight * soft_loss
@@ -849,6 +865,9 @@ def _batch_loss(
             positive_probs.append(probs.sum().detach())
             positive_hit += int(torch.argmax(scores.detach()).item() in positive_positions)
             positive_count += 1
+        if oracle_remaining_positions:
+            oracle_remaining_hit += int(torch.argmax(scores.detach()).item() in oracle_remaining_positions)
+            oracle_remaining_count += 1
         if not is_bad_prefix:
             soft_count += 1
         count += 1
@@ -861,28 +880,29 @@ def _batch_loss(
         "soft_loss": _mean_detached(soft_losses),
         "set_loss": float(torch.stack(set_losses).mean().float().item()),
         "pairwise_loss": float(torch.stack(pairwise_losses).mean().float().item()),
-        "accuracy": float(correct / max(hard_count, 1)),
-        "remaining_oracle_hit@1": float(positive_hit / max(positive_count, 1)),
+        "accuracy": float(target_correct / max(hard_count, 1)),
+        "target_accuracy": float(target_correct / max(hard_count, 1)),
+        "positive_hit@1": float(positive_hit / max(positive_count, 1)),
+        "remaining_oracle_hit@1": float(oracle_remaining_hit / max(oracle_remaining_count, 1)),
+        "oracle_remaining_hit@1": float(oracle_remaining_hit / max(oracle_remaining_count, 1)),
         "positive_prob": _mean_detached(positive_probs),
         "n_samples": float(count),
         "n_hard_samples": float(hard_count),
         "n_soft_samples": float(soft_count),
         "n_positive_samples": float(positive_count),
+        "n_oracle_remaining_samples": float(oracle_remaining_count),
         "n_bad_prefix_samples": float(bad_prefix_count),
     }
     return loss, parts
 
 
 def _set_aware_loss(
-    sample: dict[str, Any],
     scores: torch.Tensor,
     log_probs: torch.Tensor,
     *,
-    indices: list[int],
+    positive_positions: list[int],
     set_loss_type: str,
 ) -> torch.Tensor:
-    positive_indices = _remaining_oracle_indices(sample, indices)
-    positive_positions = [pos for pos, idx in enumerate(indices) if int(idx) in positive_indices]
     if not positive_positions:
         return scores.new_zeros(())
     if set_loss_type == "multi_positive_ce":
@@ -901,12 +921,16 @@ def _pairwise_positive_loss(
     scores: torch.Tensor,
     *,
     positive_positions: list[int],
+    negative_positions: list[int] | None = None,
 ) -> torch.Tensor:
     positive = [int(pos) for pos in positive_positions]
     if not positive:
         return scores.new_zeros(())
     positive_set = set(positive)
-    negative = [pos for pos in range(scores.numel()) if pos not in positive_set]
+    if negative_positions is None:
+        negative = [pos for pos in range(scores.numel()) if pos not in positive_set]
+    else:
+        negative = [int(pos) for pos in negative_positions if int(pos) not in positive_set]
     if not negative:
         return scores.new_zeros(())
     pos_scores = scores.index_select(0, torch.tensor(positive, dtype=torch.long, device=scores.device))
@@ -938,6 +962,30 @@ def _target_idx_for_loss(sample: dict[str, Any], positive_indices: set[int]) -> 
     if positive_indices:
         return int(sorted(positive_indices)[0])
     return None
+
+
+def _positive_candidate_indices(sample: dict[str, Any], indices: list[int]) -> set[int]:
+    valid = {int(idx) for idx in indices}
+    if sample.get("positive_candidate_indices") is not None:
+        return {int(idx) for idx in sample.get("positive_candidate_indices") or [] if int(idx) in valid}
+    return _remaining_oracle_indices(sample, indices)
+
+
+def _negative_candidate_indices(
+    sample: dict[str, Any],
+    indices: list[int],
+    positive_indices: set[int],
+) -> set[int]:
+    valid = {int(idx) for idx in indices}
+    if sample.get("negative_candidate_indices") is not None:
+        negatives = {
+            int(idx)
+            for idx in sample.get("negative_candidate_indices") or []
+            if int(idx) in valid and int(idx) not in positive_indices
+        }
+        if negatives:
+            return negatives
+    return {int(idx) for idx in valid if int(idx) not in positive_indices}
 
 
 def _remaining_oracle_indices(sample: dict[str, Any], indices: list[int]) -> set[int]:
@@ -995,10 +1043,15 @@ def _evaluate(
         "val_set_loss": float(main["set_loss"]),
         "val_pairwise_loss": float(main["pairwise_loss"]),
         "val_action_accuracy": float(main["accuracy"]),
+        "val_target_accuracy": float(main["target_accuracy"]),
+        "val_positive_hit@1": float(main["positive_hit@1"]),
         "val_remaining_oracle_hit@1": float(main["remaining_oracle_hit@1"]),
+        "val_oracle_remaining_hit@1": float(main["oracle_remaining_hit@1"]),
         "val_positive_prob": float(main["positive_prob"]),
         "n_val_samples": int(main["n_samples"]),
         "n_val_hard_samples": int(main["n_hard_samples"]),
+        "n_val_positive_samples": int(main["n_positive_samples"]),
+        "n_val_oracle_remaining_samples": int(main["n_oracle_remaining_samples"]),
     }
     if bad_prefix is not None:
         result.update(
@@ -1007,7 +1060,10 @@ def _evaluate(
                 "bad_prefix_val_hard_loss": float(bad_prefix["hard_loss"]),
                 "bad_prefix_val_set_loss": float(bad_prefix["set_loss"]),
                 "bad_prefix_val_pairwise_loss": float(bad_prefix["pairwise_loss"]),
+                "bad_prefix_target_accuracy": float(bad_prefix["target_accuracy"]),
+                "bad_prefix_positive_hit@1": float(bad_prefix["positive_hit@1"]),
                 "bad_prefix_remaining_oracle_hit@1": float(bad_prefix["remaining_oracle_hit@1"]),
+                "bad_prefix_oracle_remaining_hit@1": float(bad_prefix["oracle_remaining_hit@1"]),
                 "bad_prefix_positive_prob": float(bad_prefix["positive_prob"]),
                 "n_bad_prefix_val_samples": int(bad_prefix["n_samples"]),
             }
@@ -1413,6 +1469,7 @@ def _metadata(
         "action_label_mode": str(args.action_label_mode),
         "candidate_order_mode": str(args.candidate_order_mode),
         "candidate_order_seed": int(args.candidate_order_seed),
+        "target_mode": str(args.target_mode),
         "train_order_augmentation": str(args.train_order_augmentation),
         "checkpoint_layout_version": 2,
         "best_checkpoint_dir": None,
@@ -1451,6 +1508,8 @@ def _metadata(
         "val_candidate_order_mode": val_sample_settings.get("candidate_order_mode"),
         "train_candidate_order_seed": train_sample_settings.get("candidate_order_seed"),
         "val_candidate_order_seed": val_sample_settings.get("candidate_order_seed"),
+        "train_target_mode": train_sample_settings.get("target_mode"),
+        "val_target_mode": val_sample_settings.get("target_mode"),
         "soft_loss_weight": float(args.soft_loss_weight),
         "soft_tau": float(args.soft_tau),
         "hard_loss_weight": float(args.hard_loss_weight),
@@ -1470,7 +1529,7 @@ def _metadata(
 
 
 def _sample_settings(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    keys = ["action_label_mode", "candidate_order_mode", "candidate_order_seed"]
+    keys = ["action_label_mode", "candidate_order_mode", "candidate_order_seed", "target_mode"]
     settings: dict[str, Any] = {}
     for key in keys:
         values = []
@@ -1608,10 +1667,15 @@ def _aggregate_train_parts(
         "set_loss": float(summary["set_loss"]),
         "pairwise_loss": float(summary["pairwise_loss"]),
         "accuracy": float(summary["accuracy"]),
+        "target_accuracy": float(summary["target_accuracy"]),
+        "positive_hit@1": float(summary["positive_hit@1"]),
         "remaining_oracle_hit@1": float(summary["remaining_oracle_hit@1"]),
+        "oracle_remaining_hit@1": float(summary["oracle_remaining_hit@1"]),
         "positive_prob": float(summary["positive_prob"]),
         "n_samples": int(summary["n_samples"]),
         "n_hard_samples": int(summary["n_hard_samples"]),
+        "n_positive_samples": int(summary["n_positive_samples"]),
+        "n_oracle_remaining_samples": int(summary["n_oracle_remaining_samples"]),
         "n_bad_prefix_samples": int(summary["n_bad_prefix_samples"]),
         "lr": float(lr),
         **_cuda_memory_metrics(),
@@ -1623,6 +1687,7 @@ def _parts_to_sums(parts: dict[str, float], *, device: torch.device) -> torch.Te
     n_hard = float(parts.get("n_hard_samples") or 0.0)
     n_soft = float(parts.get("n_soft_samples") or 0.0)
     n_positive = float(parts.get("n_positive_samples") or 0.0)
+    n_oracle_remaining = float(parts.get("n_oracle_remaining_samples") or 0.0)
     n_bad_prefix = float(parts.get("n_bad_prefix_samples") or 0.0)
     return torch.tensor(
         [
@@ -1631,13 +1696,16 @@ def _parts_to_sums(parts: dict[str, float], *, device: torch.device) -> torch.Te
             float(parts.get("soft_loss") or 0.0) * n_soft,
             float(parts.get("set_loss") or 0.0) * n,
             float(parts.get("pairwise_loss") or 0.0) * n,
-            float(parts.get("accuracy") or 0.0) * n_hard,
+            float(parts.get("target_accuracy", parts.get("accuracy")) or 0.0) * n_hard,
             float(parts.get("positive_prob") or 0.0) * n_positive,
-            float(parts.get("remaining_oracle_hit@1") or 0.0) * n_positive,
+            float(parts.get("positive_hit@1") or 0.0) * n_positive,
+            float(parts.get("oracle_remaining_hit@1", parts.get("remaining_oracle_hit@1")) or 0.0)
+            * n_oracle_remaining,
             n,
             n_hard,
             n_soft,
             n_positive,
+            n_oracle_remaining,
             n_bad_prefix,
         ],
         dtype=torch.float64,
@@ -1646,24 +1714,32 @@ def _parts_to_sums(parts: dict[str, float], *, device: torch.device) -> torch.Te
 
 
 def _summarize_sums(sums: torch.Tensor) -> dict[str, float]:
-    n = max(float(sums[8].item()), 1.0)
-    n_hard = max(float(sums[9].item()), 1.0)
-    n_soft = max(float(sums[10].item()), 1.0)
-    n_positive = max(float(sums[11].item()), 1.0)
+    n = max(float(sums[9].item()), 1.0)
+    n_hard = max(float(sums[10].item()), 1.0)
+    n_soft = max(float(sums[11].item()), 1.0)
+    n_positive = max(float(sums[12].item()), 1.0)
+    n_oracle_remaining = max(float(sums[13].item()), 1.0)
+    target_accuracy = float(sums[5].item() / n_hard)
+    positive_hit = float(sums[7].item() / n_positive)
+    oracle_remaining_hit = float(sums[8].item() / n_oracle_remaining)
     return {
         "loss": float(sums[0].item() / n),
         "hard_loss": float(sums[1].item() / n_hard),
         "soft_loss": float(sums[2].item() / n_soft),
         "set_loss": float(sums[3].item() / n),
         "pairwise_loss": float(sums[4].item() / n),
-        "accuracy": float(sums[5].item() / n_hard),
+        "accuracy": target_accuracy,
+        "target_accuracy": target_accuracy,
         "positive_prob": float(sums[6].item() / n_positive),
-        "remaining_oracle_hit@1": float(sums[7].item() / n_positive),
-        "n_samples": float(sums[8].item()),
-        "n_hard_samples": float(sums[9].item()),
-        "n_soft_samples": float(sums[10].item()),
-        "n_positive_samples": float(sums[11].item()),
-        "n_bad_prefix_samples": float(sums[12].item()),
+        "positive_hit@1": positive_hit,
+        "remaining_oracle_hit@1": oracle_remaining_hit,
+        "oracle_remaining_hit@1": oracle_remaining_hit,
+        "n_samples": float(sums[9].item()),
+        "n_hard_samples": float(sums[10].item()),
+        "n_soft_samples": float(sums[11].item()),
+        "n_positive_samples": float(sums[12].item()),
+        "n_oracle_remaining_samples": float(sums[13].item()),
+        "n_bad_prefix_samples": float(sums[14].item()),
     }
 
 
@@ -1738,7 +1814,10 @@ def _train_swanlab_payload(record: dict[str, Any]) -> dict[str, Any]:
         "train/set_loss": record.get("set_loss"),
         "train/pairwise_loss": record.get("pairwise_loss"),
         "train/action_accuracy": record.get("accuracy"),
+        "train/target_accuracy": record.get("target_accuracy"),
+        "train/positive_hit@1": record.get("positive_hit@1"),
         "train/remaining_oracle_hit@1": record.get("remaining_oracle_hit@1"),
+        "train/oracle_remaining_hit@1": record.get("oracle_remaining_hit@1"),
         "train/positive_prob": record.get("positive_prob"),
         "train/n_bad_prefix_samples": record.get("n_bad_prefix_samples"),
         "train/lr": record.get("lr"),
@@ -1757,13 +1836,19 @@ def _val_swanlab_payload(result: dict[str, Any]) -> dict[str, Any]:
         "val/set_loss": result.get("val_set_loss"),
         "val/pairwise_loss": result.get("val_pairwise_loss"),
         "val/action_accuracy": result.get("val_action_accuracy"),
+        "val/target_accuracy": result.get("val_target_accuracy"),
+        "val/positive_hit@1": result.get("val_positive_hit@1"),
         "val/remaining_oracle_hit@1": result.get("val_remaining_oracle_hit@1"),
+        "val/oracle_remaining_hit@1": result.get("val_oracle_remaining_hit@1"),
         "val/positive_prob": result.get("val_positive_prob"),
         "val/n_samples": result.get("n_val_samples"),
         "val/bad_prefix/loss": result.get("bad_prefix_val_loss"),
         "val/bad_prefix/set_loss": result.get("bad_prefix_val_set_loss"),
         "val/bad_prefix/pairwise_loss": result.get("bad_prefix_val_pairwise_loss"),
+        "val/bad_prefix/target_accuracy": result.get("bad_prefix_target_accuracy"),
+        "val/bad_prefix/positive_hit@1": result.get("bad_prefix_positive_hit@1"),
         "val/bad_prefix/remaining_oracle_hit@1": result.get("bad_prefix_remaining_oracle_hit@1"),
+        "val/bad_prefix/oracle_remaining_hit@1": result.get("bad_prefix_oracle_remaining_hit@1"),
         "val/bad_prefix/positive_prob": result.get("bad_prefix_positive_prob"),
         "val/bad_prefix/n_samples": result.get("n_bad_prefix_val_samples"),
     }
@@ -1793,6 +1878,7 @@ def _metadata_metrics(metadata: dict[str, Any]) -> dict[str, Any]:
         "config/gradient_accumulation_steps": metadata.get("gradient_accumulation_steps"),
         "config/per_device_train_batch_size": metadata.get("per_device_train_batch_size"),
         "config/train_order_augmentation": metadata.get("train_order_augmentation"),
+        "config/target_mode": metadata.get("target_mode"),
         "config/hard_loss_weight": metadata.get("hard_loss_weight"),
         "config/set_loss_weight": metadata.get("set_loss_weight"),
         "config/set_loss_type": metadata.get("set_loss_type"),

@@ -105,6 +105,7 @@ ACTION_LABEL_MODE="${ACTION_LABEL_MODE:-local_choice}"
 TRAIN_CANDIDATE_ORDER="${TRAIN_CANDIDATE_ORDER:-random}"
 EVAL_CANDIDATE_ORDER="${EVAL_CANDIDATE_ORDER:-candidate_pool}"
 CANDIDATE_ORDER_SEED="${CANDIDATE_ORDER_SEED:-20260524}"
+TARGET_MODE="${TARGET_MODE:-oracle}"
 RUN_BASELINE_EVAL="${RUN_BASELINE_EVAL:-true}"
 BASELINE_EVAL_SAMPLE_LIMIT="${BASELINE_EVAL_SAMPLE_LIMIT:-128}"
 BASELINE_EVAL_OUTPUT_DIR="${BASELINE_EVAL_OUTPUT_DIR:-${OUTPUT_DIR}/evals/base_val}"
@@ -153,6 +154,7 @@ if [[ "${RUN_BUILD_DATA}" == "true" || "${RUN_BUILD_DATA}" == "1" ]]; then
     --action-label-mode "${ACTION_LABEL_MODE}" \
     --candidate-order-mode "${TRAIN_CANDIDATE_ORDER}" \
     --candidate-order-seed "${CANDIDATE_ORDER_SEED}" \
+    --target-mode "${TARGET_MODE}" \
     "${progress_arg[@]}" \
     "${train_bad_prefix_args[@]}" \
     "${build_extra[@]}"
@@ -184,6 +186,7 @@ if [[ "${RUN_BUILD_DATA}" == "true" || "${RUN_BUILD_DATA}" == "1" ]]; then
       --action-label-mode "${ACTION_LABEL_MODE}" \
       --candidate-order-mode "${EVAL_CANDIDATE_ORDER}" \
       --candidate-order-seed "${CANDIDATE_ORDER_SEED}" \
+      --target-mode "${TARGET_MODE}" \
       "${progress_arg[@]}" \
       "${val_bad_prefix_args[@]}" \
       "${val_extra[@]}"
@@ -226,6 +229,7 @@ train_cmd=(
   --action-label-mode "${ACTION_LABEL_MODE}"
   --candidate-order-mode "${EVAL_CANDIDATE_ORDER}"
   --candidate-order-seed "${CANDIDATE_ORDER_SEED}"
+  --target-mode "${TARGET_MODE}"
   --swanlab-project "${SWANLAB_PROJECT}"
   --swanlab-experiment-name "${SWANLAB_EXPERIMENT_NAME}"
   --swanlab-tags "${SWANLAB_TAGS}"
