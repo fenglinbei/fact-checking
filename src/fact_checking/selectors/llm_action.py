@@ -25,6 +25,11 @@ ACTION_LABEL_MODES = {ACTION_LABEL_MODE_GLOBAL_INDEX, ACTION_LABEL_MODE_LOCAL_CH
 CANDIDATE_ORDER_CANDIDATE_POOL = "candidate_pool"
 CANDIDATE_ORDER_RANDOM = "random"
 CANDIDATE_ORDER_MODES = {CANDIDATE_ORDER_CANDIDATE_POOL, CANDIDATE_ORDER_RANDOM}
+TARGET_MODE_ORACLE = "oracle"
+TARGET_MODE_UTILITY = "utility"
+TARGET_MODES = {TARGET_MODE_ORACLE, TARGET_MODE_UTILITY}
+UTILITY_POSITIVE_BEST_MARGIN = 0.05
+UTILITY_NEGATIVE_BEST_MARGIN = 0.20
 PREFIX_SOURCE_ORACLE = "oracle"
 PREFIX_SOURCE_HYBRID = "hybrid"
 PREFIX_SOURCE_RANDOM_CORRUPT = "random_corrupt"
@@ -113,6 +118,67 @@ def softmax_deltas(deltas: list[float], *, tau: float) -> list[float]:
     if denom <= 0.0 or not math.isfinite(denom):
         return [1.0 / len(values)] * len(values)
     return [float(x / denom) for x in exps]
+
+
+def utility_target_from_choices(
+    choices: list[dict[str, Any]],
+    *,
+    positive_best_margin: float = UTILITY_POSITIVE_BEST_MARGIN,
+    negative_best_margin: float = UTILITY_NEGATIVE_BEST_MARGIN,
+) -> dict[str, Any]:
+    if not choices:
+        raise ValueError("Cannot build utility target from empty choices.")
+    normalized: list[dict[str, Any]] = []
+    for choice in choices:
+        candidate_idx = int(choice["candidate_idx"])
+        delta_margin = _safe_float(choice.get("delta_margin"), 0.0)
+        hybrid_rank = _safe_float(choice.get("hybrid_rank"), float(candidate_idx))
+        if not math.isfinite(hybrid_rank):
+            hybrid_rank = float(candidate_idx)
+        normalized.append(
+            {
+                "candidate_idx": candidate_idx,
+                "delta_margin": delta_margin,
+                "hybrid_rank": hybrid_rank,
+            }
+        )
+
+    best = min(
+        normalized,
+        key=lambda row: (
+            -float(row["delta_margin"]),
+            float(row["hybrid_rank"]),
+            int(row["candidate_idx"]),
+        ),
+    )
+    best_delta = float(best["delta_margin"])
+    best_idx = int(best["candidate_idx"])
+    positive_cutoff = best_delta - float(positive_best_margin)
+    positives = [
+        int(row["candidate_idx"])
+        for row in normalized
+        if float(row["delta_margin"]) > 0.0 or float(row["delta_margin"]) >= positive_cutoff
+    ]
+    if best_idx not in positives:
+        positives.append(best_idx)
+    positive_set = set(positives)
+    negative_cutoff = best_delta - float(negative_best_margin)
+    negatives = [
+        int(row["candidate_idx"])
+        for row in normalized
+        if int(row["candidate_idx"]) not in positive_set and float(row["delta_margin"]) <= negative_cutoff
+    ]
+    if not negatives:
+        negatives = [int(row["candidate_idx"]) for row in normalized if int(row["candidate_idx"]) not in positive_set]
+
+    return {
+        "target_idx": best_idx,
+        "best_delta_margin": best_delta,
+        "positive_candidate_indices": positives,
+        "negative_candidate_indices": negatives,
+        "positive_best_margin": float(positive_best_margin),
+        "negative_best_margin": float(negative_best_margin),
+    }
 
 
 def normalize_bad_prefix_sources(value: str | list[str] | tuple[str, ...]) -> list[str]:
@@ -296,6 +362,16 @@ def rebuild_action_sample_with_order(
         rebuilt["target_idx"] = int(target_idx)
         rebuilt["target_action"] = action_completion(target_label)
         rebuilt["target_action_label"] = target_label
+    if rebuilt.get("positive_candidate_indices") is not None:
+        valid = set(ordered_remaining)
+        rebuilt["positive_candidate_indices"] = [
+            int(idx) for idx in rebuilt.get("positive_candidate_indices") or [] if int(idx) in valid
+        ]
+    if rebuilt.get("negative_candidate_indices") is not None:
+        valid = set(ordered_remaining)
+        rebuilt["negative_candidate_indices"] = [
+            int(idx) for idx in rebuilt.get("negative_candidate_indices") or [] if int(idx) in valid
+        ]
     rebuilt["action_label_mode"] = label_mode
     rebuilt["candidate_order_mode"] = order_mode
     rebuilt["candidate_order_seed"] = int(effective_seed)
@@ -318,9 +394,11 @@ def build_action_samples(
     action_label_mode: str = ACTION_LABEL_MODE_GLOBAL_INDEX,
     candidate_order_mode: str = CANDIDATE_ORDER_CANDIDATE_POOL,
     candidate_order_seed: int = 20260524,
+    target_mode: str = TARGET_MODE_ORACLE,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     label_mode = _normalize_action_label_mode(action_label_mode)
     order_mode = _normalize_candidate_order_mode(candidate_order_mode)
+    resolved_target_mode = _normalize_target_mode(target_mode)
     order_seed = int(candidate_order_seed)
     vig_index = build_vig_index(vig_rows, show_progress=bool(show_progress))
     samples: list[dict[str, Any]] = []
@@ -395,6 +473,11 @@ def build_action_samples(
                 for idx in selected
                 if int(idx) not in prefix_set and int(idx) in choice_indices
             ]
+            sample_target_idx = int(target_idx)
+            utility_target: dict[str, Any] = {}
+            if resolved_target_mode == TARGET_MODE_UTILITY:
+                utility_target = utility_target_from_choices(choices)
+                sample_target_idx = int(utility_target["target_idx"])
             prompt = build_action_prompt(
                 example,
                 prefix_indices=prefix,
@@ -404,7 +487,7 @@ def build_action_samples(
                 action_labels={int(choice["candidate_idx"]): str(choice["action_label"]) for choice in choices},
                 action_label_mode=label_mode,
             )
-            target_action_label = action_labels.get(int(target_idx), action_token(int(target_idx)))
+            target_action_label = action_labels.get(int(sample_target_idx), action_token(int(sample_target_idx)))
             samples.append(
                 {
                     "event_id": example.event_id,
@@ -418,10 +501,27 @@ def build_action_samples(
                     "remaining_indices": [int(choice["candidate_idx"]) for choice in choices],
                     "oracle_selected_indices": [int(idx) for idx in selected],
                     "remaining_oracle_indices": remaining_oracle_indices,
-                    "target_idx": int(target_idx),
+                    "oracle_next_idx": int(target_idx),
+                    "target_mode": resolved_target_mode,
+                    "target_idx": int(sample_target_idx),
                     "target_action": action_completion(target_action_label),
                     "target_action_label": target_action_label,
                     "has_hard_target": True,
+                    **(
+                        {
+                            "positive_candidate_indices": [
+                                int(idx) for idx in utility_target["positive_candidate_indices"]
+                            ],
+                            "negative_candidate_indices": [
+                                int(idx) for idx in utility_target["negative_candidate_indices"]
+                            ],
+                            "target_delta_margin": float(utility_target["best_delta_margin"]),
+                            "utility_positive_best_margin": float(utility_target["positive_best_margin"]),
+                            "utility_negative_best_margin": float(utility_target["negative_best_margin"]),
+                        }
+                        if resolved_target_mode == TARGET_MODE_UTILITY
+                        else {}
+                    ),
                     "prompt": prompt,
                     "choices": choices,
                     "candidate_text_by_idx": _candidate_text_by_idx(example),
@@ -448,6 +548,7 @@ def build_action_samples(
         "action_label_mode": label_mode,
         "candidate_order_mode": order_mode,
         "candidate_order_seed": order_seed,
+        "target_mode": resolved_target_mode,
         "missing_vig_steps": int(missing_vig_steps),
         "missing_vig_candidates": int(missing_vig_candidates),
         "missing_targets": int(missing_targets),
@@ -949,6 +1050,14 @@ def _normalize_candidate_order_mode(value: str) -> str:
             f"Unsupported candidate_order_mode={value!r}. Use '{CANDIDATE_ORDER_CANDIDATE_POOL}' "
             f"or '{CANDIDATE_ORDER_RANDOM}'."
         )
+    return mode
+
+
+def _normalize_target_mode(value: str) -> str:
+    mode = str(value or TARGET_MODE_ORACLE).strip().lower()
+    if mode not in TARGET_MODES:
+        choices = ", ".join(sorted(TARGET_MODES))
+        raise ValueError(f"Unsupported target_mode={value!r}. Use one of: {choices}.")
     return mode
 
 

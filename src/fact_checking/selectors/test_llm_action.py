@@ -18,6 +18,7 @@ from fact_checking.selectors.llm_action import (
     rebuild_action_sample_with_order,
     score_action_choices,
     softmax_deltas,
+    utility_target_from_choices,
 )
 from fact_checking.selectors.llm_action_eval import evaluate_llm_action_selection
 from fact_checking.selectors.stage2_oracle import Stage2OracleExample
@@ -96,6 +97,63 @@ class LLMActionSelectorTest(unittest.TestCase):
         self.assertIn("candidate_score_by_idx", samples[0])
         self.assertTrue(samples[0]["has_hard_target"])
         self.assertEqual(samples[0]["prefix_source"], "oracle")
+        self.assertEqual(samples[0]["target_mode"], "oracle")
+        self.assertEqual(samples[0]["oracle_next_idx"], 2)
+
+    def test_utility_target_prefers_best_delta_with_hybrid_tiebreak(self) -> None:
+        target = utility_target_from_choices(
+            [
+                {"candidate_idx": 0, "delta_margin": -0.1, "hybrid_rank": 3},
+                {"candidate_idx": 1, "delta_margin": 0.5, "hybrid_rank": 2},
+                {"candidate_idx": 2, "delta_margin": 0.5, "hybrid_rank": 1},
+                {"candidate_idx": 3, "delta_margin": 0.0, "hybrid_rank": 0},
+            ]
+        )
+
+        self.assertEqual(target["target_idx"], 2)
+        self.assertEqual(target["positive_candidate_indices"], [1, 2])
+        self.assertEqual(target["negative_candidate_indices"], [0, 3])
+
+    def test_utility_target_has_positive_when_all_deltas_are_negative(self) -> None:
+        target = utility_target_from_choices(
+            [
+                {"candidate_idx": 0, "delta_margin": -0.5, "hybrid_rank": 0},
+                {"candidate_idx": 1, "delta_margin": -0.4, "hybrid_rank": 1},
+                {"candidate_idx": 2, "delta_margin": -0.55, "hybrid_rank": 2},
+            ]
+        )
+
+        self.assertEqual(target["target_idx"], 1)
+        self.assertEqual(target["positive_candidate_indices"], [1])
+        self.assertEqual(target["negative_candidate_indices"], [0, 2])
+
+    def test_build_action_samples_utility_target_uses_delta_margin(self) -> None:
+        example = _example()
+        vig_rows = [
+            {"event_id": example.event_id, "step": 0, "candidate_idx": 0, "delta_margin": 0.3, "after_margin": 0.3},
+            {"event_id": example.event_id, "step": 0, "candidate_idx": 1, "delta_margin": -0.2, "after_margin": -0.2},
+            {"event_id": example.event_id, "step": 0, "candidate_idx": 2, "delta_margin": -0.1, "after_margin": -0.1},
+        ]
+        samples, manifest = build_action_samples(
+            [example],
+            vig_rows=vig_rows,
+            split="train",
+            top_k=1,
+            max_candidate_chars=80,
+            include_retrieval_scores=False,
+            strict=True,
+            action_label_mode="local_choice",
+            candidate_order_mode="candidate_pool",
+            target_mode="utility",
+        )
+
+        self.assertEqual(manifest["target_mode"], "utility")
+        self.assertEqual(samples[0]["oracle_next_idx"], 2)
+        self.assertEqual(samples[0]["target_idx"], 0)
+        self.assertEqual(samples[0]["target_action"], " A")
+        self.assertEqual(samples[0]["positive_candidate_indices"], [0])
+        self.assertEqual(samples[0]["negative_candidate_indices"], [1, 2])
+        self.assertEqual(samples[0]["remaining_oracle_indices"], [2])
 
     def test_local_choice_labels_are_position_local(self) -> None:
         first = choice_action_labels([2, 0, 1], action_label_mode="local_choice")
@@ -182,6 +240,39 @@ class LLMActionSelectorTest(unittest.TestCase):
         target_choice = [choice for choice in first["choices"] if int(choice["candidate_idx"]) == target_idx][0]
         self.assertEqual(first["target_action"], target_choice["action"])
 
+    def test_rebuild_action_sample_preserves_utility_sets(self) -> None:
+        example = _example_many()
+        rows = _vig_rows_for_example(example)
+        for row in rows:
+            if int(row["step"]) == 0 and int(row["candidate_idx"]) == 3:
+                row["delta_margin"] = 4.0
+                row["after_margin"] = 4.0
+        samples, _manifest = build_action_samples(
+            [example],
+            vig_rows=rows,
+            split="train",
+            top_k=1,
+            max_candidate_chars=80,
+            include_retrieval_scores=False,
+            strict=True,
+            action_label_mode="local_choice",
+            candidate_order_mode="candidate_pool",
+            target_mode="utility",
+        )
+
+        rebuilt = rebuild_action_sample_with_order(
+            samples[0],
+            action_label_mode="local_choice",
+            candidate_order_mode="random",
+            candidate_order_seed=11,
+        )
+
+        self.assertEqual(rebuilt["target_idx"], 3)
+        self.assertIn(3, rebuilt["positive_candidate_indices"])
+        self.assertNotIn(3, rebuilt["negative_candidate_indices"])
+        target_choice = [choice for choice in rebuilt["choices"] if int(choice["candidate_idx"]) == 3][0]
+        self.assertEqual(rebuilt["target_action"], target_choice["action"])
+
     def test_rebuild_action_sample_requires_structured_candidate_text(self) -> None:
         with self.assertRaisesRegex(ValueError, "candidate_text_by_idx"):
             rebuild_action_sample_with_order(
@@ -249,6 +340,48 @@ class LLMActionSelectorTest(unittest.TestCase):
         self.assertGreater(parts["n_positive_samples"], 0.0)
         loss.backward()
         self.assertIsNotNone(model.bias.grad)
+
+    def test_batch_loss_uses_utility_positive_indices_for_pairwise(self) -> None:
+        sample = {
+            "prompt": "prompt",
+            "choices": [
+                {"candidate_idx": 0, "action": " A", "delta_margin": -1.0},
+                {"candidate_idx": 1, "action": " B", "delta_margin": 1.0},
+                {"candidate_idx": 2, "action": " C", "delta_margin": -0.5},
+            ],
+            "target_idx": 1,
+            "has_hard_target": True,
+            "remaining_oracle_indices": [0],
+            "positive_candidate_indices": [1],
+            "negative_candidate_indices": [0, 2],
+        }
+        model = _TrainableChoiceModel(vocab_size=8)
+        with torch.no_grad():
+            model.bias[2] = 0.0
+            model.bias[3] = 3.0
+            model.bias[5] = 1.0
+
+        loss, parts = _batch_loss(
+            model,
+            _FakeTokenizer(),
+            [sample],
+            device=torch.device("cpu"),
+            max_length=16,
+            choice_batch_size=8,
+            score_mode="action_token",
+            soft_tau=0.2,
+            hard_loss_weight=0.0,
+            soft_loss_weight=0.0,
+            set_loss_weight=0.0,
+            set_loss_type="multi_positive_ce",
+            pairwise_loss_weight=1.0,
+            bad_prefix_hard_loss_weight=0.0,
+        )
+
+        self.assertEqual(parts["positive_hit@1"], 1.0)
+        self.assertEqual(parts["oracle_remaining_hit@1"], 0.0)
+        self.assertEqual(parts["remaining_oracle_hit@1"], 0.0)
+        self.assertGreater(float(loss.detach()), 0.0)
 
     def test_prompt_action_token_boundary_matches_completion_action(self) -> None:
         prompt = build_action_prompt(
