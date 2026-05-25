@@ -157,7 +157,7 @@ def parse_args() -> argparse.Namespace:
         default=TRAIN_ORDER_AUGMENTATION_DYNAMIC_RANDOM,
         choices=sorted(TRAIN_ORDER_AUGMENTATION_MODES),
     )
-    p.add_argument("--logging-steps", type=int, default=20)
+    p.add_argument("--logging-steps", type=int, default=5)
     p.add_argument("--eval-every", type=int, default=500)
     p.add_argument("--eval-sample-limit", type=int, default=None)
     p.add_argument("--eval-sample-mode", default="random", choices=["head", "random"])
