@@ -22,7 +22,7 @@ from fact_checking.selectors.llm_action import (
 )
 from fact_checking.selectors.llm_action_eval import evaluate_llm_action_selection
 from fact_checking.selectors.stage2_oracle import Stage2OracleExample
-from scripts.selectors.train_llm_action_selector import _batch_loss
+from scripts.selectors.train_llm_action_selector import METRIC_SUMS_SIZE, _batch_loss, _parts_to_sums
 
 
 class LLMActionSelectorTest(unittest.TestCase):
@@ -382,6 +382,30 @@ class LLMActionSelectorTest(unittest.TestCase):
         self.assertEqual(parts["oracle_remaining_hit@1"], 0.0)
         self.assertEqual(parts["remaining_oracle_hit@1"], 0.0)
         self.assertGreater(float(loss.detach()), 0.0)
+
+    def test_metric_sums_vector_uses_declared_size(self) -> None:
+        sums = _parts_to_sums(
+            {
+                "loss": 1.0,
+                "hard_loss": 0.5,
+                "soft_loss": 0.2,
+                "set_loss": 0.1,
+                "pairwise_loss": 0.3,
+                "target_accuracy": 1.0,
+                "positive_hit@1": 1.0,
+                "oracle_remaining_hit@1": 0.0,
+                "positive_prob": 0.8,
+                "n_samples": 2.0,
+                "n_hard_samples": 2.0,
+                "n_soft_samples": 2.0,
+                "n_positive_samples": 2.0,
+                "n_oracle_remaining_samples": 1.0,
+                "n_bad_prefix_samples": 0.0,
+            },
+            device=torch.device("cpu"),
+        )
+
+        self.assertEqual(sums.numel(), METRIC_SUMS_SIZE)
 
     def test_prompt_action_token_boundary_matches_completion_action(self) -> None:
         prompt = build_action_prompt(

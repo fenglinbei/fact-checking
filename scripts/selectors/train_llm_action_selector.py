@@ -58,6 +58,7 @@ from sft.runtime.deps import flash_attn2_available
 TRAIN_ORDER_AUGMENTATION_NONE = "none"
 TRAIN_ORDER_AUGMENTATION_DYNAMIC_RANDOM = "dynamic_random"
 TRAIN_ORDER_AUGMENTATION_MODES = {TRAIN_ORDER_AUGMENTATION_NONE, TRAIN_ORDER_AUGMENTATION_DYNAMIC_RANDOM}
+METRIC_SUMS_SIZE = 15
 
 
 class ActionSampleDataset(Dataset):
@@ -1086,7 +1087,7 @@ def _evaluate_loader(
     args: argparse.Namespace,
     desc: str,
 ) -> dict[str, float]:
-    sums = torch.zeros((13,), dtype=torch.float64, device=accelerator.device)
+    sums = torch.zeros((METRIC_SUMS_SIZE,), dtype=torch.float64, device=accelerator.device)
     for batch in tqdm(
         data_loader,
         desc=desc,
