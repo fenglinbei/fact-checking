@@ -8,6 +8,7 @@ from transformers import AutoTokenizer
 
 from fact_checking.data.io import load_jsonl
 from fact_checking.config import load_yaml
+from sft.data.io import load_prebuilt_samples
 from sft.data.types import PreparedSample
 from sft.runtime.adapters import checkpoint_has_hf_artifacts, checkpoint_has_peft_adapter
 
@@ -53,31 +54,6 @@ def load_inference_config(run_dir: Path, config_path: str | None = None) -> dict
             "Pass --config explicitly or use a run directory produced by the updated trainer."
         )
     return load_yaml(resolved_path)
-
-
-def _load_prebuilt_samples(rows: list[dict]) -> list[PreparedSample]:
-    samples: list[PreparedSample] = []
-    for row in rows:
-        gold_label = str(row.get("gold_label", ""))
-        if not gold_label:
-            continue
-        samples.append(PreparedSample(
-            prompt=str(row["prompt"]),
-            target=str(row["target"]),
-            prompt_add_special_tokens=bool(row.get("prompt_add_special_tokens", False)),
-            preserve_prompt_prefix=bool(row.get("preserve_prompt_prefix", True)),
-            gold_id=int(row.get("gold_id", -1)),
-            gold_label=gold_label,
-            gold_explain=str(row.get("gold_explain", "")),
-            prompt_token_count=int(row.get("prompt_token_count", 0)),
-            target_token_count=int(row.get("target_token_count", 0)),
-            evidence_count=int(row.get("evidence_count", 0)),
-            was_truncated=bool(row.get("was_truncated", False)),
-            claim=str(row.get("claim", "")),
-            no_evidence=int(row.get("evidence_count", 0)) == 0,
-            long_claim=len(str(row.get("claim", "")).split()) > 64,
-        ))
-    return samples
 
 
 def resolve_checkpoint_dir(run_dir: Path, checkpoint: str) -> tuple[str, Path]:
@@ -144,7 +120,7 @@ def build_inference_context(
 
     max_length = int(train_cfg.get("max_length", 2048))
     rows = load_jsonl(split_map[split])
-    samples = _load_prebuilt_samples(rows)
+    samples = load_prebuilt_samples(rows)
 
     return InferenceContext(
         run_dir=resolved_run_dir,
@@ -161,6 +137,51 @@ def build_inference_context(
         samples=samples,
         eval_output_dir=resolved_run_dir / "eval" / split / checkpoint_name,
     )
+
+
+def label_name_from_id(label_id: int) -> str:
+    """Map a label index to its string name; returns 'parse_error' for out-of-range ids."""
+    from fact_checking.data.constants import LABELS
+
+    if 0 <= int(label_id) < len(LABELS):
+        return LABELS[int(label_id)]
+    return "parse_error"
+
+
+def build_vllm_prediction_record(
+    sample_idx: int,
+    sample: PreparedSample,
+    raw_completion: str,
+    *,
+    use_label_decoding: bool,
+    label_prefix: str = "Label:",
+) -> dict[str, object]:
+    """Build a single prediction record dict for vLLM inference results."""
+    from sft.parser import _parse_label_id
+
+    raw_output = f"{label_prefix}{raw_completion}" if use_label_decoding else raw_completion
+    pred_id = _parse_label_id(raw_output)
+    return {
+        "sample_idx": sample_idx,
+        "prompt": sample.prompt,
+        "target": sample.target,
+        "raw_output": raw_output,
+        "raw_completion": raw_completion,
+        "pred_id": int(pred_id),
+        "pred_label": label_name_from_id(int(pred_id)),
+        "gold_id": int(sample.gold_id),
+        "gold_label": sample.gold_label,
+        "gold_explain": sample.gold_explain,
+    }
+
+
+def create_vllm_logit_processors(logit_adjust_cfg: dict | None) -> list:
+    """Return logit processors for vLLM, or empty list if label decoding is disabled."""
+    if not (logit_adjust_cfg and logit_adjust_cfg.get("enabled")):
+        return []
+    from sft.logit_adjust import create_label_choice_processor
+
+    return [create_label_choice_processor(logit_adjust_cfg)]
 
 
 def build_serializable_metrics(eval_metrics: dict[str, object]) -> dict[str, object]:

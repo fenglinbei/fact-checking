@@ -26,6 +26,7 @@ from sft.infer_common import (
     build_label_decoding_prompt,
     build_label_scoring_prompt,
     label_choice_text,
+    label_name_from_id,
 )
 from sft.logit_adjust import build_logit_bias, build_logit_adjust_cfg_from_train_config, load_logit_adjust_cfg
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
@@ -45,12 +46,6 @@ class _VLLMServerHandle:
     cleanup_merged_model_dir: bool = False
     managed_pid: int | None = None
     pid_file: Path | None = None
-
-
-def _label_name_from_id(label_id: int) -> str:
-    if 0 <= int(label_id) < len(LABELS):
-        return LABELS[int(label_id)]
-    return "parse_error"
 
 
 _LETTER_LABEL_ONLY_TARGET = re.compile(r"(?is)^\s*label\s*:\s*[A-F]\s*$")
@@ -407,7 +402,7 @@ def run_api_inference(
                     "raw_output": raw_output,
                     "raw_completion": raw_completion,
                     "pred_id": int(pred_id),
-                    "pred_label": _label_name_from_id(int(pred_id)),
+                    "pred_label": label_name_from_id(int(pred_id)),
                     "gold_id": int(sample.gold_id),
                     "gold_label": sample.gold_label,
                     "gold_explain": sample.gold_explain,

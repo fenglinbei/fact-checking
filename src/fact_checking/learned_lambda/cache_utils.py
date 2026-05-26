@@ -6,7 +6,7 @@ from typing import Any
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
-from fact_checking.build.candidates import _chunk_mmr_config_fingerprint
+from fact_checking.build.cache import chunk_mmr_config_fingerprint
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -33,7 +33,7 @@ def resolve_chunk_mmr_cache_path(
     split_name: str,
     cache_root: str | Path,
 ) -> Path:
-    fp = _chunk_mmr_config_fingerprint(build_cfg)
+    fp = chunk_mmr_config_fingerprint(build_cfg)
     return Path(cache_root) / fp / f"{split_name}.pkl"
 
 

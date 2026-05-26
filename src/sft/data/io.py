@@ -13,11 +13,37 @@ from fact_checking.data.constants import LABEL2ID, LABELS
 from fact_checking.data.types import SampleRecord, SentenceRecord
 from fact_checking.utils.logging import init_logger
 from fact_checking.utils.text import clean_text, robust_sentence_split
+from sft.data.types import PreparedSample
 from sft.runtime.adapters import checkpoint_has_hf_artifacts, is_peft_model
 
 logger = init_logger(__name__)
 
 _LORA_KEY_MARKERS = (".lora_A.", ".lora_B.", ".lora_embedding_A.", ".lora_embedding_B.")
+
+
+def load_prebuilt_samples(rows: list[dict]) -> list[PreparedSample]:
+    samples: list[PreparedSample] = []
+    for row in rows:
+        gold_label = str(row.get("gold_label", ""))
+        if not gold_label:
+            continue
+        samples.append(PreparedSample(
+            prompt=str(row["prompt"]),
+            target=str(row["target"]),
+            prompt_add_special_tokens=bool(row.get("prompt_add_special_tokens", False)),
+            preserve_prompt_prefix=bool(row.get("preserve_prompt_prefix", True)),
+            gold_id=int(row.get("gold_id", LABEL2ID.get(gold_label, -1))),
+            gold_label=gold_label,
+            gold_explain=str(row.get("gold_explain", "")),
+            prompt_token_count=int(row.get("prompt_token_count", 0)),
+            target_token_count=int(row.get("target_token_count", 0)),
+            evidence_count=int(row.get("evidence_count", 0)),
+            was_truncated=bool(row.get("was_truncated", False)),
+            claim=str(row.get("claim", "")),
+            no_evidence=int(row.get("evidence_count", 0)) == 0,
+            long_claim=len(str(row.get("claim", "")).split()) > 64,
+        ))
+    return samples
 
 
 def _is_lora_state_key(key: str) -> bool:

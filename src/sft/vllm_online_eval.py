@@ -11,13 +11,15 @@ from unittest.mock import patch
 import torch
 from transformers import AutoModelForCausalLM
 
-from fact_checking.data.constants import LABELS
 from fact_checking.utils.logging import init_logger
 from sft.data.types import PreparedSample
 from sft.eval import summarize_prediction_records
-from sft.infer_common import build_label_decoding_prompt
+from sft.infer_common import (
+    build_label_decoding_prompt,
+    build_vllm_prediction_record,
+    create_vllm_logit_processors,
+)
 from sft.logit_adjust import create_label_choice_processor
-from sft.parser import _parse_label_id
 from sft.runtime.adapters import is_peft_model
 
 module_logger = init_logger(__name__)
@@ -47,12 +49,6 @@ _DIST_ENV_UNSET = (
 def online_vllm_eval_enabled(train_cfg: dict) -> bool:
     cfg = train_cfg.get("online_vllm_eval", {}) or {}
     return bool(cfg.get("enabled", False))
-
-
-def _label_name_from_id(label_id: int) -> str:
-    if 0 <= int(label_id) < len(LABELS):
-        return LABELS[int(label_id)]
-    return "parse_error"
 
 
 def _parse_cuda_device_index(device: str) -> int | None:
@@ -373,10 +369,8 @@ class OnlineVLLMEvaluator:
         log_predictions_limit: int,
     ) -> dict[str, object]:
         self.sync_weights(model)
-        logits_processors = []
-        use_label_decoding = bool(self._logit_adjust_cfg and self._logit_adjust_cfg.get("enabled"))
-        if use_label_decoding:
-            logits_processors.append(create_label_choice_processor(self._logit_adjust_cfg))
+        logits_processors = create_vllm_logit_processors(self._logit_adjust_cfg)
+        use_label_decoding = bool(logits_processors)
         sampling_params = self._SamplingParams(
             max_tokens=1 if use_label_decoding else int(max_new_tokens),
             temperature=self.temperature,
@@ -395,21 +389,11 @@ class OnlineVLLMEvaluator:
         prediction_records: list[dict[str, object]] = []
         for sample_idx, (sample, output) in enumerate(zip(self.samples, outputs)):
             raw_completion = output.outputs[0].text if output.outputs else ""
-            raw_output = f"{label_prefix}{raw_completion}" if use_label_decoding else raw_completion
-            pred_id = _parse_label_id(raw_output)
             prediction_records.append(
-                {
-                    "sample_idx": sample_idx,
-                    "prompt": sample.prompt,
-                    "target": sample.target,
-                    "raw_output": raw_output,
-                    "raw_completion": raw_completion,
-                    "pred_id": int(pred_id),
-                    "pred_label": _label_name_from_id(int(pred_id)),
-                    "gold_id": int(sample.gold_id),
-                    "gold_label": sample.gold_label,
-                    "gold_explain": sample.gold_explain,
-                }
+                build_vllm_prediction_record(
+                    sample_idx, sample, raw_completion,
+                    use_label_decoding=use_label_decoding,
+                )
             )
 
         if self.cfg.sleep_after_eval:

@@ -8,7 +8,8 @@ from typing import Any
 
 import numpy as np
 
-from fact_checking.build.candidates import _load_pickle, compute_hybrid_scores
+from fact_checking.build.cache import load_pickle
+from fact_checking.build.candidates import compute_hybrid_scores
 from fact_checking.rl_mmr.soft_label_features import (
     DEFAULT_LAMBDA_GRID,
     SOFT_LABEL_FEATURE_NAMES,
@@ -154,7 +155,7 @@ class SoftLabelDataset:
     ) -> "SoftLabelDataset":
         grid = parse_lambda_grid(lambda_grid)
         oracle_by_eid = load_oracle_logprobs(oracle_jsonl)
-        chunk_samples = _load_pickle(Path(chunk_cache_pkl))
+        chunk_samples = load_pickle(Path(chunk_cache_pkl))
 
         raw_vectors: list[np.ndarray] = []
         raw_dicts: list[dict[str, Any]] = []

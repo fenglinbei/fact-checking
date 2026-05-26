@@ -16,7 +16,7 @@ from fact_checking.data.constants import LABEL2ID, LABELS, LETTER_ORDER
 from fact_checking.data.io import load_jsonl
 from fact_checking.config import load_yaml, save_yaml
 from fact_checking.utils.logging import init_logger
-from sft.data.io import _save_eval_artifacts, save_model
+from sft.data.io import _save_eval_artifacts, load_prebuilt_samples, save_model
 from sft.data.labels import normalize_gold_label
 from sft.data.sampling import select_mini_val_rows
 from sft.data.types import PreparedSample
@@ -31,39 +31,14 @@ from sft.prompting.stats import (
     save_prompt_statistics,
     summarize_prebuilt_prompts,
 )
-from sft.runtime.adapters import apply_lora_if_enabled, lora_enabled
+from sft.runtime.adapters import lora_enabled
 from sft.runtime.config import apply_runtime_output_layout
-from sft.runtime.deps import flash_attn2_available, fla_fast_path_available
-from sft.runtime.device import enable_tf32_if_available, maybe_empty_cache
-from sft.runtime.tracking import build_tracking_setup, log_metrics
+from sft.runtime.device import maybe_empty_cache
+from sft.runtime.tracking import log_metrics
+from sft.train_utils import setup_accelerator_and_tracker, setup_model_and_tokenizer
 from sft.vllm_online_eval import OnlineVLLMEvaluator, online_vllm_eval_enabled
 
 logger = init_logger(__name__)
-
-
-def _load_prebuilt_samples(rows: list[dict]) -> list[PreparedSample]:
-    samples: list[PreparedSample] = []
-    for row in rows:
-        gold_label = str(row.get("gold_label", ""))
-        if not gold_label:
-            continue
-        samples.append(PreparedSample(
-            prompt=str(row["prompt"]),
-            target=str(row["target"]),
-            prompt_add_special_tokens=bool(row.get("prompt_add_special_tokens", False)),
-            preserve_prompt_prefix=bool(row.get("preserve_prompt_prefix", True)),
-            gold_id=int(row.get("gold_id", -1)),
-            gold_label=gold_label,
-            gold_explain=str(row.get("gold_explain", "")),
-            prompt_token_count=int(row.get("prompt_token_count", 0)),
-            target_token_count=int(row.get("target_token_count", 0)),
-            evidence_count=int(row.get("evidence_count", 0)),
-            was_truncated=bool(row.get("was_truncated", False)),
-            claim=str(row.get("claim", "")),
-            no_evidence=int(row.get("evidence_count", 0)) == 0,
-            long_claim=len(str(row.get("claim", "")).split()) > 64,
-        ))
-    return samples
 
 
 def _broadcast_object_from_main(obj: object, accelerator: Accelerator) -> object:
@@ -158,23 +133,8 @@ def main() -> None:
     baseline_cfg = cfg["baseline"]
     train_cfg = cfg["sft_train"]
 
-    enable_tf32_if_available()
-    tracking_setup = build_tracking_setup(cfg)
-
     mixed_precision = "bf16" if bool(train_cfg.get("bf16", True)) else "no"
-
-    accelerator = Accelerator(
-        gradient_accumulation_steps=int(train_cfg.get("gradient_accumulation_steps", 8)),
-        mixed_precision=mixed_precision,
-        log_with=tracking_setup.log_with,
-    )
-
-    if tracking_setup.enabled:
-        accelerator.init_trackers(
-            project_name=tracking_setup.project_name,
-            config=cfg,
-            init_kwargs=tracking_setup.init_kwargs,
-        )
+    accelerator, tracking_setup = setup_accelerator_and_tracker(train_cfg, cfg)
 
     train_rows = load_jsonl(data_cfg["train_candidates"])
     val_rows = load_jsonl(data_cfg["val_candidates"])
@@ -194,8 +154,8 @@ def main() -> None:
         accelerator=accelerator,
     )
 
-    train_samples = _load_prebuilt_samples(train_rows)
-    val_samples = _load_prebuilt_samples(val_rows)
+    train_samples = load_prebuilt_samples(train_rows)
+    val_samples = load_prebuilt_samples(val_rows)
 
     output_dir = Path(cfg.get("output_dir", "outputs/runs/train"))
     if accelerator.is_main_process:

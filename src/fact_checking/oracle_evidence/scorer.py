@@ -6,11 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from fact_checking.build.candidates import (
-    _build_chat_prompt,
-    _build_system_message,
-    _build_user_content,
-)
+from fact_checking.build.prompts import build_chat_prompt, build_system_message, build_user_content
 from fact_checking.data.constants import LABEL_LETTERS, LETTER_ORDER
 
 if TYPE_CHECKING:
@@ -146,14 +142,14 @@ class VerifierScorer:
 
     def _render_prompt(self, claim: str, evidence_texts: list[str]) -> tuple[str, int]:
         """Return (chat_prompt, token_count)."""
-        system_msg = _build_system_message(self.system_prompt)
-        user_content = _build_user_content(
+        system_msg = build_system_message(self.system_prompt)
+        user_content = build_user_content(
             claim=claim,
             evidence_texts=evidence_texts,
             output_mode=self.output_mode,
             label_format=self.label_format,
         )
-        prompt = _build_chat_prompt(self.tokenizer, system_msg, user_content)
+        prompt = build_chat_prompt(self.tokenizer, system_msg, user_content)
         token_count = len(
             self.tokenizer(prompt, truncation=False, add_special_tokens=False)["input_ids"]
         )

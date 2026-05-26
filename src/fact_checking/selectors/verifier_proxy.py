@@ -12,6 +12,7 @@ from torch import nn
 
 from fact_checking.build.candidates import canonicalize_sentence
 from fact_checking.data.constants import LABEL2ID, LABELS, LABEL_LETTERS, LETTER2LABEL, LETTER_ORDER
+from fact_checking.pipeline.artifacts import fingerprint
 
 
 DEFAULT_DIRECT_VERIFIER_RUN_DIR = (
@@ -107,8 +108,7 @@ def sha256_file(path: str | Path) -> str:
 
 
 def stable_fingerprint(payload: dict[str, Any], *, length: int = 16) -> str:
-    data = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(data).hexdigest()[: int(length)]
+    return fingerprint(payload, length=length, algorithm="sha256")
 
 
 def verifier_config_fingerprint(info: VerifierCheckpointInfo) -> str:

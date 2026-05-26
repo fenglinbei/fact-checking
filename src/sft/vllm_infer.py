@@ -2,21 +2,19 @@ from __future__ import annotations
 
 import argparse
 
-from fact_checking.data.constants import LABELS
 from fact_checking.utils.logging import init_logger
 from sft.data.io import save_eval_artifacts
 from sft.eval import summarize_prediction_records
-from sft.infer_common import build_inference_context, build_label_decoding_prompt, build_serializable_metrics
-from sft.logit_adjust import build_logit_adjust_cfg_from_train_config, create_label_choice_processor, load_logit_adjust_cfg
-from sft.parser import _parse_label_id
+from sft.infer_common import (
+    build_inference_context,
+    build_label_decoding_prompt,
+    build_serializable_metrics,
+    build_vllm_prediction_record,
+    create_vllm_logit_processors,
+)
+from sft.logit_adjust import build_logit_adjust_cfg_from_train_config, load_logit_adjust_cfg
 
 logger = init_logger(__name__)
-
-
-def _label_name_from_id(label_id: int) -> str:
-    if 0 <= int(label_id) < len(LABELS):
-        return LABELS[int(label_id)]
-    return "parse_error"
 
 
 def parse_args() -> argparse.Namespace:
@@ -80,10 +78,8 @@ def main() -> None:
     logit_adjust_cfg = load_logit_adjust_cfg(context.run_dir)
     if logit_adjust_cfg is None:
         logit_adjust_cfg = build_logit_adjust_cfg_from_train_config(context.cfg, context.tokenizer)
-    logits_processors = []
-    use_label_decoding = bool(logit_adjust_cfg and logit_adjust_cfg.get("enabled"))
-    if use_label_decoding:
-        logits_processors.append(create_label_choice_processor(logit_adjust_cfg))
+    logits_processors = create_vllm_logit_processors(logit_adjust_cfg)
+    use_label_decoding = bool(logits_processors)
 
     sampling_params = SamplingParams(
         max_tokens=1
@@ -113,22 +109,11 @@ def main() -> None:
     prediction_records: list[dict[str, object]] = []
     for sample_idx, (sample, output) in enumerate(zip(context.samples, outputs)):
         raw_completion = output.outputs[0].text if output.outputs else ""
-        raw_output = f"{label_prefix}{raw_completion}" if use_label_decoding else raw_completion
-        pred_id = _parse_label_id(raw_output)
-
         prediction_records.append(
-            {
-                "sample_idx": sample_idx,
-                "prompt": sample.prompt,
-                "target": sample.target,
-                "raw_output": raw_output,
-                "raw_completion": raw_completion,
-                "pred_id": int(pred_id),
-                "pred_label": _label_name_from_id(int(pred_id)),
-                "gold_id": int(sample.gold_id),
-                "gold_label": sample.gold_label,
-                "gold_explain": sample.gold_explain,
-            }
+            build_vllm_prediction_record(
+                sample_idx, sample, raw_completion,
+                use_label_decoding=use_label_decoding,
+            )
         )
 
     eval_metrics = summarize_prediction_records(

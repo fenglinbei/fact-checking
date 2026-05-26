@@ -22,9 +22,9 @@ def stable_json(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
 
-def fingerprint(payload: Any, *, length: int = 12) -> str:
-    digest = hashlib.sha1(stable_json(payload).encode("utf-8")).hexdigest()
-    return digest[:length]
+def fingerprint(payload: Any, *, length: int = 12, algorithm: str = "sha1") -> str:
+    h = hashlib.new(algorithm, stable_json(payload).encode("utf-8"))
+    return h.hexdigest()[:length]
 
 
 def now_string() -> str:

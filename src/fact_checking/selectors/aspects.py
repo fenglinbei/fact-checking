@@ -5,14 +5,11 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from fact_checking.utils.text import clean_text as _base_clean_text
 
-ASPECT_EXTRACTION_VERSION = "rule_aspect_v1"
-LLM_DECOMP_PLUS_VERSION = "llm_decomp_plus_v1"
-FULL_CLAIM_ASPECT_TYPE = "full_claim"
 
-_MIN_DEFAULT_TOKENS = 4
-_MAX_DEFAULT_TOKENS = 24
-_MIN_DEFAULT_RETRIEVABILITY = 2
+def clean_text(text: Any) -> str:
+    return _base_clean_text(str(text or "")).strip(" ,.;:\"")
 
 _BAD_ENTITY_SPANS = {
     "Says",
@@ -307,10 +304,6 @@ def build_claim_aspect_bundle_from_texts(
         aspects=kept,
         dropped_aspects=dropped,
     )
-
-
-def clean_text(text: Any) -> str:
-    return re.sub(r"\s+", " ", str(text or "")).strip(" ,.;:\"")
 
 
 def aspect_feature_flags(text: str) -> dict[str, Any]:

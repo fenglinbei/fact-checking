@@ -3,8 +3,8 @@ experiment:
   name: b0
 
 baseline:
-  # baseline 仅作实验描述记录，不影响运行配置
-  # 实际运行参数以 build / sft_train / train / infer 为准
+  # 描述实验基线变体，同时作为 model_name_or_path / max_new_tokens / temperature 的后备值。
+  # 运行参数以 build / sft_train / train / infer 为准，baseline 仅在对应字段缺失时生效。
   variant: b0
 
 build:

@@ -14,13 +14,9 @@ from fact_checking.utils.logging import init_logger
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
 from sft.parser import _parse_label_id
 
+from sft.infer_common import label_name_from_id
+
 module_logger = init_logger(__name__)
-
-
-def _label_name_from_id(label_id: int) -> str:
-    if 0 <= int(label_id) < len(LABELS):
-        return LABELS[int(label_id)]
-    return "parse_error"
 
 
 def _truncate_for_log(text: str, max_chars: int = 240) -> str:
@@ -266,7 +262,7 @@ def evaluate(
                                     "target": str(sample["target"]),
                                     "raw_output": raw_output,
                                     "pred_id": int(pred_id),
-                                    "pred_label": _label_name_from_id(int(pred_id)),
+                                    "pred_label": label_name_from_id(int(pred_id)),
                                     "gold_id": int(gold_id),
                                     "gold_label": str(sample["gold_label"]),
                                     "gold_explain": str(sample["gold_explain"]),

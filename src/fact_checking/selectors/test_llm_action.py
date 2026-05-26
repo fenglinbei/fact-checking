@@ -22,7 +22,7 @@ from fact_checking.selectors.llm_action import (
 )
 from fact_checking.selectors.llm_action_eval import evaluate_llm_action_selection
 from fact_checking.selectors.stage2_oracle import Stage2OracleExample
-from scripts.selectors.train_llm_action_selector import METRIC_SUMS_SIZE, _batch_loss, _parts_to_sums
+from scripts.selectors.train.train_llm_action_selector import METRIC_SUMS_SIZE, _batch_loss, _parts_to_sums
 
 
 class LLMActionSelectorTest(unittest.TestCase):
