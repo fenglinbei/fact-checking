@@ -9,6 +9,7 @@ import socket
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -373,6 +374,7 @@ def generate_or_load_questions(
     retry_initial_delay: float = 1.0,
     retry_max_delay: float = 30.0,
     api_parse_max_retries: int = 2,
+    api_concurrency: int = 1,
     run_metadata: dict[str, Any] | None = None,
     no_progress: bool = False,
 ) -> QuestionGenerationResult:
@@ -405,78 +407,70 @@ def generate_or_load_questions(
         if pending:
             if client_factory is None:
                 raise RuntimeError("Missing API client factory for pending question generations.")
-            client = client_factory()
             with paths.question_cache_path.open("a", encoding="utf-8") as cache_fh, paths.raw_cache_path.open(
                 "a", encoding="utf-8"
             ) as raw_fh:
-                for ex in _iter_progress(
-                    pending,
-                    desc="question API",
-                    unit="claim",
-                    disable=bool(no_progress),
-                ):
-                    prompt = format_user_prompt(ex.claim)
-                    raw_text = ""
-                    api_metadata: dict[str, Any] = {}
-                    questions: list[dict[str, Any]] = []
-                    parse_status = "empty_generation"
-                    parse_error: str | None = "empty generation"
-                    complexity = "moderate"
-                    parse_attempts = 0
-                    for parse_attempt in range(max(int(api_parse_max_retries), 0) + 1):
-                        parse_attempts = parse_attempt + 1
-                        raw_text = _generate_with_retries(
-                            client,
-                            system_prompt=SYSTEM_PROMPT,
-                            user_prompt=prompt,
-                            settings=settings,
-                            max_retries=int(api_max_retries),
-                            initial_delay=float(retry_initial_delay),
-                            max_delay=float(retry_max_delay),
+                worker_kwargs = {
+                    "split": str(split),
+                    "settings": settings,
+                    "cache_fingerprint": cache_fingerprint,
+                    "generation_fingerprint": generation_fingerprint,
+                    "question_config_payload": config_payload,
+                    "client_factory": client_factory,
+                    "api_max_retries": int(api_max_retries),
+                    "retry_initial_delay": float(retry_initial_delay),
+                    "retry_max_delay": float(retry_max_delay),
+                    "api_parse_max_retries": int(api_parse_max_retries),
+                }
+                concurrency = max(int(api_concurrency), 1)
+                if concurrency == 1:
+                    generated_iter = (
+                        _generate_question_for_example(ex, **worker_kwargs)
+                        for ex in _iter_progress(
+                            pending,
+                            desc="question API",
+                            unit="claim",
+                            disable=bool(no_progress),
+                            total=len(pending),
                         )
-                        api_metadata = dict(getattr(client, "last_response_metadata", {}) or {})
-                        questions, parse_status, parse_error, complexity = parse_questions_from_generation(raw_text)
-                        if parse_status == "ok" or not _should_retry_parse_failure(
-                            parse_status=parse_status,
-                            parse_error=parse_error,
-                            api_metadata=api_metadata,
+                    )
+                    for row, raw_row, parse_failed in generated_iter:
+                        _append_generated_question_row(
+                            cache_fh,
+                            raw_fh,
+                            cache_index=cache_index,
+                            cache_fingerprint=cache_fingerprint,
+                            row=row,
+                            raw_row=raw_row,
+                        )
+                        n_api_generated += 1
+                        if parse_failed:
+                            n_parse_failures += 1
+                else:
+                    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                        futures = [
+                            executor.submit(_generate_question_for_example, ex, **worker_kwargs)
+                            for ex in pending
+                        ]
+                        for future in _iter_progress(
+                            as_completed(futures),
+                            desc=f"question API x{concurrency}",
+                            unit="claim",
+                            disable=bool(no_progress),
+                            total=len(futures),
                         ):
-                            break
-                        if parse_attempt < max(int(api_parse_max_retries), 0):
-                            time.sleep(min(1.0, max(float(retry_initial_delay), 0.0)))
-                    question_source = "api"
-                    if parse_status != "ok":
-                        questions = fallback_questions_for_claim(ex.claim)
-                        question_source = "fallback_parse_failed"
-                        n_parse_failures += 1
-                    row = _build_question_row(
-                        ex,
-                        split=split,
-                        settings=settings,
-                        cache_fingerprint=cache_fingerprint,
-                        generation_fingerprint=generation_fingerprint,
-                        question_config_payload=config_payload,
-                        questions=questions,
-                        complexity=complexity,
-                        parse_status=parse_status,
-                        parse_error=parse_error,
-                        question_source=question_source,
-                    )
-                    raw_row = _build_raw_row(
-                        row,
-                        raw_text=raw_text,
-                        system_prompt=SYSTEM_PROMPT,
-                        user_prompt=prompt,
-                        api_metadata=api_metadata,
-                        parse_attempts=parse_attempts,
-                    )
-                    cache_fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-                    cache_fh.flush()
-                    raw_fh.write(json.dumps(raw_row, ensure_ascii=False) + "\n")
-                    raw_fh.flush()
-                    cache_index.rows_by_key[_example_cache_key(ex, cache_fingerprint)] = row
-                    cache_index.total_valid_rows += 1
-                    n_api_generated += 1
+                            row, raw_row, parse_failed = future.result()
+                            _append_generated_question_row(
+                                cache_fh,
+                                raw_fh,
+                                cache_index=cache_index,
+                                cache_fingerprint=cache_fingerprint,
+                                row=row,
+                                raw_row=raw_row,
+                            )
+                            n_api_generated += 1
+                            if parse_failed:
+                                n_parse_failures += 1
 
         raw_cache = read_raw_question_cache(paths.raw_cache_path, cache_fingerprint=cache_fingerprint)
         ordered_rows: list[dict[str, Any]] = []
@@ -487,6 +481,7 @@ def generate_or_load_questions(
             desc="question cache export",
             unit="claim",
             disable=bool(no_progress),
+            total=len(normalized_examples),
         ):
             key = _example_cache_key(ex, cache_fingerprint)
             row = cache_index.rows_by_key.get(key)
@@ -532,6 +527,7 @@ def generate_or_load_questions(
             "parse_failures": int(n_parse_failures),
             "api_max_retries": int(api_max_retries),
             "api_parse_max_retries": int(api_parse_max_retries),
+            "api_concurrency": max(int(api_concurrency), 1),
             "no_progress": bool(no_progress),
             "run_metadata": dict(run_metadata or {}),
             "elapsed_seconds": round(time.time() - started_at, 3),
@@ -639,6 +635,98 @@ def _build_raw_row(
     }
 
 
+def _generate_question_for_example(
+    example: QuestionInputExample,
+    *,
+    split: str,
+    settings: QuestionGenerationSettings,
+    cache_fingerprint: str,
+    generation_fingerprint: str,
+    question_config_payload: dict[str, Any],
+    client_factory: Callable[[], Any],
+    api_max_retries: int,
+    retry_initial_delay: float,
+    retry_max_delay: float,
+    api_parse_max_retries: int,
+) -> tuple[dict[str, Any], dict[str, Any], bool]:
+    client = client_factory()
+    prompt = format_user_prompt(example.claim)
+    raw_text = ""
+    api_metadata: dict[str, Any] = {}
+    questions: list[dict[str, Any]] = []
+    parse_status = "empty_generation"
+    parse_error: str | None = "empty generation"
+    complexity = "moderate"
+    parse_attempts = 0
+    max_parse_retries = max(int(api_parse_max_retries), 0)
+    for parse_attempt in range(max_parse_retries + 1):
+        parse_attempts = parse_attempt + 1
+        raw_text = _generate_with_retries(
+            client,
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=prompt,
+            settings=settings,
+            max_retries=int(api_max_retries),
+            initial_delay=float(retry_initial_delay),
+            max_delay=float(retry_max_delay),
+        )
+        api_metadata = dict(getattr(client, "last_response_metadata", {}) or {})
+        questions, parse_status, parse_error, complexity = parse_questions_from_generation(raw_text)
+        if parse_status == "ok" or not _should_retry_parse_failure(
+            parse_status=parse_status,
+            parse_error=parse_error,
+            api_metadata=api_metadata,
+        ):
+            break
+        if parse_attempt < max_parse_retries:
+            time.sleep(min(1.0, max(float(retry_initial_delay), 0.0)))
+    question_source = "api"
+    parse_failed = parse_status != "ok"
+    if parse_failed:
+        questions = fallback_questions_for_claim(example.claim)
+        question_source = "fallback_parse_failed"
+    row = _build_question_row(
+        example,
+        split=split,
+        settings=settings,
+        cache_fingerprint=cache_fingerprint,
+        generation_fingerprint=generation_fingerprint,
+        question_config_payload=question_config_payload,
+        questions=questions,
+        complexity=complexity,
+        parse_status=parse_status,
+        parse_error=parse_error,
+        question_source=question_source,
+    )
+    raw_row = _build_raw_row(
+        row,
+        raw_text=raw_text,
+        system_prompt=SYSTEM_PROMPT,
+        user_prompt=prompt,
+        api_metadata=api_metadata,
+        parse_attempts=parse_attempts,
+    )
+    return row, raw_row, parse_failed
+
+
+def _append_generated_question_row(
+    cache_fh: Any,
+    raw_fh: Any,
+    *,
+    cache_index: QuestionCacheIndex,
+    cache_fingerprint: str,
+    row: dict[str, Any],
+    raw_row: dict[str, Any],
+) -> None:
+    cache_fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    cache_fh.flush()
+    raw_fh.write(json.dumps(raw_row, ensure_ascii=False) + "\n")
+    raw_fh.flush()
+    key = question_cache_key(str(row["event_id"]), str(row["claim_sha256"]), cache_fingerprint)
+    cache_index.rows_by_key[key] = row
+    cache_index.total_valid_rows += 1
+
+
 def _generate_with_retries(
     client: Any,
     *,
@@ -682,14 +770,21 @@ def _should_retry_parse_failure(
     return False
 
 
-def _iter_progress(items: Sequence[Any], *, desc: str, unit: str, disable: bool) -> Iterable[Any]:
+def _iter_progress(
+    items: Iterable[Any],
+    *,
+    desc: str,
+    unit: str,
+    disable: bool,
+    total: int | None = None,
+) -> Iterable[Any]:
     if disable:
         return items
     try:
         from tqdm.auto import tqdm
     except Exception:
         return items
-    return tqdm(items, desc=desc, unit=unit, dynamic_ncols=True)
+    return tqdm(items, desc=desc, unit=unit, total=total, dynamic_ncols=True)
 
 
 def _example_cache_key(example: QuestionInputExample, cache_fingerprint: str) -> str:

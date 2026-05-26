@@ -48,6 +48,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--question-api-key-env", default=os.environ.get("QUESTION_API_KEY_ENV", "QUESTION_API_KEY"))
     p.add_argument("--api-timeout", type=float, default=float(os.environ.get("QUESTION_API_TIMEOUT", "120")))
     p.add_argument("--api-max-retries", type=int, default=int(os.environ.get("API_MAX_RETRIES", "5")))
+    p.add_argument("--api-concurrency", type=int, default=int(os.environ.get("API_CONCURRENCY", "1")))
     p.add_argument("--retry-initial-delay", type=float, default=float(os.environ.get("API_RETRY_INITIAL_DELAY", "1.0")))
     p.add_argument("--retry-max-delay", type=float, default=float(os.environ.get("API_RETRY_MAX_DELAY", "30.0")))
 
@@ -117,6 +118,7 @@ def main() -> None:
         retry_initial_delay=float(args.retry_initial_delay),
         retry_max_delay=float(args.retry_max_delay),
         api_parse_max_retries=int(args.api_parse_max_retries),
+        api_concurrency=int(args.api_concurrency),
         no_progress=bool(args.no_progress),
         run_metadata={
             "command": [Path(sys.argv[0]).as_posix(), *sys.argv[1:]],
@@ -124,6 +126,7 @@ def main() -> None:
             "sample_limit": int(args.sample_limit) if args.sample_limit is not None else None,
             "question_base_url": str(args.question_base_url),
             "api_timeout": float(args.api_timeout),
+            "api_concurrency": int(args.api_concurrency),
             "thinking_type": thinking_type,
             "max_candidates": int(args.max_candidates),
             "top_k": int(args.top_k),

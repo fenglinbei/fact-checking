@@ -21,6 +21,7 @@ QUESTION_MODEL="${QUESTION_MODEL:-/data/models/Qwen2.5-7B-Instruct}"
 QUESTION_API_KEY_ENV="${QUESTION_API_KEY_ENV:-QUESTION_API_KEY}"
 QUESTION_API_TIMEOUT="${QUESTION_API_TIMEOUT:-120}"
 API_MAX_RETRIES="${API_MAX_RETRIES:-5}"
+API_CONCURRENCY="${API_CONCURRENCY:-1}"
 API_PARSE_MAX_RETRIES="${API_PARSE_MAX_RETRIES:-2}"
 API_RETRY_INITIAL_DELAY="${API_RETRY_INITIAL_DELAY:-1.0}"
 API_RETRY_MAX_DELAY="${API_RETRY_MAX_DELAY:-30.0}"
@@ -33,12 +34,19 @@ GUIDED_JSON="${GUIDED_JSON:-1}"
 RESUME_QUESTIONS="${RESUME_QUESTIONS:-true}"
 RUN_QUESTION_GENERATION="${RUN_QUESTION_GENERATION:-true}"
 RUN_RETRIEVAL="${RUN_RETRIEVAL:-false}"
+RUN_UNION="${RUN_UNION:-false}"
+RUN_RERANKER="${RUN_RERANKER:-false}"
 RUN_VERIFIER="${RUN_VERIFIER:-false}"
 NO_PROGRESS="${NO_PROGRESS:-false}"
 
 RETRIEVAL_OUTPUT_DIR="${RETRIEVAL_OUTPUT_DIR:-${OUTPUT_DIR}}"
 QUESTIONS_JSONL="${QUESTIONS_JSONL:-${OUTPUT_DIR}/questions_${SPLIT}.jsonl}"
 CHUNK_CACHE_PATH="${CHUNK_CACHE_PATH:-outputs/cache/chunk_mmr/432dfc970e75/${SPLIT}.pkl}"
+UNION_OUTPUT_DIR="${UNION_OUTPUT_DIR:-${RETRIEVAL_OUTPUT_DIR}}"
+BASELINE_JSONL="${BASELINE_JSONL:-${RETRIEVAL_OUTPUT_DIR}/baseline_claim_mmr_selected_${SPLIT}.jsonl}"
+QD_POOL_JSONL="${QD_POOL_JSONL:-${RETRIEVAL_OUTPUT_DIR}/merged_candidate_pool_${SPLIT}.jsonl}"
+RERANKER_OUTPUT_DIR="${RERANKER_OUTPUT_DIR:-${UNION_OUTPUT_DIR}/union_feature_reranker_v0_3}"
+UNION_POOL_JSONL="${UNION_POOL_JSONL:-${UNION_OUTPUT_DIR}/union_candidate_pool_${SPLIT}.jsonl}"
 if [[ -z "${EMBEDDER_MODEL:-}" ]]; then
   if [[ -d "/data/models/bge-base-en-v1.5" ]]; then
     EMBEDDER_MODEL="/data/models/bge-base-en-v1.5"
@@ -62,6 +70,18 @@ MERGE_MMR_LAMBDA="${MERGE_MMR_LAMBDA:-0.70}"
 ALPHA_DENSE="${ALPHA_DENSE:-0.70}"
 ALPHA_LEXICAL="${ALPHA_LEXICAL:-0.20}"
 ALPHA_BM25="${ALPHA_BM25:-0.10}"
+BASELINE_BONUS="${BASELINE_BONUS:-0.04}"
+BASELINE_RANK_WEIGHT="${BASELINE_RANK_WEIGHT:-0.01}"
+QD_RRF_WEIGHT="${QD_RRF_WEIGHT:-1.0}"
+QD_QUESTION_HIT_WEIGHT="${QD_QUESTION_HIT_WEIGHT:-0.004}"
+QD_MAX_HYBRID_WEIGHT="${QD_MAX_HYBRID_WEIGHT:-0.01}"
+RERANKER_VAL_FRACTION="${RERANKER_VAL_FRACTION:-0.2}"
+RERANKER_SEED="${RERANKER_SEED:-20260526}"
+RERANKER_EPOCHS="${RERANKER_EPOCHS:-500}"
+RERANKER_LR="${RERANKER_LR:-0.05}"
+RERANKER_L2="${RERANKER_L2:-0.0001}"
+RERANKER_PATIENCE="${RERANKER_PATIENCE:-50}"
+RERANKER_EVAL_EVERY="${RERANKER_EVAL_EVERY:-10}"
 
 SAMPLE_LIMIT_ARGS=()
 if [[ -n "${SAMPLE_LIMIT:-}" ]]; then
@@ -108,9 +128,12 @@ echo "[question-decomp] question model  : ${QUESTION_MODEL}"
 echo "[question-decomp] base url        : ${QUESTION_BASE_URL}"
 echo "[question-decomp] run generation  : ${RUN_QUESTION_GENERATION}"
 echo "[question-decomp] run retrieval   : ${RUN_RETRIEVAL}"
+echo "[question-decomp] run union       : ${RUN_UNION}"
+echo "[question-decomp] run reranker    : ${RUN_RERANKER}"
 echo "[question-decomp] resume questions: ${RESUME_QUESTIONS}"
 echo "[question-decomp] thinking type   : ${QUESTION_THINKING_TYPE:-none}"
 echo "[question-decomp] max tokens      : ${MAX_TOKENS}"
+echo "[question-decomp] api concurrency : ${API_CONCURRENCY}"
 echo "[question-decomp] no progress     : ${NO_PROGRESS}"
 
 if [[ "${RUN_QUESTION_GENERATION}" == "1" || "${RUN_QUESTION_GENERATION}" == "true" || "${RUN_QUESTION_GENERATION}" == "True" ]]; then
@@ -124,6 +147,7 @@ if [[ "${RUN_QUESTION_GENERATION}" == "1" || "${RUN_QUESTION_GENERATION}" == "tr
     --question-api-key-env "${QUESTION_API_KEY_ENV}" \
     --api-timeout "${QUESTION_API_TIMEOUT}" \
     --api-max-retries "${API_MAX_RETRIES}" \
+    --api-concurrency "${API_CONCURRENCY}" \
     --api-parse-max-retries "${API_PARSE_MAX_RETRIES}" \
     --retry-initial-delay "${API_RETRY_INITIAL_DELAY}" \
     --retry-max-delay "${API_RETRY_MAX_DELAY}" \
@@ -166,6 +190,44 @@ if [[ "${RUN_RETRIEVAL}" == "1" || "${RUN_RETRIEVAL}" == "true" || "${RUN_RETRIE
     --alpha-lexical "${ALPHA_LEXICAL}" \
     --alpha-bm25 "${ALPHA_BM25}" \
     "${PROGRESS_ARGS[@]}" \
+    "${SAMPLE_LIMIT_ARGS[@]}"
+fi
+
+if [[ "${RUN_UNION}" == "1" || "${RUN_UNION}" == "true" || "${RUN_UNION}" == "True" ]]; then
+  echo "[question-decomp] union output    : ${UNION_OUTPUT_DIR}"
+  echo "[question-decomp] baseline jsonl  : ${BASELINE_JSONL}"
+  echo "[question-decomp] qd pool jsonl   : ${QD_POOL_JSONL}"
+  PYTHONPATH=src python scripts/selectors/build_question_decomp_union.py \
+    --oracle-results "${ORACLE_RESULTS}" \
+    --split "${SPLIT}" \
+    --baseline-jsonl "${BASELINE_JSONL}" \
+    --qd-pool-jsonl "${QD_POOL_JSONL}" \
+    --output-dir "${UNION_OUTPUT_DIR}" \
+    --selector-top-k "${SELECTOR_TOP_K}" \
+    --baseline-bonus "${BASELINE_BONUS}" \
+    --baseline-rank-weight "${BASELINE_RANK_WEIGHT}" \
+    --qd-rrf-weight "${QD_RRF_WEIGHT}" \
+    --qd-question-hit-weight "${QD_QUESTION_HIT_WEIGHT}" \
+    --qd-max-hybrid-weight "${QD_MAX_HYBRID_WEIGHT}" \
+    "${SAMPLE_LIMIT_ARGS[@]}"
+fi
+
+if [[ "${RUN_RERANKER}" == "1" || "${RUN_RERANKER}" == "true" || "${RUN_RERANKER}" == "True" ]]; then
+  echo "[question-decomp] reranker output : ${RERANKER_OUTPUT_DIR}"
+  echo "[question-decomp] union pool jsonl: ${UNION_POOL_JSONL}"
+  PYTHONPATH=src python scripts/selectors/train_question_decomp_union_reranker.py \
+    --oracle-results "${ORACLE_RESULTS}" \
+    --split "${SPLIT}" \
+    --union-pool-jsonl "${UNION_POOL_JSONL}" \
+    --output-dir "${RERANKER_OUTPUT_DIR}" \
+    --top-k "${SELECTOR_TOP_K}" \
+    --val-fraction "${RERANKER_VAL_FRACTION}" \
+    --seed "${RERANKER_SEED}" \
+    --epochs "${RERANKER_EPOCHS}" \
+    --lr "${RERANKER_LR}" \
+    --l2 "${RERANKER_L2}" \
+    --patience "${RERANKER_PATIENCE}" \
+    --eval-every "${RERANKER_EVAL_EVERY}" \
     "${SAMPLE_LIMIT_ARGS[@]}"
 fi
 

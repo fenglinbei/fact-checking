@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -252,6 +253,49 @@ class QuestionDecompCacheTest(unittest.TestCase):
                 for line in (tmp_path / "second" / "questions_train.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             self.assertEqual([row["event_id"] for row in output_rows], ["event1", "event0"])
+
+    def test_concurrent_generation_writes_cache_and_ordered_run_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            examples = self._examples(6)
+            settings = QuestionGenerationSettings(model="qwen")
+            barrier = threading.Barrier(3)
+            lock = threading.Lock()
+            calls = 0
+
+            class _ConcurrentClient:
+                last_response_metadata = {"finish_reason": "stop"}
+
+                def generate(self, **kwargs: object) -> str:
+                    nonlocal calls
+                    with lock:
+                        calls += 1
+                        call_idx = calls
+                    if call_idx <= 3:
+                        barrier.wait(timeout=2.0)
+                    user_prompt = str(kwargs["user_prompt"])
+                    claim = user_prompt.split("Claim:\n", 1)[1].split("\n\n", 1)[0]
+                    return _json_question(f"What verifies {claim}?")
+
+            result = generate_or_load_questions(
+                examples=examples,
+                split="train",
+                output_dir=tmp_path / "concurrent",
+                question_cache_dir=tmp_path / "cache",
+                settings=settings,
+                client_factory=lambda: _ConcurrentClient(),
+                api_concurrency=3,
+                retry_initial_delay=0.0,
+                no_progress=True,
+            )
+            self.assertEqual(calls, 6)
+            self.assertEqual(result.manifest["api_concurrency"], 3)
+            self.assertEqual(result.manifest["n_api_generated"], 6)
+            self.assertEqual([row["event_id"] for row in result.rows], [f"event{idx}" for idx in range(6)])
+            self.assertEqual(result.rows[4]["questions"][0]["question"], "What verifies Claim 4?")
+            cache_files = list((tmp_path / "cache").glob("question_cache_train_*.jsonl"))
+            self.assertEqual(len(cache_files), 1)
+            self.assertEqual(len(cache_files[0].read_text(encoding="utf-8").splitlines()), 6)
 
     def test_q1_focus_is_normalized_to_overall(self) -> None:
         questions, status, error, _complexity = parse_questions_from_generation(
