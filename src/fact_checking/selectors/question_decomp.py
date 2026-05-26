@@ -367,6 +367,7 @@ def generate_or_load_questions(
     retry_initial_delay: float = 1.0,
     retry_max_delay: float = 30.0,
     run_metadata: dict[str, Any] | None = None,
+    no_progress: bool = False,
 ) -> QuestionGenerationResult:
     started_at = time.time()
     output_dir = Path(output_dir)
@@ -401,7 +402,12 @@ def generate_or_load_questions(
             with paths.question_cache_path.open("a", encoding="utf-8") as cache_fh, paths.raw_cache_path.open(
                 "a", encoding="utf-8"
             ) as raw_fh:
-                for ex in pending:
+                for ex in _iter_progress(
+                    pending,
+                    desc="question API",
+                    unit="claim",
+                    disable=bool(no_progress),
+                ):
                     prompt = format_user_prompt(ex.claim)
                     raw_text = _generate_with_retries(
                         client,
@@ -449,7 +455,12 @@ def generate_or_load_questions(
         ordered_rows: list[dict[str, Any]] = []
         ordered_raw_rows: list[dict[str, Any]] = []
         missing_after_generation: list[str] = []
-        for ex in normalized_examples:
+        for ex in _iter_progress(
+            normalized_examples,
+            desc="question cache export",
+            unit="claim",
+            disable=bool(no_progress),
+        ):
             key = _example_cache_key(ex, cache_fingerprint)
             row = cache_index.rows_by_key.get(key)
             if row is None:
@@ -493,6 +504,7 @@ def generate_or_load_questions(
             "cache_duplicate_rows": int(cache_index.duplicate_rows),
             "parse_failures": int(n_parse_failures),
             "api_max_retries": int(api_max_retries),
+            "no_progress": bool(no_progress),
             "run_metadata": dict(run_metadata or {}),
             "elapsed_seconds": round(time.time() - started_at, 3),
         }
@@ -619,6 +631,16 @@ def _generate_with_retries(
                 time.sleep(sleep_for + random.uniform(0.0, min(0.25, sleep_for)))
     assert last_exc is not None
     raise last_exc
+
+
+def _iter_progress(items: Sequence[Any], *, desc: str, unit: str, disable: bool) -> Iterable[Any]:
+    if disable:
+        return items
+    try:
+        from tqdm.auto import tqdm
+    except Exception:
+        return items
+    return tqdm(items, desc=desc, unit=unit, dynamic_ncols=True)
 
 
 def _example_cache_key(example: QuestionInputExample, cache_fingerprint: str) -> str:

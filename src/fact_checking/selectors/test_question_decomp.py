@@ -73,6 +73,7 @@ class QuestionDecompCacheTest(unittest.TestCase):
                 settings=settings,
                 client_factory=lambda: first_client,
                 retry_initial_delay=0.0,
+                no_progress=True,
             )
             self.assertEqual(first.manifest["n_loaded_from_cache"], 0)
             self.assertEqual(first.manifest["n_api_generated"], 8)
@@ -87,6 +88,7 @@ class QuestionDecompCacheTest(unittest.TestCase):
                 settings=settings,
                 client_factory=lambda: second_client,
                 retry_initial_delay=0.0,
+                no_progress=True,
             )
             self.assertEqual(second.manifest["n_loaded_from_cache"], 8)
             self.assertEqual(second.manifest["n_api_generated"], 4)
@@ -107,6 +109,7 @@ class QuestionDecompCacheTest(unittest.TestCase):
                 settings=settings,
                 client_factory=lambda: first_client,
                 retry_initial_delay=0.0,
+                no_progress=True,
             )
 
             def _unexpected_factory() -> _FakeClient:
@@ -120,6 +123,7 @@ class QuestionDecompCacheTest(unittest.TestCase):
                 settings=settings,
                 client_factory=_unexpected_factory,
                 retry_initial_delay=0.0,
+                no_progress=True,
             )
             self.assertEqual(second.manifest["n_loaded_from_cache"], 2)
             self.assertEqual(second.manifest["n_api_generated"], 0)
@@ -138,6 +142,7 @@ class QuestionDecompCacheTest(unittest.TestCase):
                 settings=settings,
                 client_factory=lambda: client,
                 retry_initial_delay=0.0,
+                no_progress=True,
             )
             self.assertEqual(first.manifest["parse_failures"], 1)
             self.assertEqual(first.rows[0]["parse_status"], "parse_failed")
@@ -151,6 +156,7 @@ class QuestionDecompCacheTest(unittest.TestCase):
                 settings=settings,
                 client_factory=lambda: _FakeClient(exc=AssertionError("should not call API")),
                 retry_initial_delay=0.0,
+                no_progress=True,
             )
             self.assertEqual(second.manifest["n_loaded_from_cache"], 1)
             self.assertEqual(second.rows[0]["question_source"], "fallback_parse_failed")
@@ -169,6 +175,7 @@ class QuestionDecompCacheTest(unittest.TestCase):
                     settings=settings,
                     client_factory=lambda: _FakeClient(exc=RuntimeError("api down")),
                     retry_initial_delay=0.0,
+                    no_progress=True,
                 )
             cache_files = list((tmp_path / "cache").glob("question_cache_val_*.jsonl"))
             if cache_files:
@@ -183,6 +190,7 @@ class QuestionDecompCacheTest(unittest.TestCase):
                 settings=settings,
                 client_factory=lambda: client,
                 retry_initial_delay=0.0,
+                no_progress=True,
             )
             self.assertEqual(retry.manifest["n_loaded_from_cache"], 0)
             self.assertEqual(retry.manifest["n_api_generated"], 1)
@@ -222,6 +230,7 @@ class QuestionDecompCacheTest(unittest.TestCase):
                 settings=settings,
                 client_factory=lambda: client,
                 retry_initial_delay=0.0,
+                no_progress=True,
             )
             reversed_examples = list(reversed(examples))
             second = generate_or_load_questions(
@@ -232,6 +241,7 @@ class QuestionDecompCacheTest(unittest.TestCase):
                 settings=settings,
                 client_factory=lambda: _FakeClient(exc=AssertionError("should not call API")),
                 retry_initial_delay=0.0,
+                no_progress=True,
             )
             self.assertEqual([row["event_id"] for row in second.rows], ["event1", "event0"])
             output_rows = [

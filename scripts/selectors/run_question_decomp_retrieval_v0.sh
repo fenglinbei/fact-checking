@@ -31,6 +31,7 @@ SEED="${SEED:-20260526}"
 GUIDED_JSON="${GUIDED_JSON:-1}"
 RESUME_QUESTIONS="${RESUME_QUESTIONS:-true}"
 RUN_VERIFIER="${RUN_VERIFIER:-false}"
+NO_PROGRESS="${NO_PROGRESS:-false}"
 
 SAMPLE_LIMIT_ARGS=()
 if [[ -n "${SAMPLE_LIMIT:-}" ]]; then
@@ -52,6 +53,11 @@ if [[ "${RESUME_QUESTIONS}" == "0" || "${RESUME_QUESTIONS}" == "false" || "${RES
   RESUME_ARGS=(--no-resume-questions)
 fi
 
+PROGRESS_ARGS=()
+if [[ "${NO_PROGRESS}" == "1" || "${NO_PROGRESS}" == "true" || "${NO_PROGRESS}" == "True" ]]; then
+  PROGRESS_ARGS=(--no-progress)
+fi
+
 echo "[question-decomp] split           : ${SPLIT}"
 echo "[question-decomp] oracle results  : ${ORACLE_RESULTS}"
 echo "[question-decomp] output dir      : ${OUTPUT_DIR}"
@@ -59,6 +65,7 @@ echo "[question-decomp] question cache  : ${QUESTION_CACHE_DIR}"
 echo "[question-decomp] question model  : ${QUESTION_MODEL}"
 echo "[question-decomp] base url        : ${QUESTION_BASE_URL}"
 echo "[question-decomp] resume questions: ${RESUME_QUESTIONS}"
+echo "[question-decomp] no progress     : ${NO_PROGRESS}"
 
 PYTHONPATH=src python scripts/selectors/generate_question_decomp_cache.py \
   --oracle-results "${ORACLE_RESULTS}" \
@@ -78,6 +85,7 @@ PYTHONPATH=src python scripts/selectors/generate_question_decomp_cache.py \
   --seed "${SEED}" \
   "${GUIDED_JSON_ARGS[@]}" \
   "${RESUME_ARGS[@]}" \
+  "${PROGRESS_ARGS[@]}" \
   "${QUESTION_CACHE_ID_ARGS[@]}" \
   "${SAMPLE_LIMIT_ARGS[@]}" \
   "$@"

@@ -57,6 +57,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=int(os.environ.get("SEED", "20260526")))
     p.add_argument("--guided-json", dest="guided_json", action="store_true", default=True)
     p.add_argument("--no-guided-json", dest="guided_json", action="store_false")
+    p.add_argument("--no-progress", action="store_true")
     return p.parse_args()
 
 
@@ -106,6 +107,7 @@ def main() -> None:
         api_max_retries=int(args.api_max_retries),
         retry_initial_delay=float(args.retry_initial_delay),
         retry_max_delay=float(args.retry_max_delay),
+        no_progress=bool(args.no_progress),
         run_metadata={
             "command": [Path(sys.argv[0]).as_posix(), *sys.argv[1:]],
             "oracle_results": str(oracle_results),
