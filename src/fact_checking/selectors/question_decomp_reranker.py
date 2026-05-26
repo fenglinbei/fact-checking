@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import random
 from collections import Counter, defaultdict
@@ -263,6 +264,59 @@ def score_rows(rows: Sequence[dict[str, Any]], feature_names: Sequence[str], mod
     x = feature_matrix(rows, feature_names)
     x = (x - model["feature_mean"]) / model["feature_std"]
     return (x @ model["weights"]).astype(np.float32)
+
+
+def pairwise_metrics_for_rows(
+    rows: Sequence[dict[str, Any]],
+    feature_names: Sequence[str],
+    model: dict[str, Any],
+) -> dict[str, Any]:
+    x = feature_matrix(rows, feature_names)
+    x = (x - model["feature_mean"]) / model["feature_std"]
+    pairs = _pairwise_diffs(rows, x)
+    return {
+        "n_pairs": int(pairs.shape[0]),
+        "pairwise_acc": pairwise_accuracy(pairs, model["weights"]),
+    }
+
+
+def save_pairwise_logistic_model(
+    path: str,
+    *,
+    model: dict[str, Any],
+    feature_names: Sequence[str],
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    np.savez(
+        path,
+        weights=np.asarray(model["weights"], dtype=np.float32),
+        feature_mean=np.asarray(model["feature_mean"], dtype=np.float32),
+        feature_std=np.asarray(model["feature_std"], dtype=np.float32),
+        feature_names=np.asarray(list(feature_names), dtype=object),
+        metadata_json=np.array(metadata or {}, dtype=object),
+    )
+
+
+def load_pairwise_logistic_model(path: str) -> dict[str, Any]:
+    data = np.load(path, allow_pickle=True)
+    feature_names = [str(item) for item in data["feature_names"].tolist()]
+    metadata_raw = data["metadata_json"].tolist() if "metadata_json" in data else {}
+    if isinstance(metadata_raw, dict):
+        metadata = metadata_raw
+    elif isinstance(metadata_raw, str):
+        try:
+            metadata = json.loads(metadata_raw)
+        except json.JSONDecodeError:
+            metadata = {}
+    else:
+        metadata = {}
+    return {
+        "weights": data["weights"].astype(np.float32),
+        "feature_mean": data["feature_mean"].astype(np.float32),
+        "feature_std": data["feature_std"].astype(np.float32),
+        "feature_names": feature_names,
+        "metadata": metadata,
+    }
 
 
 def build_selected_rows(

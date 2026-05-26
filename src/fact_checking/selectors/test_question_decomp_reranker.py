@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -9,6 +11,9 @@ from fact_checking.selectors.question_decomp_reranker import (
     build_feature_rows,
     build_selected_rows,
     default_feature_names,
+    load_pairwise_logistic_model,
+    pairwise_metrics_for_rows,
+    save_pairwise_logistic_model,
     score_rows,
     split_event_ids,
     train_pairwise_logistic,
@@ -46,6 +51,29 @@ class QuestionDecompRerankerTest(unittest.TestCase):
         )
         scores = score_rows(rows, feature_names, model)
         self.assertGreater(float(np.mean(scores[::2])), float(np.mean(scores[1::2])))
+        metrics = pairwise_metrics_for_rows(rows, feature_names, model)
+        self.assertEqual(metrics["n_pairs"], 3)
+        self.assertGreater(metrics["pairwise_acc"], 0.9)
+
+    def test_pairwise_model_roundtrip(self) -> None:
+        rows = [
+            {"event_id": "e0", "label": 1, "features": {"signal": 1.0}, "text": "pos"},
+            {"event_id": "e0", "label": 0, "features": {"signal": 0.0}, "text": "neg"},
+        ]
+        feature_names = ["signal"]
+        model = train_pairwise_logistic(
+            rows,
+            [],
+            feature_names,
+            params=PairwiseRerankerParams(epochs=20, eval_every=5, patience=10, lr=0.2),
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "model.npz"
+            save_pairwise_logistic_model(str(path), model=model, feature_names=feature_names, metadata={"name": "test"})
+            loaded = load_pairwise_logistic_model(str(path))
+        np.testing.assert_allclose(loaded["weights"], model["weights"])
+        self.assertEqual(loaded["feature_names"], feature_names)
+        self.assertEqual(loaded["metadata"]["name"], "test")
 
     def test_anchor_selection_keeps_baseline_first(self) -> None:
         rows = [
