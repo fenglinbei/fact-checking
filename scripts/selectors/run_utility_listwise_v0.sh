@@ -26,17 +26,25 @@ BCE_WEIGHT="${BCE_WEIGHT:-0.2}"
 SOFT_TAU="${SOFT_TAU:-0.3}"
 POSITIVE_BEST_MARGIN="${POSITIVE_BEST_MARGIN:-0.05}"
 EVAL_EVERY="${EVAL_EVERY:-100}"
+FEATURE_ABLATION="${FEATURE_ABLATION:-none}"
+USE_RANK_EMBEDDING="${USE_RANK_EMBEDDING:-auto}"
+SHUFFLE_PROBABILITY="${SHUFFLE_PROBABILITY:-0.0}"
+SELECTOR_NAME="${SELECTOR_NAME:-utility_listwise_v0}"
 TRAIN_SAMPLE_LIMIT="${TRAIN_SAMPLE_LIMIT:-}"
 VAL_SAMPLE_LIMIT="${VAL_SAMPLE_LIMIT:-}"
 NO_PROGRESS="${NO_PROGRESS:-false}"
 
 echo "[utility-listwise-v0] model=${MODEL_NAME}"
 echo "[utility-listwise-v0] output=${OUTPUT_DIR}"
+echo "[utility-listwise-v0] selector_name=${SELECTOR_NAME}"
 echo "[utility-listwise-v0] train_vig=${TRAIN_VIG_CACHE}"
 echo "[utility-listwise-v0] val_vig=${VAL_VIG_CACHE}"
 echo "[utility-listwise-v0] train_oracle=${TRAIN_ORACLE_RESULTS}"
 echo "[utility-listwise-v0] val_oracle=${VAL_ORACLE_RESULTS}"
 echo "[utility-listwise-v0] frozen_encoder=true"
+echo "[utility-listwise-v0] feature_ablation=${FEATURE_ABLATION}"
+echo "[utility-listwise-v0] use_rank_embedding=${USE_RANK_EMBEDDING}"
+echo "[utility-listwise-v0] shuffle_probability=${SHUFFLE_PROBABILITY}"
 
 cmd=(
   python scripts/selectors/train_utility_listwise_selector.py
@@ -57,6 +65,10 @@ cmd=(
   --soft-tau "${SOFT_TAU}"
   --positive-best-margin "${POSITIVE_BEST_MARGIN}"
   --eval-every "${EVAL_EVERY}"
+  --feature-ablation "${FEATURE_ABLATION}"
+  --use-rank-embedding "${USE_RANK_EMBEDDING}"
+  --shuffle-probability "${SHUFFLE_PROBABILITY}"
+  --selector-name "${SELECTOR_NAME}"
 )
 
 if [[ -n "${TRAIN_SAMPLE_LIMIT}" ]]; then
@@ -70,4 +82,3 @@ if [[ "${NO_PROGRESS}" == "true" || "${NO_PROGRESS}" == "1" ]]; then
 fi
 
 "${cmd[@]}" "$@"
-

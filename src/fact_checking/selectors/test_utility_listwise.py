@@ -7,6 +7,7 @@ import torch
 from fact_checking.selectors.stage2_oracle import Stage2OracleExample
 from fact_checking.selectors.utility_listwise import (
     build_utility_listwise_examples,
+    permute_utility_listwise_example,
     utility_listwise_loss,
     utility_positive_indices,
     utility_soft_targets,
@@ -67,6 +68,27 @@ class UtilityListwiseTest(unittest.TestCase):
         good_loss.backward()
         self.assertIsNotNone(good_scores[0].grad)
 
+    def test_candidate_order_shuffle_keeps_utility_labels_aligned(self) -> None:
+        example = _example()
+        group = build_utility_listwise_examples(
+            _vig_rows(example, [0.4, -0.1, 0.2]),
+            [example],
+            split="train",
+        )[0]
+
+        shuffled = permute_utility_listwise_example(group, [2, 0, 1])
+
+        self.assertEqual(
+            [row["text"] for row in shuffled.candidates],
+            ["gamma evidence", "alpha evidence", "beta evidence"],
+        )
+        self.assertEqual(shuffled.delta_margins, [0.2, 0.4, -0.1])
+        self.assertEqual(shuffled.positive_indices, [0, 1])
+        self.assertEqual(shuffled.oracle_selected_indices, [0, 1])
+        self.assertEqual([row["candidate_idx"] for row in shuffled.candidate_scores], [0, 1, 2])
+        self.assertEqual([row["original_candidate_idx"] for row in shuffled.candidate_scores], [2, 0, 1])
+        self.assertEqual(shuffled.oracle_example.selected_indices, [0, 1])
+
 
 def _example() -> Stage2OracleExample:
     candidates = [
@@ -111,4 +133,3 @@ def _vig_rows(example: Stage2OracleExample, deltas: list[float]) -> list[dict[st
 
 if __name__ == "__main__":
     unittest.main()
-

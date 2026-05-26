@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -40,6 +40,54 @@ class UtilityListwiseExample:
             candidates=[dict(item) for item in self.candidates],
             candidate_scores=[dict(item) for item in self.candidate_scores],
         )
+
+
+def permute_utility_listwise_example(
+    example: UtilityListwiseExample,
+    permutation: list[int],
+) -> UtilityListwiseExample:
+    n_candidates = len(example.candidates)
+    if sorted(int(idx) for idx in permutation) != list(range(n_candidates)):
+        raise ValueError(
+            f"Permutation must cover candidate positions 0..{n_candidates - 1}; got {permutation}."
+        )
+    perm = [int(idx) for idx in permutation]
+    inverse = {old_idx: new_idx for new_idx, old_idx in enumerate(perm)}
+    candidates = [dict(example.candidates[old_idx]) for old_idx in perm]
+    candidate_scores: list[dict[str, Any]] = []
+    for new_idx, old_idx in enumerate(perm):
+        score = (
+            dict(example.candidate_scores[old_idx])
+            if old_idx < len(example.candidate_scores)
+            else {}
+        )
+        score.setdefault("original_candidate_idx", _safe_int(score.get("candidate_idx"), old_idx))
+        score["candidate_idx"] = int(new_idx)
+        candidate_scores.append(score)
+    oracle_selected = [
+        inverse[int(idx)]
+        for idx in example.oracle_selected_indices
+        if int(idx) in inverse
+    ]
+    oracle_example = replace(
+        example.oracle_example,
+        candidates=candidates,
+        candidate_scores=candidate_scores,
+        selected_indices=oracle_selected,
+    )
+    return replace(
+        example,
+        candidates=candidates,
+        candidate_scores=candidate_scores,
+        delta_margins=[float(example.delta_margins[old_idx]) for old_idx in perm],
+        positive_indices=sorted({
+            inverse[int(idx)]
+            for idx in example.positive_indices
+            if int(idx) in inverse
+        }),
+        oracle_selected_indices=oracle_selected,
+        oracle_example=oracle_example,
+    )
 
 
 def load_utility_listwise_examples(
@@ -343,4 +391,3 @@ def _safe_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return float(default)
-

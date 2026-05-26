@@ -15,9 +15,11 @@ from tqdm.auto import tqdm
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
 from fact_checking.selectors.listwise import (
+    FEATURE_ABLATION_CHOICES,
     LISTWISE_HEAD_FILENAME,
     SetAwareListwiseSelectorModel,
     forward_listwise_groups,
+    normalize_feature_ablation,
 )
 from fact_checking.selectors.metrics import (
     build_order_control_trace,
@@ -39,6 +41,7 @@ from fact_checking.selectors.utility_listwise import (
     DEFAULT_UTILITY_SOFT_TAU,
     UtilityListwiseExample,
     load_utility_listwise_examples,
+    permute_utility_listwise_example,
     utility_listwise_loss,
     utility_rank_metrics,
 )
@@ -73,6 +76,27 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--list-layers", type=int, default=2)
     p.add_argument("--list-heads", type=int, default=4)
     p.add_argument("--dropout", type=float, default=0.1)
+    p.add_argument(
+        "--feature-ablation",
+        default="none",
+        choices=FEATURE_ABLATION_CHOICES,
+        help="Numeric/rank-prior ablation. Use no_rank_prior to zero rank/index features.",
+    )
+    p.add_argument(
+        "--use-rank-embedding",
+        default="auto",
+        choices=["auto", "true", "false", "1", "0", "yes", "no"],
+        help="Whether to add rank embeddings in the set head. auto disables them for no_rank_prior.",
+    )
+    p.add_argument(
+        "--shuffle-probability",
+        "--train-candidate-shuffle-probability",
+        dest="shuffle_probability",
+        type=float,
+        default=0.0,
+        help="Probability of permuting candidate order for each train example before scoring.",
+    )
+    p.add_argument("--selector-name", default="utility_listwise_v0")
     p.add_argument("--max-grad-norm", type=float, default=1.0)
     p.add_argument("--train-sample-limit", type=int, default=None)
     p.add_argument("--val-sample-limit", type=int, default=None)
@@ -130,6 +154,7 @@ def main() -> None:
 
     device = torch.device(str(args.device) if torch.cuda.is_available() else "cpu")
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
+    feature_ablation = normalize_feature_ablation(args.feature_ablation)
     model = SetAwareListwiseSelectorModel(
         args.model_name,
         hidden_size=int(args.list_hidden_size),
@@ -137,6 +162,8 @@ def main() -> None:
         num_attention_heads=int(args.list_heads),
         dropout=float(args.dropout),
         max_candidates=int(args.max_candidates),
+        feature_ablation=feature_ablation,
+        use_rank_embedding=_optional_bool(args.use_rank_embedding),
     )
     for param in model.encoder.parameters():
         param.requires_grad = False
@@ -177,8 +204,12 @@ def main() -> None:
             dynamic_ncols=True,
             disable=bool(args.no_progress),
         )
-        for batch in iterator:
+        for raw_batch in iterator:
             model.train()
+            batch = _maybe_permute_utility_batch(
+                raw_batch,
+                probability=float(args.shuffle_probability),
+            )
             score_groups = _forward_utility_examples(
                 model,
                 tokenizer,
@@ -287,6 +318,7 @@ def _validate_and_save_if_best(
         max_candidates=int(args.max_candidates),
         eval_batch_size=int(args.eval_batch_size),
         top_k=int(args.top_k),
+        selector_name=str(args.selector_name),
         no_progress=bool(args.no_progress),
     )
     selection_metrics = summarize_ordered_selection(traces)
@@ -355,6 +387,7 @@ def evaluate_model(
     max_candidates: int,
     eval_batch_size: int,
     top_k: int,
+    selector_name: str,
     no_progress: bool,
 ) -> tuple[list[dict[str, Any]], dict[str, float], dict[str, Any]]:
     model.eval()
@@ -386,7 +419,7 @@ def evaluate_model(
             trace = build_selection_trace(
                 example.oracle_example,
                 scores.numpy(),
-                selector_name="utility_listwise_v0",
+                selector_name=str(selector_name),
                 top_k=int(top_k),
             )
             traces.append(trace)
@@ -441,7 +474,7 @@ def _metadata(
     total_steps: int,
 ) -> dict[str, Any]:
     return {
-        "selector_type": "utility_listwise_v0",
+        "selector_type": str(args.selector_name),
         "base_model": str(args.model_name),
         "train_vig_cache": str(args.train_vig_cache),
         "val_vig_cache": str(args.val_vig_cache),
@@ -451,6 +484,9 @@ def _metadata(
         "target_source": "vig_step0_delta_margin",
         "step_filter": 0,
         "freeze_pair_encoder": True,
+        "feature_ablation": normalize_feature_ablation(args.feature_ablation),
+        "use_rank_embedding": str(args.use_rank_embedding),
+        "train_candidate_shuffle_probability": float(args.shuffle_probability),
         "top_k": int(args.top_k),
         "max_candidates": int(args.max_candidates),
         "max_length": int(args.max_length),
@@ -469,6 +505,8 @@ def _metadata(
             "num_attention_heads": int(args.list_heads),
             "dropout": float(args.dropout),
             "max_candidates": int(args.max_candidates),
+            "feature_ablation": normalize_feature_ablation(args.feature_ablation),
+            "use_rank_embedding": _optional_bool(args.use_rank_embedding),
         },
         "losses": {
             "pairwise_delta": float(args.pairwise_weight),
@@ -483,6 +521,35 @@ def _metadata(
         "val_sample_limit": int(args.val_sample_limit) if args.val_sample_limit is not None else None,
         "seed": int(args.seed),
     }
+
+
+def _maybe_permute_utility_batch(
+    batch: list[UtilityListwiseExample],
+    *,
+    probability: float,
+) -> list[UtilityListwiseExample]:
+    if probability <= 0.0:
+        return batch
+    out: list[UtilityListwiseExample] = []
+    for example in batch:
+        if random.random() >= float(probability) or len(example.candidates) <= 1:
+            out.append(example)
+            continue
+        perm = list(range(len(example.candidates)))
+        random.shuffle(perm)
+        out.append(permute_utility_listwise_example(example, perm))
+    return out
+
+
+def _optional_bool(value: Any) -> bool | None:
+    text = str(value).strip().lower()
+    if text in {"", "auto", "none", "null"}:
+        return None
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Expected boolean or auto, got {value!r}.")
 
 
 def _batches(items: list[Any], batch_size: int):
