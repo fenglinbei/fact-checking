@@ -81,9 +81,10 @@ class QuestionGenerationSettings:
     model: str
     temperature: float = 0.0
     top_p: float = 1.0
-    max_tokens: int = 384
+    max_tokens: int = 1024
     seed: int = 20260526
     guided_json: bool = True
+    thinking_type: str | None = None
     prompt_version: str = QUESTION_DECOMP_PROMPT_VERSION
     schema_version: str = QUESTION_DECOMP_SCHEMA_VERSION
     min_questions: int = MIN_QUESTIONS
@@ -130,6 +131,7 @@ class OpenAIChatClient:
         self.model = model
         self.api_key = api_key
         self.timeout = float(timeout)
+        self.last_response_metadata: dict[str, Any] = {}
 
     def generate(
         self,
@@ -147,9 +149,12 @@ class OpenAIChatClient:
             "max_tokens": int(settings.max_tokens),
             "temperature": float(settings.temperature),
             "top_p": float(settings.top_p),
+            "stream": False,
         }
         if bool(settings.guided_json):
             payload["response_format"] = {"type": "json_object"}
+        if settings.thinking_type:
+            payload["thinking"] = {"type": str(settings.thinking_type)}
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -170,6 +175,7 @@ class OpenAIChatClient:
         except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
             raise QuestionAPITransientError(f"Transient API connection error: {exc}") from exc
 
+        self.last_response_metadata = _chat_response_metadata(data)
         choices = data.get("choices") or []
         if not choices:
             return ""
@@ -191,6 +197,7 @@ def question_config_payload(settings: QuestionGenerationSettings) -> dict[str, A
         "min_questions": int(settings.min_questions),
         "max_questions": int(settings.max_questions),
         "guided_json": bool(settings.guided_json),
+        "thinking_type": settings.thinking_type,
     }
 
 
@@ -333,8 +340,7 @@ def parse_questions_from_generation(raw_text: str) -> tuple[list[dict[str, Any]]
         )
     if not (MIN_QUESTIONS <= len(questions) <= MAX_QUESTIONS):
         return [], "parse_failed", f"valid deduplicated question count must be {MIN_QUESTIONS}-{MAX_QUESTIONS}", complexity
-    if questions[0]["focus"] != "overall":
-        return [], "parse_failed", "q1 focus must be overall", complexity
+    questions[0]["focus"] = "overall"
     return questions, "ok", None, complexity
 
 
@@ -366,6 +372,7 @@ def generate_or_load_questions(
     api_max_retries: int = 5,
     retry_initial_delay: float = 1.0,
     retry_max_delay: float = 30.0,
+    api_parse_max_retries: int = 2,
     run_metadata: dict[str, Any] | None = None,
     no_progress: bool = False,
 ) -> QuestionGenerationResult:
@@ -409,16 +416,34 @@ def generate_or_load_questions(
                     disable=bool(no_progress),
                 ):
                     prompt = format_user_prompt(ex.claim)
-                    raw_text = _generate_with_retries(
-                        client,
-                        system_prompt=SYSTEM_PROMPT,
-                        user_prompt=prompt,
-                        settings=settings,
-                        max_retries=int(api_max_retries),
-                        initial_delay=float(retry_initial_delay),
-                        max_delay=float(retry_max_delay),
-                    )
-                    questions, parse_status, parse_error, complexity = parse_questions_from_generation(raw_text)
+                    raw_text = ""
+                    api_metadata: dict[str, Any] = {}
+                    questions: list[dict[str, Any]] = []
+                    parse_status = "empty_generation"
+                    parse_error: str | None = "empty generation"
+                    complexity = "moderate"
+                    parse_attempts = 0
+                    for parse_attempt in range(max(int(api_parse_max_retries), 0) + 1):
+                        parse_attempts = parse_attempt + 1
+                        raw_text = _generate_with_retries(
+                            client,
+                            system_prompt=SYSTEM_PROMPT,
+                            user_prompt=prompt,
+                            settings=settings,
+                            max_retries=int(api_max_retries),
+                            initial_delay=float(retry_initial_delay),
+                            max_delay=float(retry_max_delay),
+                        )
+                        api_metadata = dict(getattr(client, "last_response_metadata", {}) or {})
+                        questions, parse_status, parse_error, complexity = parse_questions_from_generation(raw_text)
+                        if parse_status == "ok" or not _should_retry_parse_failure(
+                            parse_status=parse_status,
+                            parse_error=parse_error,
+                            api_metadata=api_metadata,
+                        ):
+                            break
+                        if parse_attempt < max(int(api_parse_max_retries), 0):
+                            time.sleep(min(1.0, max(float(retry_initial_delay), 0.0)))
                     question_source = "api"
                     if parse_status != "ok":
                         questions = fallback_questions_for_claim(ex.claim)
@@ -442,6 +467,8 @@ def generate_or_load_questions(
                         raw_text=raw_text,
                         system_prompt=SYSTEM_PROMPT,
                         user_prompt=prompt,
+                        api_metadata=api_metadata,
+                        parse_attempts=parse_attempts,
                     )
                     cache_fh.write(json.dumps(row, ensure_ascii=False) + "\n")
                     cache_fh.flush()
@@ -504,6 +531,7 @@ def generate_or_load_questions(
             "cache_duplicate_rows": int(cache_index.duplicate_rows),
             "parse_failures": int(n_parse_failures),
             "api_max_retries": int(api_max_retries),
+            "api_parse_max_retries": int(api_parse_max_retries),
             "no_progress": bool(no_progress),
             "run_metadata": dict(run_metadata or {}),
             "elapsed_seconds": round(time.time() - started_at, 3),
@@ -520,6 +548,7 @@ def make_openai_chat_client_factory(
     model: str,
     api_key_env: str | None,
     timeout: float,
+    thinking_type: str | None = None,
 ) -> Callable[[], OpenAIChatClient]:
     def _factory() -> OpenAIChatClient:
         api_key = os.environ.get(api_key_env or "") if api_key_env else None
@@ -584,6 +613,8 @@ def _build_raw_row(
     raw_text: str,
     system_prompt: str,
     user_prompt: str,
+    api_metadata: dict[str, Any] | None = None,
+    parse_attempts: int = 1,
 ) -> dict[str, Any]:
     return {
         "event_id": question_row.get("event_id"),
@@ -600,6 +631,8 @@ def _build_raw_row(
         "complexity": question_row.get("complexity"),
         "questions": question_row.get("questions"),
         "raw_text": str(raw_text or ""),
+        "api_metadata": dict(api_metadata or {}),
+        "parse_attempts": int(parse_attempts),
         "system_prompt": system_prompt,
         "user_prompt": user_prompt,
         "created_at": question_row.get("created_at"),
@@ -631,6 +664,22 @@ def _generate_with_retries(
                 time.sleep(sleep_for + random.uniform(0.0, min(0.25, sleep_for)))
     assert last_exc is not None
     raise last_exc
+
+
+def _should_retry_parse_failure(
+    *,
+    parse_status: str,
+    parse_error: str | None,
+    api_metadata: dict[str, Any],
+) -> bool:
+    finish_reason = str(api_metadata.get("finish_reason") or "")
+    if finish_reason == "length":
+        return True
+    if parse_status == "empty_generation":
+        return True
+    if parse_error == "could not parse JSON object":
+        return True
+    return False
 
 
 def _iter_progress(items: Sequence[Any], *, desc: str, unit: str, disable: bool) -> Iterable[Any]:
@@ -707,6 +756,25 @@ def _sha256_text(text: str) -> str:
 
 def _is_transient_http_status(status: int) -> bool:
     return int(status) in {408, 409, 425, 429} or int(status) >= 500
+
+
+def _chat_response_metadata(data: dict[str, Any]) -> dict[str, Any]:
+    choices = data.get("choices") or []
+    choice = choices[0] if choices else {}
+    message = choice.get("message") if isinstance(choice, dict) else {}
+    if not isinstance(message, dict):
+        message = {}
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    content = message.get("content")
+    reasoning = message.get("reasoning_content")
+    return {
+        "id": data.get("id"),
+        "finish_reason": choice.get("finish_reason") if isinstance(choice, dict) else None,
+        "content_length": len(str(content or "")),
+        "has_reasoning_content": bool(reasoning),
+        "reasoning_content_length": len(str(reasoning or "")),
+        "usage": usage,
+    }
 
 
 @contextlib.contextmanager

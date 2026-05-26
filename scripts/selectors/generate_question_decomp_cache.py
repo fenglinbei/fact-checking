@@ -51,10 +51,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--retry-initial-delay", type=float, default=float(os.environ.get("API_RETRY_INITIAL_DELAY", "1.0")))
     p.add_argument("--retry-max-delay", type=float, default=float(os.environ.get("API_RETRY_MAX_DELAY", "30.0")))
 
-    p.add_argument("--max-tokens", type=int, default=int(os.environ.get("MAX_TOKENS", "384")))
+    p.add_argument("--max-tokens", type=int, default=int(os.environ.get("MAX_TOKENS", "1024")))
     p.add_argument("--temperature", type=float, default=float(os.environ.get("TEMPERATURE", "0.0")))
     p.add_argument("--top-p", type=float, default=float(os.environ.get("TOP_P", "1.0")))
     p.add_argument("--seed", type=int, default=int(os.environ.get("SEED", "20260526")))
+    p.add_argument("--thinking-type", default=os.environ.get("QUESTION_THINKING_TYPE"))
+    p.add_argument("--api-parse-max-retries", type=int, default=int(os.environ.get("API_PARSE_MAX_RETRIES", "2")))
     p.add_argument("--guided-json", dest="guided_json", action="store_true", default=True)
     p.add_argument("--no-guided-json", dest="guided_json", action="store_false")
     p.add_argument("--no-progress", action="store_true")
@@ -81,6 +83,12 @@ def main() -> None:
     if not examples:
         raise ValueError("No examples after Stage2 audit/filtering.")
 
+    thinking_type = args.thinking_type
+    if thinking_type is None and str(args.question_model).startswith("deepseek-"):
+        thinking_type = "disabled"
+    if isinstance(thinking_type, str) and not thinking_type.strip():
+        thinking_type = None
+
     settings = QuestionGenerationSettings(
         model=str(args.question_model),
         temperature=float(args.temperature),
@@ -88,6 +96,7 @@ def main() -> None:
         max_tokens=int(args.max_tokens),
         seed=int(args.seed),
         guided_json=bool(args.guided_json),
+        thinking_type=thinking_type,
     )
     client_factory = make_openai_chat_client_factory(
         base_url=str(args.question_base_url),
@@ -107,6 +116,7 @@ def main() -> None:
         api_max_retries=int(args.api_max_retries),
         retry_initial_delay=float(args.retry_initial_delay),
         retry_max_delay=float(args.retry_max_delay),
+        api_parse_max_retries=int(args.api_parse_max_retries),
         no_progress=bool(args.no_progress),
         run_metadata={
             "command": [Path(sys.argv[0]).as_posix(), *sys.argv[1:]],
@@ -114,6 +124,7 @@ def main() -> None:
             "sample_limit": int(args.sample_limit) if args.sample_limit is not None else None,
             "question_base_url": str(args.question_base_url),
             "api_timeout": float(args.api_timeout),
+            "thinking_type": thinking_type,
             "max_candidates": int(args.max_candidates),
             "top_k": int(args.top_k),
             "filter_policy": str(args.filter_policy),

@@ -21,10 +21,11 @@ QUESTION_MODEL="${QUESTION_MODEL:-/data/models/Qwen2.5-7B-Instruct}"
 QUESTION_API_KEY_ENV="${QUESTION_API_KEY_ENV:-QUESTION_API_KEY}"
 QUESTION_API_TIMEOUT="${QUESTION_API_TIMEOUT:-120}"
 API_MAX_RETRIES="${API_MAX_RETRIES:-5}"
+API_PARSE_MAX_RETRIES="${API_PARSE_MAX_RETRIES:-2}"
 API_RETRY_INITIAL_DELAY="${API_RETRY_INITIAL_DELAY:-1.0}"
 API_RETRY_MAX_DELAY="${API_RETRY_MAX_DELAY:-30.0}"
 
-MAX_TOKENS="${MAX_TOKENS:-384}"
+MAX_TOKENS="${MAX_TOKENS:-1024}"
 TEMPERATURE="${TEMPERATURE:-0.0}"
 TOP_P="${TOP_P:-1.0}"
 SEED="${SEED:-20260526}"
@@ -41,6 +42,18 @@ fi
 QUESTION_CACHE_ID_ARGS=()
 if [[ -n "${QUESTION_CACHE_ID:-}" ]]; then
   QUESTION_CACHE_ID_ARGS=(--question-cache-id "${QUESTION_CACHE_ID}")
+fi
+
+if [[ -z "${QUESTION_THINKING_TYPE+x}" ]]; then
+  if [[ "${QUESTION_MODEL}" == deepseek-* ]]; then
+    QUESTION_THINKING_TYPE="disabled"
+  else
+    QUESTION_THINKING_TYPE=""
+  fi
+fi
+THINKING_ARGS=()
+if [[ -n "${QUESTION_THINKING_TYPE}" ]]; then
+  THINKING_ARGS=(--thinking-type "${QUESTION_THINKING_TYPE}")
 fi
 
 GUIDED_JSON_ARGS=()
@@ -65,6 +78,8 @@ echo "[question-decomp] question cache  : ${QUESTION_CACHE_DIR}"
 echo "[question-decomp] question model  : ${QUESTION_MODEL}"
 echo "[question-decomp] base url        : ${QUESTION_BASE_URL}"
 echo "[question-decomp] resume questions: ${RESUME_QUESTIONS}"
+echo "[question-decomp] thinking type   : ${QUESTION_THINKING_TYPE:-none}"
+echo "[question-decomp] max tokens      : ${MAX_TOKENS}"
 echo "[question-decomp] no progress     : ${NO_PROGRESS}"
 
 PYTHONPATH=src python scripts/selectors/generate_question_decomp_cache.py \
@@ -77,6 +92,7 @@ PYTHONPATH=src python scripts/selectors/generate_question_decomp_cache.py \
   --question-api-key-env "${QUESTION_API_KEY_ENV}" \
   --api-timeout "${QUESTION_API_TIMEOUT}" \
   --api-max-retries "${API_MAX_RETRIES}" \
+  --api-parse-max-retries "${API_PARSE_MAX_RETRIES}" \
   --retry-initial-delay "${API_RETRY_INITIAL_DELAY}" \
   --retry-max-delay "${API_RETRY_MAX_DELAY}" \
   --max-tokens "${MAX_TOKENS}" \
@@ -86,6 +102,7 @@ PYTHONPATH=src python scripts/selectors/generate_question_decomp_cache.py \
   "${GUIDED_JSON_ARGS[@]}" \
   "${RESUME_ARGS[@]}" \
   "${PROGRESS_ARGS[@]}" \
+  "${THINKING_ARGS[@]}" \
   "${QUESTION_CACHE_ID_ARGS[@]}" \
   "${SAMPLE_LIMIT_ARGS[@]}" \
   "$@"

@@ -9,6 +9,7 @@ from fact_checking.selectors.question_decomp import (
     QuestionGenerationSettings,
     QuestionInputExample,
     generate_or_load_questions,
+    parse_questions_from_generation,
     question_cache_key,
     question_config_fingerprint,
     read_question_cache,
@@ -141,6 +142,7 @@ class QuestionDecompCacheTest(unittest.TestCase):
                 question_cache_dir=tmp_path / "cache",
                 settings=settings,
                 client_factory=lambda: client,
+                api_parse_max_retries=0,
                 retry_initial_delay=0.0,
                 no_progress=True,
             )
@@ -174,6 +176,7 @@ class QuestionDecompCacheTest(unittest.TestCase):
                     question_cache_dir=tmp_path / "cache",
                     settings=settings,
                     client_factory=lambda: _FakeClient(exc=RuntimeError("api down")),
+                    api_parse_max_retries=0,
                     retry_initial_delay=0.0,
                     no_progress=True,
                 )
@@ -249,6 +252,47 @@ class QuestionDecompCacheTest(unittest.TestCase):
                 for line in (tmp_path / "second" / "questions_train.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             self.assertEqual([row["event_id"] for row in output_rows], ["event1", "event0"])
+
+    def test_q1_focus_is_normalized_to_overall(self) -> None:
+        questions, status, error, _complexity = parse_questions_from_generation(
+            json.dumps(
+                {
+                    "complexity": "simple",
+                    "questions": [
+                        {
+                            "id": "q1",
+                            "question": "How many people left Puerto Rico last year?",
+                            "focus": "quantity",
+                            "priority": 1,
+                        }
+                    ],
+                }
+            )
+        )
+        self.assertEqual(status, "ok")
+        self.assertIsNone(error)
+        self.assertEqual(questions[0]["focus"], "overall")
+
+    def test_parse_retry_recovers_before_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            examples = self._examples(1)
+            settings = QuestionGenerationSettings(model="qwen")
+            client = _FakeClient(["", _json_question("What verifies retry success?")])
+            result = generate_or_load_questions(
+                examples=examples,
+                split="val",
+                output_dir=tmp_path / "retry",
+                question_cache_dir=tmp_path / "cache",
+                settings=settings,
+                client_factory=lambda: client,
+                api_parse_max_retries=1,
+                retry_initial_delay=0.0,
+                no_progress=True,
+            )
+            self.assertEqual(client.calls, 2)
+            self.assertEqual(result.rows[0]["parse_status"], "ok")
+            self.assertEqual(result.rows[0]["question_source"], "api")
 
     @staticmethod
     def _examples(n: int) -> list[QuestionInputExample]:
