@@ -10,6 +10,15 @@ VERIFIER_MODEL="${VERIFIER_MODEL:-fact-checking-sft}"
 LABEL_PREFIX="${LABEL_PREFIX:-Label:}"
 PROMPT_LOGPROBS="${PROMPT_LOGPROBS:-0}"
 
+SCORING_BACKEND="${SCORING_BACKEND:-api}"
+VLLM_MODEL_PATH="${VLLM_MODEL_PATH:-}"
+VLLM_TOKENIZER_PATH="${VLLM_TOKENIZER_PATH:-}"
+VLLM_TENSOR_PARALLEL_SIZE="${VLLM_TENSOR_PARALLEL_SIZE:-4}"
+VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
+VLLM_DTYPE="${VLLM_DTYPE:-auto}"
+VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-}"
+VLLM_PROMPT_BATCH_SIZE="${VLLM_PROMPT_BATCH_SIZE:-6000}"
+
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/selectors/question_decomp_retrieval/verifier_proxy_cross_encoder/b3_oracle_direct_v0}"
 CACHE_DIR="${CACHE_DIR:-outputs/selectors/question_decomp_retrieval/verifier_proxy_cross_encoder/verifier_score_cache}"
 TRAIN_UNION_POOL_JSONL="${TRAIN_UNION_POOL_JSONL:-outputs/selectors/question_decomp_retrieval/qwen_v0_train/union_candidate_pool_train.jsonl}"
@@ -111,6 +120,7 @@ echo "[verifier-proxy-v0] cache dir      : ${CACHE_DIR}"
 echo "[verifier-proxy-v0] run labels     : ${RUN_LABELS}"
 echo "[verifier-proxy-v0] run train      : ${RUN_TRAIN}"
 echo "[verifier-proxy-v0] run eval       : ${RUN_EVAL}"
+echo "[verifier-proxy-v0] scoring backend: ${SCORING_BACKEND}"
 
 if [[ "${RUN_LABELS}" == "1" || "${RUN_LABELS}" == "true" || "${RUN_LABELS}" == "True" ]]; then
   PYTHONPATH=src python scripts/phase5_selectors/build/build_verifier_proxy_candidate_labels.py \
@@ -131,6 +141,14 @@ if [[ "${RUN_LABELS}" == "1" || "${RUN_LABELS}" == "true" || "${RUN_LABELS}" == 
     --prompt-logprobs "${PROMPT_LOGPROBS}" \
     --label-prefix "${LABEL_PREFIX}" \
     --prompt-max-length "${PROMPT_MAX_LENGTH}" \
+    --scoring-backend "${SCORING_BACKEND}" \
+    ${VLLM_MODEL_PATH:+--vllm-model-path "${VLLM_MODEL_PATH}"} \
+    ${VLLM_TOKENIZER_PATH:+--vllm-tokenizer-path "${VLLM_TOKENIZER_PATH}"} \
+    ${VLLM_TENSOR_PARALLEL_SIZE:+--vllm-tensor-parallel-size "${VLLM_TENSOR_PARALLEL_SIZE}"} \
+    ${VLLM_GPU_MEMORY_UTILIZATION:+--vllm-gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION}"} \
+    ${VLLM_DTYPE:+--vllm-dtype "${VLLM_DTYPE}"} \
+    ${VLLM_MAX_MODEL_LEN:+--vllm-max-model-len "${VLLM_MAX_MODEL_LEN}"} \
+    --vllm-prompt-batch-size "${VLLM_PROMPT_BATCH_SIZE}" \
     "${RESUME_ARGS[@]}" \
     "${PROGRESS_ARGS[@]}" \
     "${TRAIN_SAMPLE_LIMIT_ARGS[@]}"
@@ -153,6 +171,14 @@ if [[ "${RUN_LABELS}" == "1" || "${RUN_LABELS}" == "true" || "${RUN_LABELS}" == 
     --prompt-logprobs "${PROMPT_LOGPROBS}" \
     --label-prefix "${LABEL_PREFIX}" \
     --prompt-max-length "${PROMPT_MAX_LENGTH}" \
+    --scoring-backend "${SCORING_BACKEND}" \
+    ${VLLM_MODEL_PATH:+--vllm-model-path "${VLLM_MODEL_PATH}"} \
+    ${VLLM_TOKENIZER_PATH:+--vllm-tokenizer-path "${VLLM_TOKENIZER_PATH}"} \
+    ${VLLM_TENSOR_PARALLEL_SIZE:+--vllm-tensor-parallel-size "${VLLM_TENSOR_PARALLEL_SIZE}"} \
+    ${VLLM_GPU_MEMORY_UTILIZATION:+--vllm-gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION}"} \
+    ${VLLM_DTYPE:+--vllm-dtype "${VLLM_DTYPE}"} \
+    ${VLLM_MAX_MODEL_LEN:+--vllm-max-model-len "${VLLM_MAX_MODEL_LEN}"} \
+    --vllm-prompt-batch-size "${VLLM_PROMPT_BATCH_SIZE}" \
     "${RESUME_ARGS[@]}" \
     "${PROGRESS_ARGS[@]}" \
     "${VAL_SAMPLE_LIMIT_ARGS[@]}"

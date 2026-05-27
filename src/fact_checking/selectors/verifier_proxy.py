@@ -15,6 +15,17 @@ from fact_checking.data.constants import LABEL2ID, LABELS, LABEL_LETTERS, LETTER
 from fact_checking.pipeline.artifacts import fingerprint
 
 
+@dataclass
+class EvidenceSetInfo:
+    scored_candidates: list[dict[str, Any]]
+    scored_keys: list[str]
+    evidence_set_hash: str
+    role: str
+    candidate_idx: int | None = None
+    candidate_key: str | None = None
+    is_anchor: bool = False
+
+
 DEFAULT_DIRECT_VERIFIER_RUN_DIR = (
     "outputs/oracle_direct_verifier/stage2_sentence/train/"
     "b3_oracle_sentence_direct_verifier_1024_20260519-200709"
@@ -190,6 +201,7 @@ def cache_key_for_score(
     verifier_fingerprint: str,
     prompt_fingerprint: str,
     label_policy: str,
+    scoring_backend: str = "api",
 ) -> str:
     return stable_fingerprint(
         {
@@ -199,6 +211,7 @@ def cache_key_for_score(
             "verifier_config_fingerprint": str(verifier_fingerprint),
             "prompt_config_fingerprint": str(prompt_fingerprint),
             "label_policy": str(label_policy),
+            "scoring_backend": str(scoring_backend),
         },
         length=32,
     )
@@ -235,15 +248,12 @@ def append_score_cache_row(path: str | Path, row: dict[str, Any]) -> None:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def build_anchor2_delta_rows(
+def enumerate_anchor2_evidence_sets(
     *,
-    split: str,
     union_row: dict[str, Any],
     oracle_row: dict[str, Any],
-    score_fn: Callable[[list[dict[str, Any]]], dict[str, Any]],
     label_policy: str = DEFAULT_LABEL_POLICY,
-    positive_close_delta: float = 0.02,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[EvidenceSetInfo], str, str, str]:
     if label_policy != DEFAULT_LABEL_POLICY:
         raise ValueError(f"Unsupported verifier-proxy label_policy={label_policy!r}")
     event_id = str(union_row.get("event_id") or oracle_row.get("event_id") or "")
@@ -252,7 +262,74 @@ def build_anchor2_delta_rows(
     candidates = dedupe_candidates(list(union_row.get("candidates") or []))
     anchor = dedupe_candidates(select_anchor_candidates(candidates, anchor_k=2))
     anchor_keys = [candidate_key(candidate) for candidate in anchor]
-    anchor_score = score_fn(anchor)
+
+    sets: list[EvidenceSetInfo] = []
+    sets.append(
+        EvidenceSetInfo(
+            scored_candidates=list(anchor),
+            scored_keys=list(anchor_keys),
+            evidence_set_hash=evidence_set_hash(anchor_keys),
+            role="anchor",
+            is_anchor=True,
+        )
+    )
+    anchor_key_set = set(anchor_keys)
+    for candidate_idx, candidate in enumerate(candidates):
+        key = candidate_key(candidate)
+        if key in anchor_key_set:
+            scored = [item for item in anchor if candidate_key(item) != key]
+            evidence_policy = "anchor_leave_one_out"
+        else:
+            scored = dedupe_candidates([*anchor, candidate])
+            evidence_policy = "anchor_add_one"
+        scored_keys = [candidate_key(item) for item in scored]
+        sets.append(
+            EvidenceSetInfo(
+                scored_candidates=scored,
+                scored_keys=scored_keys,
+                evidence_set_hash=evidence_set_hash(scored_keys),
+                role=evidence_policy,
+                candidate_idx=int(candidate_idx),
+                candidate_key=key,
+                is_anchor=False,
+            )
+        )
+    return sets, event_id, claim, gold_label
+
+
+def build_anchor2_delta_rows(
+    *,
+    split: str,
+    union_row: dict[str, Any],
+    oracle_row: dict[str, Any],
+    score_fn: Callable[[list[dict[str, Any]]], dict[str, Any]] | None = None,
+    score_by_evidence_set_hash: dict[str, dict[str, Any]] | None = None,
+    label_policy: str = DEFAULT_LABEL_POLICY,
+    positive_close_delta: float = 0.02,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if score_fn is None and score_by_evidence_set_hash is None:
+        raise ValueError("One of score_fn or score_by_evidence_set_hash must be provided.")
+    if score_fn is not None and score_by_evidence_set_hash is not None:
+        raise ValueError("Only one of score_fn or score_by_evidence_set_hash may be provided.")
+    if label_policy != DEFAULT_LABEL_POLICY:
+        raise ValueError(f"Unsupported verifier-proxy label_policy={label_policy!r}")
+    event_id = str(union_row.get("event_id") or oracle_row.get("event_id") or "")
+    claim = str(union_row.get("claim") or oracle_row.get("claim") or "")
+    gold_label = str(oracle_row.get("gold_label") or "").strip().lower()
+    candidates = dedupe_candidates(list(union_row.get("candidates") or []))
+    anchor = dedupe_candidates(select_anchor_candidates(candidates, anchor_k=2))
+    anchor_keys = [candidate_key(candidate) for candidate in anchor]
+
+    def _get_score(scored_candidates: list[dict[str, Any]], scored_keys: list[str]) -> dict[str, Any]:
+        if score_fn is not None:
+            return score_fn(scored_candidates)
+        set_hash = evidence_set_hash(scored_keys)
+        score = score_by_evidence_set_hash[set_hash]
+        if score is None:
+            raise KeyError(f"No score found for evidence_set_hash={set_hash}")
+        return score
+
+    anchor_score = _get_score(list(anchor), anchor_keys)
     anchor_margin = float(anchor_score["margin"])
 
     rows: list[dict[str, Any]] = []
@@ -267,7 +344,7 @@ def build_anchor2_delta_rows(
             scored = dedupe_candidates([*anchor, candidate])
             evidence_policy = "anchor_add_one"
         scored_keys = [candidate_key(item) for item in scored]
-        score = score_fn(scored)
+        score = _get_score(scored, scored_keys)
         raw_scores.append(score)
         utility = anchor_margin - float(score["margin"]) if key in anchor_key_set else float(score["margin"]) - anchor_margin
         rows.append(
