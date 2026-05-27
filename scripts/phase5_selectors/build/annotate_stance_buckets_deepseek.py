@@ -94,6 +94,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-tokens", type=int, default=64)
     p.add_argument("--top-logprobs", type=int, default=20)
     p.add_argument("--fallback-top-logprobs", type=int, default=5)
+    p.add_argument("--thinking-type", default="disabled", choices=["disabled", "enabled", "none"])
     p.add_argument("--concurrency", type=int, default=8)
     p.add_argument("--requests-per-minute", type=int, default=120)
     p.add_argument("--tokens-per-minute", type=int, default=200000)
@@ -150,11 +151,13 @@ def main() -> None:
             )
             for future in iterator:
                 result = future.result()
+                raw = result.get("raw")
+                if raw:
+                    raw_fh.write(json.dumps(raw, ensure_ascii=False) + "\n")
+                    raw_fh.flush()
                 if result.get("ok"):
                     ann_fh.write(json.dumps(result["annotation"], ensure_ascii=False) + "\n")
                     ann_fh.flush()
-                    raw_fh.write(json.dumps(result["raw"], ensure_ascii=False) + "\n")
-                    raw_fh.flush()
                     n_written += 1
                     usage = result["annotation"].get("api_usage") or {}
                     for key in usage_totals:
@@ -189,6 +192,7 @@ def main() -> None:
         "prompt_version": PROMPT_VERSION,
         "top_logprobs_requested": int(args.top_logprobs),
         "fallback_top_logprobs": int(args.fallback_top_logprobs),
+        "thinking_type": str(args.thinking_type),
         "top_logprobs_used": top_logprobs_used.payload(),
         "concurrency": max(int(args.concurrency), 1),
         "requests_per_minute": int(args.requests_per_minute),
@@ -255,8 +259,11 @@ def _run_job(job: AnnotationJob, *, args: argparse.Namespace, api_key: str | Non
     estimated_tokens = (len(system_prompt) + len(user_prompt)) // 4 + int(args.max_tokens)
     attempts = max(int(args.max_retries), 0) + 1
     last_error = ""
+    last_raw: dict[str, Any] | None = None
+    attempts_made = 0
     top_logprobs = int(args.top_logprobs)
     for attempt in range(1, attempts + 1):
+        attempts_made = attempt
         try:
             limiter.wait(estimated_tokens)
             data, top_used = _chat_completion(
@@ -266,8 +273,28 @@ def _run_job(job: AnnotationJob, *, args: argparse.Namespace, api_key: str | Non
                 user_prompt=user_prompt,
                 top_logprobs=top_logprobs,
             )
-            content = _response_content(data)
-            annotation = parse_teacher_content(content)
+            created_at = datetime.now(timezone.utc).isoformat()
+            raw = _raw_row(
+                job,
+                args=args,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response=data,
+                top_logprobs_used=top_used,
+                created_at=created_at,
+            )
+            content = ""
+            try:
+                content = _response_content(data)
+                annotation = parse_teacher_content(content)
+            except TeacherAnnotationError as exc:
+                raw["parse_status"] = "schema_validation_failed"
+                raw["parse_error"] = str(exc)
+                raw["response_content_preview"] = content[:1000]
+                last_raw = raw
+                raise
+            raw["parse_status"] = "ok"
+            raw["response_content_preview"] = content[:1000]
             usage = dict(data.get("usage") or {})
             row = {
                 "annotation_key": job.annotation_key,
@@ -287,20 +314,7 @@ def _run_job(job: AnnotationJob, *, args: argparse.Namespace, api_key: str | Non
                 "finish_reason": _finish_reason(data),
                 "logprobs_saved": True,
                 "top_logprobs_used": int(top_used),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
-            raw = {
-                "annotation_key": job.annotation_key,
-                "event_id": job.event_id,
-                "candidate_uid": job.candidate_uid,
-                "candidate_key": job.candidate_key,
-                "model": str(args.model),
-                "prompt_version": PROMPT_VERSION,
-                "top_logprobs_used": int(top_used),
-                "system_prompt": system_prompt,
-                "user_prompt": user_prompt,
-                "response": data,
-                "created_at": row["created_at"],
+                "created_at": created_at,
             }
             return {"ok": True, "annotation": row, "raw": raw}
         except TeacherAnnotationError as exc:
@@ -315,12 +329,12 @@ def _run_job(job: AnnotationJob, *, args: argparse.Namespace, api_key: str | Non
                 top_logprobs = int(args.fallback_top_logprobs)
                 last_error = f"retrying_with_top_logprobs_{top_logprobs}: {message}"
             else:
-                return {"ok": False, "error": _error_row(job, "terminal_api_error", message, attempt)}
+                return {"ok": False, "error": _error_row(job, "terminal_api_error", message, attempt, raw=last_raw), "raw": last_raw}
         except Exception as exc:
             last_error = f"unexpected: {type(exc).__name__}: {exc}"
         if attempt < attempts:
             time.sleep(min(float(args.retry_max_sleep), float(args.retry_base_sleep) * (2 ** (attempt - 1))))
-    return {"ok": False, "error": _error_row(job, "retry_exhausted", last_error, attempts)}
+    return {"ok": False, "error": _error_row(job, "retry_exhausted", last_error, attempts_made, raw=last_raw), "raw": last_raw}
 
 
 def _chat_completion(
@@ -345,6 +359,9 @@ def _chat_completion(
         "user": "stance_bucket_v0",
         "stream": False,
     }
+    thinking_type = str(getattr(args, "thinking_type", "disabled") or "disabled")
+    if thinking_type != "none":
+        payload["thinking"] = {"type": thinking_type}
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -366,6 +383,33 @@ def _chat_completion(
         raise APITransientError(str(exc)) from exc
 
 
+def _raw_row(
+    job: AnnotationJob,
+    *,
+    args: argparse.Namespace,
+    system_prompt: str,
+    user_prompt: str,
+    response: dict[str, Any],
+    top_logprobs_used: int,
+    created_at: str,
+) -> dict[str, Any]:
+    return {
+        "annotation_key": job.annotation_key,
+        "event_id": job.event_id,
+        "candidate_uid": job.candidate_uid,
+        "candidate_key": job.candidate_key,
+        "model": str(args.model),
+        "prompt_version": PROMPT_VERSION,
+        "top_logprobs_used": int(top_logprobs_used),
+        "thinking_type": str(getattr(args, "thinking_type", "disabled") or "disabled"),
+        "finish_reason": _finish_reason(response),
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
+        "response": response,
+        "created_at": created_at,
+    }
+
+
 def _response_content(data: dict[str, Any]) -> str:
     choices = data.get("choices") or []
     if not choices:
@@ -381,8 +425,8 @@ def _finish_reason(data: dict[str, Any]) -> str:
     return str(choices[0].get("finish_reason") or "")
 
 
-def _error_row(job: AnnotationJob, error_type: str, message: str, attempts: int) -> dict[str, Any]:
-    return {
+def _error_row(job: AnnotationJob, error_type: str, message: str, attempts: int, *, raw: dict[str, Any] | None = None) -> dict[str, Any]:
+    row = {
         "annotation_key": job.annotation_key,
         "event_id": job.event_id,
         "candidate_uid": job.candidate_uid,
@@ -392,6 +436,25 @@ def _error_row(job: AnnotationJob, error_type: str, message: str, attempts: int)
         "attempts": int(attempts),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    if raw:
+        response = raw.get("response") if isinstance(raw.get("response"), dict) else {}
+        usage = response.get("usage") or {}
+        row.update(
+            {
+                "finish_reason": raw.get("finish_reason", ""),
+                "parse_status": raw.get("parse_status", ""),
+                "parse_error": raw.get("parse_error", ""),
+                "response_content_preview": raw.get("response_content_preview", ""),
+                "top_logprobs_used": raw.get("top_logprobs_used"),
+                "thinking_type": raw.get("thinking_type", ""),
+                "api_usage": {
+                    "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+                    "completion_tokens": int(usage.get("completion_tokens") or 0),
+                    "total_tokens": int(usage.get("total_tokens") or 0),
+                },
+            }
+        )
+    return row
 
 
 def _load_completed_keys(path: Path) -> set[str]:

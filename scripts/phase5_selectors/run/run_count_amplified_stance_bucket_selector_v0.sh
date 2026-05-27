@@ -38,6 +38,7 @@ TEACHER_TPM="${TEACHER_TPM:-200000}"
 TEACHER_MAX_RETRIES="${TEACHER_MAX_RETRIES:-5}"
 TEACHER_TOP_LOGPROBS="${TEACHER_TOP_LOGPROBS:-20}"
 TEACHER_FALLBACK_TOP_LOGPROBS="${TEACHER_FALLBACK_TOP_LOGPROBS:-5}"
+TEACHER_THINKING_TYPE="${TEACHER_THINKING_TYPE:-disabled}"
 
 N_STANCE_BUCKETS="${N_STANCE_BUCKETS:-3,5,7}"
 EVAL_N_BUCKETS="${EVAL_N_BUCKETS:-3 5 7}"
@@ -80,6 +81,7 @@ echo "[count-amplified-v0] run build    : ${RUN_BUILD}"
 echo "[count-amplified-v0] run annotate : ${RUN_ANNOTATE}"
 echo "[count-amplified-v0] run postproc : ${RUN_POSTPROCESS}"
 echo "[count-amplified-v0] run eval     : ${RUN_EVAL}"
+echo "[count-amplified-v0] thinking     : ${TEACHER_THINKING_TYPE}"
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -106,6 +108,7 @@ if [[ "${RUN_ANNOTATE}" == "1" || "${RUN_ANNOTATE}" == "true" || "${RUN_ANNOTATE
     --max-retries "${TEACHER_MAX_RETRIES}" \
     --top-logprobs "${TEACHER_TOP_LOGPROBS}" \
     --fallback-top-logprobs "${TEACHER_FALLBACK_TOP_LOGPROBS}" \
+    --thinking-type "${TEACHER_THINKING_TYPE}" \
     "${SAMPLE_ARGS[@]}" \
     "${PROGRESS_ARGS[@]}"
 else
