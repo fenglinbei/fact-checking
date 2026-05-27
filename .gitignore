@@ -12,6 +12,8 @@ build/
 !src/fact_checking/build/
 !src/fact_checking/build/**
 src/fact_checking/build/**/__pycache__/
+!scripts/phase5_selectors/build/
+!scripts/phase5_selectors/build/**
 develop-eggs/
 dist/
 downloads/
