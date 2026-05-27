@@ -139,8 +139,8 @@ next = shift_to_question_decomposition_and_evidence_structure_or_verifier_aware_
 
 ## 相关文档
 
-- `docs/analysis/20260526_utility_listwise_v0_report.md`
-- `docs/analysis/20260526_selector_roundtable_question_teacher_ideas.md`
+- `docs/E-selectors/202605270134_utility_listwise_v0_report.md`
+- `docs/E-selectors/202605270134_selector_roundtable_question_teacher_ideas.md`
 - `outputs/selectors/utility_listwise/deberta_v0_step0_static/selection_metrics.json`
 - `outputs/selectors/utility_listwise/deberta_v0_1_no_rank_shuffle/selection_metrics.json`
 - `outputs/selectors/vig_utility/saved_step_train_to_val/ranker_eval/selection_metrics.json`
