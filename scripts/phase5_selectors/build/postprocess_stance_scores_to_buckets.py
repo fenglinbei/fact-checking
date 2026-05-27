@@ -20,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--split", default="val", choices=["train", "val", "test"])
     p.add_argument("--n-stance-buckets", default="3,5,7")
     p.add_argument("--bucket-tau", type=float, default=2.0)
+    p.add_argument("--artifact-suffix", default="")
     return p.parse_args()
 
 
@@ -41,8 +42,9 @@ def main() -> None:
             n_stance_buckets=int(n),
             tau=float(args.bucket_tau),
         )
-        suffix = "" if int(n) == 3 else f"_n{int(n)}"
-        path = out_dir / f"candidate_stance_buckets{suffix}_{args.split}.jsonl"
+        artifact_suffix = _artifact_suffix(args.artifact_suffix)
+        bucket_suffix = "" if int(n) == 3 else f"_n{int(n)}"
+        path = out_dir / f"candidate_stance_buckets{artifact_suffix}{bucket_suffix}_{args.split}.jsonl"
         write_jsonl(enriched, path)
         outputs[f"n{int(n)}"] = str(path)
 
@@ -56,12 +58,13 @@ def main() -> None:
             "split": str(args.split),
             "n_stance_buckets": bucket_values,
             "bucket_tau": float(args.bucket_tau),
+            "artifact_suffix": str(args.artifact_suffix or ""),
             "n_events": len(rows),
             "n_annotations": len(annotations),
             "outputs": outputs,
             "elapsed_seconds": round(time.time() - started_at, 3),
         },
-        out_dir / "postprocess_stance_manifest.json",
+        out_dir / f"postprocess_stance_manifest{_artifact_suffix(args.artifact_suffix)}.json",
     )
     print(f"Wrote stance bucket files under: {out_dir}")
     print("bucket files: " + ", ".join(outputs.values()))
@@ -81,6 +84,15 @@ def _parse_bucket_values(raw: str) -> list[int]:
     if not values:
         raise ValueError("No bucket values provided.")
     return values
+
+
+def _artifact_suffix(raw: str) -> str:
+    suffix = str(raw or "").strip()
+    if not suffix:
+        return ""
+    if suffix.startswith("_"):
+        return suffix
+    return f"_{suffix}"
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ from fact_checking.selectors.evidence_quality import (
 from fact_checking.selectors.stance_buckets import (
     derive_stance_fields,
     normalized_entropy,
+    role_evidence_score,
 )
 
 
@@ -37,6 +38,11 @@ class CountAmplifiedParams:
     alpha: float = 0.5
     gamma_stance: float = 1.6
     rho: float = 0.6
+    ambiguous_bucket_penalty: float = 1.0
+    use_directness_scoring: bool = False
+    adaptive_polar_quota: bool = False
+    tau_polar_ready: float = 0.8
+    max_forced_polar_slots: int = 0
     tau_c: float = 0.50
     tau_r: float = 0.15
     min_bucket_membership: float | None = None
@@ -201,6 +207,7 @@ def attach_stance_annotation(
             "stance_score_clamped": bool(teacher.get("stance_score_clamped", False)),
             "semantic_completeness_clamped": bool(teacher.get("semantic_completeness_clamped", False)),
         }
+        _attach_v02_teacher_fields(item, teacher)
         item["annotation_key"] = str(annotation.get("annotation_key") or item.get("annotation_key") or "")
     else:
         item = enrich_quality_fields(candidate, claim=claim, annotation_missing=True)
@@ -211,6 +218,7 @@ def attach_stance_annotation(
             "stance_score_clamped": False,
             "semantic_completeness_clamped": False,
         }
+        _attach_v02_teacher_fields(item, {})
 
     item.update(
         derive_stance_fields(
@@ -220,6 +228,37 @@ def attach_stance_annotation(
         )
     )
     return item
+
+
+def _attach_v02_teacher_fields(item: dict[str, Any], teacher: dict[str, Any]) -> None:
+    specificity = _nullable_float(teacher.get("claim_specificity"))
+    directness = _nullable_float(teacher.get("direct_evidence"))
+    background = _nullable_float(teacher.get("background_only"))
+    overlap = _nullable_float(teacher.get("key_fact_overlap"))
+    role = str(teacher.get("evidence_role") or "")
+    role_score = _safe_float(teacher.get("role_evidence_score"), role_evidence_score(role))
+    item["claim_specificity_score"] = 0.0 if specificity is None else float(np.clip(specificity / 10.0, 0.0, 1.0))
+    item["direct_evidence_score"] = 0.0 if directness is None else float(np.clip(directness / 10.0, 0.0, 1.0))
+    item["background_only_score"] = 0.0 if background is None else float(np.clip(background / 10.0, 0.0, 1.0))
+    item["key_fact_overlap_score"] = 0.0 if overlap is None else float(np.clip(overlap / 10.0, 0.0, 1.0))
+    item["evidence_role"] = role
+    item["role_evidence_score"] = float(np.clip(role_score, 0.0, 1.0))
+    item["claim_directness_score"] = float(
+        item["direct_evidence_score"]
+        * item["claim_specificity_score"]
+        * (1.0 - item["background_only_score"])
+    )
+    if role:
+        item["teacher_annotation"].update(
+            {
+                "claim_specificity": specificity,
+                "direct_evidence": directness,
+                "background_only": background,
+                "key_fact_overlap": overlap,
+                "evidence_role": role,
+                "role_evidence_score": item["role_evidence_score"],
+            }
+        )
 
 
 def select_count_amplified_topk(
@@ -249,6 +288,7 @@ def select_count_amplified_topk(
     selected_keys: set[str] = set()
     selected_source_groups: set[str] = set()
     selected_count_by_bucket: Counter[str] = Counter()
+    forced_polar_slots_used = 0
 
     for slot in range(1, int(params.top_k) + 1):
         bucket_scores: dict[str, float] = {}
@@ -265,7 +305,21 @@ def select_count_amplified_topk(
             bucket_scores[bucket] = mass / ((1.0 + float(selected_count_by_bucket[bucket])) ** float(params.rho))
         if not bucket_scores:
             break
-        chosen_bucket = max(bucket_scores, key=lambda name: (bucket_scores[name], -bucket_names.index(name)))
+        regular_bucket = max(bucket_scores, key=lambda name: (bucket_scores[name], -bucket_names.index(name)))
+        chosen_bucket = regular_bucket
+        forced_by_adaptive_quota = False
+        forced_bucket = _adaptive_polar_bucket(
+            bucket_names=bucket_names,
+            bucket_scores=bucket_scores,
+            count_payload=count_payload,
+            selected_count_by_bucket=selected_count_by_bucket,
+            forced_polar_slots_used=forced_polar_slots_used,
+            params=params,
+        )
+        if forced_bucket and regular_bucket != forced_bucket:
+            chosen_bucket = forced_bucket
+            forced_by_adaptive_quota = True
+            forced_polar_slots_used += 1
         candidate = _best_candidate_in_bucket(
             candidates,
             bucket=chosen_bucket,
@@ -297,6 +351,10 @@ def select_count_amplified_topk(
                 "selected_text": str(item.get("text") or ""),
                 "oracle_selected": bool(item.get("oracle_selected", False)),
                 "candidate_score": float(item.get("candidate_score", 0.0)),
+                "regular_chosen_stance_bucket": regular_bucket,
+                "forced_by_adaptive_quota": bool(forced_by_adaptive_quota),
+                "bucket_quality": float((count_payload.get("bucket_quality") or {}).get(chosen_bucket, 0.0)),
+                "polar_ready": float((count_payload.get("polar_ready") or {}).get(chosen_bucket, 0.0)),
             }
         )
     return selected, slot_trace, count_payload
@@ -312,6 +370,7 @@ def bucket_count_payload(
     dedup_weights = dedup_weights or source_dedup_weights(candidates, bucket_names=bucket_names, params=params)
     effective: dict[str, float] = {bucket: 0.0 for bucket in bucket_names}
     raw_effective: dict[str, float] = {bucket: 0.0 for bucket in bucket_names}
+    direct_weighted: dict[str, float] = {bucket: 0.0 for bucket in bucket_names}
     eligible_counts: dict[str, int] = {bucket: 0 for bucket in bucket_names}
     for candidate in candidates:
         if not quality_gate(candidate, tau_c=params.tau_c, tau_r=params.tau_r):
@@ -319,26 +378,64 @@ def bucket_count_payload(
         probs = dict(candidate.get("teacher_stance_probs") or {})
         q_weight = question_route_weight(candidate)
         candidate_uid = str(candidate.get("candidate_uid") or candidate.get("candidate_key") or "")
+        direct_quality = claim_directness_score(candidate)
         for bucket in bucket_names:
             membership = _safe_float(probs.get(bucket), 0.0)
             if membership <= 0.0:
                 continue
             raw_effective[bucket] += membership * q_weight
-            effective[bucket] += membership * q_weight * float(dedup_weights.get((candidate_uid, bucket), 1.0))
+            contribution = membership * q_weight * float(dedup_weights.get((candidate_uid, bucket), 1.0))
+            effective[bucket] += contribution
+            direct_weighted[bucket] += contribution * direct_quality
             if membership >= (params.min_bucket_membership or (1.0 / max(len(bucket_names), 1))):
                 eligible_counts[bucket] += 1
-    mass = {
+    unpenalized_mass = {
         bucket: float((effective[bucket] + float(params.alpha)) ** float(params.gamma_stance))
+        for bucket in bucket_names
+    }
+    bucket_multipliers = {
+        bucket: _bucket_mass_multiplier(bucket, params=params)
+        for bucket in bucket_names
+    }
+    mass = {
+        bucket: float(unpenalized_mass[bucket] * bucket_multipliers[bucket])
+        for bucket in bucket_names
+    }
+    bucket_quality = {
+        bucket: float(direct_weighted[bucket] / effective[bucket]) if effective[bucket] > 0.0 else 0.0
+        for bucket in bucket_names
+    }
+    polar_ready = {
+        bucket: float(effective[bucket] * bucket_quality[bucket]) if _is_polar_bucket(bucket) else 0.0
         for bucket in bucket_names
     }
     return {
         "bucket_names": list(bucket_names),
         "effective_counts": effective,
         "raw_effective_counts": raw_effective,
+        "directness_weighted_counts": direct_weighted,
+        "bucket_quality": bucket_quality,
+        "polar_ready": polar_ready,
+        "bucket_mass_unpenalized": unpenalized_mass,
+        "bucket_mass_multipliers": bucket_multipliers,
         "bucket_mass": mass,
         "eligible_counts": eligible_counts,
         "params": params.__dict__,
     }
+
+
+def _bucket_mass_multiplier(bucket: str, *, params: CountAmplifiedParams) -> float:
+    if _is_ambiguous_bucket(bucket):
+        return max(float(params.ambiguous_bucket_penalty), 0.0)
+    return 1.0
+
+
+def _is_ambiguous_bucket(bucket: str) -> bool:
+    return str(bucket) == "ambiguous_claim_bucket"
+
+
+def _is_polar_bucket(bucket: str) -> bool:
+    return bool(str(bucket)) and not _is_ambiguous_bucket(bucket)
 
 
 def source_dedup_weights(
@@ -379,11 +476,25 @@ def candidate_score_in_bucket(
     *,
     bucket: str,
     selected_source_groups: set[str] | None = None,
+    params: CountAmplifiedParams | None = None,
 ) -> float:
     probs = dict(candidate.get("teacher_stance_probs") or {})
     source_bonus = 1.0
     if selected_source_groups is not None and source_group(candidate) in selected_source_groups:
         source_bonus = 0.0
+    if params is not None and bool(params.use_directness_scoring):
+        score = (
+            0.25 * retrieval_score(candidate)
+            + 0.20 * _safe_float(candidate.get("direct_evidence_score"), 0.0)
+            + 0.20 * _safe_float(candidate.get("claim_specificity_score"), 0.0)
+            + 0.15 * _safe_float(candidate.get("semantic_completeness_score"), 0.0)
+            + 0.10 * _safe_float(candidate.get("key_fact_overlap_score"), 0.0)
+            + 0.05 * question_coverage_score(candidate)
+            + 0.05 * source_bonus
+            + 0.05 * _safe_float(candidate.get("role_evidence_score"), 0.0)
+            - 0.15 * _safe_float(candidate.get("background_only_score"), 0.0)
+        )
+        return float(score)
     score = (
         0.30 * retrieval_score(candidate)
         + 0.30 * _safe_float(candidate.get("semantic_completeness_score"), 0.0)
@@ -392,6 +503,13 @@ def candidate_score_in_bucket(
         + 0.10 * source_bonus
     )
     return float(score)
+
+
+def claim_directness_score(candidate: dict[str, Any]) -> float:
+    directness = _safe_float(candidate.get("direct_evidence_score"), 0.0)
+    specificity = _safe_float(candidate.get("claim_specificity_score"), 0.0)
+    background = _safe_float(candidate.get("background_only_score"), 0.0)
+    return float(np.clip(directness * specificity * (1.0 - background), 0.0, 1.0))
 
 
 def select_order_control(
@@ -489,13 +607,25 @@ def selection_quality_metrics(selected: Sequence[dict[str, Any]]) -> dict[str, A
             "mean_semantic_completeness@5": 0.0,
             "source_entropy@5": 0.0,
             "stance_bucket_entropy@5": 0.0,
+            "mean_direct_evidence@5": 0.0,
+            "mean_claim_specificity@5": 0.0,
+            "mean_background_only@5": 0.0,
+            "role_entropy@5": 0.0,
+            "direct_or_partial_rate@5": 0.0,
         }
     source_counts = Counter(source_group(row) for row in rows)
     stance_counts = Counter(str(row.get("stance_bucket_derived") or "") for row in rows)
+    role_counts = Counter(str(row.get("evidence_role") or "") for row in rows if row.get("evidence_role"))
+    direct_roles = {"direct_support_claim", "direct_refute_claim", "partial_support", "partial_refute"}
     return {
         "mean_semantic_completeness@5": float(np.mean([_safe_float(row.get("semantic_completeness_score"), 0.0) for row in rows])),
         "source_entropy@5": normalized_entropy(list(source_counts.values())),
         "stance_bucket_entropy@5": normalized_entropy(list(stance_counts.values())),
+        "mean_direct_evidence@5": float(np.mean([_safe_float(row.get("direct_evidence_score"), 0.0) for row in rows])),
+        "mean_claim_specificity@5": float(np.mean([_safe_float(row.get("claim_specificity_score"), 0.0) for row in rows])),
+        "mean_background_only@5": float(np.mean([_safe_float(row.get("background_only_score"), 0.0) for row in rows])),
+        "role_entropy@5": normalized_entropy(list(role_counts.values())),
+        "direct_or_partial_rate@5": float(np.mean([1.0 if str(row.get("evidence_role") or "") in direct_roles else 0.0 for row in rows])),
     }
 
 
@@ -516,6 +646,10 @@ def oracle_observation_metrics(rows: Sequence[dict[str, Any]]) -> dict[str, Any]
     nonselected = [candidate for candidate in flat if not bool(candidate.get("oracle_selected"))]
     selected_completeness = [_safe_float(row.get("semantic_completeness_score"), 0.0) for row in selected]
     nonselected_completeness = [_safe_float(row.get("semantic_completeness_score"), 0.0) for row in nonselected]
+    selected_directness = [_safe_float(row.get("direct_evidence_score"), 0.0) for row in selected]
+    nonselected_directness = [_safe_float(row.get("direct_evidence_score"), 0.0) for row in nonselected]
+    selected_background = [_safe_float(row.get("background_only_score"), 0.0) for row in selected]
+    nonselected_background = [_safe_float(row.get("background_only_score"), 0.0) for row in nonselected]
     labels = [1 if bool(row.get("oracle_selected")) else 0 for row in flat]
     completeness_values = [_safe_float(row.get("semantic_completeness_score"), 0.0) for row in flat]
     alignment_values: list[float] = []
@@ -538,6 +672,12 @@ def oracle_observation_metrics(rows: Sequence[dict[str, Any]]) -> dict[str, Any]
         "mean_completeness_non_selected": _mean(nonselected_completeness),
         "completeness_selected_lift": _mean(selected_completeness) - _mean(nonselected_completeness),
         "completeness_selected_auroc": _roc_auc_score(labels, completeness_values),
+        "mean_direct_evidence_oracle_selected": _mean(selected_directness),
+        "mean_direct_evidence_non_selected": _mean(nonselected_directness),
+        "oracle_selected_directness_lift": _mean(selected_directness) - _mean(nonselected_directness),
+        "mean_background_only_oracle_selected": _mean(selected_background),
+        "mean_background_only_non_selected": _mean(nonselected_background),
+        "oracle_selected_background_lift": _mean(selected_background) - _mean(nonselected_background),
         "oracle_selected_stance_label_alignment": _mean(selected_alignment),
         "pool_stance_label_alignment": _mean(pool_alignment),
         "oracle_vs_pool_stance_alignment_lift": _mean(selected_alignment) - _mean(pool_alignment),
@@ -773,10 +913,23 @@ def _best_candidate_in_bucket(
             item,
             bucket=bucket,
             selected_source_groups=selected_source_groups,
+            params=params,
         )
         eligible.append(item)
     if not eligible:
         return None
+    if bool(params.use_directness_scoring):
+        return max(
+            eligible,
+            key=lambda row: (
+                float(row.get("candidate_score") or 0.0),
+                float(row.get("direct_evidence_score") or 0.0),
+                float(row.get("claim_specificity_score") or 0.0),
+                float(row.get("semantic_completeness_score") or 0.0),
+                -int(row.get("union_pool_rank") or 10**9),
+                str(row.get("candidate_key") or ""),
+            ),
+        )
     return max(
         eligible,
         key=lambda row: (
@@ -786,6 +939,40 @@ def _best_candidate_in_bucket(
             str(row.get("candidate_key") or ""),
         ),
     )
+
+
+def _adaptive_polar_bucket(
+    *,
+    bucket_names: Sequence[str],
+    bucket_scores: dict[str, float],
+    count_payload: dict[str, Any],
+    selected_count_by_bucket: Counter[str],
+    forced_polar_slots_used: int,
+    params: CountAmplifiedParams,
+) -> str | None:
+    if not bool(params.adaptive_polar_quota):
+        return None
+    if int(params.max_forced_polar_slots) <= 0:
+        return None
+    if int(forced_polar_slots_used) >= int(params.max_forced_polar_slots):
+        return None
+    polar_ready = dict(count_payload.get("polar_ready") or {})
+    candidates = []
+    for bucket in bucket_names:
+        if bucket not in bucket_scores:
+            continue
+        if not _is_polar_bucket(bucket):
+            continue
+        if int(selected_count_by_bucket[bucket]) > 0:
+            continue
+        ready = _safe_float(polar_ready.get(bucket), 0.0)
+        if ready < float(params.tau_polar_ready):
+            continue
+        candidates.append((bucket, ready, float(bucket_scores[bucket])))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[1], item[2], -list(bucket_names).index(item[0])), reverse=True)
+    return candidates[0][0]
 
 
 def _has_eligible_remaining(
@@ -861,6 +1048,13 @@ def _candidate_output(candidate: dict[str, Any]) -> dict[str, Any]:
         "oracle_step",
         "selected_stance_bucket",
         "candidate_score",
+        "claim_specificity_score",
+        "direct_evidence_score",
+        "background_only_score",
+        "key_fact_overlap_score",
+        "evidence_role",
+        "role_evidence_score",
+        "claim_directness_score",
         "text",
     ]
     return {key: candidate.get(key) for key in keys if key in candidate}
@@ -877,6 +1071,11 @@ def _summarize_trace_group(traces: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "mean_semantic_completeness@5",
         "source_entropy@5",
         "stance_bucket_entropy@5",
+        "mean_direct_evidence@5",
+        "mean_claim_specificity@5",
+        "mean_background_only@5",
+        "role_entropy@5",
+        "direct_or_partial_rate@5",
     ]
     out: dict[str, Any] = {"n_claims": len(traces)}
     weights = np.asarray([float(trace.get("overlap_pair_count", 0)) for trace in traces], dtype=np.float64)

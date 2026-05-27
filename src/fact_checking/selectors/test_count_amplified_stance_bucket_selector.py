@@ -7,12 +7,13 @@ from fact_checking.selectors.count_amplified_stance_bucket_selector import (
     CountAmplifiedParams,
     build_union_analysis_row,
     bucket_count_payload,
+    candidate_score_in_bucket,
     select_count_amplified_topk,
     source_dedup_weights,
     text_ordered_selection_metrics,
 )
 from fact_checking.selectors.evidence_quality import enrich_quality_fields, quality_gate, question_route_weight
-from fact_checking.selectors.stance_buckets import stance_score_to_probs, validate_teacher_payload
+from fact_checking.selectors.stance_buckets import PROMPT_VERSION_V02, stance_score_to_probs, validate_teacher_payload
 
 
 class CountAmplifiedStanceBucketSelectorTest(unittest.TestCase):
@@ -30,6 +31,28 @@ class CountAmplifiedStanceBucketSelectorTest(unittest.TestCase):
         self.assertEqual(annotation.semantic_completeness, 10.0)
         self.assertTrue(annotation.stance_score_clamped)
         self.assertTrue(annotation.semantic_completeness_clamped)
+
+    def test_teacher_payload_v02_validates_directness_fields(self) -> None:
+        annotation = validate_teacher_payload(
+            {
+                "stance_score": 11,
+                "semantic_completeness": 9,
+                "claim_specificity": 12,
+                "direct_evidence": 8,
+                "background_only": -2,
+                "key_fact_overlap": 7,
+                "evidence_role": "direct-refute-claim",
+            },
+            prompt_version=PROMPT_VERSION_V02,
+        )
+
+        self.assertEqual(annotation.stance_score, 10.0)
+        self.assertEqual(annotation.claim_specificity, 10.0)
+        self.assertEqual(annotation.background_only, 0.0)
+        self.assertEqual(annotation.evidence_role, "direct_refute_claim")
+        self.assertTrue(annotation.stance_score_clamped)
+        self.assertTrue(annotation.claim_specificity_clamped)
+        self.assertTrue(annotation.background_only_clamped)
 
     def test_quality_gate_and_original_route_weight(self) -> None:
         candidate = enrich_quality_fields(
@@ -121,6 +144,141 @@ class CountAmplifiedStanceBucketSelectorTest(unittest.TestCase):
         amplified_ratio = amplified["bucket_mass"]["oppose_claim_bucket"] / amplified["bucket_mass"]["support_claim_bucket"]
         self.assertGreater(amplified_ratio, linear_ratio)
 
+    def test_ambiguous_bucket_penalty_only_reduces_ambiguous_mass(self) -> None:
+        candidates = [
+            _candidate("a1", "report:1", {"oppose_claim_bucket": 0.0, "ambiguous_claim_bucket": 1.0, "support_claim_bucket": 0.0}),
+            _candidate("a2", "report:2", {"oppose_claim_bucket": 0.0, "ambiguous_claim_bucket": 1.0, "support_claim_bucket": 0.0}),
+            _candidate("s1", "report:3", {"oppose_claim_bucket": 0.0, "ambiguous_claim_bucket": 0.0, "support_claim_bucket": 1.0}),
+        ]
+        unpenalized = bucket_count_payload(
+            candidates,
+            bucket_names=["oppose_claim_bucket", "ambiguous_claim_bucket", "support_claim_bucket"],
+            params=CountAmplifiedParams(alpha=0.0, gamma_stance=1.0, ambiguous_bucket_penalty=1.0, tau_c=0.0, tau_r=0.0),
+        )
+        penalized = bucket_count_payload(
+            candidates,
+            bucket_names=["oppose_claim_bucket", "ambiguous_claim_bucket", "support_claim_bucket"],
+            params=CountAmplifiedParams(alpha=0.0, gamma_stance=1.0, ambiguous_bucket_penalty=0.5, tau_c=0.0, tau_r=0.0),
+        )
+
+        self.assertAlmostEqual(
+            penalized["bucket_mass"]["ambiguous_claim_bucket"],
+            unpenalized["bucket_mass"]["ambiguous_claim_bucket"] * 0.5,
+        )
+        self.assertAlmostEqual(
+            penalized["bucket_mass"]["support_claim_bucket"],
+            unpenalized["bucket_mass"]["support_claim_bucket"],
+        )
+
+    def test_v01_params_escape_ambiguous_bucket_after_first_slot(self) -> None:
+        candidates = [
+            _candidate("a1", "report:1", {"oppose_claim_bucket": 0.0, "ambiguous_claim_bucket": 1.0, "support_claim_bucket": 0.0}),
+            _candidate("a2", "report:2", {"oppose_claim_bucket": 0.0, "ambiguous_claim_bucket": 1.0, "support_claim_bucket": 0.0}),
+            _candidate("a3", "report:3", {"oppose_claim_bucket": 0.0, "ambiguous_claim_bucket": 1.0, "support_claim_bucket": 0.0}),
+            _candidate("a4", "report:4", {"oppose_claim_bucket": 0.0, "ambiguous_claim_bucket": 1.0, "support_claim_bucket": 0.0}),
+            _candidate("o1", "report:5", {"oppose_claim_bucket": 1.0, "ambiguous_claim_bucket": 0.0, "support_claim_bucket": 0.0}),
+            _candidate("s1", "report:6", {"oppose_claim_bucket": 0.0, "ambiguous_claim_bucket": 0.0, "support_claim_bucket": 1.0}),
+        ]
+
+        _, slot_trace, _ = select_count_amplified_topk(
+            candidates,
+            params=CountAmplifiedParams(
+                top_k=3,
+                alpha=0.5,
+                gamma_stance=0.8,
+                rho=2.0,
+                ambiguous_bucket_penalty=0.6,
+                tau_c=0.0,
+                tau_r=0.0,
+            ),
+        )
+
+        chosen = [slot["chosen_stance_bucket"] for slot in slot_trace]
+        self.assertEqual(chosen[0], "ambiguous_claim_bucket")
+        self.assertIn("oppose_claim_bucket", chosen[1:])
+        self.assertIn("support_claim_bucket", chosen[1:])
+
+    def test_directness_scorer_prefers_direct_claim_specific_evidence(self) -> None:
+        direct = _with_v02_scores(
+            _candidate("direct", "report:1", {"oppose_claim_bucket": 1.0, "ambiguous_claim_bucket": 0.0, "support_claim_bucket": 0.0}),
+            direct=1.0,
+            specificity=1.0,
+            background=0.0,
+            overlap=1.0,
+            role="direct_refute_claim",
+        )
+        background = _with_v02_scores(
+            _candidate("background", "report:2", {"oppose_claim_bucket": 1.0, "ambiguous_claim_bucket": 0.0, "support_claim_bucket": 0.0}),
+            direct=0.2,
+            specificity=0.2,
+            background=1.0,
+            overlap=0.2,
+            role="contextual_background",
+        )
+        params = CountAmplifiedParams(use_directness_scoring=True, tau_c=0.0, tau_r=0.0)
+
+        direct_score = candidate_score_in_bucket(direct, bucket="oppose_claim_bucket", params=params)
+        background_score = candidate_score_in_bucket(background, bucket="oppose_claim_bucket", params=params)
+
+        self.assertGreater(direct_score, background_score)
+
+    def test_adaptive_polar_quota_forces_ready_polar_bucket(self) -> None:
+        candidates = [
+            _with_v02_scores(
+                _candidate("a1", "report:1", {"oppose_claim_bucket": 0.0, "ambiguous_claim_bucket": 1.0, "support_claim_bucket": 0.0}),
+                direct=0.15,
+                specificity=0.20,
+                background=0.70,
+                overlap=0.20,
+                role="contextual_background",
+            ),
+            _with_v02_scores(
+                _candidate("a2", "report:2", {"oppose_claim_bucket": 0.0, "ambiguous_claim_bucket": 1.0, "support_claim_bucket": 0.0}),
+                direct=0.15,
+                specificity=0.20,
+                background=0.70,
+                overlap=0.20,
+                role="contextual_background",
+            ),
+            _with_v02_scores(
+                _candidate("a3", "report:3", {"oppose_claim_bucket": 0.0, "ambiguous_claim_bucket": 1.0, "support_claim_bucket": 0.0}),
+                direct=0.15,
+                specificity=0.20,
+                background=0.70,
+                overlap=0.20,
+                role="contextual_background",
+            ),
+            _with_v02_scores(
+                _candidate("o1", "report:4", {"oppose_claim_bucket": 1.0, "ambiguous_claim_bucket": 0.0, "support_claim_bucket": 0.0}),
+                direct=1.0,
+                specificity=1.0,
+                background=0.0,
+                overlap=1.0,
+                role="direct_refute_claim",
+            ),
+        ]
+
+        _, slot_trace, _ = select_count_amplified_topk(
+            candidates,
+            params=CountAmplifiedParams(
+                top_k=2,
+                alpha=0.5,
+                gamma_stance=0.8,
+                rho=2.0,
+                ambiguous_bucket_penalty=1.0,
+                use_directness_scoring=True,
+                adaptive_polar_quota=True,
+                tau_polar_ready=0.5,
+                max_forced_polar_slots=1,
+                tau_c=0.0,
+                tau_r=0.0,
+            ),
+        )
+
+        forced = [slot for slot in slot_trace if slot.get("forced_by_adaptive_quota")]
+        self.assertEqual(len(forced), 1)
+        self.assertEqual(forced[0]["chosen_stance_bucket"], "oppose_claim_bucket")
+
     def test_selected_count_penalty_moves_second_slot_on_tie(self) -> None:
         candidates = [
             _candidate("a", "report:1", {"oppose_claim_bucket": 1.0, "ambiguous_claim_bucket": 0.0, "support_claim_bucket": 0.0}),
@@ -164,6 +322,26 @@ def _candidate(key: str, source: str, probs: dict[str, float]) -> dict:
         "question_coverage_score": 1.0,
         "union_pool_rank": 1,
     }
+
+
+def _with_v02_scores(
+    candidate: dict,
+    *,
+    direct: float,
+    specificity: float,
+    background: float,
+    overlap: float,
+    role: str,
+) -> dict:
+    item = dict(candidate)
+    item["direct_evidence_score"] = float(direct)
+    item["claim_specificity_score"] = float(specificity)
+    item["background_only_score"] = float(background)
+    item["key_fact_overlap_score"] = float(overlap)
+    item["evidence_role"] = str(role)
+    item["role_evidence_score"] = 1.0 if str(role).startswith("direct_") else 0.35
+    item["claim_directness_score"] = float(direct) * float(specificity) * (1.0 - float(background))
+    return item
 
 
 if __name__ == "__main__":

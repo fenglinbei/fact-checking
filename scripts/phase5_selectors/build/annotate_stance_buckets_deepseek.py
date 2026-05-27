@@ -20,11 +20,13 @@ from tqdm.auto import tqdm
 
 from fact_checking.selectors.stance_buckets import (
     PROMPT_VERSION,
-    SYSTEM_PROMPT,
+    PROMPT_VERSION_V02,
     TeacherAnnotationError,
     annotation_key,
     format_user_prompt,
+    normalize_prompt_version,
     parse_teacher_content,
+    system_prompt_for_version,
     teacher_annotation_payload,
 )
 from fact_checking.utils.io import read_jsonl, save_json
@@ -89,6 +91,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--split", default="val", choices=["train", "val", "test"])
     p.add_argument("--base-url", default=os.environ.get("TEACHER_BASE_URL", DEFAULT_BASE_URL))
     p.add_argument("--model", default=os.environ.get("TEACHER_MODEL", DEFAULT_MODEL))
+    p.add_argument("--prompt-version", default=os.environ.get("TEACHER_PROMPT_VERSION", PROMPT_VERSION), choices=[PROMPT_VERSION, PROMPT_VERSION_V02])
     p.add_argument("--api-key-env", default=os.environ.get("TEACHER_API_KEY_ENV", "DEEPSEEK_API_KEY"))
     p.add_argument("--timeout", type=float, default=120.0)
     p.add_argument("--max-tokens", type=int, default=64)
@@ -113,13 +116,15 @@ def main() -> None:
     started_at = time.time()
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    annotations_path = out_dir / f"deepseek_teacher_annotations_{args.split}.jsonl"
-    raw_path = out_dir / f"deepseek_teacher_raw_responses_{args.split}.jsonl"
-    errors_path = out_dir / f"deepseek_teacher_errors_{args.split}.jsonl"
-    progress_path = out_dir / "deepseek_teacher_progress.json"
+    prompt_version = normalize_prompt_version(str(args.prompt_version))
+    output_suffix = _prompt_output_suffix(prompt_version)
+    annotations_path = out_dir / f"deepseek_teacher_annotations{output_suffix}_{args.split}.jsonl"
+    raw_path = out_dir / f"deepseek_teacher_raw_responses{output_suffix}_{args.split}.jsonl"
+    errors_path = out_dir / f"deepseek_teacher_errors{output_suffix}_{args.split}.jsonl"
+    progress_path = out_dir / f"deepseek_teacher_progress{output_suffix}.json"
 
     rows = read_jsonl(args.candidate_pool)
-    jobs = build_jobs(rows, model=str(args.model), sample_limit=args.sample_limit)
+    jobs = build_jobs(rows, model=str(args.model), prompt_version=prompt_version, sample_limit=args.sample_limit)
     completed_keys = _load_completed_keys(annotations_path) if args.resume else set()
     pending = [job for job in jobs if job.annotation_key not in completed_keys]
     api_key = os.environ.get(str(args.api_key_env) or "")
@@ -189,7 +194,7 @@ def main() -> None:
         "base_url": str(args.base_url),
         "model": str(args.model),
         "api_key_env": str(args.api_key_env),
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": prompt_version,
         "top_logprobs_requested": int(args.top_logprobs),
         "fallback_top_logprobs": int(args.fallback_top_logprobs),
         "thinking_type": str(args.thinking_type),
@@ -212,14 +217,14 @@ def main() -> None:
         },
         "elapsed_seconds": round(time.time() - started_at, 3),
     }
-    save_json(manifest, out_dir / "teacher_api_audit_manifest.json")
-    save_json(usage_totals, out_dir / "teacher_api_usage_summary.json")
-    save_json({"note": "No price table is encoded; totals are token usage only.", "usage_totals": usage_totals}, out_dir / "teacher_api_cost_estimate.json")
+    save_json(manifest, out_dir / f"teacher_api_audit_manifest{output_suffix}.json")
+    save_json(usage_totals, out_dir / f"teacher_api_usage_summary{output_suffix}.json")
+    save_json({"note": "No price table is encoded; totals are token usage only.", "usage_totals": usage_totals}, out_dir / f"teacher_api_cost_estimate{output_suffix}.json")
     print(f"Wrote annotations: {annotations_path}")
     print(f"new={n_written} errors={n_errors} skipped_resume={n_completed} total_jobs={len(jobs)}")
 
 
-def build_jobs(rows: list[dict[str, Any]], *, model: str, sample_limit: int | None) -> list[AnnotationJob]:
+def build_jobs(rows: list[dict[str, Any]], *, model: str, prompt_version: str, sample_limit: int | None) -> list[AnnotationJob]:
     jobs: list[AnnotationJob] = []
     seen: set[str] = set()
     for row in rows:
@@ -232,7 +237,7 @@ def build_jobs(rows: list[dict[str, Any]], *, model: str, sample_limit: int | No
             key = annotation_key(
                 event_id=event_id,
                 candidate_uid=candidate_uid,
-                prompt_version=PROMPT_VERSION,
+                prompt_version=prompt_version,
                 model=model,
             )
             if key in seen:
@@ -254,8 +259,9 @@ def build_jobs(rows: list[dict[str, Any]], *, model: str, sample_limit: int | No
 
 
 def _run_job(job: AnnotationJob, *, args: argparse.Namespace, api_key: str | None, limiter: RateLimiter) -> dict[str, Any]:
-    system_prompt = SYSTEM_PROMPT
-    user_prompt = format_user_prompt(claim=job.claim, evidence_text=job.evidence_text)
+    prompt_version = normalize_prompt_version(str(args.prompt_version))
+    system_prompt = system_prompt_for_version(prompt_version)
+    user_prompt = format_user_prompt(claim=job.claim, evidence_text=job.evidence_text, prompt_version=prompt_version)
     estimated_tokens = (len(system_prompt) + len(user_prompt)) // 4 + int(args.max_tokens)
     attempts = max(int(args.max_retries), 0) + 1
     last_error = ""
@@ -286,7 +292,7 @@ def _run_job(job: AnnotationJob, *, args: argparse.Namespace, api_key: str | Non
             content = ""
             try:
                 content = _response_content(data)
-                annotation = parse_teacher_content(content)
+                annotation = parse_teacher_content(content, prompt_version=prompt_version)
             except TeacherAnnotationError as exc:
                 raw["parse_status"] = "schema_validation_failed"
                 raw["parse_error"] = str(exc)
@@ -301,7 +307,7 @@ def _run_job(job: AnnotationJob, *, args: argparse.Namespace, api_key: str | Non
                 "event_id": job.event_id,
                 "candidate_uid": job.candidate_uid,
                 "candidate_key": job.candidate_key,
-                "prompt_version": PROMPT_VERSION,
+                "prompt_version": prompt_version,
                 "model": str(args.model),
                 "teacher_annotation": teacher_annotation_payload(annotation),
                 "api_usage": {
@@ -399,7 +405,7 @@ def _raw_row(
         "candidate_uid": job.candidate_uid,
         "candidate_key": job.candidate_key,
         "model": str(args.model),
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": str(args.prompt_version),
         "top_logprobs_used": int(top_logprobs_used),
         "thinking_type": str(getattr(args, "thinking_type", "disabled") or "disabled"),
         "finish_reason": _finish_reason(response),
@@ -457,6 +463,15 @@ def _error_row(job: AnnotationJob, error_type: str, message: str, attempts: int,
     return row
 
 
+def _prompt_output_suffix(prompt_version: str) -> str:
+    version = normalize_prompt_version(prompt_version)
+    if version == PROMPT_VERSION:
+        return ""
+    if version == PROMPT_VERSION_V02:
+        return "_v02"
+    return "_" + version.replace("stance_bucket_teacher_", "")
+
+
 def _load_completed_keys(path: Path) -> set[str]:
     if not path.exists():
         return set()
@@ -481,6 +496,7 @@ def _write_progress(
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "split": str(args.split),
             "model": str(args.model),
+            "prompt_version": str(args.prompt_version),
             "n_jobs": int(n_jobs),
             "n_pending_at_start": int(n_pending),
             "n_completed_initial": int(n_completed_initial),

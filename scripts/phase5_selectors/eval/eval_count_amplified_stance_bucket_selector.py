@@ -36,6 +36,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gamma-values", default="1.0,1.6,1.8")
     p.add_argument("--primary-gamma", type=float, default=1.6)
     p.add_argument("--rho", type=float, default=0.6)
+    p.add_argument("--ambiguous-bucket-penalty", type=float, default=1.0)
+    p.add_argument("--use-directness-scoring", action="store_true")
+    p.add_argument("--adaptive-polar-quota", action="store_true")
+    p.add_argument("--tau-polar-ready", type=float, default=0.8)
+    p.add_argument("--max-forced-polar-slots", type=int, default=0)
     p.add_argument("--tau-c", type=float, default=0.50)
     p.add_argument("--tau-r", type=float, default=0.15)
     p.add_argument("--min-bucket-membership", type=float, default=None)
@@ -64,6 +69,11 @@ def main() -> None:
                 alpha=float(args.alpha),
                 gamma_stance=float(gamma),
                 rho=float(args.rho),
+                ambiguous_bucket_penalty=float(args.ambiguous_bucket_penalty),
+                use_directness_scoring=bool(args.use_directness_scoring),
+                adaptive_polar_quota=bool(args.adaptive_polar_quota),
+                tau_polar_ready=float(args.tau_polar_ready),
+                max_forced_polar_slots=int(args.max_forced_polar_slots),
                 tau_c=float(args.tau_c),
                 tau_r=float(args.tau_r),
                 min_bucket_membership=args.min_bucket_membership,
@@ -93,6 +103,7 @@ def main() -> None:
                         str(item.get("selected_stance_bucket") or item.get("stance_bucket_derived") or "")
                         for item in selected
                     ],
+                    "slot_trace": list(slot_trace),
                 }
             )
 
@@ -119,6 +130,11 @@ def main() -> None:
                 "gamma_values": _parse_float_list(args.gamma_values),
                 "primary_gamma": float(args.primary_gamma),
                 "rho": float(args.rho),
+                "ambiguous_bucket_penalty": float(args.ambiguous_bucket_penalty),
+                "use_directness_scoring": bool(args.use_directness_scoring),
+                "adaptive_polar_quota": bool(args.adaptive_polar_quota),
+                "tau_polar_ready": float(args.tau_polar_ready),
+                "max_forced_polar_slots": int(args.max_forced_polar_slots),
                 "tau_c": float(args.tau_c),
                 "tau_r": float(args.tau_r),
                 "min_bucket_membership": args.min_bucket_membership,
@@ -260,22 +276,50 @@ def _summarize_count_rows(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
             )
             for bucket in bucket_names
         }
+        quality_by_bucket = {
+            bucket: _mean(
+                (item.get("count_payload") or {}).get("bucket_quality", {}).get(bucket, 0.0)
+                for item in items
+            )
+            for bucket in bucket_names
+        }
+        polar_ready_by_bucket = {
+            bucket: _mean(
+                (item.get("count_payload") or {}).get("polar_ready", {}).get(bucket, 0.0)
+                for item in items
+            )
+            for bucket in bucket_names
+        }
         collapse = []
+        quota_trigger = []
+        forced_hits = []
         for item in items:
             selected = [bucket for bucket in item.get("selected_stance_buckets") or [] if bucket]
             if selected:
                 counts = Counter(selected)
                 collapse.append(float(max(counts.values()) == len(selected)))
+            forced_slots = [
+                slot
+                for slot in item.get("slot_trace") or []
+                if bool(slot.get("forced_by_adaptive_quota"))
+            ]
+            quota_trigger.append(float(bool(forced_slots)))
+            forced_hits.extend(1.0 if bool(slot.get("oracle_selected")) else 0.0 for slot in forced_slots)
         payload[selector_name] = {
             "n_events": len(items),
             "bucket_names": bucket_names,
             "mean_effective_counts": effective_by_bucket,
             "mean_raw_effective_counts": raw_by_bucket,
+            "mean_bucket_quality": quality_by_bucket,
+            "mean_polar_ready": polar_ready_by_bucket,
             "mean_dedup_effective_delta": {
                 bucket: float(effective_by_bucket.get(bucket, 0.0) - raw_by_bucket.get(bucket, 0.0))
                 for bucket in bucket_names
             },
             "single_bucket_collapse_rate": _mean(collapse),
+            "adaptive_quota_trigger_rate": _mean(quota_trigger),
+            "forced_polar_slot_hit_rate": _mean(forced_hits),
+            "n_forced_polar_slots": int(len(forced_hits)),
         }
     return payload
 
@@ -322,16 +366,17 @@ def _write_analysis(
         "",
         f"- decision: `{decision.get('decision')}`",
         f"- completeness_selected_lift: `{float(observation_metrics.get('completeness_selected_lift', 0.0)):.4f}`",
+        f"- oracle_selected_directness_lift: `{float(observation_metrics.get('oracle_selected_directness_lift', 0.0)):.4f}`",
         f"- oracle_vs_pool_stance_alignment_lift: `{float(observation_metrics.get('oracle_vs_pool_stance_alignment_lift', 0.0)):.4f}`",
         "",
         "## Selector Metrics",
         "",
-        "| selector | recall@5 | jaccard@5 | top1_match | oracle_rank_ndcg@5 | pairwise_order_acc@5 | mean_completeness@5 | source_entropy@5 | stance_entropy@5 |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| selector | recall@5 | jaccard@5 | top1_match | oracle_rank_ndcg@5 | pairwise_order_acc@5 | mean_completeness@5 | direct@5 | specificity@5 | background@5 | direct_rate@5 | source_entropy@5 | stance_entropy@5 |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for selector, metrics in sorted(selector_metrics.items()):
         lines.append(
-            "| {selector} | {recall:.4f} | {jaccard:.4f} | {top1:.4f} | {ndcg:.4f} | {pairwise:.4f} | {comp:.4f} | {source:.4f} | {stance:.4f} |".format(
+            "| {selector} | {recall:.4f} | {jaccard:.4f} | {top1:.4f} | {ndcg:.4f} | {pairwise:.4f} | {comp:.4f} | {direct:.4f} | {specificity:.4f} | {background:.4f} | {direct_rate:.4f} | {source:.4f} | {stance:.4f} |".format(
                 selector=selector,
                 recall=float(metrics.get("recall@5", 0.0)),
                 jaccard=float(metrics.get("jaccard@5", 0.0)),
@@ -339,6 +384,10 @@ def _write_analysis(
                 ndcg=float(metrics.get("oracle_rank_ndcg@5", 0.0)),
                 pairwise=float(metrics.get("pairwise_order_acc@5", 0.0)),
                 comp=float(metrics.get("mean_semantic_completeness@5", 0.0)),
+                direct=float(metrics.get("mean_direct_evidence@5", 0.0)),
+                specificity=float(metrics.get("mean_claim_specificity@5", 0.0)),
+                background=float(metrics.get("mean_background_only@5", 0.0)),
+                direct_rate=float(metrics.get("direct_or_partial_rate@5", 0.0)),
                 source=float(metrics.get("source_entropy@5", 0.0)),
                 stance=float(metrics.get("stance_bucket_entropy@5", 0.0)),
             )
@@ -349,6 +398,13 @@ def _write_analysis(
             "- `{selector}`: single_bucket_collapse_rate=`{collapse:.4f}`".format(
                 selector=selector,
                 collapse=float(metrics.get("single_bucket_collapse_rate", 0.0)),
+            )
+        )
+        lines.append(
+            "  adaptive_quota_trigger_rate=`{trigger:.4f}`, forced_polar_slot_hit_rate=`{hit:.4f}`, n_forced_polar_slots=`{n}`".format(
+                trigger=float(metrics.get("adaptive_quota_trigger_rate", 0.0)),
+                hit=float(metrics.get("forced_polar_slot_hit_rate", 0.0)),
+                n=int(metrics.get("n_forced_polar_slots", 0)),
             )
         )
     lines.append("")
