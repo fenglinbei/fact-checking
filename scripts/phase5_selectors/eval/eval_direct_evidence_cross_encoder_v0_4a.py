@@ -28,8 +28,8 @@ from fact_checking.selectors.evidence_quality import retrieval_score
 from fact_checking.utils.io import read_jsonl, save_json, write_jsonl
 
 
-DEFAULT_SCORED_FILE = "outputs/selectors/direct_evidence_cross_encoder/v0_4a_val/direct_ce_scored_candidates_val.jsonl"
-DEFAULT_OUTPUT_DIR = "outputs/selectors/direct_evidence_cross_encoder/v0_4a_val/eval"
+DEFAULT_SCORED_FILE = "outputs/selectors/direct_evidence_cross_encoder/v0_4a_1_val/direct_ce_scored_candidates_val.jsonl"
+DEFAULT_OUTPUT_DIR = "outputs/selectors/direct_evidence_cross_encoder/v0_4a_1_val/eval"
 DEFAULT_V03_REFERENCE = (
     "outputs/selectors/oracle_likelihood_constrained_selector/v0_3_1_val/"
     "pointwise_all_features/candidate_oracle_likelihood_scores_val.jsonl"
@@ -217,6 +217,7 @@ def _decision(selector_metrics: dict[str, Any], diagnostics: dict[str, Any]) -> 
     v03 = selector_metrics.get(V03_REFERENCE_SELECTOR, {})
     original = selector_metrics.get("original_pool_order_top5", {})
     qd_source = selector_metrics.get("qd_union_source_score_top5", {})
+    score_sanity = diagnostics.get("score_sanity") or {}
     auroc = float((diagnostics.get("candidate_level") or {}).get("auroc", 0.0))
     same_source_acc = float((diagnostics.get("same_source_hard_negative_pairwise") or {}).get("pairwise_acc", 0.0))
     direct_jaccard = float(direct.get("jaccard@5", 0.0))
@@ -225,7 +226,9 @@ def _decision(selector_metrics: dict[str, Any], diagnostics: dict[str, Any]) -> 
     best_control_jaccard = max(float(original.get("jaccard@5", 0.0)), float(qd_source.get("jaccard@5", 0.0)))
     passes = auroc > 0.56 and same_source_acc > 0.57 and direct_jaccard >= 0.250
     beats_v03 = direct_jaccard > v03_jaccard
-    if passes and beats_v03:
+    if not bool(score_sanity.get("passes_score_sanity_gate", True)):
+        name = "invalid_collapsed_direct_ce_scores_v0_4a_1"
+    elif passes and beats_v03:
         name = "go_direct_evidence_ce_v0_4a"
     elif auroc <= 0.52 and direct_jaccard <= best_control_jaccard:
         name = "stop_weak_text_only_direct_evidence_signal_v0_4a"
@@ -239,6 +242,10 @@ def _decision(selector_metrics: dict[str, Any], diagnostics: dict[str, Any]) -> 
         "best_control_jaccard@5": best_control_jaccard,
         "candidate_auroc": auroc,
         "same_source_hard_negative_pairwise_acc": same_source_acc,
+        "score_std": float((score_sanity.get("scores") or {}).get("std", 0.0)),
+        "unique_score_count": int(score_sanity.get("unique_score_count", 0)),
+        "event_all_tie_rate": float(score_sanity.get("event_all_tie_rate", 0.0)),
+        "passes_score_sanity_gate": bool(score_sanity.get("passes_score_sanity_gate", True)),
         "passes_v0_4a_gate": bool(passes),
         "beats_v0_3_1_reference": bool(beats_v03),
     }
@@ -251,11 +258,14 @@ def _write_analysis(
     decision: dict[str, Any],
 ) -> None:
     lines = [
-        "# Direct Evidence Cross-Encoder v0.4a",
+        "# Direct Evidence Cross-Encoder v0.4a/v0.4a.1",
         "",
         f"- decision: `{decision.get('decision')}`",
         f"- candidate_auroc: `{float(decision.get('candidate_auroc', 0.0)):.4f}`",
         f"- same_source_hard_negative_pairwise_acc: `{float(decision.get('same_source_hard_negative_pairwise_acc', 0.0)):.4f}`",
+        f"- score_std: `{float(decision.get('score_std', 0.0)):.8f}`",
+        f"- unique_score_count: `{int(decision.get('unique_score_count', 0))}`",
+        f"- event_all_tie_rate: `{float(decision.get('event_all_tie_rate', 0.0)):.4f}`",
         f"- oracle_selected_score_lift: `{float(diagnostics.get('oracle_selected_score_lift', 0.0)):.4f}`",
         "",
         "## Selector Metrics",
@@ -282,11 +292,14 @@ def _write_analysis(
     same_source = diagnostics.get("same_source_hard_negative_pairwise") or {}
     within = diagnostics.get("within_event_pairwise") or {}
     high_ret = diagnostics.get("high_retrieval_non_oracle_false_positive_rate") or {}
+    score_sanity = diagnostics.get("score_sanity") or {}
     lines.extend(
         [
             "",
             "## Candidate Diagnostics",
             "",
+            f"- score_sanity_gate: `{bool(score_sanity.get('passes_score_sanity_gate', True))}`",
+            f"- score_min/max: `{float((score_sanity.get('scores') or {}).get('min', 0.0)):.8f}` / `{float((score_sanity.get('scores') or {}).get('max', 0.0)):.8f}`",
             f"- auroc: `{float(candidate.get('auroc', 0.0)):.4f}`",
             f"- auprc: `{float(candidate.get('auprc', 0.0)):.4f}`",
             f"- same_source_pairwise_acc: `{float(same_source.get('pairwise_acc', 0.0)):.4f}` over `{int(same_source.get('n_pairs', 0))}` pairs",

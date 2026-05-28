@@ -3,12 +3,17 @@ from __future__ import annotations
 import unittest
 
 from fact_checking.selectors.direct_evidence_cross_encoder import (
+    PROMPT_MODE_DEFAULT_QUERY,
+    PROMPT_MODE_DIRECT_EVIDENCE_CUSTOM,
     DirectEvidenceCrossEncoderScorer,
     attach_direct_ce_scores,
+    assert_score_sanity,
+    average_precision_score,
     build_direct_ce_trace,
     build_text_only_pair,
     merge_scored_event_rows,
     score_rows_with_scorer,
+    score_sanity_summary,
     select_direct_ce_topk,
     select_event_shard,
     select_source_diverse_direct_ce_topk,
@@ -39,6 +44,43 @@ class DirectEvidenceCrossEncoderTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "no fallback backend"):
             DirectEvidenceCrossEncoderScorer(cross_encoder_cls=FailingCrossEncoder)
 
+    def test_cross_encoder_prompt_modes_and_raw_scores(self) -> None:
+        captured: list[dict] = []
+        case = self
+
+        class FakeCrossEncoder:
+            def __init__(self, *args, **kwargs) -> None:
+                captured.append(dict(kwargs))
+
+            def predict(self, payload, *, batch_size: int, show_progress_bar: bool):
+                case.assertEqual(batch_size, 2)
+                case.assertFalse(show_progress_bar)
+                return [5.0, -5.0]
+
+        scorer = DirectEvidenceCrossEncoderScorer(
+            cross_encoder_cls=FakeCrossEncoder,
+            prompt_mode=PROMPT_MODE_DIRECT_EVIDENCE_CUSTOM,
+        )
+        scores = scorer.score_pairs(
+            [
+                build_text_only_pair(_event("e1"), _event("e1")["candidates"][0]),
+                build_text_only_pair(_event("e1"), _event("e1")["candidates"][2]),
+            ],
+            batch_size=2,
+            show_progress_bar=False,
+        )
+        self.assertIn("prompts", captured[0])
+        self.assertEqual(captured[0]["default_prompt_name"], "direct_evidence")
+        self.assertEqual(scores.raw_scores, [5.0, -5.0])
+        self.assertGreater(scores.scores[0], scores.scores[1])
+
+        DirectEvidenceCrossEncoderScorer(
+            cross_encoder_cls=FakeCrossEncoder,
+            prompt_mode=PROMPT_MODE_DEFAULT_QUERY,
+        )
+        self.assertNotIn("prompts", captured[1])
+        self.assertNotIn("default_prompt_name", captured[1])
+
     def test_shard_split_and_merge_cover_events_once(self) -> None:
         rows = [_event(f"e{idx}") for idx in range(7)]
         shards = [
@@ -66,6 +108,8 @@ class DirectEvidenceCrossEncoderTest(unittest.TestCase):
         candidates = scored[0]["candidates"]
         self.assertEqual(len(candidates), 3)
         self.assertTrue(all("direct_ce_score" in candidate for candidate in candidates))
+        self.assertTrue(all("direct_ce_raw_score" in candidate for candidate in candidates))
+        self.assertTrue(all(candidate["direct_ce_prompt_mode"] == "direct_evidence_custom" for candidate in candidates))
         self.assertTrue(all(candidate["direct_ce_score_source"] == "mock_lexical_overlap" for candidate in candidates))
 
     def test_text_key_metrics_trace(self) -> None:
@@ -110,6 +154,26 @@ class DirectEvidenceCrossEncoderTest(unittest.TestCase):
 
         with self.assertRaises(KeyError):
             attach_direct_ce_scores(rows, scores, model_name="mock")
+
+    def test_average_precision_tie_groups_use_step_precision(self) -> None:
+        self.assertAlmostEqual(
+            average_precision_score([1, 0, 1, 0], [0.5, 0.5, 0.5, 0.5]),
+            0.5,
+        )
+
+    def test_score_sanity_detects_collapsed_event_scores(self) -> None:
+        rows = [_event("e1"), _event("e2")]
+        for row in rows:
+            for candidate in row["candidates"]:
+                candidate["direct_ce_score"] = 0.5
+                candidate["direct_ce_raw_score"] = 0.5
+
+        summary = score_sanity_summary(rows, min_score_std=1e-4, min_unique_scores=3, max_event_all_tie_rate=0.5)
+
+        self.assertFalse(summary["passes_score_sanity_gate"])
+        self.assertEqual(summary["n_event_all_tie"], 2)
+        with self.assertRaisesRegex(RuntimeError, "score sanity check failed"):
+            assert_score_sanity(summary)
 
 
 def _event(event_id: str) -> dict:

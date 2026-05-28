@@ -22,7 +22,12 @@ DIRECT_CE_SOURCE_DIVERSE_SELECTOR = "direct_ce_light_source_diverse_top5"
 V03_REFERENCE_SELECTOR = "v0_3_1_pointwise_all_features_top5"
 
 DEFAULT_MODEL_NAME = "Qwen/Qwen3-Reranker-8B"
-DEFAULT_PROMPT_VERSION = "direct_evidence_ce_v0_4a"
+DEFAULT_PROMPT_VERSION = "direct_evidence_ce_v0_4a_1"
+PROMPT_MODE_DEFAULT_QUERY = "default_query"
+PROMPT_MODE_DIRECT_EVIDENCE_CUSTOM = "direct_evidence_custom"
+PROMPT_MODE_CHOICES = (PROMPT_MODE_DEFAULT_QUERY, PROMPT_MODE_DIRECT_EVIDENCE_CUSTOM)
+DEFAULT_PROMPT_MODE = PROMPT_MODE_DIRECT_EVIDENCE_CUSTOM
+DEFAULT_SCORE_NORMALIZATION = "sigmoid_if_out_of_range"
 DEFAULT_INSTRUCTION = (
     "Given a fact-checking claim, score whether the evidence directly verifies or refutes the claim. "
     "Prefer passages that state the claim's key entities, quantities, dates, comparisons, causes, or outcomes. "
@@ -56,6 +61,13 @@ class DirectEvidencePair:
     source_fields: tuple[str, ...] = ("claim", "text")
 
 
+@dataclass(frozen=True)
+class DirectEvidenceScores:
+    raw_scores: list[float]
+    scores: list[float]
+    normalization: str = DEFAULT_SCORE_NORMALIZATION
+
+
 class DirectEvidenceCrossEncoderScorer:
     """Thin fail-fast wrapper around sentence_transformers.CrossEncoder."""
 
@@ -66,12 +78,16 @@ class DirectEvidenceCrossEncoderScorer:
         max_length: int = 1024,
         device: str = "auto",
         instruction: str = DEFAULT_INSTRUCTION,
+        prompt_mode: str = DEFAULT_PROMPT_MODE,
         cross_encoder_cls: Any | None = None,
     ) -> None:
         self.model_name = str(model_name)
         self.max_length = int(max_length)
         self.device = str(device)
         self.instruction = str(instruction)
+        self.prompt_mode = str(prompt_mode)
+        if self.prompt_mode not in PROMPT_MODE_CHOICES:
+            raise ValueError(f"Unknown prompt_mode={prompt_mode!r}; expected one of {list(PROMPT_MODE_CHOICES)}")
         if cross_encoder_cls is None:
             try:
                 from sentence_transformers import CrossEncoder as cross_encoder_cls  # type: ignore
@@ -80,11 +96,10 @@ class DirectEvidenceCrossEncoderScorer:
                     "sentence_transformers.CrossEncoder is required for v0.4a direct evidence scoring. "
                     "Install sentence-transformers on the target server; no transformers fallback is provided."
                 ) from exc
-        kwargs: dict[str, Any] = {
-            "max_length": int(max_length),
-            "prompts": {"direct_evidence": str(instruction)},
-            "default_prompt_name": "direct_evidence",
-        }
+        kwargs: dict[str, Any] = {"max_length": int(max_length)}
+        if self.prompt_mode == PROMPT_MODE_DIRECT_EVIDENCE_CUSTOM:
+            kwargs["prompts"] = {"direct_evidence": str(instruction)}
+            kwargs["default_prompt_name"] = "direct_evidence"
         if str(device) != "auto":
             kwargs["device"] = str(device)
         try:
@@ -101,7 +116,7 @@ class DirectEvidenceCrossEncoderScorer:
         *,
         batch_size: int,
         show_progress_bar: bool = True,
-    ) -> list[float]:
+    ) -> DirectEvidenceScores:
         payload = [(pair.query, pair.passage) for pair in pairs]
         try:
             raw_scores = self.model.predict(
@@ -114,7 +129,12 @@ class DirectEvidenceCrossEncoderScorer:
                 f"sentence_transformers.CrossEncoder predict failed for {self.model_name!r}. "
                 "v0.4a intentionally has no fallback backend."
             ) from exc
-        return normalize_model_scores(raw_scores)
+        model_raw_scores = extract_model_raw_scores(raw_scores)
+        return DirectEvidenceScores(
+            raw_scores=model_raw_scores,
+            scores=normalize_direct_ce_raw_scores(model_raw_scores),
+            normalization=DEFAULT_SCORE_NORMALIZATION,
+        )
 
 
 def build_text_only_pair(
@@ -164,7 +184,10 @@ def attach_direct_ce_scores(
     scores_by_key: dict[tuple[str, str, str], float],
     *,
     model_name: str,
+    raw_scores_by_key: dict[tuple[str, str, str], float] | None = None,
     prompt_version: str = DEFAULT_PROMPT_VERSION,
+    prompt_mode: str = DEFAULT_PROMPT_MODE,
+    score_normalization: str = DEFAULT_SCORE_NORMALIZATION,
     score_source: str = "cross_encoder",
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
@@ -177,9 +200,15 @@ def attach_direct_ce_scores(
             key = _candidate_key(event_id, c)
             if key not in scores_by_key:
                 raise KeyError(f"Missing direct CE score for candidate key={key}")
+            if raw_scores_by_key is not None and key not in raw_scores_by_key:
+                raise KeyError(f"Missing direct CE raw score for candidate key={key}")
+            raw_score = raw_scores_by_key[key] if raw_scores_by_key is not None else scores_by_key[key]
+            c["direct_ce_raw_score"] = float(raw_score)
             c["direct_ce_score"] = float(scores_by_key[key])
             c["direct_ce_model"] = str(model_name)
             c["direct_ce_prompt_version"] = str(prompt_version)
+            c["direct_ce_prompt_mode"] = str(prompt_mode)
+            c["direct_ce_score_normalization"] = str(score_normalization)
             c["direct_ce_score_source"] = str(score_source)
             candidates.append(c)
         item["candidates"] = candidates
@@ -187,14 +216,14 @@ def attach_direct_ce_scores(
     return out
 
 
-def mock_scores_for_pairs(pairs: Sequence[DirectEvidencePair]) -> list[float]:
+def mock_scores_for_pairs(pairs: Sequence[DirectEvidencePair]) -> DirectEvidenceScores:
     scores: list[float] = []
     for pair in pairs:
         lexical = lexical_overlap_f1(pair.query, pair.passage)
         digest = hashlib.sha1(f"{pair.query}\n{pair.passage}".encode("utf-8")).hexdigest()
         jitter = int(digest[:6], 16) / float(0xFFFFFF) * 0.01
         scores.append(float(min(1.0, max(0.0, lexical + jitter))))
-    return scores
+    return DirectEvidenceScores(raw_scores=list(scores), scores=list(scores), normalization="none_mock_score_already_0_1")
 
 
 def score_rows_with_scorer(
@@ -204,24 +233,29 @@ def score_rows_with_scorer(
     batch_size: int,
     model_name: str,
     prompt_version: str = DEFAULT_PROMPT_VERSION,
+    prompt_mode: str = DEFAULT_PROMPT_MODE,
     instruction: str = DEFAULT_INSTRUCTION,
     mock_scores: bool = False,
 ) -> list[dict[str, Any]]:
     pairs, keys = flatten_scoring_jobs(rows, instruction=instruction, prompt_version=prompt_version)
     if mock_scores:
-        scores = mock_scores_for_pairs(pairs)
+        score_bundle = mock_scores_for_pairs(pairs)
         source = "mock_lexical_overlap"
     else:
         if scorer is None:
             raise ValueError("A DirectEvidenceCrossEncoderScorer is required when mock_scores=False.")
-        scores = scorer.score_pairs(pairs, batch_size=int(batch_size))
+        score_bundle = scorer.score_pairs(pairs, batch_size=int(batch_size))
         source = "cross_encoder"
-    scores_by_key = {key: float(score) for key, score in zip(keys, scores)}
+    scores_by_key = {key: float(score) for key, score in zip(keys, score_bundle.scores)}
+    raw_scores_by_key = {key: float(score) for key, score in zip(keys, score_bundle.raw_scores)}
     return attach_direct_ce_scores(
         rows,
         scores_by_key,
         model_name=model_name,
+        raw_scores_by_key=raw_scores_by_key,
         prompt_version=prompt_version,
+        prompt_mode=prompt_mode,
+        score_normalization=score_bundle.normalization,
         score_source=source,
     )
 
@@ -319,6 +353,7 @@ def build_direct_ce_trace(
                 "candidate_key": str(candidate.get("candidate_key") or ""),
                 "selection_origin": str(candidate.get("selection_origin") or ""),
                 "oracle_selected": bool(candidate.get("oracle_selected")),
+                "direct_ce_raw_score": _safe_float(candidate.get("direct_ce_raw_score"), 0.0),
                 "direct_ce_score": _safe_float(candidate.get("direct_ce_score"), 0.0),
                 "direct_ce_adjusted_score": _safe_float(candidate.get("direct_ce_adjusted_score"), 0.0),
                 "source_group": source_group(candidate),
@@ -367,6 +402,7 @@ def direct_ce_diagnostics(
         for candidate in trace.get("selected_candidates") or []
     ]
     return {
+        "score_sanity": score_sanity_summary(scored_rows),
         "candidate_level": candidate_level_metrics(labels, scores),
         "oracle_selected_score_mean": _mean(selected_scores),
         "non_oracle_selected_score_mean": _mean(nonselected_scores),
@@ -413,7 +449,125 @@ def high_retrieval_non_oracle_false_positive_rate(scored_rows: Sequence[dict[str
     }
 
 
-def normalize_model_scores(raw_scores: Any) -> list[float]:
+def canary_pairs(*, prompt_version: str = DEFAULT_PROMPT_VERSION) -> list[DirectEvidencePair]:
+    return [
+        DirectEvidencePair(
+            query="What is the capital of China?",
+            passage="The capital of China is Beijing.",
+            prompt_version=str(prompt_version),
+        ),
+        DirectEvidencePair(
+            query="What is the capital of China?",
+            passage="Gravity is a force that attracts objects toward each other.",
+            prompt_version=str(prompt_version),
+        ),
+        DirectEvidencePair(
+            query="Who wrote Hamlet?",
+            passage="Hamlet was written by William Shakespeare.",
+            prompt_version=str(prompt_version),
+        ),
+    ]
+
+
+def canary_sanity_summary(score_bundle: DirectEvidenceScores) -> dict[str, Any]:
+    score_stats = _score_stats(score_bundle.scores)
+    raw_stats = _score_stats(score_bundle.raw_scores)
+    scores = list(score_bundle.scores)
+    positive_gt_negative = bool(len(scores) >= 2 and scores[0] > scores[1])
+    second_positive_gt_negative = bool(len(scores) >= 3 and scores[2] > scores[1])
+    spread = float(max(scores) - min(scores)) if scores else 0.0
+    summary = {
+        "scores": score_stats,
+        "raw_scores": raw_stats,
+        "positive_gt_negative": positive_gt_negative,
+        "second_positive_gt_negative": second_positive_gt_negative,
+        "score_spread": spread,
+    }
+    summary["passes_canary_gate"] = bool(positive_gt_negative and second_positive_gt_negative and spread > 1e-6)
+    return summary
+
+
+def assert_canary_sanity(summary: dict[str, Any]) -> None:
+    if not bool(summary.get("passes_canary_gate")):
+        raise RuntimeError(
+            "Direct CE canary sanity check failed: model scores did not rank obvious positive evidence above unrelated evidence. "
+            f"summary={summary}"
+        )
+
+
+def score_sanity_summary(
+    scored_rows: Sequence[dict[str, Any]],
+    *,
+    min_score_std: float = 1e-4,
+    min_unique_scores: int = 3,
+    max_event_all_tie_rate: float = 0.5,
+    tie_epsilon: float = 1e-7,
+) -> dict[str, Any]:
+    event_summaries: list[dict[str, Any]] = []
+    flat_scores: list[float] = []
+    flat_raw_scores: list[float] = []
+    n_event_with_multiple_candidates = 0
+    n_event_all_tie = 0
+    for row in scored_rows:
+        candidates = list(row.get("candidates") or [])
+        scores = [_safe_float(candidate.get("direct_ce_score"), 0.0) for candidate in candidates]
+        raw_scores = [_safe_float(candidate.get("direct_ce_raw_score"), _safe_float(candidate.get("direct_ce_score"), 0.0)) for candidate in candidates]
+        flat_scores.extend(scores)
+        flat_raw_scores.extend(raw_scores)
+        if len(scores) <= 1:
+            continue
+        n_event_with_multiple_candidates += 1
+        score_range = float(max(scores) - min(scores)) if scores else 0.0
+        all_tie = score_range <= float(tie_epsilon)
+        if all_tie:
+            n_event_all_tie += 1
+        event_summaries.append(
+            {
+                "event_id": str(row.get("event_id") or ""),
+                "n_candidates": int(len(scores)),
+                "score_range": score_range,
+                "all_tie": bool(all_tie),
+            }
+        )
+    stats = _score_stats(flat_scores)
+    raw_stats = _score_stats(flat_raw_scores)
+    unique_score_count = int(len({round(float(score), 10) for score in flat_scores}))
+    event_all_tie_rate = float(n_event_all_tie / n_event_with_multiple_candidates) if n_event_with_multiple_candidates else 0.0
+    passes = (
+        float(stats.get("std", 0.0)) >= float(min_score_std)
+        and unique_score_count >= int(min_unique_scores)
+        and event_all_tie_rate <= float(max_event_all_tie_rate)
+    )
+    worst_tie_examples = sorted(
+        (item for item in event_summaries if bool(item.get("all_tie"))),
+        key=lambda item: (-int(item.get("n_candidates", 0)), str(item.get("event_id") or "")),
+    )[:10]
+    return {
+        "n_scored_candidates": int(len(flat_scores)),
+        "n_scored_events": int(len(scored_rows)),
+        "n_event_with_multiple_candidates": int(n_event_with_multiple_candidates),
+        "n_event_all_tie": int(n_event_all_tie),
+        "event_all_tie_rate": event_all_tie_rate,
+        "unique_score_count": unique_score_count,
+        "scores": stats,
+        "raw_scores": raw_stats,
+        "min_score_std": float(min_score_std),
+        "min_unique_scores": int(min_unique_scores),
+        "max_event_all_tie_rate": float(max_event_all_tie_rate),
+        "passes_score_sanity_gate": bool(passes),
+        "all_tie_examples": worst_tie_examples,
+    }
+
+
+def assert_score_sanity(summary: dict[str, Any]) -> None:
+    if not bool(summary.get("passes_score_sanity_gate")):
+        raise RuntimeError(
+            "Direct CE score sanity check failed: scores look collapsed or mostly tied within events. "
+            f"summary={summary}"
+        )
+
+
+def extract_model_raw_scores(raw_scores: Any) -> list[float]:
     arr = np.asarray(raw_scores, dtype=np.float32)
     if arr.ndim == 0:
         arr = arr.reshape(1)
@@ -424,9 +578,20 @@ def normalize_model_scores(raw_scores: Any) -> list[float]:
             arr = arr[:, -1]
     if arr.ndim != 1:
         raise ValueError(f"Expected one score per input pair, got shape={arr.shape}")
+    return [float(_safe_float(value, 0.0)) for value in arr.tolist()]
+
+
+def normalize_direct_ce_raw_scores(raw_scores: Sequence[float] | np.ndarray) -> list[float]:
+    arr = np.asarray(raw_scores, dtype=np.float32)
+    if arr.ndim == 0:
+        arr = arr.reshape(1)
     if arr.size and (float(arr.min()) < 0.0 or float(arr.max()) > 1.0):
         arr = 1.0 / (1.0 + np.exp(-np.clip(arr, -50.0, 50.0)))
     return [float(_safe_float(value, 0.0)) for value in arr.tolist()]
+
+
+def normalize_model_scores(raw_scores: Any) -> list[float]:
+    return normalize_direct_ce_raw_scores(extract_model_raw_scores(raw_scores))
 
 
 def roc_auc_score(labels: Sequence[float] | np.ndarray, scores: Sequence[float] | np.ndarray) -> float:
@@ -453,13 +618,24 @@ def average_precision_score(labels: Sequence[float] | np.ndarray, scores: Sequen
     positives = sum(label for _, label in pairs)
     if positives == 0:
         return 0.0
-    hits = 0
-    total = 0.0
-    for rank, (_, label) in enumerate(pairs, start=1):
-        if label:
-            hits += 1
-            total += hits / rank
-    return float(total / positives)
+    cum_hits = 0
+    cum_total = 0
+    prev_recall = 0.0
+    total_ap = 0.0
+    idx = 0
+    while idx < len(pairs):
+        end = idx + 1
+        while end < len(pairs) and pairs[end][0] == pairs[idx][0]:
+            end += 1
+        group = pairs[idx:end]
+        cum_hits += sum(label for _, label in group)
+        cum_total += len(group)
+        recall = cum_hits / float(positives)
+        precision = cum_hits / float(cum_total)
+        total_ap += (recall - prev_recall) * precision
+        prev_recall = recall
+        idx = end
+    return float(total_ap)
 
 
 def calibration_bins(labels: np.ndarray, scores: np.ndarray, *, n_bins: int) -> list[dict[str, Any]]:
@@ -566,9 +742,13 @@ def _candidate_output(candidate: dict[str, Any]) -> dict[str, Any]:
         "source_group",
         "oracle_selected",
         "oracle_step",
+        "direct_ce_raw_score",
         "direct_ce_score",
         "direct_ce_adjusted_score",
         "direct_ce_model",
+        "direct_ce_prompt_version",
+        "direct_ce_prompt_mode",
+        "direct_ce_score_normalization",
         "direct_ce_score_source",
         "same_source_selected_count",
         "direct_evidence_score",
@@ -619,6 +799,27 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 def _mean(values: Sequence[float] | Any) -> float:
     vals = [float(value) for value in values if value is not None and math.isfinite(float(value))]
     return float(np.mean(vals)) if vals else 0.0
+
+
+def _score_stats(values: Sequence[float] | np.ndarray) -> dict[str, Any]:
+    arr = np.asarray(list(values), dtype=np.float64)
+    if arr.size == 0:
+        return {
+            "n": 0,
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "std": 0.0,
+            "range": 0.0,
+        }
+    return {
+        "n": int(arr.size),
+        "min": float(arr.min()),
+        "max": float(arr.max()),
+        "mean": float(arr.mean()),
+        "std": float(arr.std()),
+        "range": float(arr.max() - arr.min()),
+    }
 
 
 def _reverse_string(value: str) -> str:

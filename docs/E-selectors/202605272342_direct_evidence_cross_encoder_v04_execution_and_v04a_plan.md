@@ -117,3 +117,30 @@ No-Go interpretation:
 - If candidate AUROC is near random and jaccard does not beat controls, do not train Qwen3 LoRA; the bottleneck is likely supervision or oracle target, not model capacity.
 - If candidate AUROC is high but top5 overlap does not improve, inspect false positives among high-retrieval non-oracle candidates before adding fusion.
 - If gains appear only after adding rank/provenance metadata, treat it as the same shortcut failure observed in earlier selector lines.
+
+## v0.4a.1 Fix
+
+The synced v0.4a run showed collapsed CrossEncoder scores: almost every event had identical candidate scores, so the result should be interpreted as a scoring-interface failure rather than evidence that Qwen3-Reranker-8B lacks direct-evidence signal.
+
+v0.4a.1 adds:
+
+- `direct_ce_raw_score` plus normalized `direct_ce_score` in scored candidates.
+- `PROMPT_MODE=direct_evidence_custom/default_query` switch.
+- canary scoring before real rows; obvious positive evidence must score above unrelated evidence.
+- score sanity gate after each shard and merge: global score std, unique score count, and event-level all-tie rate.
+- tie-aware AUPRC; all-tied scores now produce positive-rate AP instead of an inflated value.
+- fresh default output dirs under `v0_4a_1_${SPLIT}_${PROMPT_MODE}` and `RESUME=0`.
+
+Recommended repair sweep:
+
+```bash
+PROMPT_MODE=default_query OUTPUT_DIR=outputs/selectors/direct_evidence_cross_encoder/v0_4a_1_val_default_query \
+CUDA_VISIBLE_DEVICES=0,1,2,3 NUM_SHARDS=4 BATCH_SIZE=2 RESUME=0 \
+bash scripts/phase5_selectors/run/run_direct_evidence_cross_encoder_v0_4a_1.sh
+
+PROMPT_MODE=direct_evidence_custom OUTPUT_DIR=outputs/selectors/direct_evidence_cross_encoder/v0_4a_1_val_direct_evidence_custom \
+CUDA_VISIBLE_DEVICES=0,1,2,3 NUM_SHARDS=4 BATCH_SIZE=2 RESUME=0 \
+bash scripts/phase5_selectors/run/run_direct_evidence_cross_encoder_v0_4a_1.sh
+```
+
+If either prompt mode fails the canary or score sanity gate, stop at v0.4a.1 and inspect the CrossEncoder/Qwen3 interface before moving to v0.4b/c. Do not bypass the gate for full runs.
