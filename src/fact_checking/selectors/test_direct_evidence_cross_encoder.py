@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from fact_checking.selectors.direct_evidence_cross_encoder import (
+    QWEN_RERANKER_ST_REQUIRED_FILES,
     PROMPT_MODE_DEFAULT_QUERY,
     PROMPT_MODE_DIRECT_EVIDENCE_CUSTOM,
     DirectEvidenceCrossEncoderScorer,
@@ -17,6 +20,7 @@ from fact_checking.selectors.direct_evidence_cross_encoder import (
     select_direct_ce_topk,
     select_event_shard,
     select_source_diverse_direct_ce_topk,
+    validate_local_qwen_reranker_snapshot,
 )
 
 
@@ -43,6 +47,18 @@ class DirectEvidenceCrossEncoderTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "no fallback backend"):
             DirectEvidenceCrossEncoderScorer(cross_encoder_cls=FailingCrossEncoder)
+
+    def test_local_qwen_snapshot_requires_sentence_transformers_files(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="Qwen3-Reranker-8B-") as tmp:
+            path = Path(tmp)
+            with self.assertRaisesRegex(RuntimeError, "Sentence Transformers v5.4 integration files"):
+                validate_local_qwen_reranker_snapshot(str(path))
+            for rel in QWEN_RERANKER_ST_REQUIRED_FILES:
+                target = path / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("{}", encoding="utf-8")
+
+            validate_local_qwen_reranker_snapshot(str(path))
 
     def test_cross_encoder_prompt_modes_and_raw_scores(self) -> None:
         captured: list[dict] = []

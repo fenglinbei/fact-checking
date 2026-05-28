@@ -5,6 +5,7 @@ import inspect
 import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 import numpy as np
@@ -31,6 +32,13 @@ PROMPT_MODE_CHOICES = (PROMPT_MODE_DEFAULT_QUERY, PROMPT_MODE_DIRECT_EVIDENCE_CU
 DEFAULT_PROMPT_MODE = PROMPT_MODE_DIRECT_EVIDENCE_CUSTOM
 DEFAULT_SCORE_NORMALIZATION = "sigmoid_if_out_of_range"
 DEFAULT_COERCE_INPUT_IDS_LONG = True
+QWEN_RERANKER_ST_REQUIRED_FILES = (
+    "modules.json",
+    "config_sentence_transformers.json",
+    "sentence_bert_config.json",
+    "chat_template.jinja",
+    "1_LogitScore/config.json",
+)
 DEFAULT_INSTRUCTION = (
     "Given a fact-checking claim, score whether the evidence directly verifies or refutes the claim. "
     "Prefer passages that state the claim's key entities, quantities, dates, comparisons, causes, or outcomes. "
@@ -96,6 +104,8 @@ class DirectEvidenceCrossEncoderScorer:
         self.input_id_dtype_repair_hook_count = 0
         if self.prompt_mode not in PROMPT_MODE_CHOICES:
             raise ValueError(f"Unknown prompt_mode={prompt_mode!r}; expected one of {list(PROMPT_MODE_CHOICES)}")
+        if cross_encoder_cls is None:
+            validate_local_qwen_reranker_snapshot(self.model_name)
         if cross_encoder_cls is None:
             try:
                 from sentence_transformers import CrossEncoder as cross_encoder_cls  # type: ignore
@@ -522,6 +532,24 @@ def _install_input_id_dtype_repair_hooks(cross_encoder: Any) -> int:
             continue
         count += 1
     return count
+
+
+def validate_local_qwen_reranker_snapshot(model_name_or_path: str) -> None:
+    path = Path(str(model_name_or_path))
+    if not path.exists() or not path.is_dir():
+        return
+    path_name = path.name.lower()
+    if "qwen3-reranker" not in path_name:
+        return
+    missing = [rel for rel in QWEN_RERANKER_ST_REQUIRED_FILES if not (path / rel).exists()]
+    if not missing:
+        return
+    raise RuntimeError(
+        f"Local Qwen3-Reranker snapshot at {path} is missing Sentence Transformers v5.4 integration files: {missing}. "
+        "This can make CrossEncoder construct the model through an incompatible generic path, producing empty token "
+        "sequences or dtype errors even when sentence-transformers/transformers versions are new enough. Refresh the "
+        "model snapshot from Qwen/Qwen3-Reranker-8B, then rerun v0.4a.1."
+    )
 
 
 def _cross_encoder_model_kwargs(torch_dtype_name: str) -> dict[str, Any]:

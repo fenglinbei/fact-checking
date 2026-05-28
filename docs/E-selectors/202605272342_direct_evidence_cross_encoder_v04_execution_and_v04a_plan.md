@@ -128,6 +128,7 @@ v0.4a.1 adds:
 - `PROMPT_MODE=direct_evidence_custom/default_query` switch.
 - a CrossEncoder-only input-id dtype repair hook for environments where `input_ids` are incorrectly cast to float before the Qwen embedding layer.
 - `MAX_LENGTH` default raised from `1024` to `8192`, matching the Qwen3-Reranker model-card example and avoiding empty-token sequences after chat-template overhead.
+- local Qwen3-Reranker snapshot validation: the local model dir must include the Sentence Transformers v5.4 files `modules.json`, `config_sentence_transformers.json`, `sentence_bert_config.json`, `chat_template.jinja`, and `1_LogitScore/config.json`.
 - canary scoring before real rows; obvious positive evidence must score above unrelated evidence.
 - score sanity gate after each shard and merge: global score std, unique score count, and event-level all-tie rate.
 - tie-aware AUPRC; all-tied scores now produce positive-rate AP instead of an inflated value.
@@ -145,6 +146,23 @@ PY
 ```
 
 `transformers` should be at least `4.51.0` for Qwen3. If `sentence-transformers` is older than the Qwen3-Reranker integration line, upgrade it before interpreting model quality.
+
+Recommended local model snapshot check:
+
+```bash
+ls /data/models/Qwen3-Reranker-8B/modules.json \
+   /data/models/Qwen3-Reranker-8B/config_sentence_transformers.json \
+   /data/models/Qwen3-Reranker-8B/sentence_bert_config.json \
+   /data/models/Qwen3-Reranker-8B/chat_template.jinja \
+   /data/models/Qwen3-Reranker-8B/1_LogitScore/config.json
+```
+
+If any file is missing, refresh the local model snapshot before rerunning:
+
+```bash
+huggingface-cli download Qwen/Qwen3-Reranker-8B \
+  --local-dir /data/models/Qwen3-Reranker-8B
+```
 
 Recommended repair sweep:
 
