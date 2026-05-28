@@ -134,7 +134,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--train-data", required=True)
     p.add_argument("--val-data", required=True)
     p.add_argument("--output-dir", required=True)
-    p.add_argument("--model-name", default="/home/fenglin/project/hateSpeechDetection/models/base/Qwen2.5-7B-Instruct")
+    p.add_argument("--model-name", default="/data/models/base/Qwen2.5-7B-Instruct")
     p.add_argument("--max-length", type=int, default=1024)
     p.add_argument("--per-device-train-batch-size", type=int, default=1)
     p.add_argument("--per-device-eval-batch-size", type=int, default=1)

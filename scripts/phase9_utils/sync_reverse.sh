@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-REMOTE="fenglin@yd.frp-ski.com:/home/fenglin/project/fact-checking/outputs/selectors"
+REMOTE="fenglin@yd.frp-ski.com:/home/fenglin/project/fact-checking/outputs/selectors/direct_evidence_cross_encoder"
 SSH_PORT=16880
 ALL=false
 DRY_RUN=""
@@ -14,7 +14,7 @@ for arg in "${@}"; do
     esac
 done
 
-SRC="outputs/selectors/evidence_map_selector"
+DST="outputs/selectors/"
 
 EXCLUDES=()
 if [ "$ALL" != true ]; then
@@ -35,7 +35,7 @@ if [ -z "$REMOTE" ]; then
     exit 1
 fi
 
-echo "同步中..."
+echo "反向同步中（远程 → 本地）..."
 # shellcheck disable=SC2086
-rsync -avzP -e "ssh -p $SSH_PORT" $DRY_RUN "${EXCLUDES[@]}" "$SRC" "$REMOTE"
-echo "同步完成。"
+rsync -avzP -e "ssh -p $SSH_PORT" $DRY_RUN "${EXCLUDES[@]}" "$REMOTE" "$DST"
+echo "反向同步完成。"
