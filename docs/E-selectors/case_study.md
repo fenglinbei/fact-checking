@@ -19,7 +19,7 @@ Oracle selected indices：`[13, 8, 1, 9, 2]`
   中文：罗姆尼称，如果当选总统，他会允许各州退出医保法。
 
 - E4 / C10  
-  原文：In the speech, Romney won't spend much time talk about Massachusetts, and the plan he sign that now require the state's citizen to buy health insurance — an individual mandate that be include in the federal law and drive Republican fury.  
+  原文：In the speech, Romney won't spend much time talk about Massachusetts, and the plan he sign that now require the state's citizen to buy health insurance — an individual mandate that be include in the federal law and drive Republican fury.git  
   中文：在演讲中，罗姆尼不会花太多时间谈马萨诸塞，以及他签署的、要求该州居民购买医保的计划；这一“个人强制参保”后来被纳入联邦法律，并激起共和党人的愤怒。
 
 - E5 / C3  

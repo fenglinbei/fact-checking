@@ -105,3 +105,42 @@ Recommended interpretation:
 - If every map-aware prompt is below the original oracle-direct verifier by a large margin, treat v0.5a as explanation-only and move to train-side map generation before judging final utility.
 
 Because current v0.5a artifacts are val-only, this remains a val diagnostic rather than held-out evidence.
+
+## Full-Val Readout
+
+Measured output:
+
+`outputs/selectors/evidence_map_selector/v0_5b_val_map_verifier/`
+
+Best row:
+
+| selector | checkpoint | accuracy | macro-F1 | true-side macro-F1 | selection score |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `v0_5a_base_only_top5` | `best` / `checkpoint-600` | 0.2943 | 0.2842 | 0.3295 | 0.4489 |
+
+Selector comparison at `best`:
+
+| selector | accuracy | macro-F1 | true-side macro-F1 |
+| --- | ---: | ---: | ---: |
+| `v0_5a_base_only_top5` | 0.2943 | 0.2842 | 0.3295 |
+| `v0_5a_evidence_map_top5` | 0.2732 | 0.2630 | 0.3134 |
+| `fusion_refit_all_features_plus_direct_ce_top5` | 0.2716 | 0.2618 | 0.3272 |
+
+Checkpoint choice:
+
+- `best` and `checkpoint-600` are identical on the best selector row, so the checkpoint recommendation remains `best` / `checkpoint-600`.
+- Earlier checkpoints do not rescue the map-aware prompt distribution; the spread is small relative to the oracle-direct prior.
+
+Interpretation:
+
+- v0.5b is **not a classification Go** for directly applying the old oracle-direct verifier to map-aware prompts.
+- The best map-aware result, 0.2943 accuracy / 0.2842 macro-F1, is only slightly above the historical fixed-MMR + oracle-direct verifier region and far below oracle evidence + oracle-direct verifier.
+- `v0_5a_evidence_map_top5` underperforms `base_only`, despite better explainability metrics in v0.5a. This means the old verifier is not benefiting from atom/relation/directness metadata as currently rendered.
+- The likely failure mode is verifier prompt-distribution mismatch plus remaining evidence-distribution gap: the verifier was trained on plain numbered evidence, not structured evidence maps with relation/directness annotations.
+
+Recommended next step:
+
+1. Build train-side map artifacts before judging the map prompt itself.
+2. Train a small map-aware verifier LoRA using the same rendered prompt format.
+3. Keep `v0_5a_base_only_top5` as the strongest eval-only evidence selector for this prompt family.
+4. Treat `v0_5a_evidence_map_top5` as explanation/rationale data, not as the current classifier-facing top5 selector.
