@@ -19,7 +19,7 @@ SAMPLE_LIMIT="${SAMPLE_LIMIT:-}"
 CASE_IDS="${CASE_IDS:-}"
 BUILD_VERIFIER_DATA="${BUILD_VERIFIER_DATA:-true}"
 CONFIG="${CONFIG:-configs/experiment/b3_oracle_sentence_direct_verifier_1024.yaml}"
-MODEL_BASE_PATH="${MODEL_BASE_PATH:-/data/models/}"
+MODEL_BASE_PATH="${MODEL_BASE_PATH:-}"
 PROMPT_MODEL_NAME_OR_PATH="${PROMPT_MODEL_NAME_OR_PATH:-}"
 TRAIN_MODEL_NAME_OR_PATH="${TRAIN_MODEL_NAME_OR_PATH:-}"
 
@@ -42,6 +42,9 @@ if [[ -n "${PROMPT_MODEL_NAME_OR_PATH}" ]]; then
 fi
 if [[ -n "${TRAIN_MODEL_NAME_OR_PATH}" ]]; then
   PROMPT_MODEL_ARGS+=(--train-model-name-or-path "${TRAIN_MODEL_NAME_OR_PATH}")
+fi
+if [[ -n "${MODEL_BASE_PATH}" ]]; then
+  PROMPT_MODEL_ARGS+=(--model-base-path "${MODEL_BASE_PATH}")
 fi
 
 CANDIDATE_POOL="${OUTPUT_DIR}/evidence_map_candidate_pool_${SPLIT}.jsonl"
@@ -114,7 +117,6 @@ if [[ "${BUILD_VERIFIER_DATA}" == "true" ]]; then
     --split "${SPLIT}" \
     --raw-path "${RAW_PATH}" \
     --config "${CONFIG}" \
-    --model-base-path "${MODEL_BASE_PATH}" \
     "${PROMPT_MODEL_ARGS[@]}" \
     "${SAMPLE_ARGS[@]}"
 fi

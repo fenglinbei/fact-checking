@@ -65,6 +65,7 @@ def main() -> None:
         prompt_cfg["model_name_or_path"] = args.prompt_model_name_or_path
     if args.model_base_path and prompt_cfg.get("model_name_or_path"):
         prompt_cfg["model_name_or_path"] = _resolve_model_path(str(prompt_cfg["model_name_or_path"]), str(args.model_base_path))
+    _validate_model_path(str(prompt_cfg.get("model_name_or_path") or ""), field_name="build.prompt.model_name_or_path")
     tokenizer = load_prompt_tokenizer(str(prompt_cfg["model_name_or_path"]))
 
     traces = [
@@ -123,6 +124,20 @@ def main() -> None:
     save_json(manifest, out_dir / "build_report.json")
     print(f"Wrote evidence-map verifier data: {out_path}")
     print(f"Train config: {train_config_path}")
+
+
+def _validate_model_path(model_name_or_path: str, *, field_name: str) -> None:
+    value = str(model_name_or_path or "").strip()
+    if not value:
+        raise ValueError(f"{field_name} is empty; pass --prompt-model-name-or-path or fix the config.")
+    if value.startswith("/"):
+        path = Path(value)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{field_name} points to a local model path that does not exist on this server: {value}. "
+                "Either leave MODEL_BASE_PATH unset to use the config path as-is, set MODEL_BASE_PATH to this server's "
+                "model root, or pass PROMPT_MODEL_NAME_OR_PATH to an existing tokenizer/model path."
+            )
 
 
 def _build_map_verifier_row(trace: dict[str, Any], *, sample: Any, tokenizer: Any, prompt_cfg: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
