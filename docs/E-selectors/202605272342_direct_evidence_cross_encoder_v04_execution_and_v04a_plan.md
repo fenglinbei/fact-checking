@@ -127,6 +127,7 @@ v0.4a.1 adds:
 - `direct_ce_raw_score` plus normalized `direct_ce_score` in scored candidates.
 - `PROMPT_MODE=direct_evidence_custom/default_query` switch.
 - a CrossEncoder-only input-id dtype repair hook for environments where `input_ids` are incorrectly cast to float before the Qwen embedding layer.
+- `MAX_LENGTH` default raised from `1024` to `8192`, matching the Qwen3-Reranker model-card example and avoiding empty-token sequences after chat-template overhead.
 - canary scoring before real rows; obvious positive evidence must score above unrelated evidence.
 - score sanity gate after each shard and merge: global score std, unique score count, and event-level all-tie rate.
 - tie-aware AUPRC; all-tied scores now produce positive-rate AP instead of an inflated value.
@@ -149,11 +150,11 @@ Recommended repair sweep:
 
 ```bash
 PROMPT_MODE=default_query OUTPUT_DIR=outputs/selectors/direct_evidence_cross_encoder/v0_4a_1_val_default_query \
-CUDA_VISIBLE_DEVICES=0,1,2,3 NUM_SHARDS=4 BATCH_SIZE=2 RESUME=0 \
+CUDA_VISIBLE_DEVICES=0,1,2,3 NUM_SHARDS=4 BATCH_SIZE=1 MAX_LENGTH=8192 RESUME=0 \
 bash scripts/phase5_selectors/run/run_direct_evidence_cross_encoder_v0_4a_1.sh
 
 PROMPT_MODE=direct_evidence_custom OUTPUT_DIR=outputs/selectors/direct_evidence_cross_encoder/v0_4a_1_val_direct_evidence_custom \
-CUDA_VISIBLE_DEVICES=0,1,2,3 NUM_SHARDS=4 BATCH_SIZE=2 RESUME=0 \
+CUDA_VISIBLE_DEVICES=0,1,2,3 NUM_SHARDS=4 BATCH_SIZE=1 MAX_LENGTH=8192 RESUME=0 \
 bash scripts/phase5_selectors/run/run_direct_evidence_cross_encoder_v0_4a_1.sh
 ```
 

@@ -10,6 +10,7 @@ from typing import Any
 
 from fact_checking.selectors.direct_evidence_cross_encoder import (
     DEFAULT_INSTRUCTION,
+    DEFAULT_MAX_LENGTH,
     DEFAULT_MODEL_NAME,
     DEFAULT_PROMPT_MODE,
     DEFAULT_PROMPT_VERSION,
@@ -40,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--prompt-version", default=DEFAULT_PROMPT_VERSION)
     p.add_argument("--prompt-mode", default=DEFAULT_PROMPT_MODE, choices=list(PROMPT_MODE_CHOICES))
     p.add_argument("--instruction", default=DEFAULT_INSTRUCTION)
-    p.add_argument("--max-length", type=int, default=1024)
+    p.add_argument("--max-length", type=int, default=DEFAULT_MAX_LENGTH)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--device", default="auto")
     p.add_argument("--torch-dtype", default="bf16", choices=["bf16", "fp16", "fp32", "auto"])

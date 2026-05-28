@@ -116,6 +116,37 @@ class DirectEvidenceCrossEncoderTest(unittest.TestCase):
         self.assertGreaterEqual(scorer.input_id_dtype_repair_hook_count, 1)
         self.assertEqual(scorer.model.qwen.seen_dtype, torch.long)
 
+    def test_input_id_hook_rejects_empty_sequences(self) -> None:
+        try:
+            import torch
+            from torch import nn
+        except Exception:
+            self.skipTest("torch is not installed")
+
+        class FakeQwenForward(nn.Module):
+            def forward(self, input_ids=None):
+                return input_ids
+
+        class FakeCrossEncoder(nn.Module):
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__()
+                self.qwen = FakeQwenForward()
+
+            def predict(self, payload, *, batch_size: int, show_progress_bar: bool):
+                self.qwen(input_ids=torch.empty((2, 0), dtype=torch.long))
+                return [1.0, 1.0]
+
+        scorer = DirectEvidenceCrossEncoderScorer(cross_encoder_cls=FakeCrossEncoder)
+        with self.assertRaisesRegex(RuntimeError, "became empty"):
+            scorer.score_pairs(
+                [
+                    build_text_only_pair(_event("e1"), _event("e1")["candidates"][0]),
+                    build_text_only_pair(_event("e1"), _event("e1")["candidates"][1]),
+                ],
+                batch_size=2,
+                show_progress_bar=False,
+            )
+
     def test_shard_split_and_merge_cover_events_once(self) -> None:
         rows = [_event(f"e{idx}") for idx in range(7)]
         shards = [

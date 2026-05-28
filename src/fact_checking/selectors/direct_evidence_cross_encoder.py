@@ -23,6 +23,7 @@ DIRECT_CE_SOURCE_DIVERSE_SELECTOR = "direct_ce_light_source_diverse_top5"
 V03_REFERENCE_SELECTOR = "v0_3_1_pointwise_all_features_top5"
 
 DEFAULT_MODEL_NAME = "Qwen/Qwen3-Reranker-8B"
+DEFAULT_MAX_LENGTH = 8192
 DEFAULT_PROMPT_VERSION = "direct_evidence_ce_v0_4a_1"
 PROMPT_MODE_DEFAULT_QUERY = "default_query"
 PROMPT_MODE_DIRECT_EVIDENCE_CUSTOM = "direct_evidence_custom"
@@ -77,7 +78,7 @@ class DirectEvidenceCrossEncoderScorer:
         self,
         *,
         model_name: str = DEFAULT_MODEL_NAME,
-        max_length: int = 1024,
+        max_length: int = DEFAULT_MAX_LENGTH,
         device: str = "auto",
         instruction: str = DEFAULT_INSTRUCTION,
         prompt_mode: str = DEFAULT_PROMPT_MODE,
@@ -148,6 +149,13 @@ class DirectEvidenceCrossEncoderScorer:
                     "the HF Qwen embedding layer as a floating tensor. This is a CrossEncoder/Qwen3 compatibility issue, "
                     "not a selector signal result. v0.4a.1 keeps the CrossEncoder backend only and does not fall back. "
                     f"{hook_note}"
+                ) from exc
+            if _looks_like_empty_sequence_error(exc):
+                raise RuntimeError(
+                    f"sentence_transformers.CrossEncoder predict failed for {self.model_name!r} because the tokenized "
+                    "Qwen3-Reranker input sequence became empty before self-attention. This usually means max_length is "
+                    "too small for the model chat template and prompt. v0.4a.1 defaults MAX_LENGTH to 8192; rerun with "
+                    "MAX_LENGTH=8192 or higher, and prefer PROMPT_MODE=default_query for the first smoke."
                 ) from exc
             raise RuntimeError(
                 f"sentence_transformers.CrossEncoder predict failed for {self.model_name!r}. "
@@ -490,6 +498,12 @@ def _install_input_id_dtype_repair_hooks(cross_encoder: Any) -> int:
             value = fixed_kwargs.get(key)
             if torch.is_tensor(value) and value.dtype not in (torch.long, torch.int32, torch.int64):
                 fixed_kwargs[key] = value.long()
+        input_ids = fixed_kwargs.get("input_ids")
+        if torch.is_tensor(input_ids) and input_ids.ndim >= 2 and int(input_ids.shape[-1]) == 0:
+            raise RuntimeError(
+                "Qwen3-Reranker received an empty token sequence from sentence-transformers preprocessing. "
+                "Increase MAX_LENGTH, reduce prompt length, or try PROMPT_MODE=default_query."
+            )
         return args, fixed_kwargs
 
     for module in cross_encoder.modules():
@@ -537,6 +551,15 @@ def _looks_like_input_id_dtype_error(exc: BaseException) -> bool:
         "Expected tensor for argument #1 'indices'" in message
         and "embedding" in message
         and ("FloatTensor" in message or "HalfTensor" in message or "BFloat16" in message)
+    )
+
+
+def _looks_like_empty_sequence_error(exc: BaseException) -> bool:
+    message = str(exc)
+    return (
+        "cannot reshape tensor of 0 elements" in message
+        or "empty token sequence" in message
+        or "shape [2, 0" in message
     )
 
 
