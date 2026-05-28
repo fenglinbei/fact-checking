@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+NCCL_CUMEM_HOST_ENABLE=0
+
 SPLIT="${SPLIT:-val}"
 INPUT_BUCKET_FILE="${INPUT_BUCKET_FILE:-outputs/selectors/count_amplified_stance_bucket_selector/v0_2_${SPLIT}/candidate_stance_buckets_v02_n7_${SPLIT}.jsonl}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/selectors/direct_evidence_cross_encoder/v0_4a_${SPLIT}}"
-BASE_MODEL="${BASE_MODEL:-Qwen/Qwen3-Reranker-8B}"
+BASE_MODEL="${BASE_MODEL:-/data/models/Qwen3-Reranker-8B}"
 MAX_LENGTH="${MAX_LENGTH:-1024}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
 TORCH_DTYPE="${TORCH_DTYPE:-bf16}"
@@ -54,13 +56,11 @@ if [[ "${RUN_SCORE}" == "1" || "${RUN_SCORE}" == "true" || "${RUN_SCORE}" == "Tr
   for shard in $(seq 0 $((NUM_SHARDS - 1))); do
     if [[ "${MOCK_SCORES}" == "1" || "${MOCK_SCORES}" == "true" || "${MOCK_SCORES}" == "True" ]]; then
       shard_device="auto"
-      visible_devices="${CUDA_DEVICES}"
     else
-      shard_device="cuda"
-      visible_devices="${DEVICE_LIST[$shard]}"
+      shard_device="cuda:${shard}"
     fi
-    echo "[direct-ce-v0.4a] launch shard=${shard}/${NUM_SHARDS} CUDA_VISIBLE_DEVICES=${visible_devices}"
-    CUDA_VISIBLE_DEVICES="${visible_devices}" PYTHONPATH=src python scripts/phase5_selectors/eval/score_direct_evidence_cross_encoder_v0_4a.py \
+    echo "[direct-ce-v0.4a] launch shard=${shard}/${NUM_SHARDS} device=${shard_device}"
+    PYTHONPATH=src python scripts/phase5_selectors/eval/score_direct_evidence_cross_encoder_v0_4a.py \
       --candidate-stance-buckets "${INPUT_BUCKET_FILE}" \
       --output-dir "${OUTPUT_DIR}" \
       --split "${SPLIT}" \
