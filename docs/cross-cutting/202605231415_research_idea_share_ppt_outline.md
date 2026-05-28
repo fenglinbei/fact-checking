@@ -65,7 +65,7 @@
 
 ### 2.1 早期探索定位
 
-早期探索从原始 evidence label 的直接使用开始。系统使用原始 oracle 数据集中的 `is_evidence` 句子级 label，从标注句子中取 top5 微调 LLM verifier，但效果不理想。该阶段说明：人工 evidence relevance label 与当前 verifier 所需的 evidence utility 之间存在差异。
+早期探索从原始 evidence label 的直接使用开始。系统使用 LIAR-RAW `reports[].tokenized[].is_evidence=1` 句子级 label，从标注句子中取 top5 微调 LLM verifier，但实验效果不理想。无论按 hybrid_score 重新排序，还是保留原始 report / sentence order，test Macro-F1 都低于 fixed-MMR baseline。该阶段说明：人工 evidence relevance label 与当前 verifier 所需的 evidence utility 之间存在差异。
 
 ModernBERT 分类器属于同期的轻量验证实验，发生在学校服务器停机期间。该实验可以作为判别式路径的辅助背景，但不构成后续研究主线的关键因果节点。
 
@@ -90,7 +90,17 @@ PPT 主线应按以下逻辑展开：
 
 ### 2.3 可量化材料状态
 
-早期 `is_evidence top5 -> LLM verifier` 阶段适合作为研究背景写入 PPT。当前 `docs/analysis/202605201437_experiment_progress_timeline.md` 对该阶段记录不充分；如需展示具体数值，需要补充对应 run 路径或实验表。
+早期 `is_evidence top5 -> LLM verifier` 阶段适合作为研究背景写入 PPT。它的作用不是证明某个具体模型失败，而是给出负向对照：gold relevance label 不能直接替代 verifier utility。
+
+| 方法 | 来源 / 设置 | LIAR-RAW Acc | LIAR-RAW Macro-P | LIAR-RAW Macro-R | LIAR-RAW Macro-F1 | PPT 用法 |
+|---|---|---:|---:|---:|---:|---|
+| L-Defense | 文献对照 | - | 30.55 | 32.20 | 30.53 | 外部参照 |
+| G-Defense | 文献对照 | - | 33.09 | 31.55 | 31.55 | 外部参照 |
+| fixed-MMR baseline | `lambda=0.7, top_k=5` | 27.02 | 28.13 | 28.44 | 27.69 | 本项目固定对照 |
+| raw `is_evidence` + hybrid | 标注 evidence 句子按 hybrid_score 排序 | 25.74 | 27.44 | 24.49 | 23.51 | 负向对照 |
+| raw `is_evidence` + original order | 标注 evidence 句子保留原始顺序 | 25.42 | 29.95 | 24.72 | 22.71 | 负向对照 |
+
+表中 L-Defense / G-Defense 数值来自周报中的 LIAR-RAW P/R/F1；本项目三行使用 test inference 的 accuracy 与 macro P/R/F1。raw `is_evidence` 两种排序均低于 fixed-MMR，说明“标出来的 evidence”并不自动等于“对当前 verifier 有用的 evidence set”。
 
 ## 3. 总体叙事弧
 
@@ -129,7 +139,7 @@ Takeaway:   研究推进的关键是不断重定义监督信号
 |---|---|---|---|---|---|
 | 1 | 从 Evidence 到 Selector | 这场分享讲什么？ | 事实核查不是单纯分类，而是 evidence selection + verifier 的耦合问题。 | 标题页，claim/evidence/verdict 三元素。 | 本文叙事定位 |
 | 2 | 一个看似简单的问题 | 模型错了，到底错在哪里？ | 提出核心问题：verifier 不会判，还是 evidence 没选对？ | 二分问题图：Verifier vs Evidence。 | 本文主线 |
-| 3 | 起点：Gold Evidence 并不自动好用 | 为什么没有直接沿用数据集证据标签？ | 使用原始 `is_evidence` 句子级 label，取 top5 微调 LLM verifier，效果不理想。强调这是研究动机，不是最终指标页。 | “Gold label -> top5 -> LLM verifier -> weak result”的流程图。 | 早期实验背景，指标待补 |
+| 3 | 起点：Gold Evidence 并不自动好用 | 为什么没有直接沿用数据集证据标签？ | 使用原始 `is_evidence` 句子级 label，取 top5 微调 LLM verifier。两种排序方式 test Macro-F1 均低于 fixed-MMR baseline，说明 gold relevance label 不能直接替代 verifier utility。强调这是研究动机，不是最终指标页。 | “Gold label -> top5 -> LLM verifier -> weak result”的流程图 + 五行指标表。 | 实验进度文档，周报 |
 | 4 | 第一轮反思：Evidence Relevance 不等于 Verifier Utility | 为什么人工证据标签未必够？ | `is_evidence` 更像 relevance / support 标注，但 verifier 需要的是能让 label decision 更稳的 evidence set。 | 两列对比：relevance label vs utility signal。 | `docs/analysis/202605200216_selector_experiment_plan_and_literature_review.md` |
 | 5 | RAG 在这里是什么意思 | 为什么要补 RAG？ | 不是泛泛介绍 RAG，而是说明：先从 report 中取证据，再让 verifier 只基于这些证据判断。R 是 evidence retrieval，G/verifier 是 label decision。 | `claim + report -> retrieval -> evidence -> verifier -> label`。 | `docs/analysis/202605201437_experiment_progress_timeline.md` |
 | 6 | 相似度检索与有效证据的错位 | fact-checking 的检索目标有什么特殊性？ | 普通 RAG 的检索口径主要是 evidence 与 claim 的相似度；fact-checking 的目标是 evidence 是否能提供有效证明、反驳或限定信息。因此 RAG 检索只能做初筛，后续需要特殊方法建模 claim-evidence utility 交互。 | 两列对比：similarity retrieval vs evidence utility。 | 本文研究动机，`docs/analysis/202605161449_oracle_set_gap_analysis.md` |
@@ -137,7 +147,7 @@ Takeaway:   研究推进的关键是不断重定义监督信号
 | 8 | lambda 是 MMR 的旋钮 | lambda 控制什么？ | 高 lambda 偏相关性，低 lambda 偏多样性；lambda=1 类似纯相关 top-k，lambda=0 更偏去冗余。 | lambda slider：diversity <- -> relevance。 | `docs/implementation/202605111255_mmr-lambda-sweep-pipeline.md` |
 | 9 | 轻量插曲：ModernBERT 分类器 | ModernBERT 在故事中放哪里？ | 服务器停机时做的轻量判别式验证。可以说明“单独换分类器没有打开局面”，但不把它作为主因证据。 | 小号 side note，不做主转折页。 | `docs/analysis/202605111212_classifier-collapse-analysis.md` |
 | 10 | 检索器：Dense 主导，词面信号兜底 | R 具体怎么做？ | BGE dense score 0.70，lexical overlap 0.20，BM25 0.10；句子/chunk 编码，hybrid score 排序。 | 三路分数融合图。 | `docs/implementation/202605111255_mmr-lambda-sweep-pipeline.md` |
-| 11 | Baseline 的意义：不是弱起点 | 为什么后续都要和 fixed-MMR 比？ | fixed lambda=0.7 是强 baseline。当前叙事口径：仅用 MMR 检索证据，性能已接近 L-defense / G-defense 量级；正式展示建议补入基线表。 | 大字报：fixed-MMR = strong baseline。 | `docs/analysis/202605151453_RL_MMR_direction_summary.md`，基线指标待补 |
+| 11 | Baseline 的意义：不是弱起点 | 为什么后续都要和 fixed-MMR 比？ | fixed lambda=0.7 是强 baseline。它的 test Macro-F1 为 27.69，和 L-Defense / G-Defense 的 30.53 / 31.55 保持同一量级，因此可以作为后续 raw evidence 与 selector 实验的固定对照。 | 大字报：fixed-MMR = strong baseline。 | `docs/analysis/202605151453_RL_MMR_direction_summary.md`，周报对照表 |
 | 12 | 于是问题变成：lambda 能不能自适应？ | 为什么从 lambda 开始？ | 如果不同 claim 需要不同相关性/多样性权衡，那么 lambda 应该可以变成 claim-adaptive policy。 | claim 简单/复杂两个例子。 | `docs/analysis/202605141045_RL_MMR_research_review.md` |
 | 13 | 第一组实验：k sweep / fixed-lambda / oracle-lambda | lambda 方向有没有理论价值？ | fixed lambda 建 baseline；oracle lambda 比 fixed 约 +3pp，说明 adaptive lambda 有上界但不大。 | 小表：fixed vs oracle lambda。 | `docs/learned_lambda/202605141045_verification_experiment.md`，timeline |
 | 14 | Learned-lambda 为什么失败 | 为什么不继续堆模型预测 lambda？ | predictor 近似均值预测；R2 约 0.01；72.6% 样本最优与次优 lambda margin < 0.05；oracle lambda 是不稳定 hard label。 | 大数字：R2~0.01，72.6%。 | `docs/learned_lambda/202605141052_analysis.md` |
@@ -177,6 +187,8 @@ Takeaway:   研究推进的关键是不断重定义监督信号
 
 ```text
 研究起点不是直接设计复杂 selector，而是先尝试使用数据集中标好的 evidence 句子。该路径效果不理想，暴露出一个关键问题：数据集里标注为 evidence 的句子，不一定就是对当前 LLM verifier 最有用的 evidence set。
+
+实验对照显示，直接使用 raw `is_evidence` 的两种排序方式都低于 fixed-MMR baseline。结论不是“gold evidence 没价值”，而是“人工 relevance label 与 verifier utility target 不一致”。
 ```
 
 表达边界：
@@ -412,8 +424,6 @@ Selector 实验不是简单失败。Pairwise 和 listwise 说明：单候选相�
 
 ## 10. 后续生成 PPT 时的 TODO
 
-1. 补齐早期 `is_evidence top5 -> LLM verifier` 的具体 run 路径和指标。如果找不到，PPT 中只作为研究背景，不放具体数字。
-2. 补齐与 L-defense / G-defense 的对照表来源。如果使用“接近”这一表述，应放出具体指标或改成“达到同量级竞争性 baseline”。
-3. 按 45 分钟版本制作时，建议主 deck 为 28 页：22 页主线 + 6 页展开页；额外技术细节放 backup。
-4. 决定 PPT 风格：建议 Swiss Style，便于承载指标和路线图。
-5. 若生成网页 PPT，优先做第 5、7、10、17、19、21 页的图示资产；45 分钟版还要补 Top-k failure 和 selector metrics 分层图。
+1. 按 45 分钟版本制作时，建议主 deck 为 28 页：22 页主线 + 6 页展开页；额外技术细节放 backup。
+2. 决定 PPT 风格：建议 Swiss Style，便于承载指标和路线图。
+3. 若生成网页 PPT，优先做第 5、7、10、17、19、21 页的图示资产；45 分钟版还要补 Top-k failure 和 selector metrics 分层图。
