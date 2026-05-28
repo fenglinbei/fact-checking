@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ PROMPT_MODE_DIRECT_EVIDENCE_CUSTOM = "direct_evidence_custom"
 PROMPT_MODE_CHOICES = (PROMPT_MODE_DEFAULT_QUERY, PROMPT_MODE_DIRECT_EVIDENCE_CUSTOM)
 DEFAULT_PROMPT_MODE = PROMPT_MODE_DIRECT_EVIDENCE_CUSTOM
 DEFAULT_SCORE_NORMALIZATION = "sigmoid_if_out_of_range"
+DEFAULT_COERCE_INPUT_IDS_LONG = True
 DEFAULT_INSTRUCTION = (
     "Given a fact-checking claim, score whether the evidence directly verifies or refutes the claim. "
     "Prefer passages that state the claim's key entities, quantities, dates, comparisons, causes, or outcomes. "
@@ -79,6 +81,8 @@ class DirectEvidenceCrossEncoderScorer:
         device: str = "auto",
         instruction: str = DEFAULT_INSTRUCTION,
         prompt_mode: str = DEFAULT_PROMPT_MODE,
+        torch_dtype: str = "auto",
+        coerce_input_ids_long: bool = DEFAULT_COERCE_INPUT_IDS_LONG,
         cross_encoder_cls: Any | None = None,
     ) -> None:
         self.model_name = str(model_name)
@@ -86,6 +90,9 @@ class DirectEvidenceCrossEncoderScorer:
         self.device = str(device)
         self.instruction = str(instruction)
         self.prompt_mode = str(prompt_mode)
+        self.torch_dtype = str(torch_dtype)
+        self.coerce_input_ids_long = bool(coerce_input_ids_long)
+        self.input_id_dtype_repair_hook_count = 0
         if self.prompt_mode not in PROMPT_MODE_CHOICES:
             raise ValueError(f"Unknown prompt_mode={prompt_mode!r}; expected one of {list(PROMPT_MODE_CHOICES)}")
         if cross_encoder_cls is None:
@@ -97,6 +104,9 @@ class DirectEvidenceCrossEncoderScorer:
                     "Install sentence-transformers on the target server; no transformers fallback is provided."
                 ) from exc
         kwargs: dict[str, Any] = {"max_length": int(max_length)}
+        model_kwargs = _cross_encoder_model_kwargs(self.torch_dtype)
+        if model_kwargs:
+            kwargs["model_kwargs"] = model_kwargs
         if self.prompt_mode == PROMPT_MODE_DIRECT_EVIDENCE_CUSTOM:
             kwargs["prompts"] = {"direct_evidence": str(instruction)}
             kwargs["default_prompt_name"] = "direct_evidence"
@@ -109,6 +119,8 @@ class DirectEvidenceCrossEncoderScorer:
                 f"Failed to load {model_name!r} through sentence_transformers.CrossEncoder. "
                 "v0.4a intentionally has no fallback backend."
             ) from exc
+        if self.coerce_input_ids_long:
+            self.input_id_dtype_repair_hook_count = _install_input_id_dtype_repair_hooks(self.model)
 
     def score_pairs(
         self,
@@ -125,6 +137,18 @@ class DirectEvidenceCrossEncoderScorer:
                 show_progress_bar=bool(show_progress_bar),
             )
         except Exception as exc:
+            if _looks_like_input_id_dtype_error(exc):
+                hook_note = (
+                    f"input_id_dtype_repair_hooks={self.input_id_dtype_repair_hook_count}. "
+                    "If this is 0, the installed sentence-transformers object did not expose torch modules "
+                    "with an input_ids forward signature; upgrade sentence-transformers to a Qwen3-Reranker compatible release."
+                )
+                raise RuntimeError(
+                    f"sentence_transformers.CrossEncoder predict failed for {self.model_name!r} because input_ids reached "
+                    "the HF Qwen embedding layer as a floating tensor. This is a CrossEncoder/Qwen3 compatibility issue, "
+                    "not a selector signal result. v0.4a.1 keeps the CrossEncoder backend only and does not fall back. "
+                    f"{hook_note}"
+                ) from exc
             raise RuntimeError(
                 f"sentence_transformers.CrossEncoder predict failed for {self.model_name!r}. "
                 "v0.4a intentionally has no fallback backend."
@@ -447,6 +471,73 @@ def high_retrieval_non_oracle_false_positive_rate(scored_rows: Sequence[dict[str
         "rate_score_ge_0_5": float(np.mean([1.0 if _safe_float(candidate.get("direct_ce_score"), 0.0) >= 0.5 else 0.0 for candidate in high_retrieval])),
         "mean_score": _mean(_safe_float(candidate.get("direct_ce_score"), 0.0) for candidate in high_retrieval),
     }
+
+
+def _install_input_id_dtype_repair_hooks(cross_encoder: Any) -> int:
+    """Keep CrossEncoder path, but repair bad index dtypes before HF embedding lookup."""
+    try:
+        import torch
+        from torch import nn
+    except Exception:  # pragma: no cover - torch is present on target scoring machines
+        return 0
+    if not isinstance(cross_encoder, nn.Module):
+        return 0
+    count = 0
+
+    def hook(_module: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]]:
+        fixed_kwargs = dict(kwargs)
+        for key in ("input_ids", "decoder_input_ids", "position_ids", "token_type_ids", "cache_position"):
+            value = fixed_kwargs.get(key)
+            if torch.is_tensor(value) and value.dtype not in (torch.long, torch.int32, torch.int64):
+                fixed_kwargs[key] = value.long()
+        return args, fixed_kwargs
+
+    for module in cross_encoder.modules():
+        forward = getattr(module, "forward", None)
+        if forward is None:
+            continue
+        try:
+            params = set(inspect.signature(forward).parameters)
+        except (TypeError, ValueError):
+            continue
+        if "input_ids" not in params:
+            continue
+        try:
+            module.register_forward_pre_hook(hook, with_kwargs=True)
+        except TypeError:
+            continue
+        count += 1
+    return count
+
+
+def _cross_encoder_model_kwargs(torch_dtype_name: str) -> dict[str, Any]:
+    dtype_name = str(torch_dtype_name or "auto").lower()
+    if dtype_name == "auto":
+        return {"torch_dtype": "auto"}
+    try:
+        import torch
+    except Exception as exc:  # pragma: no cover - target env has torch for real scoring
+        raise RuntimeError(f"torch_dtype={torch_dtype_name!r} was requested but torch is unavailable.") from exc
+    mapping = {
+        "bf16": torch.bfloat16,
+        "bfloat16": torch.bfloat16,
+        "fp16": torch.float16,
+        "float16": torch.float16,
+        "fp32": torch.float32,
+        "float32": torch.float32,
+    }
+    if dtype_name not in mapping:
+        raise ValueError(f"Unsupported torch_dtype={torch_dtype_name!r}; expected auto/bf16/fp16/fp32")
+    return {"torch_dtype": mapping[dtype_name]}
+
+
+def _looks_like_input_id_dtype_error(exc: BaseException) -> bool:
+    message = str(exc)
+    return (
+        "Expected tensor for argument #1 'indices'" in message
+        and "embedding" in message
+        and ("FloatTensor" in message or "HalfTensor" in message or "BFloat16" in message)
+    )
 
 
 def canary_pairs(*, prompt_version: str = DEFAULT_PROMPT_VERSION) -> list[DirectEvidencePair]:

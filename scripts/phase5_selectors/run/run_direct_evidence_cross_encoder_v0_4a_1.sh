@@ -23,6 +23,7 @@ RUN_SCORE="${RUN_SCORE:-1}"
 RUN_EVAL="${RUN_EVAL:-1}"
 SKIP_CANARY_CHECK="${SKIP_CANARY_CHECK:-0}"
 SKIP_SCORE_SANITY_CHECK="${SKIP_SCORE_SANITY_CHECK:-0}"
+DISABLE_INPUT_ID_DTYPE_REPAIR="${DISABLE_INPUT_ID_DTYPE_REPAIR:-0}"
 MIN_SCORE_STD="${MIN_SCORE_STD:-0.0001}"
 MIN_UNIQUE_SCORES="${MIN_UNIQUE_SCORES:-3}"
 MAX_EVENT_ALL_TIE_RATE="${MAX_EVENT_ALL_TIE_RATE:-0.5}"
@@ -53,6 +54,11 @@ if [[ "${SKIP_SCORE_SANITY_CHECK}" == "1" || "${SKIP_SCORE_SANITY_CHECK}" == "tr
   SANITY_ARGS=(--skip-score-sanity-check)
 fi
 
+DTYPE_REPAIR_ARGS=()
+if [[ "${DISABLE_INPUT_ID_DTYPE_REPAIR}" == "1" || "${DISABLE_INPUT_ID_DTYPE_REPAIR}" == "true" || "${DISABLE_INPUT_ID_DTYPE_REPAIR}" == "True" ]]; then
+  DTYPE_REPAIR_ARGS=(--disable-input-id-dtype-repair)
+fi
+
 echo "[direct-ce-v0.4a.1] split       : ${SPLIT}"
 echo "[direct-ce-v0.4a.1] input       : ${INPUT_BUCKET_FILE}"
 echo "[direct-ce-v0.4a.1] output dir  : ${OUTPUT_DIR}"
@@ -62,6 +68,7 @@ echo "[direct-ce-v0.4a.1] shards      : ${NUM_SHARDS}"
 echo "[direct-ce-v0.4a.1] cuda devices: ${CUDA_DEVICES}"
 echo "[direct-ce-v0.4a.1] mock scores : ${MOCK_SCORES}"
 echo "[direct-ce-v0.4a.1] resume      : ${RESUME}"
+echo "[direct-ce-v0.4a.1] dtype repair disabled: ${DISABLE_INPUT_ID_DTYPE_REPAIR}"
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -99,6 +106,7 @@ if [[ "${RUN_SCORE}" == "1" || "${RUN_SCORE}" == "true" || "${RUN_SCORE}" == "Tr
       "${MOCK_ARGS[@]}" \
       "${CANARY_ARGS[@]}" \
       "${SANITY_ARGS[@]}" \
+      "${DTYPE_REPAIR_ARGS[@]}" \
       "${SAMPLE_ARGS[@]}" &
     pids+=("$!")
   done

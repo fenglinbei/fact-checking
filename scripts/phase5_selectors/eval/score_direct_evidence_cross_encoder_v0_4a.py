@@ -52,6 +52,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--merge-shards", action="store_true")
     p.add_argument("--skip-canary-check", action="store_true")
     p.add_argument("--skip-score-sanity-check", action="store_true")
+    p.add_argument("--disable-input-id-dtype-repair", action="store_true")
     p.add_argument("--min-score-std", type=float, default=1e-4)
     p.add_argument("--min-unique-scores", type=int, default=3)
     p.add_argument("--max-event-all-tie-rate", type=float, default=0.5)
@@ -96,6 +97,8 @@ def main() -> None:
             device=str(args.device),
             instruction=str(args.instruction),
             prompt_mode=str(args.prompt_mode),
+            torch_dtype=str(args.torch_dtype),
+            coerce_input_ids_long=not bool(args.disable_input_id_dtype_repair),
         )
         if not bool(args.skip_canary_check):
             canary_scores = scorer.score_pairs(
@@ -151,6 +154,8 @@ def main() -> None:
         "shard_index": int(args.shard_index),
         "skip_canary_check": bool(args.skip_canary_check),
         "skip_score_sanity_check": bool(args.skip_score_sanity_check),
+        "input_id_dtype_repair_enabled": not bool(args.disable_input_id_dtype_repair),
+        "input_id_dtype_repair_hook_count": int(getattr(scorer, "input_id_dtype_repair_hook_count", 0)) if scorer else 0,
         "score_sanity": sanity,
         "canary_sanity": canary_summary,
         "n_reference_events": len(all_rows),

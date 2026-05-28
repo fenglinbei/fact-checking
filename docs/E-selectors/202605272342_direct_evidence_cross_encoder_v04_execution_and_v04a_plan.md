@@ -126,10 +126,24 @@ v0.4a.1 adds:
 
 - `direct_ce_raw_score` plus normalized `direct_ce_score` in scored candidates.
 - `PROMPT_MODE=direct_evidence_custom/default_query` switch.
+- a CrossEncoder-only input-id dtype repair hook for environments where `input_ids` are incorrectly cast to float before the Qwen embedding layer.
 - canary scoring before real rows; obvious positive evidence must score above unrelated evidence.
 - score sanity gate after each shard and merge: global score std, unique score count, and event-level all-tie rate.
 - tie-aware AUPRC; all-tied scores now produce positive-rate AP instead of an inflated value.
 - fresh default output dirs under `v0_4a_1_${SPLIT}_${PROMPT_MODE}` and `RESUME=0`.
+
+Recommended environment check on the remote server:
+
+```bash
+python - <<'PY'
+import sentence_transformers, transformers, torch
+print("sentence_transformers", sentence_transformers.__version__)
+print("transformers", transformers.__version__)
+print("torch", torch.__version__)
+PY
+```
+
+`transformers` should be at least `4.51.0` for Qwen3. If `sentence-transformers` is older than the Qwen3-Reranker integration line, upgrade it before interpreting model quality.
 
 Recommended repair sweep:
 
