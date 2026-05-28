@@ -14,6 +14,7 @@ TEACHER_API_KEY_ENV="${TEACHER_API_KEY_ENV:-DEEPSEEK_API_KEY}"
 CONCURRENCY="${CONCURRENCY:-4}"
 REQUESTS_PER_MINUTE="${REQUESTS_PER_MINUTE:-60}"
 MAX_TOKENS="${MAX_TOKENS:-2048}"
+THINKING_TYPE="${THINKING_TYPE:-disabled}"
 SAMPLE_LIMIT="${SAMPLE_LIMIT:-}"
 CASE_IDS="${CASE_IDS:-}"
 BUILD_VERIFIER_DATA="${BUILD_VERIFIER_DATA:-true}"
@@ -73,6 +74,7 @@ if [[ "${RUN_TEACHER}" == "true" ]]; then
     --concurrency "${CONCURRENCY}" \
     --requests-per-minute "${REQUESTS_PER_MINUTE}" \
     --max-tokens "${MAX_TOKENS}" \
+    --thinking-type "${THINKING_TYPE}" \
     "${SAMPLE_ARGS[@]}"
 elif [[ "${MOCK_EVIDENCE_MAPS}" == "true" || "${MOCK_EVIDENCE_MAPS}" == "1" ]]; then
   PYTHONPATH=src python scripts/phase5_selectors/build/annotate_evidence_maps_deepseek.py \
@@ -80,6 +82,7 @@ elif [[ "${MOCK_EVIDENCE_MAPS}" == "true" || "${MOCK_EVIDENCE_MAPS}" == "1" ]]; 
     --output-dir "${OUTPUT_DIR}" \
     --split "${SPLIT}" \
     --model "mock-evidence-map" \
+    --thinking-type "${THINKING_TYPE}" \
     --mock-maps \
     "${SAMPLE_ARGS[@]}"
 elif [[ ! -s "${ANNOTATIONS}" ]]; then

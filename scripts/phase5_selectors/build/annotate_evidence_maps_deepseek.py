@@ -58,6 +58,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--api-key-env", default=os.environ.get("TEACHER_API_KEY_ENV", "DEEPSEEK_API_KEY"))
     p.add_argument("--timeout", type=float, default=120.0)
     p.add_argument("--max-tokens", type=int, default=2048)
+    p.add_argument("--thinking-type", default=os.environ.get("THINKING_TYPE", "disabled"), choices=["disabled", "enabled", "none"])
     p.add_argument("--concurrency", type=int, default=4)
     p.add_argument("--requests-per-minute", type=int, default=60)
     p.add_argument("--max-retries", type=int, default=4)
@@ -122,6 +123,7 @@ def main() -> None:
         "api_key_env": str(args.api_key_env),
         "prompt_version": PROMPT_VERSION,
         "mock_maps": bool(args.mock_maps),
+        "thinking_type": str(args.thinking_type),
         "concurrency": max(int(args.concurrency), 1),
         "requests_per_minute": int(args.requests_per_minute),
         "resume": bool(args.resume),
@@ -188,6 +190,7 @@ def _write_mock_maps(
                             "model": str(args.model),
                             "prompt_version": PROMPT_VERSION,
                             "mock_maps": True,
+                            "thinking_type": str(args.thinking_type),
                             "system_prompt": system_prompt,
                             "user_prompt": user_prompt,
                             "response_content_preview": json.dumps(evidence_map, ensure_ascii=False)[:1000],
@@ -323,6 +326,9 @@ def _chat_completion(*, args: argparse.Namespace, api_key: str | None, system_pr
         "user": "evidence_map_v0_5a",
         "stream": False,
     }
+    thinking_type = str(getattr(args, "thinking_type", "disabled") or "disabled")
+    if thinking_type != "none":
+        payload["thinking"] = {"type": thinking_type}
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -386,6 +392,7 @@ def _raw_row(job: EvidenceMapJob, *, args: argparse.Namespace, system_prompt: st
         "event_id": job.event_id,
         "model": str(args.model),
         "prompt_version": PROMPT_VERSION,
+        "thinking_type": str(args.thinking_type),
         "finish_reason": _finish_reason(response),
         "system_prompt": system_prompt,
         "user_prompt": user_prompt,
