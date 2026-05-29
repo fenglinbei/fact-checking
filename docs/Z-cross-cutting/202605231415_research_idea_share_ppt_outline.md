@@ -160,7 +160,7 @@ Takeaway:   研究推进的关键是不断重定义监督信号
 | 19 | Selector Step1-4：学得到排序，但选不准集合 | 已经试过哪些 selector？ | pairwise/listwise No-Go；sequential pointer 改善 order metrics，但 recall@5 仍约 0.385，full pipeline 提升有限。 | 表：Step1/3/4 指标和 Stop/Go。 | `docs/Z-cross-cutting/202605201437_experiment_progress_timeline.md` |
 | 20 | 下一步：Verifier-aware Utility | 为什么不是继续上更复杂 RL？ | 当前不是 exposure bias 优先，而是 evidence utility 表示不足。VIG / oracle-margin distillation / prefix-level contribution 是更合理下一步。 | 公式：delta_margin = margin(prefix+cand)-margin(prefix)。 | `docs/F-feature-diagnostics/202605221430_oracle_vig_utility_analysis.md` |
 | 21 | 当前路线图：Set-aware Selector | set selector 接下来怎么推进？ | 用 sentence-level oracle candidate pool、order-aware gate 和 verifier-aware utility，把目标从 imitation oracle indices 改成学习 prefix / set-level utility。 | 三阶段路线图：candidate pool -> utility scorer -> ordered top5。 | `docs/E-selectors/202605200216_selector_experiment_plan_and_literature_review.md` |
-| 22 | 方法论 Takeaways | 听众需要带走什么？ | 先建强 baseline；用 oracle 上界判断空间；用 Stop/Go 管理路线；失败实验要收敛问题定义。 | 四条 takeaways。 | 本文综合 |
+| 22 | 方法论 Takeaways | 听众需要带走什么？ | 先建强 baseline；用 oracle 上界判断空间；用 Stop/Go 管理路线；失败实验要收敛问题定义。给几个大概有用的大方向，推荐方法/工具（AI/生图/工具链/看文献） | 四条 takeaways。 | 本文综合 |
 
 ### 4.3 45 分钟建议增加的 6 页展开页
 

@@ -27,6 +27,12 @@ from fact_checking.selectors.llm_action import (
     SCORE_MODE_CONTINUATION,
 )
 from fact_checking.selectors.llm_action_eval import (
+    AGGREGATION_MODES,
+    CALIBRATION_MODES,
+    DECODE_STRATEGIES,
+    AGGREGATION_MEAN_ZSCORE,
+    CALIBRATION_MODE_NONE,
+    DECODE_STRATEGY_RAW,
     evaluate_llm_action_selection,
     selection_history_record,
     write_selection_eval_outputs,
@@ -75,6 +81,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--action-label-mode", default=None, choices=sorted(ACTION_LABEL_MODES))
     p.add_argument("--candidate-order-mode", default=CANDIDATE_ORDER_CANDIDATE_POOL, choices=sorted(CANDIDATE_ORDER_MODES))
     p.add_argument("--candidate-order-seed", type=int, default=20260524)
+    p.add_argument("--decode-strategy", default=DECODE_STRATEGY_RAW, choices=sorted(DECODE_STRATEGIES))
+    p.add_argument("--num-permutations", type=int, default=1)
+    p.add_argument("--permutation-seed", type=int, default=20260524)
+    p.add_argument("--permutation-include-base-order", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--aggregation", default=AGGREGATION_MEAN_ZSCORE, choices=sorted(AGGREGATION_MODES))
+    p.add_argument("--calibration-mode", default=CALIBRATION_MODE_NONE, choices=sorted(CALIBRATION_MODES))
+    p.add_argument("--calibration-alpha", type=float, default=0.0)
     return p.parse_args()
 
 
@@ -136,6 +149,13 @@ def main() -> None:
         action_label_mode=action_label_mode,
         candidate_order_mode=str(args.candidate_order_mode),
         candidate_order_seed=int(args.candidate_order_seed),
+        decode_strategy=str(args.decode_strategy),
+        num_permutations=int(args.num_permutations),
+        permutation_seed=int(args.permutation_seed),
+        permutation_include_base_order=bool(args.permutation_include_base_order),
+        aggregation=str(args.aggregation),
+        calibration_mode=str(args.calibration_mode),
+        calibration_alpha=float(args.calibration_alpha),
         disable_progress=bool(args.no_progress),
     )
     selector_metrics = result["metrics"]["selector"]
@@ -178,13 +198,14 @@ def main() -> None:
     if logger is not None:
         logger.info(
             "Finished selection eval n_claims=%d top_k=%d score_mode=%s action_label_mode=%s "
-            "candidate_order_mode=%s elapsed_seconds=%.3f claims_per_second=%.6f "
+            "candidate_order_mode=%s decode_strategy=%s elapsed_seconds=%.3f claims_per_second=%.6f "
             "estimated_forward_steps=%d output_dir=%s",
             int(metrics.get("n_claims", 0)),
             int(metrics.get("top_k", 0)),
             str(metrics.get("score_mode")),
             str(metrics.get("action_label_mode")),
             str(metrics.get("candidate_order_mode")),
+            str(metrics.get("decode_strategy")),
             float(metrics.get("elapsed_seconds", 0.0)),
             float(metrics.get("claims_per_second", 0.0)),
             int(metrics.get("estimated_forward_steps", 0)),

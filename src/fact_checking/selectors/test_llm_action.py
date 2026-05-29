@@ -20,9 +20,16 @@ from fact_checking.selectors.llm_action import (
     softmax_deltas,
     utility_target_from_choices,
 )
-from fact_checking.selectors.llm_action_eval import evaluate_llm_action_selection
+from fact_checking.selectors.llm_action_eval import (
+    AGGREGATION_BORDA,
+    AGGREGATION_MEAN_ZSCORE,
+    DECODE_STRATEGY_PERMUTATION,
+    aggregate_candidate_choice_scores,
+    evaluate_llm_action_selection,
+    rollout_llm_action_example,
+)
 from fact_checking.selectors.stage2_oracle import Stage2OracleExample
-from scripts.selectors.train.train_llm_action_selector import METRIC_SUMS_SIZE, _batch_loss, _parts_to_sums
+from scripts.phase5_selectors.train.train_llm_action_selector import METRIC_SUMS_SIZE, _batch_loss, _parts_to_sums
 
 
 class LLMActionSelectorTest(unittest.TestCase):
@@ -540,6 +547,133 @@ class LLMActionSelectorTest(unittest.TestCase):
         self.assertEqual(result["traces"][0]["selector_ordered_indices"], [2])
         self.assertEqual(result["traces"][0]["per_step_action_scores"][0]["selected_action"], "C")
 
+    def test_raw_decode_matches_existing_rollout_default(self) -> None:
+        kwargs = dict(
+            device=torch.device("cpu"),
+            top_k=2,
+            max_length=16,
+            score_mode="action_token",
+            choice_batch_size=8,
+            max_candidate_chars=80,
+            include_retrieval_scores=True,
+            action_label_mode="local_choice",
+            candidate_order_mode="candidate_pool",
+        )
+
+        raw = rollout_llm_action_example(
+            _FakeChoiceModel(vocab_size=8, preferred_action_id=3),
+            _FakeTokenizer(),
+            _example(),
+            **kwargs,
+        )
+        explicit = rollout_llm_action_example(
+            _FakeChoiceModel(vocab_size=8, preferred_action_id=3),
+            _FakeTokenizer(),
+            _example(),
+            decode_strategy="raw",
+            **kwargs,
+        )
+
+        self.assertEqual(raw["ordered_indices"], explicit["ordered_indices"])
+        self.assertEqual(raw["per_step_action_scores"], explicit["per_step_action_scores"])
+
+    def test_permutation_decode_maps_local_labels_back_to_candidate_idx(self) -> None:
+        result = evaluate_llm_action_selection(
+            _FakeChoiceModel(vocab_size=8, preferred_action_id=3),
+            _FakeTokenizer(),
+            [_example()],
+            device=torch.device("cpu"),
+            split="val",
+            top_k=1,
+            max_length=16,
+            score_mode="action_token",
+            choice_batch_size=8,
+            max_candidate_chars=80,
+            include_retrieval_scores=True,
+            action_label_mode="local_choice",
+            candidate_order_mode="candidate_pool",
+            decode_strategy=DECODE_STRATEGY_PERMUTATION,
+            num_permutations=3,
+            permutation_seed=5,
+            disable_progress=True,
+        )
+
+        step = result["traces"][0]["per_step_action_scores"][0]
+        self.assertEqual(step["num_permutations"], 3)
+        self.assertTrue(any(len(row["labels_seen"]) > 1 for row in step["choice_scores"]))
+        self.assertCountEqual([row["candidate_idx"] for row in step["choice_scores"]], [0, 1, 2])
+
+    def test_aggregate_candidate_choice_scores_applies_calibrated_scores(self) -> None:
+        rows = aggregate_candidate_choice_scores(
+            [
+                {
+                    "permutation_index": 0,
+                    "candidate_idx": 0,
+                    "action": "A",
+                    "raw_score": 5.0,
+                    "calibrated_score": 1.0,
+                    "selection_score": 1.0,
+                },
+                {
+                    "permutation_index": 0,
+                    "candidate_idx": 1,
+                    "action": "B",
+                    "raw_score": 3.0,
+                    "calibrated_score": 2.0,
+                    "selection_score": 2.0,
+                },
+            ],
+            aggregation="mean_score",
+        )
+
+        by_idx = {row["candidate_idx"]: row for row in rows}
+        self.assertEqual(by_idx[0]["mean_calibrated_score"], 1.0)
+        self.assertEqual(by_idx[1]["mean_calibrated_score"], 2.0)
+        self.assertGreater(by_idx[1]["aggregate_score"], by_idx[0]["aggregate_score"])
+
+    def test_calibrated_decode_subtracts_content_free_label_bias(self) -> None:
+        result = rollout_llm_action_example(
+            _PromptAwareChoiceModel(vocab_size=8),
+            _PromptAwareTokenizer(),
+            _example(),
+            device=torch.device("cpu"),
+            top_k=1,
+            max_length=16,
+            score_mode="action_token",
+            choice_batch_size=8,
+            max_candidate_chars=80,
+            include_retrieval_scores=False,
+            action_label_mode="local_choice",
+            candidate_order_mode="candidate_pool",
+            decode_strategy="calibrated",
+            calibration_mode="content_free_width",
+            calibration_alpha=1.0,
+            aggregation="mean_score",
+        )
+
+        self.assertEqual(result["ordered_indices"], [1])
+        by_idx = {
+            row["candidate_idx"]: row
+            for row in result["per_step_action_scores"][0]["choice_scores"]
+        }
+        self.assertEqual(by_idx[0]["mean_raw_score"], 3.0)
+        self.assertEqual(by_idx[0]["mean_calibrated_score"], 1.0)
+        self.assertEqual(by_idx[1]["mean_calibrated_score"], 2.0)
+
+    def test_mean_zscore_single_permutation_preserves_order_and_borda_is_deterministic(self) -> None:
+        records = [
+            {"permutation_index": 0, "candidate_idx": 0, "action": "A", "raw_score": 1.0, "calibrated_score": 1.0, "selection_score": 1.0},
+            {"permutation_index": 0, "candidate_idx": 1, "action": "B", "raw_score": 3.0, "calibrated_score": 3.0, "selection_score": 3.0},
+            {"permutation_index": 0, "candidate_idx": 2, "action": "C", "raw_score": 2.0, "calibrated_score": 2.0, "selection_score": 2.0},
+        ]
+
+        z_rows = aggregate_candidate_choice_scores(records, aggregation=AGGREGATION_MEAN_ZSCORE)
+        borda_first = aggregate_candidate_choice_scores(records, aggregation=AGGREGATION_BORDA)
+        borda_second = aggregate_candidate_choice_scores(list(reversed(records)), aggregation=AGGREGATION_BORDA)
+
+        self.assertEqual(max(z_rows, key=lambda row: row["aggregate_score"])["candidate_idx"], 1)
+        self.assertEqual(borda_first, borda_second)
+
 
 def _example() -> Stage2OracleExample:
     candidates = [
@@ -662,6 +796,36 @@ class _FakeChoiceModel(torch.nn.Module):
         logits[:, 1, self.preferred_action_id] = 8.0
         if input_ids.shape[1] > 2:
             logits[:, 2, 1] = 8.0
+        return type("FakeOutput", (), {"logits": logits})()
+
+
+class _PromptAwareTokenizer(_FakeTokenizer):
+    def __call__(self, text: str, **_: object) -> dict[str, list[int]]:
+        if "[claim omitted]" in text:
+            return {"input_ids": [6, 6]}
+        return super().__call__(text, **_)
+
+
+class _PromptAwareChoiceModel(torch.nn.Module):
+    def __init__(self, *, vocab_size: int) -> None:
+        super().__init__()
+        self.vocab_size = int(vocab_size)
+
+    def forward(
+        self,
+        *,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        use_cache: bool,
+    ) -> object:
+        del attention_mask, use_cache
+        logits = torch.zeros((*input_ids.shape, self.vocab_size), dtype=torch.float32)
+        for row in range(input_ids.shape[0]):
+            if int(input_ids[row, 0].item()) == 6:
+                logits[row, -1, 2] = 2.0
+            else:
+                logits[row, -1, 2] = 3.0
+                logits[row, -1, 3] = 2.0
         return type("FakeOutput", (), {"logits": logits})()
 
 
