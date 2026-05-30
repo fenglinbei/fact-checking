@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import math
 import time
 import urllib.error
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from fact_checking.data.constants import LETTER_ORDER
+from fact_checking.data.constants import LABEL2ID, LETTER2LABEL, LETTER_ORDER
 from fact_checking.infer.api import (
     OpenAICompletionsClient,
     _choice_payload_prompt_logprobs,
@@ -34,10 +35,13 @@ class VerifierScoreRequest:
     claim: str = ""
     evidence_set_hash: str = ""
     scored_candidate_keys: list[str] = None
+    metadata: dict[str, Any] = None
 
     def __post_init__(self) -> None:
         if self.scored_candidate_keys is None:
             self.scored_candidate_keys = []
+        if self.metadata is None:
+            self.metadata = {}
 
 
 def build_verifier_scoring_prompts(prompt_row: dict[str, Any], label_prefix: str) -> list[str]:
@@ -79,11 +83,38 @@ def extract_label_logprobs_from_prompt_logprobs_list(
     return label_logprobs
 
 
+def summarize_label_logprobs(label_logprobs: dict[str, float]) -> dict[str, Any]:
+    scores = {letter: float(label_logprobs[letter]) for letter in LETTER_ORDER}
+    ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    pred_letter, top1 = ordered[0]
+    top2 = ordered[1][1] if len(ordered) > 1 else float("-inf")
+    max_logprob = max(scores.values())
+    if math.isfinite(max_logprob):
+        exp_scores = [math.exp(value - max_logprob) for value in scores.values()]
+        denom = sum(exp_scores)
+        probs = [value / denom for value in exp_scores] if denom > 0.0 else []
+    else:
+        probs = [1.0 / len(scores) for _ in scores]
+    entropy = -sum(prob * math.log(max(prob, 1.0e-12)) for prob in probs)
+    return {
+        "label_logprobs": scores,
+        "pred_letter": pred_letter,
+        "pred_label": LETTER2LABEL[pred_letter],
+        "top1_logprob": float(top1),
+        "top2_logprob": float(top2),
+        "pred_margin": float(top1 - top2),
+        "entropy": float(entropy),
+        "entropy_neg": float(-entropy),
+    }
+
+
 def compute_score_from_logprobs(
     label_logprobs: dict[str, float], gold_label: str
 ) -> dict[str, Any]:
-    margin = score_margin(label_logprobs, gold_label)
-    return {"label_logprobs": label_logprobs, **margin}
+    summary = summarize_label_logprobs(label_logprobs)
+    if str(gold_label).strip().lower() in LABEL2ID:
+        summary.update(score_margin(label_logprobs, gold_label))
+    return summary
 
 
 class BaseVerifierScorer(ABC):
