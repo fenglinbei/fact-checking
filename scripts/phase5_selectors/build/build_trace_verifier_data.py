@@ -21,6 +21,9 @@ from omegaconf import OmegaConf
 from tqdm.auto import tqdm
 
 from fact_checking.build.candidates import _build_training_row, _load_prompt_tokenizer
+
+load_prompt_tokenizer = _load_prompt_tokenizer
+build_training_row = _build_training_row
 from fact_checking.config import save_yaml
 from fact_checking.data.io import load_split
 from fact_checking.selectors.metrics import ordered_selection_metrics, summarize_ordered_selection
