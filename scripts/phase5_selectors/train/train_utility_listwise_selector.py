@@ -18,6 +18,7 @@ from fact_checking.selectors.listwise import (
     FEATURE_ABLATION_CHOICES,
     LISTWISE_HEAD_FILENAME,
     SetAwareListwiseSelectorModel,
+    dropped_numeric_feature_names,
     forward_listwise_groups,
     normalize_feature_ablation,
 )
@@ -80,13 +81,30 @@ def parse_args() -> argparse.Namespace:
         "--feature-ablation",
         default="none",
         choices=FEATURE_ABLATION_CHOICES,
-        help="Numeric/rank-prior ablation. Use no_rank_prior to zero rank/index features.",
+        help=(
+            "Numeric/rank-prior ablation. Use text_only for strict text-only utility ranking; "
+            "content_features_only keeps only text length and claim-overlap numeric features."
+        ),
     )
     p.add_argument(
         "--use-rank-embedding",
         default="auto",
         choices=["auto", "true", "false", "1", "0", "yes", "no"],
-        help="Whether to add rank embeddings in the set head. auto disables them for no_rank_prior.",
+        help="Whether to add rank embeddings in the set head. auto enables them only for feature_ablation=none.",
+    )
+    encoder_group = p.add_mutually_exclusive_group()
+    encoder_group.add_argument(
+        "--freeze-pair-encoder",
+        dest="freeze_pair_encoder",
+        action="store_true",
+        default=True,
+        help="Freeze the claim-candidate encoder and train only the utility listwise head.",
+    )
+    encoder_group.add_argument(
+        "--unfreeze-pair-encoder",
+        dest="freeze_pair_encoder",
+        action="store_false",
+        help="Fine-tune the claim-candidate encoder together with the utility listwise head.",
     )
     p.add_argument(
         "--shuffle-probability",
@@ -165,8 +183,9 @@ def main() -> None:
         feature_ablation=feature_ablation,
         use_rank_embedding=_optional_bool(args.use_rank_embedding),
     )
-    for param in model.encoder.parameters():
-        param.requires_grad = False
+    if bool(args.freeze_pair_encoder):
+        for param in model.encoder.parameters():
+            param.requires_grad = False
     model.to(device)
     model.float()
 
@@ -483,8 +502,9 @@ def _metadata(
         "chunk_mmr_fingerprint": str(args.expected_chunk_mmr_fingerprint),
         "target_source": "vig_step0_delta_margin",
         "step_filter": 0,
-        "freeze_pair_encoder": True,
+        "freeze_pair_encoder": bool(args.freeze_pair_encoder),
         "feature_ablation": normalize_feature_ablation(args.feature_ablation),
+        "dropped_numeric_feature_names": dropped_numeric_feature_names(args.feature_ablation),
         "use_rank_embedding": str(args.use_rank_embedding),
         "train_candidate_shuffle_probability": float(args.shuffle_probability),
         "top_k": int(args.top_k),
@@ -506,6 +526,7 @@ def _metadata(
             "dropout": float(args.dropout),
             "max_candidates": int(args.max_candidates),
             "feature_ablation": normalize_feature_ablation(args.feature_ablation),
+            "dropped_numeric_feature_names": dropped_numeric_feature_names(args.feature_ablation),
             "use_rank_embedding": _optional_bool(args.use_rank_embedding),
         },
         "losses": {

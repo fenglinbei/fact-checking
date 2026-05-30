@@ -5,8 +5,10 @@ import unittest
 import torch
 
 from fact_checking.selectors.listwise import (
+    FEATURE_ABLATION_CONTENT_FEATURES_ONLY,
     FEATURE_ABLATION_HYBRID_SCORE_ONLY_PRIOR,
     FEATURE_ABLATION_NO_RANK_PRIOR,
+    FEATURE_ABLATION_TEXT_ONLY,
     NUMERIC_FEATURE_NAMES,
     build_numeric_features,
     dropped_numeric_feature_names,
@@ -138,6 +140,73 @@ class ListwiseSelectorTest(unittest.TestCase):
                 "hybrid_rank_norm",
                 "candidate_idx_norm",
             ],
+        )
+
+    def test_text_only_ablation_zeroes_all_numeric_features(self) -> None:
+        features = build_numeric_features(
+            "Claim says 70 percent in 2020.",
+            {
+                "text": "The article says 70 percent in 2020 and compares prior years.",
+                "sent_idx": 4,
+                "source_index": 12,
+            },
+            {
+                "candidate_idx": 3,
+                "hybrid_rank": 2,
+                "dense_score": 0.7,
+                "lexical_score": 0.25,
+                "bm25_score": 2.0,
+                "hybrid_score": 0.9,
+            },
+            idx=3,
+            max_candidates=15,
+            feature_ablation=FEATURE_ABLATION_TEXT_ONLY,
+        )
+
+        self.assertEqual(len(features), len(NUMERIC_FEATURE_NAMES))
+        self.assertTrue(all(value == 0.0 for value in features))
+        self.assertEqual(dropped_numeric_feature_names(FEATURE_ABLATION_TEXT_ONLY), NUMERIC_FEATURE_NAMES)
+
+    def test_content_features_only_keeps_text_overlap_features(self) -> None:
+        raw_candidate = {
+            "text": "The article says 70 percent in 2020 and compares prior years.",
+            "sent_idx": 4,
+            "source_index": 12,
+        }
+        raw_score = {
+            "candidate_idx": 3,
+            "hybrid_rank": 2,
+            "dense_score": 0.7,
+            "lexical_score": 0.25,
+            "bm25_score": 2.0,
+            "hybrid_score": 0.9,
+        }
+        full = build_numeric_features(
+            "Claim says 70 percent in 2020.",
+            raw_candidate,
+            raw_score,
+            idx=3,
+            max_candidates=15,
+        )
+        content_only = build_numeric_features(
+            "Claim says 70 percent in 2020.",
+            raw_candidate,
+            raw_score,
+            idx=3,
+            max_candidates=15,
+            feature_ablation=FEATURE_ABLATION_CONTENT_FEATURES_ONLY,
+        )
+        kept = {"text_token_len_norm", "claim_token_overlap", "number_overlap"}
+
+        self.assertEqual(len(full), len(content_only))
+        for idx, name in enumerate(NUMERIC_FEATURE_NAMES):
+            if name in kept:
+                self.assertEqual(content_only[idx], full[idx])
+            else:
+                self.assertEqual(content_only[idx], 0.0)
+        self.assertEqual(
+            dropped_numeric_feature_names(FEATURE_ABLATION_CONTENT_FEATURES_ONLY),
+            [name for name in NUMERIC_FEATURE_NAMES if name not in kept],
         )
 
 

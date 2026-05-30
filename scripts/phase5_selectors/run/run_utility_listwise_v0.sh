@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PYTHONPATH:-}"
@@ -26,8 +26,10 @@ BCE_WEIGHT="${BCE_WEIGHT:-0.2}"
 SOFT_TAU="${SOFT_TAU:-0.3}"
 POSITIVE_BEST_MARGIN="${POSITIVE_BEST_MARGIN:-0.05}"
 EVAL_EVERY="${EVAL_EVERY:-100}"
+EARLY_STOPPING_METRIC="${EARLY_STOPPING_METRIC:-jaccard@5}"
 FEATURE_ABLATION="${FEATURE_ABLATION:-none}"
 USE_RANK_EMBEDDING="${USE_RANK_EMBEDDING:-auto}"
+FREEZE_PAIR_ENCODER="${FREEZE_PAIR_ENCODER:-true}"
 SHUFFLE_PROBABILITY="${SHUFFLE_PROBABILITY:-0.0}"
 SELECTOR_NAME="${SELECTOR_NAME:-utility_listwise_v0}"
 TRAIN_SAMPLE_LIMIT="${TRAIN_SAMPLE_LIMIT:-}"
@@ -41,10 +43,11 @@ echo "[utility-listwise-v0] train_vig=${TRAIN_VIG_CACHE}"
 echo "[utility-listwise-v0] val_vig=${VAL_VIG_CACHE}"
 echo "[utility-listwise-v0] train_oracle=${TRAIN_ORACLE_RESULTS}"
 echo "[utility-listwise-v0] val_oracle=${VAL_ORACLE_RESULTS}"
-echo "[utility-listwise-v0] frozen_encoder=true"
+echo "[utility-listwise-v0] freeze_pair_encoder=${FREEZE_PAIR_ENCODER}"
 echo "[utility-listwise-v0] feature_ablation=${FEATURE_ABLATION}"
 echo "[utility-listwise-v0] use_rank_embedding=${USE_RANK_EMBEDDING}"
 echo "[utility-listwise-v0] shuffle_probability=${SHUFFLE_PROBABILITY}"
+echo "[utility-listwise-v0] early_stopping_metric=${EARLY_STOPPING_METRIC}"
 
 cmd=(
   python scripts/phase5_selectors/train/train_utility_listwise_selector.py
@@ -65,11 +68,21 @@ cmd=(
   --soft-tau "${SOFT_TAU}"
   --positive-best-margin "${POSITIVE_BEST_MARGIN}"
   --eval-every "${EVAL_EVERY}"
+  --early-stopping-metric "${EARLY_STOPPING_METRIC}"
   --feature-ablation "${FEATURE_ABLATION}"
   --use-rank-embedding "${USE_RANK_EMBEDDING}"
   --shuffle-probability "${SHUFFLE_PROBABILITY}"
   --selector-name "${SELECTOR_NAME}"
 )
+
+if [[ "${FREEZE_PAIR_ENCODER}" == "true" || "${FREEZE_PAIR_ENCODER}" == "1" ]]; then
+  cmd+=(--freeze-pair-encoder)
+elif [[ "${FREEZE_PAIR_ENCODER}" == "false" || "${FREEZE_PAIR_ENCODER}" == "0" ]]; then
+  cmd+=(--unfreeze-pair-encoder)
+else
+  echo "[utility-listwise-v0] invalid FREEZE_PAIR_ENCODER=${FREEZE_PAIR_ENCODER}; use true/false" >&2
+  exit 2
+fi
 
 if [[ -n "${TRAIN_SAMPLE_LIMIT}" ]]; then
   cmd+=(--train-sample-limit "${TRAIN_SAMPLE_LIMIT}")

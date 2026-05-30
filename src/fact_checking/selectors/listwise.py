@@ -40,13 +40,18 @@ NUMERIC_FEATURE_NAMES = [
 FEATURE_ABLATION_NONE = "none"
 FEATURE_ABLATION_NO_RANK_PRIOR = "no_rank_prior"
 FEATURE_ABLATION_HYBRID_SCORE_ONLY_PRIOR = "hybrid_score_only_prior"
+FEATURE_ABLATION_CONTENT_FEATURES_ONLY = "content_features_only"
+FEATURE_ABLATION_TEXT_ONLY = "text_only"
 FEATURE_ABLATION_CHOICES = (
     FEATURE_ABLATION_NONE,
     FEATURE_ABLATION_NO_RANK_PRIOR,
     FEATURE_ABLATION_HYBRID_SCORE_ONLY_PRIOR,
+    FEATURE_ABLATION_CONTENT_FEATURES_ONLY,
+    FEATURE_ABLATION_TEXT_ONLY,
 )
 _RANK_PRIOR_FEATURES = {"hybrid_rank_norm", "candidate_idx_norm"}
 _RETRIEVAL_COMPONENT_FEATURES = {"dense_score", "lexical_score", "bm25_log_norm"}
+_CONTENT_FEATURES = {"text_token_len_norm", "claim_token_overlap", "number_overlap"}
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
@@ -478,6 +483,10 @@ def dropped_numeric_feature_names(feature_ablation: Any) -> list[str]:
         dropped.update(_RANK_PRIOR_FEATURES)
     if mode == FEATURE_ABLATION_HYBRID_SCORE_ONLY_PRIOR:
         dropped.update(_RETRIEVAL_COMPONENT_FEATURES)
+    if mode == FEATURE_ABLATION_CONTENT_FEATURES_ONLY:
+        dropped.update(set(NUMERIC_FEATURE_NAMES) - _CONTENT_FEATURES)
+    if mode == FEATURE_ABLATION_TEXT_ONLY:
+        dropped.update(NUMERIC_FEATURE_NAMES)
     return [name for name in NUMERIC_FEATURE_NAMES if name in dropped]
 
 
