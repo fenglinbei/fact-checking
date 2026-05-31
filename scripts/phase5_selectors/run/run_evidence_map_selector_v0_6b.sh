@@ -33,9 +33,24 @@ else
   RAW_PATH="${RAW_PATH:-data/raw/LIAR-RAW/val.json}"
 fi
 
+if [[ -z "${ORACLE_RESULTS+x}" ]]; then
+  if [[ "${SPLIT}" == "train" ]]; then
+    ORACLE_RESULTS="outputs/oracle_evidence/stage2_margin_train_sharded/oracle_results_train.jsonl"
+  elif [[ "${SPLIT}" == "val" ]]; then
+    ORACLE_RESULTS="outputs/oracle_evidence/stage2_margin_val_20260518_111721/oracle_results_val.jsonl"
+  else
+    ORACLE_RESULTS=""
+  fi
+fi
+
 SAMPLE_ARGS=()
 if [[ -n "${SAMPLE_LIMIT}" ]]; then
   SAMPLE_ARGS=(--sample-limit "${SAMPLE_LIMIT}")
+fi
+
+ORACLE_ARGS=()
+if [[ -n "${ORACLE_RESULTS}" ]]; then
+  ORACLE_ARGS=(--oracle-results "${ORACLE_RESULTS}")
 fi
 
 PROMPT_MODEL_ARGS=()
@@ -56,6 +71,7 @@ TRACE="${OUTPUT_DIR}/selection_trace_${SPLIT}.jsonl"
 
 echo "[evidence-map-v0.6b] split       : ${SPLIT}"
 echo "[evidence-map-v0.6b] qd union    : ${QD_UNION_POOL_FILE}"
+echo "[evidence-map-v0.6b] oracle meta : ${ORACLE_RESULTS:-none}"
 echo "[evidence-map-v0.6b] output      : ${OUTPUT_DIR}"
 echo "[evidence-map-v0.6b] top_n/top_k : ${CANDIDATE_TOP_N}/${TOP_K}"
 echo "[evidence-map-v0.6b] prompt      : ${PROMPT_VERSION}"
@@ -69,6 +85,7 @@ PYTHONPATH=src python scripts/phase5_selectors/build/prepare_evidence_map_candid
   --split "${SPLIT}" \
   --candidate-source qd_union \
   --candidate-top-n "${CANDIDATE_TOP_N}" \
+  "${ORACLE_ARGS[@]}" \
   "${SAMPLE_ARGS[@]}"
 
 if [[ "${RUN_TEACHER}" == "true" ]]; then
