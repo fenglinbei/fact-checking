@@ -19,6 +19,8 @@ from typing import Any
 from tqdm.auto import tqdm
 
 from fact_checking.selectors.evidence_map_selector import (
+    COMPACT_PROMPT_VERSION,
+    DEFAULT_MAX_EVIDENCE_CHARS,
     PROMPT_VERSION,
     EvidenceMapSchemaError,
     build_teacher_messages,
@@ -49,10 +51,12 @@ class APINonRetryableError(RuntimeError):
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Annotate v0.5a event-level claim-atom evidence maps with DeepSeek-compatible API.")
+    p = argparse.ArgumentParser(description="Annotate event-level claim-atom evidence maps with DeepSeek-compatible API.")
     p.add_argument("--candidate-pool", required=True)
     p.add_argument("--output-dir", required=True)
     p.add_argument("--split", default="val", choices=["train", "val", "test"])
+    p.add_argument("--prompt-version", default=PROMPT_VERSION)
+    p.add_argument("--max-evidence-chars", type=int, default=None)
     p.add_argument("--base-url", default=os.environ.get("TEACHER_BASE_URL", DEFAULT_BASE_URL))
     p.add_argument("--model", default=os.environ.get("TEACHER_MODEL", DEFAULT_MODEL))
     p.add_argument("--api-key-env", default=os.environ.get("TEACHER_API_KEY_ENV", "DEEPSEEK_API_KEY"))
@@ -74,6 +78,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.max_evidence_chars is None and str(args.prompt_version) == COMPACT_PROMPT_VERSION:
+        args.max_evidence_chars = DEFAULT_MAX_EVIDENCE_CHARS
     started_at = time.time()
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -85,7 +91,7 @@ def main() -> None:
     rows = read_jsonl(args.candidate_pool)
     if args.sample_limit is not None:
         rows = rows[: int(args.sample_limit)]
-    jobs = _build_jobs(rows, model=str(args.model))
+    jobs = _build_jobs(rows, model=str(args.model), prompt_version=str(args.prompt_version))
     completed = _completed_keys(annotations_path) if args.resume else set()
     pending = [job for job in jobs if job.annotation_key not in completed]
 
@@ -121,7 +127,8 @@ def main() -> None:
         "base_url": str(args.base_url),
         "model": str(args.model),
         "api_key_env": str(args.api_key_env),
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": str(args.prompt_version),
+        "max_evidence_chars": args.max_evidence_chars,
         "mock_maps": bool(args.mock_maps),
         "thinking_type": str(args.thinking_type),
         "concurrency": max(int(args.concurrency), 1),
@@ -148,14 +155,14 @@ def main() -> None:
     print(f"new={n_written} errors={n_errors} skipped_resume={len(completed)} total_jobs={len(jobs)}")
 
 
-def _build_jobs(rows: list[dict[str, Any]], *, model: str) -> list[EvidenceMapJob]:
+def _build_jobs(rows: list[dict[str, Any]], *, model: str, prompt_version: str) -> list[EvidenceMapJob]:
     jobs: list[EvidenceMapJob] = []
     seen: set[str] = set()
     for row in rows:
         event_id = str(row.get("event_id") or "")
         if not event_id:
             continue
-        key = evidence_map_annotation_key(event_id=event_id, prompt_version=PROMPT_VERSION, model=model)
+        key = evidence_map_annotation_key(event_id=event_id, prompt_version=prompt_version, model=model)
         if key in seen:
             continue
         seen.add(key)
@@ -178,7 +185,11 @@ def _write_mock_maps(
         for job in jobs:
             created_at = datetime.now(timezone.utc).isoformat()
             try:
-                system_prompt, user_prompt = build_teacher_messages(job.row)
+                system_prompt, user_prompt = build_teacher_messages(
+                    job.row,
+                    prompt_version=str(args.prompt_version),
+                    max_evidence_chars=args.max_evidence_chars,
+                )
                 evidence_map = mock_evidence_map_for_row(job.row)
                 row = _annotation_row(job, args=args, evidence_map=evidence_map, created_at=created_at, usage={})
                 ann_fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -188,7 +199,8 @@ def _write_mock_maps(
                             "annotation_key": job.annotation_key,
                             "event_id": job.event_id,
                             "model": str(args.model),
-                            "prompt_version": PROMPT_VERSION,
+                            "prompt_version": str(args.prompt_version),
+                            "max_evidence_chars": args.max_evidence_chars,
                             "mock_maps": True,
                             "thinking_type": str(args.thinking_type),
                             "system_prompt": system_prompt,
@@ -270,7 +282,11 @@ def _run_api_jobs(
 
 
 def _run_job(job: EvidenceMapJob, *, args: argparse.Namespace, api_key: str | None, limiter: "RateLimiter") -> dict[str, Any]:
-    system_prompt, user_prompt = build_teacher_messages(job.row)
+    system_prompt, user_prompt = build_teacher_messages(
+        job.row,
+        prompt_version=str(args.prompt_version),
+        max_evidence_chars=args.max_evidence_chars,
+    )
     attempts = max(int(args.max_retries), 0) + 1
     last_error = ""
     last_raw: dict[str, Any] | None = None
@@ -323,7 +339,7 @@ def _chat_completion(*, args: argparse.Namespace, api_key: str | None, system_pr
         "response_format": {"type": "json_object"},
         "temperature": 0,
         "max_tokens": int(args.max_tokens),
-        "user": "evidence_map_v0_5a",
+        "user": str(args.prompt_version),
         "stream": False,
     }
     thinking_type = str(getattr(args, "thinking_type", "disabled") or "disabled")
@@ -373,7 +389,8 @@ def _annotation_row(job: EvidenceMapJob, *, args: argparse.Namespace, evidence_m
     return {
         "annotation_key": job.annotation_key,
         "event_id": job.event_id,
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": str(args.prompt_version),
+        "max_evidence_chars": args.max_evidence_chars,
         "model": str(args.model),
         "evidence_map": evidence_map,
         "api_usage": {
@@ -391,7 +408,8 @@ def _raw_row(job: EvidenceMapJob, *, args: argparse.Namespace, system_prompt: st
         "annotation_key": job.annotation_key,
         "event_id": job.event_id,
         "model": str(args.model),
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": str(args.prompt_version),
+        "max_evidence_chars": args.max_evidence_chars,
         "thinking_type": str(args.thinking_type),
         "finish_reason": _finish_reason(response),
         "system_prompt": system_prompt,

@@ -30,6 +30,8 @@ EVIDENCE_MAP_SELECTOR = "v0_5a_evidence_map_top5"
 EVIDENCE_MAP_BASE_ONLY_SELECTOR = "v0_5a_base_only_top5"
 EVIDENCE_MAP_COVERAGE_ONLY_SELECTOR = "v0_5a_coverage_only_top5"
 PROMPT_VERSION = "evidence_map_v0_5a"
+COMPACT_PROMPT_VERSION = "evidence_map_v0_6b"
+DEFAULT_MAX_EVIDENCE_CHARS = 700
 
 ALLOWED_RELATIONS = {"support", "refute", "qualify", "mixed", "background", "irrelevant"}
 ALLOWED_DIRECTNESS = {"direct", "partial", "context", "none"}
@@ -123,7 +125,21 @@ def prepare_evidence_map_candidate_rows(
     return out
 
 
-def build_teacher_messages(row: dict[str, Any]) -> tuple[str, str]:
+def build_teacher_messages(
+    row: dict[str, Any],
+    *,
+    prompt_version: str = PROMPT_VERSION,
+    max_evidence_chars: int | None = None,
+) -> tuple[str, str]:
+    prompt_version = str(prompt_version or PROMPT_VERSION)
+    if prompt_version == COMPACT_PROMPT_VERSION:
+        system_prompt, user_prompt = _build_compact_teacher_messages(
+            row,
+            max_evidence_chars=max_evidence_chars,
+        )
+        audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
+        return system_prompt, user_prompt
+
     system_prompt = (
         "You are a careful fact-checking evidence analyst. Build a compact evidence map "
         "from the claim and evidence passages only. Do not use outside knowledge. "
@@ -149,11 +165,49 @@ def build_teacher_messages(row: dict[str, Any]) -> tuple[str, str]:
     ]
     for item in row.get("evidence_items") or []:
         evidence_id = str(item.get("evidence_id") or "")
-        text = _clean_for_prompt(str(item.get("text") or ""))
+        text = _compact_evidence_text(str(item.get("text") or ""), max_evidence_chars=max_evidence_chars)
         lines.append(f"{evidence_id}: {text}")
     user_prompt = "\n".join(lines)
     audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
     return system_prompt, user_prompt
+
+
+def _build_compact_teacher_messages(
+    row: dict[str, Any],
+    *,
+    max_evidence_chars: int | None,
+) -> tuple[str, str]:
+    system_prompt = (
+        "You map evidence to claim atoms for fact-checking. Use only the claim and "
+        "evidence text. Return valid JSON only."
+    )
+    schema = (
+        '{"claim_atoms":[{"atom_id":"A1","text":"...","type":"entity|quantity|date|comparison|cause|outcome|other","importance":1.0}],'
+        '"candidate_alignments":[{"evidence_id":"E01","covered_atom_ids":["A1"],"relation":"support|refute|qualify|mixed|background|irrelevant",'
+        '"directness":"direct|partial|context|none","evidence_role":"primary_support|primary_refute|partial_support|partial_refute|qualifying_context|background_context|duplicate|irrelevant",'
+        '"key_spans":["short quote"],"duplicate_group":"G1","confidence":0.0}]}'
+    )
+    lines = [
+        "Build a compact evidence map.",
+        "Output exactly these useful fields; omit any extra fields.",
+        schema,
+        "",
+        "Rules:",
+        "- Split the claim into ordered atomic facts A1, A2, ...",
+        "- Map each evidence ID to covered atom IDs, relation, directness, role, short key spans, duplicate group, and confidence.",
+        "- Mark weak background as relation=background and directness=context or none.",
+        "- Use only IDs shown below.",
+        "",
+        "Claim:",
+        str(row.get("claim") or "").strip(),
+        "",
+        "Evidence:",
+    ]
+    for item in row.get("evidence_items") or []:
+        evidence_id = str(item.get("evidence_id") or "")
+        text = _compact_evidence_text(str(item.get("text") or ""), max_evidence_chars=max_evidence_chars)
+        lines.append(f"{evidence_id}: {text}")
+    return system_prompt, "\n".join(lines)
 
 
 def audit_teacher_prompt(row: dict[str, Any], *, system_prompt: str, user_prompt: str) -> None:
@@ -982,6 +1036,21 @@ def _short_span(text: str) -> str:
 
 def _clean_for_prompt(text: str) -> str:
     return " ".join(str(text or "").replace("\n", " ").split())
+
+
+def _compact_evidence_text(text: str, *, max_evidence_chars: int | None) -> str:
+    clean = _clean_for_prompt(text)
+    if max_evidence_chars is None or int(max_evidence_chars) <= 0:
+        return clean
+    limit = int(max_evidence_chars)
+    if len(clean) <= limit:
+        return clean
+    marker = " ... "
+    if limit <= len(marker) + 40:
+        return clean[:limit]
+    tail_chars = min(max(120, limit // 4), max(40, limit // 2 - len(marker)))
+    head_chars = max(1, limit - tail_chars - len(marker))
+    return f"{clean[:head_chars].rstrip()}{marker}{clean[-tail_chars:].lstrip()}"
 
 
 def _strip_json_fence(content: str) -> str:

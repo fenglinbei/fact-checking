@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from fact_checking.selectors.evidence_map_selector import (
+    COMPACT_PROMPT_VERSION,
     EVIDENCE_MAP_BASE_ONLY_SELECTOR,
     EVIDENCE_MAP_SELECTOR,
     EvidenceMapParams,
@@ -29,6 +30,29 @@ class EvidenceMapSelectorTest(unittest.TestCase):
         self.assertNotIn("event-1", prompt)
         self.assertNotIn("uid-1", prompt)
         self.assertNotIn("oracle_selected", prompt)
+        audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
+
+    def test_compact_v0_6b_prompt_truncates_evidence_and_excludes_forbidden_fields(self) -> None:
+        event = _event()
+        event["candidates"][0]["candidate_uid"] = "secret-uid-1"
+        event["candidates"][0]["candidate_key"] = "secret-key-1"
+        event["candidates"][0]["text"] = "HEAD " + ("middle " * 80) + "TAIL_SENTINEL"
+        row = prepare_evidence_map_candidate_rows([event], candidate_top_n=1)[0]
+
+        system_prompt, user_prompt = build_teacher_messages(
+            row,
+            prompt_version=COMPACT_PROMPT_VERSION,
+            max_evidence_chars=120,
+        )
+
+        prompt = system_prompt + "\n" + user_prompt
+        self.assertIn("E01:", prompt)
+        self.assertIn("HEAD", prompt)
+        self.assertIn("TAIL_SENTINEL", prompt)
+        self.assertNotIn("secret-uid-1", prompt)
+        self.assertNotIn("secret-key-1", prompt)
+        for forbidden in ("candidate_uid", "candidate_key", "gold_label", "oracle_selected", "oracle", "scores"):
+            self.assertNotIn(forbidden, prompt)
         audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
 
     def test_schema_validation_clamps_and_fills_alignments(self) -> None:
