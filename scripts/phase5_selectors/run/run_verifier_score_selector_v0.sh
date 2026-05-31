@@ -7,7 +7,7 @@ DIRECT_VERIFIER_RUN_DIR="${DIRECT_VERIFIER_RUN_DIR:-outputs/oracle_direct_verifi
 VERIFIER_CHECKPOINT="${VERIFIER_CHECKPOINT:-best}"
 LABEL_PREFIX="${LABEL_PREFIX:-Label:}"
 ORACLE_RESULTS="${ORACLE_RESULTS:-outputs/oracle_evidence/stage2_margin_val_20260518_111721/oracle_results_val.jsonl}"
-OUTPUT_DIR="${OUTPUT_DIR:-outputs/selectors/verifier_score_selector/b3_oracle_direct_v0/val}"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/selectors/verifier_score_selector/b3_oracle_direct_v0/val_greedy_stepwise_top5}"
 SPLIT="${SPLIT:-val}"
 
 DIAG_SAMPLE_LIMIT="${DIAG_SAMPLE_LIMIT:-512}"
