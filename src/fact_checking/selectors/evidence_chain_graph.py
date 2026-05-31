@@ -17,9 +17,12 @@ from fact_checking.selectors.evidence_map_selector import evidence_map_selection
 
 GRAPH_VERSION = "evidence_chain_graph_v0_6b"
 CHAIN_SELECTOR = "v0_6b_chain_graph_top5"
+RULE_STEP_GRAPH_VERSION = "evidence_chain_graph_v0_6c"
+RULE_STEP_CHAIN_SELECTOR = "v0_6c_rule_step_adaptive5_10"
 DEFAULT_CHUNK_MMR_FINGERPRINT = "432dfc970e75"
 
 POSITIVE_CHAIN_EDGE_TYPES = {"complements", "corroborates", "tension", "bridge_context"}
+RULE_STEP_STRONG_EDGE_TYPES = {"complements", "corroborates", "tension"}
 POST_ORDER_EDGE_REWARDS = {
     "complements": 0.35,
     "corroborates": 0.25,
@@ -37,6 +40,14 @@ class EvidenceChainParams:
     candidate_top_n: int = 20
     top_k: int = 5
     beam_size: int = 12
+    chunk_mmr_fingerprint: str = DEFAULT_CHUNK_MMR_FINGERPRINT
+
+
+@dataclass(frozen=True)
+class RuleStepEvidenceChainParams:
+    candidate_top_n: int = 20
+    min_top_k: int = 5
+    max_top_k: int = 10
     chunk_mmr_fingerprint: str = DEFAULT_CHUNK_MMR_FINGERPRINT
 
 
@@ -84,6 +95,79 @@ def build_evidence_chain_graph_row(row: dict[str, Any], *, params: EvidenceChain
     return graph_row
 
 
+def build_rule_step_evidence_chain_graph_row(
+    row: dict[str, Any],
+    *,
+    params: RuleStepEvidenceChainParams | None = None,
+) -> dict[str, Any]:
+    params = params or RuleStepEvidenceChainParams()
+    min_top_k = max(1, int(params.min_top_k))
+    max_top_k = max(min_top_k, int(params.max_top_k))
+    candidates = _sorted_candidates(row.get("candidates") or [], candidate_top_n=params.candidate_top_n)
+    atom_nodes = _atom_nodes(row)
+    evidence_nodes = [_evidence_node(candidate, idx=idx) for idx, candidate in enumerate(candidates, start=1)]
+    atom_by_id = {str(atom.get("node_id") or ""): atom for atom in atom_nodes}
+    evidence_by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    edges = _build_edges(atom_nodes, evidence_nodes)
+    edge_index = _edge_index(edges)
+    rule_result = _select_rule_step_evidence_ids(
+        evidence_nodes,
+        atom_by_id=atom_by_id,
+        edge_index=edge_index,
+        min_top_k=min_top_k,
+        max_top_k=max_top_k,
+    )
+    selected_ids = list(rule_result.get("evidence_ids") or [])
+    selected_candidates = [_candidate_for_evidence_id(evidence_by_id[eid]) for eid in selected_ids if eid in evidence_by_id]
+    selected_chain = _rule_step_chain_summary(
+        selected_ids,
+        evidence_nodes=evidence_nodes,
+        atom_by_id=atom_by_id,
+        edge_index=edge_index,
+        rule_result=rule_result,
+    )
+    graph_row = {
+        "event_id": str(row.get("event_id") or ""),
+        "claim": str(row.get("claim") or ""),
+        "gold_label": str(row.get("gold_label") or ""),
+        "graph_version": RULE_STEP_GRAPH_VERSION,
+        "selector_name": RULE_STEP_CHAIN_SELECTOR,
+        "params": {
+            "candidate_top_n": int(params.candidate_top_n),
+            "min_top_k": min_top_k,
+            "max_top_k": max_top_k,
+            "chunk_mmr_fingerprint": str(params.chunk_mmr_fingerprint or ""),
+        },
+        "fingerprint": str(params.chunk_mmr_fingerprint or ""),
+        "candidate_pool_metadata": {
+            "chunk_mmr_fingerprint": str(params.chunk_mmr_fingerprint or ""),
+        },
+        "claim_node": {"node_id": "C0", "type": "claim", "text": str(row.get("claim") or "")},
+        "atom_nodes": atom_nodes,
+        "evidence_nodes": evidence_nodes,
+        "edges": edges,
+        "chains": [selected_chain] if selected_chain.get("evidence_ids") else [],
+        "selected_chain_id": str(selected_chain.get("chain_id") or ""),
+        "selected_evidence_ids": selected_ids,
+        "selected_candidates": selected_candidates,
+        "oracle_ordered_keys": list(row.get("oracle_ordered_keys") or []),
+        "adaptive_policy": "rule_step_v0_6c",
+        "min_top_k": min_top_k,
+        "max_top_k": max_top_k,
+        "adaptive_evidence_count": len(selected_ids),
+        "adaptive_stop_reason": str(rule_result.get("stop_reason") or ""),
+        "selection_steps": list(rule_result.get("selection_steps") or []),
+        "adaptive_additions": [
+            dict(step)
+            for step in rule_result.get("selection_steps") or []
+            if int(step.get("step", 0)) > min_top_k or bool(step.get("fallback_used"))
+        ],
+        "diagnostics": _graph_diagnostics(atom_nodes, evidence_nodes, edges, selected_chain),
+    }
+    graph_row["selection_trace"] = build_evidence_chain_trace(row, graph_row, top_k=max_top_k)
+    return graph_row
+
+
 def build_evidence_chain_trace(row: dict[str, Any], graph_row: dict[str, Any], *, top_k: int) -> dict[str, Any]:
     selected = list(graph_row.get("selected_candidates") or [])
     candidate_pool = _pipeline_candidate_pool(graph_row)
@@ -94,17 +178,19 @@ def build_evidence_chain_trace(row: dict[str, Any], graph_row: dict[str, Any], *
         candidate_pool,
     )
     fingerprint = str(graph_row.get("fingerprint") or (graph_row.get("candidate_pool_metadata") or {}).get("chunk_mmr_fingerprint") or "")
+    selector_name = str(graph_row.get("selector_name") or CHAIN_SELECTOR)
+    graph_version = str(graph_row.get("graph_version") or GRAPH_VERSION)
     trace = {
         "event_id": str(row.get("event_id") or graph_row.get("event_id") or ""),
         "claim": str(row.get("claim") or graph_row.get("claim") or ""),
         "gold_label": str(row.get("gold_label") or graph_row.get("gold_label") or ""),
-        "selector_name": CHAIN_SELECTOR,
-        "graph_version": GRAPH_VERSION,
+        "selector_name": selector_name,
+        "graph_version": graph_version,
         "fingerprint": fingerprint,
         "candidate_pool_metadata": {
             "chunk_mmr_fingerprint": fingerprint,
-            "graph_version": GRAPH_VERSION,
-            "selector_name": CHAIN_SELECTOR,
+            "graph_version": graph_version,
+            "selector_name": selector_name,
         },
         "candidate_pool": candidate_pool,
         "candidate_scores": candidate_scores,
@@ -119,9 +205,20 @@ def build_evidence_chain_trace(row: dict[str, Any], graph_row: dict[str, Any], *
         "chain_summary": _selected_chain_summary(graph_row),
         "claim_atoms": [dict(atom) for atom in graph_row.get("atom_nodes") or []],
     }
-    trace.update(text_ordered_selection_metrics(trace["oracle_ordered_keys"], selected, top_k=top_k))
-    trace.update(selection_quality_metrics(selected))
-    trace.update(evidence_map_selection_metrics({"evidence_map": {"claim_atoms": graph_row.get("atom_nodes") or []}}, selected))
+    for key in (
+        "adaptive_policy",
+        "min_top_k",
+        "max_top_k",
+        "adaptive_evidence_count",
+        "adaptive_stop_reason",
+        "selection_steps",
+        "adaptive_additions",
+    ):
+        if key in graph_row:
+            trace[key] = graph_row[key]
+    trace.update(_text_ordered_selection_metrics_multi(trace["oracle_ordered_keys"], selected, top_k=top_k))
+    trace.update(selection_quality_metrics(selected[: min(5, int(top_k), len(selected))]))
+    trace.update(_evidence_map_selection_metrics_multi(graph_row, selected, top_k=top_k))
     return trace
 
 
@@ -142,6 +239,58 @@ def summarize_chain_graph_rows(rows: Sequence[dict[str, Any]]) -> dict[str, Any]
         "mean_oracle_pair_edge_rate": _mean(_safe_float(item.get("oracle_pair_edge_rate"), 0.0) for item in diagnostics),
         "mean_max_chain_atom_coverage": _mean(_safe_float(item.get("max_chain_atom_coverage"), 0.0) for item in diagnostics),
         "mean_selected_chain_score": _mean(_safe_float((row.get("chains") or [{}])[0].get("chain_score"), 0.0) for row in rows),
+        "selection_metrics": _summarize_traces(traces),
+    }
+
+
+def summarize_rule_step_chain_graph_rows(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    traces = [row.get("selection_trace") or {} for row in rows]
+    diagnostics = [row.get("diagnostics") or {} for row in rows]
+    edge_counts: Counter[str] = Counter()
+    selected_lengths: Counter[str] = Counter()
+    stop_reasons: Counter[str] = Counter()
+    step_rules: Counter[str] = Counter()
+    fallback_rows = 0
+    p3_rows = 0
+    background_additions = 0
+    total_additions = 0
+    for row in rows:
+        edge_counts.update(str(edge.get("edge_type") or "") for edge in row.get("edges") or [])
+        selected_lengths[str(len(row.get("selected_evidence_ids") or []))] += 1
+        stop_reasons[str(row.get("adaptive_stop_reason") or "")] += 1
+        row_has_fallback = False
+        row_has_p3 = False
+        for step in row.get("selection_steps") or []:
+            rule = str(step.get("rule") or "")
+            step_rules[rule] += 1
+            if bool(step.get("fallback_used")):
+                row_has_fallback = True
+            if rule == "P3_bridge_context":
+                row_has_p3 = True
+            if int(step.get("step", 0)) > int(row.get("min_top_k") or 5):
+                total_additions += 1
+                if str(step.get("relation") or "") in BACKGROUND_RELATIONS:
+                    background_additions += 1
+        if row_has_fallback:
+            fallback_rows += 1
+        if row_has_p3:
+            p3_rows += 1
+    return {
+        "graph_version": RULE_STEP_GRAPH_VERSION,
+        "selector_name": RULE_STEP_CHAIN_SELECTOR,
+        "n_events": len(rows),
+        "n_edges_by_type": dict(sorted(edge_counts.items())),
+        "selected_lengths": dict(sorted(selected_lengths.items())),
+        "adaptive_stop_reasons": dict(sorted(stop_reasons.items())),
+        "selection_rules": dict(sorted(step_rules.items())),
+        "fallback_row_rate": float(fallback_rows / max(len(rows), 1)),
+        "p3_row_rate": float(p3_rows / max(len(rows), 1)),
+        "post_min_background_addition_rate": float(background_additions / max(total_additions, 1)),
+        "mean_atom_isolate_rate": _mean(_safe_float(item.get("atom_isolate_rate"), 0.0) for item in diagnostics),
+        "mean_evidence_isolate_rate": _mean(_safe_float(item.get("evidence_isolate_rate"), 0.0) for item in diagnostics),
+        "mean_oracle_evidence_connected_rate": _mean(_safe_float(item.get("oracle_evidence_connected_rate"), 0.0) for item in diagnostics),
+        "mean_oracle_pair_edge_rate": _mean(_safe_float(item.get("oracle_pair_edge_rate"), 0.0) for item in diagnostics),
+        "mean_max_chain_atom_coverage": _mean(_safe_float(item.get("max_chain_atom_coverage"), 0.0) for item in diagnostics),
         "selection_metrics": _summarize_traces(traces),
     }
 
@@ -168,6 +317,33 @@ def render_case_studies(rows: Sequence[dict[str, Any]], *, top_n: int = 5) -> st
                     f"- recall@5: {_safe_float(trace.get('recall@5'), 0.0):.4f}",
                     f"- weighted atom coverage: {_safe_float(chain.get('weighted_atom_coverage'), 0.0):.4f}",
                     f"- evidence ids: {chain.get('evidence_ids', [])}",
+                    "",
+                ]
+            )
+    return "\n".join(lines)
+
+
+def render_rule_step_case_studies(rows: Sequence[dict[str, Any]], *, top_n: int = 5) -> str:
+    ranked = sorted(rows, key=lambda row: len(row.get("selected_evidence_ids") or []), reverse=True)
+    fallback_ranked = sorted(rows, key=lambda row: sum(1 for step in row.get("selection_steps") or [] if bool(step.get("fallback_used"))), reverse=True)
+    lines = ["# Evidence Chain Graph v0.6c Rule-Step Case Studies", ""]
+    for title, items in (("Longest Adaptive Selections", ranked[:top_n]), ("Most Fallback Steps", fallback_ranked[:top_n])):
+        lines.extend([f"## {title}", ""])
+        if not items:
+            lines.extend(["(none)", ""])
+            continue
+        for row in items:
+            trace = row.get("selection_trace") or {}
+            lines.extend(
+                [
+                    f"### {row.get('event_id')} selected={len(row.get('selected_evidence_ids') or [])} stop={row.get('adaptive_stop_reason', '')}",
+                    "",
+                    f"Claim: {row.get('claim', '')}",
+                    "",
+                    f"- jaccard@5: {_safe_float(trace.get('jaccard@5'), 0.0):.4f}",
+                    f"- jaccard@10: {_safe_float(trace.get('jaccard@10'), 0.0):.4f}",
+                    f"- evidence ids: {row.get('selected_evidence_ids', [])}",
+                    f"- rules: {[step.get('rule') for step in row.get('selection_steps') or []]}",
                     "",
                 ]
             )
@@ -335,6 +511,414 @@ def _build_chains(
         chain["chain_id"] = f"CH{idx:02d}"
         chain["rank"] = idx
     return chains
+
+
+def _select_rule_step_evidence_ids(
+    evidence_nodes: Sequence[dict[str, Any]],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    min_top_k: int,
+    max_top_k: int,
+) -> dict[str, Any]:
+    by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    selected: list[str] = []
+    steps: list[dict[str, Any]] = []
+    stop_reason = ""
+
+    while len(selected) < min(max_top_k, len(evidence_nodes)):
+        pick = _best_rule_step_candidate(
+            selected,
+            evidence_nodes,
+            atom_by_id=atom_by_id,
+            edge_index=edge_index,
+        )
+        fallback_used = False
+        if pick is None:
+            if len(selected) >= int(min_top_k):
+                stop_reason = "reached_min_top_k_no_rule_candidate"
+                break
+            pick = _best_rule_step_fallback(
+                selected,
+                evidence_nodes,
+                atom_by_id=atom_by_id,
+                edge_index=edge_index,
+            )
+            fallback_used = True
+        if pick is None:
+            stop_reason = "pool_exhausted_before_min_top_k" if len(selected) < int(min_top_k) else "pool_exhausted"
+            break
+
+        evidence_id = str(pick["evidence_id"])
+        if evidence_id in selected or evidence_id not in by_id:
+            stop_reason = "duplicate_pick_guard"
+            break
+        selected.append(evidence_id)
+        steps.append(
+            {
+                "step": len(selected),
+                "evidence_id": evidence_id,
+                "rule": str(pick.get("rule") or ""),
+                "covered_new_atom_ids": list(pick.get("covered_new_atom_ids") or []),
+                "anchor_evidence_ids": list(pick.get("anchor_evidence_ids") or []),
+                "fallback_used": bool(fallback_used or pick.get("fallback_used")),
+                "directness": str(by_id[evidence_id].get("directness") or ""),
+                "relation": str(by_id[evidence_id].get("relation") or ""),
+            }
+        )
+
+    if not stop_reason:
+        stop_reason = "reached_max_top_k" if len(selected) >= int(max_top_k) else "pool_exhausted"
+    return {
+        "evidence_ids": selected,
+        "selection_steps": steps,
+        "stop_reason": stop_reason,
+    }
+
+
+def _best_rule_step_candidate(
+    selected: Sequence[str],
+    evidence_nodes: Sequence[dict[str, Any]],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    selected_set = {str(eid) for eid in selected}
+    selected_atoms = _covered_atoms_for_ids(selected, evidence_nodes)
+    if not selected:
+        rows = []
+        for node in evidence_nodes:
+            evidence_id = str(node.get("node_id") or "")
+            covered = _covered_atoms(node, atom_by_id=atom_by_id)
+            if _is_rule_core_node(node) and covered:
+                rows.append(
+                    {
+                        "evidence_id": evidence_id,
+                        "rule": "anchor_core",
+                        "covered_new_atom_ids": covered,
+                        "anchor_evidence_ids": [],
+                        "sort_key": _rule_step_sort_key(node, covered, [], atom_by_id=atom_by_id, selected=evidence_nodes),
+                    }
+                )
+        return _min_pick(rows)
+
+    for rule_name, builder in (
+        ("P1_new_atom_core", _rule_step_p1_candidates),
+        ("P2_strong_edge_core", _rule_step_p2_candidates),
+        ("P3_bridge_context", _rule_step_p3_candidates),
+    ):
+        rows = builder(
+            selected,
+            evidence_nodes,
+            atom_by_id=atom_by_id,
+            edge_index=edge_index,
+            selected_set=selected_set,
+            selected_atoms=selected_atoms,
+            rule_name=rule_name,
+        )
+        pick = _min_pick(rows)
+        if pick is not None:
+            return pick
+    return None
+
+
+def _rule_step_p1_candidates(
+    selected: Sequence[str],
+    evidence_nodes: Sequence[dict[str, Any]],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    selected_set: set[str],
+    selected_atoms: set[str],
+    rule_name: str,
+) -> list[dict[str, Any]]:
+    del selected, edge_index
+    rows: list[dict[str, Any]] = []
+    for node in evidence_nodes:
+        evidence_id = str(node.get("node_id") or "")
+        if evidence_id in selected_set or not _is_rule_core_node(node):
+            continue
+        new_atoms = [atom_id for atom_id in _covered_atoms(node, atom_by_id=atom_by_id) if atom_id not in selected_atoms]
+        if not new_atoms:
+            continue
+        rows.append(
+            {
+                "evidence_id": evidence_id,
+                "rule": rule_name,
+                "covered_new_atom_ids": new_atoms,
+                "anchor_evidence_ids": [],
+                "sort_key": _rule_step_sort_key(node, new_atoms, [], atom_by_id=atom_by_id, selected=evidence_nodes),
+            }
+        )
+    return rows
+
+
+def _rule_step_p2_candidates(
+    selected: Sequence[str],
+    evidence_nodes: Sequence[dict[str, Any]],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    selected_set: set[str],
+    selected_atoms: set[str],
+    rule_name: str,
+) -> list[dict[str, Any]]:
+    del selected_atoms
+    by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    core_anchor_ids = [str(eid) for eid in selected if _is_rule_core_node(by_id.get(str(eid), {}))]
+    rows: list[dict[str, Any]] = []
+    for node in evidence_nodes:
+        evidence_id = str(node.get("node_id") or "")
+        if evidence_id in selected_set or not _is_rule_core_node(node):
+            continue
+        anchor_ids, edge_rank = _rule_step_anchor_ids(
+            evidence_id,
+            core_anchor_ids,
+            edge_index=edge_index,
+            allowed_edges=RULE_STEP_STRONG_EDGE_TYPES,
+        )
+        if not anchor_ids:
+            continue
+        covered = _covered_atoms(node, atom_by_id=atom_by_id)
+        rows.append(
+            {
+                "evidence_id": evidence_id,
+                "rule": rule_name,
+                "covered_new_atom_ids": [],
+                "anchor_evidence_ids": anchor_ids,
+                "sort_key": _rule_step_sort_key(
+                    node,
+                    covered,
+                    anchor_ids,
+                    atom_by_id=atom_by_id,
+                    selected=evidence_nodes,
+                    edge_rank=edge_rank,
+                ),
+            }
+        )
+    return rows
+
+
+def _rule_step_p3_candidates(
+    selected: Sequence[str],
+    evidence_nodes: Sequence[dict[str, Any]],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    selected_set: set[str],
+    selected_atoms: set[str],
+    rule_name: str,
+) -> list[dict[str, Any]]:
+    del selected_atoms
+    by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    core_anchor_ids = [str(eid) for eid in selected if _is_rule_core_node(by_id.get(str(eid), {}))]
+    rows: list[dict[str, Any]] = []
+    for node in evidence_nodes:
+        evidence_id = str(node.get("node_id") or "")
+        if evidence_id in selected_set:
+            continue
+        if str(node.get("relation") or "") == "irrelevant" or str(node.get("directness") or "") == "none":
+            continue
+        anchor_ids, edge_rank = _rule_step_anchor_ids(
+            evidence_id,
+            core_anchor_ids,
+            edge_index=edge_index,
+            allowed_edges={"bridge_context"},
+        )
+        if not anchor_ids:
+            continue
+        covered = _covered_atoms(node, atom_by_id=atom_by_id)
+        rows.append(
+            {
+                "evidence_id": evidence_id,
+                "rule": rule_name,
+                "covered_new_atom_ids": [],
+                "anchor_evidence_ids": anchor_ids,
+                "sort_key": _rule_step_sort_key(
+                    node,
+                    covered,
+                    anchor_ids,
+                    atom_by_id=atom_by_id,
+                    selected=evidence_nodes,
+                    edge_rank=edge_rank,
+                    context_rule=True,
+                ),
+            }
+        )
+    return rows
+
+
+def _best_rule_step_fallback(
+    selected: Sequence[str],
+    evidence_nodes: Sequence[dict[str, Any]],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    del edge_index
+    selected_set = {str(eid) for eid in selected}
+    selected_atoms = _covered_atoms_for_ids(selected, evidence_nodes)
+    rows: list[dict[str, Any]] = []
+    for node in evidence_nodes:
+        evidence_id = str(node.get("node_id") or "")
+        if evidence_id in selected_set:
+            continue
+        covered = _covered_atoms(node, atom_by_id=atom_by_id)
+        new_atoms = [atom_id for atom_id in covered if atom_id not in selected_atoms]
+        rows.append(
+            {
+                "evidence_id": evidence_id,
+                "rule": "fallback_core_first",
+                "covered_new_atom_ids": new_atoms,
+                "anchor_evidence_ids": [],
+                "fallback_used": True,
+                "sort_key": _fallback_sort_key(node, new_atoms, atom_by_id=atom_by_id, selected=evidence_nodes),
+            }
+        )
+    return _min_pick(rows)
+
+
+def _min_pick(rows: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
+    if not rows:
+        return None
+    return dict(min(rows, key=lambda row: row.get("sort_key") or ()))
+
+
+def _rule_step_chain_summary(
+    evidence_ids: Sequence[str],
+    *,
+    evidence_nodes: Sequence[dict[str, Any]],
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    rule_result: dict[str, Any],
+) -> dict[str, Any]:
+    by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    ids = [str(eid) for eid in evidence_ids if str(eid) in by_id]
+    nodes = [by_id[eid] for eid in ids]
+    total_weight = sum(_safe_float(atom.get("importance"), 1.0) for atom in atom_by_id.values()) or 1.0
+    covered_atoms = set(atom_id for node in nodes for atom_id in node.get("covered_atom_ids") or [] if atom_id in atom_by_id)
+    covered_weight = sum(_safe_float(atom_by_id[atom_id].get("importance"), 1.0) for atom_id in covered_atoms)
+    pair_counts = _pair_edge_counts(ids, edge_index=edge_index)
+    duplicate_groups = [str(node.get("duplicate_group") or "") for node in nodes if node.get("duplicate_group")]
+    source_groups = [str(node.get("source_group") or "") for node in nodes if node.get("source_group")]
+    return {
+        "chain_id": "CH01" if ids else "",
+        "rank": 1 if ids else 0,
+        "evidence_ids": ids,
+        "search_order_evidence_ids": ids,
+        "selection_steps": list(rule_result.get("selection_steps") or []),
+        "adaptive_stop_reason": str(rule_result.get("stop_reason") or ""),
+        "chain_score": 0.0,
+        "rule_step_score": float(len(ids)),
+        "mean_base_score": _mean(_safe_float(node.get("base_score"), 0.0) for node in nodes),
+        "weighted_atom_coverage": float(covered_weight / total_weight),
+        "covered_atom_ids": sorted(covered_atoms),
+        "direct_or_partial_rate": _mean(1.0 if node.get("directness") in DIRECTNESS_VALUES else 0.0 for node in nodes),
+        "background_rate": _mean(1.0 if bool(node.get("is_background")) else 0.0 for node in nodes),
+        "edge_counts": dict(sorted(pair_counts.items())),
+        "positive_pair_edge_density": float(
+            sum(pair_counts.get(edge_type, 0) for edge_type in POSITIVE_CHAIN_EDGE_TYPES)
+            / max(len(ids) * (len(ids) - 1) / 2.0, 1.0)
+        ),
+        "duplicate_repeat_count": int(sum(max(count - 1, 0) for count in Counter(duplicate_groups).values())),
+        "same_source_excess_count": int(sum(max(count - 2, 0) for count in Counter(source_groups).values())),
+    }
+
+
+def _is_rule_core_node(node: dict[str, Any]) -> bool:
+    return (
+        str(node.get("directness") or "") in DIRECTNESS_VALUES
+        and str(node.get("relation") or "") in POLAR_RELATIONS
+        and bool(node.get("covered_atom_ids") or [])
+    )
+
+
+def _covered_atoms(node: dict[str, Any], *, atom_by_id: dict[str, dict[str, Any]]) -> list[str]:
+    atom_order = {str(atom_id): idx for idx, atom_id in enumerate(atom_by_id)}
+    atoms = [str(atom_id) for atom_id in node.get("covered_atom_ids") or [] if str(atom_id) in atom_by_id]
+    return sorted(set(atoms), key=lambda atom_id: atom_order.get(atom_id, 10**9))
+
+
+def _rule_step_anchor_ids(
+    evidence_id: str,
+    selected_core_ids: Sequence[str],
+    *,
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    allowed_edges: set[str],
+) -> tuple[list[str], int]:
+    edge_priority = {"complements": 0, "corroborates": 1, "tension": 2, "bridge_context": 3}
+    rows: list[tuple[int, int, str]] = []
+    for anchor_pos, anchor_id in enumerate(selected_core_ids):
+        edge_types = {
+            str(edge.get("edge_type") or "")
+            for edge in edge_index.get(_pair_key(str(evidence_id), str(anchor_id)), [])
+        }
+        matched = edge_types & allowed_edges
+        if matched:
+            rows.append((min(edge_priority.get(edge_type, 99) for edge_type in matched), int(anchor_pos), str(anchor_id)))
+    rows.sort()
+    return [anchor_id for _edge_rank, _anchor_pos, anchor_id in rows], rows[0][0] if rows else 99
+
+
+def _rule_step_sort_key(
+    node: dict[str, Any],
+    atoms: Sequence[str],
+    anchor_ids: Sequence[str],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    selected: Sequence[dict[str, Any]],
+    edge_rank: int = 99,
+    context_rule: bool = False,
+) -> tuple[Any, ...]:
+    del selected
+    atom_order = {str(atom_id): idx for idx, atom_id in enumerate(atom_by_id)}
+    directness_rank = {"direct": 0, "partial": 1, "context": 2, "none": 3}.get(str(node.get("directness") or ""), 3)
+    relation_rank = 1 if str(node.get("relation") or "") in BACKGROUND_RELATIONS else 0
+    return (
+        _min_atom_order(atoms, atom_order),
+        int(edge_rank),
+        _min_evidence_id_order(anchor_ids),
+        relation_rank if context_rule else 0,
+        directness_rank,
+        -_safe_float(node.get("evidence_map_quality_score"), 0.0),
+        -_safe_float(node.get("base_score"), 0.0),
+        int(bool(node.get("duplicate_group"))),
+        _evidence_id_sort_value(str(node.get("node_id") or "")),
+    )
+
+
+def _fallback_sort_key(
+    node: dict[str, Any],
+    atoms: Sequence[str],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    selected: Sequence[dict[str, Any]],
+) -> tuple[Any, ...]:
+    del selected
+    atom_order = {str(atom_id): idx for idx, atom_id in enumerate(atom_by_id)}
+    directness_rank = {"direct": 0, "partial": 1, "context": 2, "none": 3}.get(str(node.get("directness") or ""), 3)
+    return (
+        0 if _is_rule_core_node(node) else 1,
+        int(_is_background_node(node) or str(node.get("relation") or "") == "irrelevant"),
+        int(bool(node.get("duplicate_group"))),
+        _min_atom_order(atoms, atom_order),
+        directness_rank,
+        -_safe_float(node.get("evidence_map_quality_score"), 0.0),
+        -_safe_float(node.get("base_score"), 0.0),
+        _evidence_id_sort_value(str(node.get("node_id") or "")),
+    )
+
+
+def _min_atom_order(atoms: Sequence[str], atom_order: dict[str, int]) -> int:
+    if not atoms:
+        return 10**9
+    return min(atom_order.get(str(atom_id), 10**9) for atom_id in atoms)
+
+
+def _min_evidence_id_order(evidence_ids: Sequence[str]) -> tuple[str, int, str]:
+    if not evidence_ids:
+        return ("", 10**9, "")
+    return min(_evidence_id_sort_value(str(evidence_id)) for evidence_id in evidence_ids)
 
 
 def _extension_ids(
@@ -642,8 +1226,60 @@ def _graph_diagnostics(
 
 
 def _summarize_traces(traces: Sequence[dict[str, Any]]) -> dict[str, float]:
-    keys = ("recall@5", "jaccard@5", "top1_match", "oracle_rank_ndcg@5", "weighted_atom_coverage@5", "direct_or_partial_rate@5")
+    keys = (
+        "recall@5",
+        "jaccard@5",
+        "top1_match",
+        "oracle_rank_ndcg@5",
+        "weighted_atom_coverage@5",
+        "direct_or_partial_rate@5",
+        "recall@10",
+        "jaccard@10",
+        "oracle_rank_ndcg@10",
+        "weighted_atom_coverage@10",
+    )
     return {key: _mean(_safe_float(trace.get(key), 0.0) for trace in traces) for key in keys}
+
+
+def _text_ordered_selection_metrics_multi(
+    oracle_ordered_keys: Sequence[Any],
+    selected: Sequence[dict[str, Any]],
+    *,
+    top_k: int,
+) -> dict[str, Any]:
+    fixed = text_ordered_selection_metrics(oracle_ordered_keys, selected, top_k=min(5, int(top_k)))
+    if int(top_k) <= 5:
+        return fixed
+    out = dict(fixed)
+    dynamic = text_ordered_selection_metrics(oracle_ordered_keys, selected, top_k=int(top_k))
+    out.update(_rename_at5_metrics(dynamic, suffix=f"@{int(top_k)}"))
+    return out
+
+
+def _evidence_map_selection_metrics_multi(
+    graph_row: dict[str, Any],
+    selected: Sequence[dict[str, Any]],
+    *,
+    top_k: int,
+) -> dict[str, Any]:
+    row = {"evidence_map": {"claim_atoms": graph_row.get("atom_nodes") or []}}
+    fixed = evidence_map_selection_metrics(row, list(selected)[: min(5, int(top_k))])
+    if int(top_k) <= 5:
+        return fixed
+    out = dict(fixed)
+    dynamic = evidence_map_selection_metrics(row, list(selected)[: int(top_k)])
+    out.update(_rename_at5_metrics(dynamic, suffix=f"@{int(top_k)}"))
+    return out
+
+
+def _rename_at5_metrics(metrics: dict[str, Any], *, suffix: str) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in metrics.items():
+        if key.endswith("@5"):
+            out[f"{key[:-2]}{suffix}"] = value
+        elif key in {"set_overlap", "overlap_pair_count"}:
+            out[f"{key}{suffix}"] = value
+    return out
 
 
 def _edge(edge_type: str, source: str, target: str, *, weight: float, **extra: Any) -> dict[str, Any]:

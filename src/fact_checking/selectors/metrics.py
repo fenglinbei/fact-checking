@@ -15,6 +15,23 @@ def ordered_selection_metrics(
     *,
     top_k: int = 5,
 ) -> dict[str, Any]:
+    metrics = _ordered_selection_metrics_at_k(oracle_ordered_indices, selector_ordered_indices, top_k=min(5, int(top_k)), suffix=5)
+    if int(top_k) <= 5:
+        return metrics
+    dynamic = _ordered_selection_metrics_at_k(oracle_ordered_indices, selector_ordered_indices, top_k=int(top_k), suffix=int(top_k))
+    metrics.update({key: value for key, value in dynamic.items() if key not in {"top1_match"}})
+    metrics["set_overlap"] = dynamic["set_overlap"]
+    metrics["overlap_pair_count"] = dynamic["overlap_pair_count"]
+    return metrics
+
+
+def _ordered_selection_metrics_at_k(
+    oracle_ordered_indices: list[int],
+    selector_ordered_indices: list[int],
+    *,
+    top_k: int,
+    suffix: int,
+) -> dict[str, Any]:
     oracle = [int(idx) for idx in oracle_ordered_indices[:top_k]]
     pred = [int(idx) for idx in selector_ordered_indices[:top_k]]
     oracle_set = set(oracle)
@@ -26,19 +43,22 @@ def ordered_selection_metrics(
     prefix = {
         f"prefix_match@{n}": _prefix_match(oracle, pred, n)
         for n in (1, 3, 5)
+        if n <= int(suffix)
     }
+    if int(suffix) not in {1, 3, 5}:
+        prefix[f"prefix_match@{int(suffix)}"] = _prefix_match(oracle, pred, int(suffix))
     pairwise_acc, pair_count = _pairwise_order_acc(oracle, pred)
     metrics: dict[str, Any] = {
         "set_overlap": int(len(overlap)),
-        "recall@5": float(len(overlap) / max(len(oracle_set), 1)),
-        "precision@5": float(len(overlap) / k),
-        "jaccard@5": float(len(overlap) / max(len(union), 1)),
+        f"recall@{int(suffix)}": float(len(overlap) / max(len(oracle_set), 1)),
+        f"precision@{int(suffix)}": float(len(overlap) / k),
+        f"jaccard@{int(suffix)}": float(len(overlap) / max(len(union), 1)),
         "top1_match": float(len(oracle) > 0 and len(pred) > 0 and oracle[0] == pred[0]),
-        "ordered_hit@5": _ordered_hit_at_k(oracle, pred, top_k),
-        "oracle_rank_ndcg@5": _oracle_rank_ndcg(oracle, pred, top_k),
-        "pairwise_order_acc@5": pairwise_acc,
+        f"ordered_hit@{int(suffix)}": _ordered_hit_at_k(oracle, pred, top_k),
+        f"oracle_rank_ndcg@{int(suffix)}": _oracle_rank_ndcg(oracle, pred, top_k),
+        f"pairwise_order_acc@{int(suffix)}": pairwise_acc,
         "overlap_pair_count": int(pair_count),
-        "ordered_exact_match@5": float(oracle == pred[: len(oracle)] and len(pred) == len(oracle)),
+        f"ordered_exact_match@{int(suffix)}": float(oracle == pred[: len(oracle)] and len(pred) == len(oracle)),
     }
     metrics.update(prefix)
     return metrics
@@ -66,6 +86,26 @@ def summarize_ordered_selection(
         "pairwise_order_acc@5",
         "ordered_exact_match@5",
     ]
+    extra_metric_keys = sorted(
+        {
+            key
+            for trace in traces
+            for key, value in trace.items()
+            if (
+                isinstance(value, (int, float))
+                and (
+                    key.endswith("@10")
+                    or key.startswith("prefix_match@")
+                    or key.startswith("ordered_hit@")
+                    or key.startswith("oracle_rank_ndcg@")
+                    or key.startswith("pairwise_order_acc@")
+                    or key.startswith("ordered_exact_match@")
+                )
+            )
+        }
+        - set(metric_keys)
+    )
+    metric_keys.extend(extra_metric_keys)
     weights_for_pairwise = np.array(
         [float(trace.get("overlap_pair_count", 0)) for trace in traces],
         dtype=np.float64,
