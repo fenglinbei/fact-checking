@@ -8,8 +8,11 @@ from pathlib import Path
 
 from fact_checking.selectors.evidence_chain_graph import (
     CHAIN_SELECTOR,
+    RULE_STEP_CHAIN_SELECTOR,
     EvidenceChainParams,
+    RuleStepEvidenceChainParams,
     build_evidence_chain_graph_row,
+    build_rule_step_evidence_chain_graph_row,
 )
 from scripts.phase5_selectors.visualize.render_evidence_chain_graph_html import (
     load_or_build_translations,
@@ -141,6 +144,113 @@ class EvidenceChainGraphTest(unittest.TestCase):
         self.assertTrue(all(0 <= idx < len(pool) for idx in trace["oracle_ordered_indices"]))
         selected_from_pool = [pool[idx]["evidence_id"] for idx in trace["selector_ordered_indices"]]
         self.assertEqual(selected_from_pool, graph["selected_evidence_ids"])
+
+    def test_rule_step_anchor_prefers_core_evidence_over_background(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=[], relation="background", directness="context", base=0.99),
+                _candidate("E02", atoms=["A1"], relation="support", directness="direct", base=0.70),
+                _candidate("E03", atoms=[], relation="irrelevant", directness="none", base=0.98),
+                _candidate("E04", atoms=["A2"], relation="support", directness="partial", base=0.60),
+                _candidate("E05", atoms=[], relation="background", directness="context", base=0.50),
+            ]
+        )
+
+        graph = build_rule_step_evidence_chain_graph_row(row, params=RuleStepEvidenceChainParams(min_top_k=5, max_top_k=10))
+
+        self.assertEqual(graph["selector_name"], RULE_STEP_CHAIN_SELECTOR)
+        self.assertEqual(graph["selected_evidence_ids"][0], "E02")
+        self.assertEqual(graph["selection_steps"][0]["rule"], "anchor_core")
+
+    def test_rule_step_p1_beats_p2_and_uses_claim_atom_order(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", base=0.99, source="report:1"),
+                _candidate("E02", atoms=["A2"], relation="support", directness="direct", base=0.98, source="report:2"),
+                _candidate("E03", atoms=["A1"], relation="support", directness="direct", base=0.80, source="report:3"),
+                _candidate("E04", atoms=["A3"], relation="support", directness="partial", base=0.70, source="report:4"),
+                _candidate("E05", atoms=[], relation="irrelevant", directness="none", base=0.10, source="report:5"),
+            ]
+        )
+
+        graph = build_rule_step_evidence_chain_graph_row(row, params=RuleStepEvidenceChainParams(min_top_k=5, max_top_k=10))
+
+        self.assertEqual(graph["selected_evidence_ids"][:3], ["E01", "E02", "E04"])
+        self.assertEqual([step["rule"] for step in graph["selection_steps"][:3]], ["anchor_core", "P1_new_atom_core", "P1_new_atom_core"])
+
+    def test_rule_step_p2_requires_strong_edge_and_core_candidate(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.90),
+                _candidate("E02", atoms=["A1"], relation="support", directness="direct", source="report:2", base=0.80),
+                _candidate("E03", atoms=[], relation="background", directness="context", source="report:3", base=0.99),
+                _candidate("E04", atoms=[], relation="irrelevant", directness="none", source="report:4", base=0.98),
+                _candidate("E05", atoms=[], relation="background", directness="context", source="report:5", base=0.97),
+            ]
+        )
+
+        graph = build_rule_step_evidence_chain_graph_row(row, params=RuleStepEvidenceChainParams(min_top_k=5, max_top_k=10))
+
+        self.assertEqual(graph["selected_evidence_ids"][1], "E02")
+        self.assertEqual(graph["selection_steps"][1]["rule"], "P2_strong_edge_core")
+
+    def test_rule_step_p3_requires_core_anchor(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", sent_idx=1, base=0.90),
+                _candidate("E02", atoms=["A1"], relation="background", directness="context", source="report:1", sent_idx=2, base=0.80),
+                _candidate("E03", atoms=[], relation="background", directness="context", source="report:9", sent_idx=9, base=0.99),
+                _candidate("E04", atoms=[], relation="irrelevant", directness="none", source="report:1", sent_idx=3, base=0.98),
+                _candidate("E05", atoms=[], relation="background", directness="context", source="report:8", sent_idx=8, base=0.10),
+            ]
+        )
+
+        graph = build_rule_step_evidence_chain_graph_row(row, params=RuleStepEvidenceChainParams(min_top_k=5, max_top_k=10))
+
+        self.assertEqual(graph["selected_evidence_ids"][1], "E02")
+        self.assertEqual(graph["selection_steps"][1]["rule"], "P3_bridge_context")
+        self.assertNotEqual(graph["selected_evidence_ids"][1], "E03")
+
+    def test_rule_step_fallback_fills_to_five_then_stops_without_rules(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", base=0.90),
+                _candidate("E02", atoms=[], relation="irrelevant", directness="none", base=0.80),
+                _candidate("E03", atoms=[], relation="irrelevant", directness="none", base=0.70),
+                _candidate("E04", atoms=[], relation="background", directness="context", base=0.60),
+                _candidate("E05", atoms=[], relation="irrelevant", directness="none", base=0.50),
+                _candidate("E06", atoms=[], relation="irrelevant", directness="none", base=0.40),
+            ]
+        )
+
+        graph = build_rule_step_evidence_chain_graph_row(row, params=RuleStepEvidenceChainParams(min_top_k=5, max_top_k=10))
+
+        self.assertEqual(len(graph["selected_evidence_ids"]), 5)
+        self.assertEqual(graph["adaptive_stop_reason"], "reached_min_top_k_no_rule_candidate")
+        self.assertTrue(any(step["fallback_used"] for step in graph["selection_steps"]))
+
+    def test_rule_step_max_top_k_cap_and_trace_coordinates(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99),
+                *[
+                    _candidate(f"E{i:02d}", atoms=["A1"], relation="support", directness="direct", source=f"report:{i}", base=0.99 - i * 0.01)
+                    for i in range(2, 13)
+                ],
+            ]
+        )
+
+        graph = build_rule_step_evidence_chain_graph_row(row, params=RuleStepEvidenceChainParams(min_top_k=5, max_top_k=10))
+        trace = graph["selection_trace"]
+        pool = trace["candidate_pool"]
+
+        self.assertEqual(len(graph["selected_evidence_ids"]), 10)
+        self.assertEqual(trace["adaptive_evidence_count"], 10)
+        self.assertEqual([pool[idx]["evidence_id"] for idx in trace["selector_ordered_indices"]], graph["selected_evidence_ids"])
+        self.assertTrue(all(0 <= idx < len(pool) for idx in trace["selector_ordered_indices"]))
+        self.assertIn("jaccard@5", trace)
+        self.assertIn("jaccard@10", trace)
+        self.assertNotIn("post_order", graph["chains"][0])
 
     def test_oracle_zero_step_is_preserved_and_rendered_as_one_based_badge(self) -> None:
         graph = build_evidence_chain_graph_row(_row([_candidate("E01", atoms=["A1"], base=0.9, oracle=True)]), params=EvidenceChainParams(top_k=1))
