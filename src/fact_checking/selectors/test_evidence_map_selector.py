@@ -90,6 +90,30 @@ class EvidenceMapSelectorTest(unittest.TestCase):
         self.assertEqual(mapping, {"E01": "uid-1", "E02": "uid-2"})
         self.assertEqual(row["candidates"][0]["evidence_id"], "E01")
 
+    def test_qd_union_candidate_pool_uses_union_rank_prior_without_fusion_features(self) -> None:
+        row = prepare_evidence_map_candidate_rows(
+            [
+                {
+                    "event_id": "event-q",
+                    "claim": "The budget increased.",
+                    "candidates": [
+                        {"text": "Rank two text.", "canonical_text": "rank two", "union_pool_rank": 2, "report_id": 2},
+                        {"text": "Rank one text.", "canonical_text": "rank one", "union_pool_rank": 1, "report_id": 1},
+                    ],
+                }
+            ],
+            candidate_top_n=2,
+            candidate_source="qd_union",
+        )[0]
+        attach_event_base_scores([row])
+
+        self.assertEqual(row["evidence_map_candidate_source"], "qd_union")
+        self.assertEqual([candidate["candidate_key"] for candidate in row["candidates"]], ["rank one", "rank two"])
+        self.assertGreater(row["candidates"][0]["evidence_map_base_score"], row["candidates"][1]["evidence_map_base_score"])
+        self.assertNotIn("fusion_refit_score", row["candidates"][0])
+        self.assertNotIn("direct_ce_score", row["candidates"][0])
+        self.assertNotIn("oracle_likelihood_score", row["candidates"][0])
+
     def test_greedy_rewards_new_atoms_and_penalizes_background_duplicates(self) -> None:
         candidates = [
             _candidate("a", uid="a", fusion=0.4, atoms=["A1"], directness="direct", relation="support", duplicate="G1"),

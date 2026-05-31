@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SPLIT="${SPLIT:-val}"
-INPUT_FUSION_FILE="${INPUT_FUSION_FILE:-outputs/selectors/direct_evidence_cross_encoder/v0_4d_${SPLIT}_default_query_fusion/candidate_fusion_scores_${SPLIT}.jsonl}"
+QD_UNION_POOL_FILE="${QD_UNION_POOL_FILE:-outputs/selectors/question_decomp_retrieval/qwen_v0_${SPLIT}/union_candidate_pool_${SPLIT}.jsonl}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/selectors/evidence_map_selector/v0_6b_${SPLIT}}"
 CANDIDATE_TOP_N="${CANDIDATE_TOP_N:-20}"
 TOP_K="${TOP_K:-5}"
@@ -55,7 +55,7 @@ FEATURES="${OUTPUT_DIR}/candidate_evidence_map_features_${SPLIT}.jsonl"
 TRACE="${OUTPUT_DIR}/selection_trace_${SPLIT}.jsonl"
 
 echo "[evidence-map-v0.6b] split       : ${SPLIT}"
-echo "[evidence-map-v0.6b] input       : ${INPUT_FUSION_FILE}"
+echo "[evidence-map-v0.6b] qd union    : ${QD_UNION_POOL_FILE}"
 echo "[evidence-map-v0.6b] output      : ${OUTPUT_DIR}"
 echo "[evidence-map-v0.6b] top_n/top_k : ${CANDIDATE_TOP_N}/${TOP_K}"
 echo "[evidence-map-v0.6b] prompt      : ${PROMPT_VERSION}"
@@ -64,9 +64,10 @@ echo "[evidence-map-v0.6b] run teacher : ${RUN_TEACHER}"
 echo "[evidence-map-v0.6b] mock maps   : ${MOCK_EVIDENCE_MAPS}"
 
 PYTHONPATH=src python scripts/phase5_selectors/build/prepare_evidence_map_candidate_pool.py \
-  --input-fusion-file "${INPUT_FUSION_FILE}" \
+  --input-candidate-file "${QD_UNION_POOL_FILE}" \
   --output-dir "${OUTPUT_DIR}" \
   --split "${SPLIT}" \
+  --candidate-source qd_union \
   --candidate-top-n "${CANDIDATE_TOP_N}" \
   "${SAMPLE_ARGS[@]}"
 

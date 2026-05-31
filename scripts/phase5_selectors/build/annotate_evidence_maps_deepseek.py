@@ -25,6 +25,7 @@ from fact_checking.selectors.evidence_map_selector import (
     EvidenceMapSchemaError,
     build_teacher_messages,
     evidence_map_annotation_key,
+    evidence_items_fingerprint,
     mock_evidence_map_for_row,
     parse_evidence_map_content,
 )
@@ -162,7 +163,12 @@ def _build_jobs(rows: list[dict[str, Any]], *, model: str, prompt_version: str) 
         event_id = str(row.get("event_id") or "")
         if not event_id:
             continue
-        key = evidence_map_annotation_key(event_id=event_id, prompt_version=prompt_version, model=model)
+        key = evidence_map_annotation_key(
+            event_id=event_id,
+            prompt_version=prompt_version,
+            model=model,
+            evidence_fingerprint=evidence_items_fingerprint(row.get("evidence_items") or []) if prompt_version == COMPACT_PROMPT_VERSION else "",
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -201,6 +207,7 @@ def _write_mock_maps(
                             "model": str(args.model),
                             "prompt_version": str(args.prompt_version),
                             "max_evidence_chars": args.max_evidence_chars,
+                            "evidence_items_fingerprint": str(job.row.get("evidence_items_fingerprint") or ""),
                             "mock_maps": True,
                             "thinking_type": str(args.thinking_type),
                             "system_prompt": system_prompt,
@@ -391,6 +398,7 @@ def _annotation_row(job: EvidenceMapJob, *, args: argparse.Namespace, evidence_m
         "event_id": job.event_id,
         "prompt_version": str(args.prompt_version),
         "max_evidence_chars": args.max_evidence_chars,
+        "evidence_items_fingerprint": str(job.row.get("evidence_items_fingerprint") or ""),
         "model": str(args.model),
         "evidence_map": evidence_map,
         "api_usage": {
@@ -410,6 +418,7 @@ def _raw_row(job: EvidenceMapJob, *, args: argparse.Namespace, system_prompt: st
         "model": str(args.model),
         "prompt_version": str(args.prompt_version),
         "max_evidence_chars": args.max_evidence_chars,
+        "evidence_items_fingerprint": str(job.row.get("evidence_items_fingerprint") or ""),
         "thinking_type": str(args.thinking_type),
         "finish_reason": _finish_reason(response),
         "system_prompt": system_prompt,

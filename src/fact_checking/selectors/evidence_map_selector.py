@@ -80,19 +80,45 @@ class EvidenceMapSchemaError(ValueError):
     pass
 
 
-def evidence_map_annotation_key(*, event_id: str, prompt_version: str, model: str) -> str:
+def evidence_map_annotation_key(
+    *,
+    event_id: str,
+    prompt_version: str,
+    model: str,
+    evidence_fingerprint: str = "",
+) -> str:
     payload = f"{event_id}|{prompt_version}|{model}"
+    if evidence_fingerprint:
+        payload = f"{payload}|{evidence_fingerprint}"
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def evidence_items_fingerprint(evidence_items: Sequence[dict[str, Any]]) -> str:
+    payload = [
+        [
+            str(item.get("evidence_id") or ""),
+            str(item.get("text") or ""),
+        ]
+        for item in evidence_items
+    ]
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
 def prepare_evidence_map_candidate_rows(
     rows: Sequence[dict[str, Any]],
     *,
     candidate_top_n: int,
+    candidate_source: str = "fusion",
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for row in rows:
-        candidates = _top_annotation_candidates(row.get("candidates") or [], candidate_top_n=candidate_top_n)
+        source = str(candidate_source or "fusion")
+        candidates = [
+            _normalize_candidate_for_map(candidate, event_id=str(row.get("event_id") or ""), fallback_idx=idx, candidate_source=source)
+            for idx, candidate in enumerate(row.get("candidates") or [], start=1)
+        ]
+        candidates = _top_annotation_candidates(candidates, candidate_top_n=candidate_top_n, candidate_source=source)
         evidence_items: list[dict[str, Any]] = []
         trimmed_candidates: list[dict[str, Any]] = []
         for idx, candidate in enumerate(candidates, start=1):
@@ -116,6 +142,8 @@ def prepare_evidence_map_candidate_rows(
                 "oracle_ordered_keys": list(row.get("oracle_ordered_keys") or []),
                 "oracle_selected_count": int(row.get("oracle_selected_count") or len(row.get("oracle_ordered_keys") or [])),
                 "candidate_top_n": int(candidate_top_n),
+                "evidence_map_candidate_source": source,
+                "evidence_items_fingerprint": evidence_items_fingerprint(evidence_items),
                 "evidence_items": evidence_items,
                 "candidates": trimmed_candidates,
                 "n_stance_buckets": int(row.get("n_stance_buckets") or 7),
@@ -302,10 +330,13 @@ def attach_evidence_map_annotations(
     rows: Sequence[dict[str, Any]],
     annotations: Sequence[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    by_event = {str(row.get("event_id") or ""): row for row in annotations if row.get("event_id")}
+    by_event: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in annotations:
+        if row.get("event_id"):
+            by_event[str(row.get("event_id") or "")].append(row)
     out: list[dict[str, Any]] = []
     for row in rows:
-        annotation = by_event.get(str(row.get("event_id") or ""))
+        annotation = _matching_annotation(row, by_event.get(str(row.get("event_id") or ""), []))
         item = dict(row)
         evidence_ids = [str(ev.get("evidence_id") or "") for ev in row.get("evidence_items") or []]
         if annotation and isinstance(annotation.get("evidence_map"), dict):
@@ -338,6 +369,15 @@ def attach_evidence_map_annotations(
         out.append(item)
     attach_event_base_scores(out)
     return out
+
+
+def _matching_annotation(row: dict[str, Any], annotations: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
+    expected_fingerprint = str(row.get("evidence_items_fingerprint") or "")
+    if expected_fingerprint:
+        for annotation in reversed(list(annotations)):
+            if str(annotation.get("evidence_items_fingerprint") or "") == expected_fingerprint:
+                return annotation
+    return dict(annotations[-1]) if annotations else None
 
 
 def candidate_evidence_map_features(
@@ -390,11 +430,18 @@ def candidate_evidence_map_features(
 def attach_event_base_scores(rows: Sequence[dict[str, Any]]) -> None:
     for row in rows:
         candidates = [candidate for candidate in row.get("candidates") or []]
+        source = str(row.get("evidence_map_candidate_source") or "fusion")
+        if source == "qd_union":
+            for candidate in candidates:
+                candidate["evidence_map_base_score"] = _qd_union_rank_prior(candidate)
+                candidate["evidence_map_base_score_source"] = "qd_union_rank"
+            continue
         fusion = _event_minmax([_safe_float(c.get("fusion_refit_score"), 0.0) for c in candidates])
         oracle = _event_minmax([_safe_float(c.get("oracle_likelihood_score"), 0.0) for c in candidates])
         direct = _event_minmax([_safe_float(c.get("direct_ce_score"), 0.0) for c in candidates])
         for idx, candidate in enumerate(candidates):
             candidate["evidence_map_base_score"] = float(0.70 * fusion[idx] + 0.20 * oracle[idx] + 0.10 * direct[idx])
+            candidate["evidence_map_base_score_source"] = "fusion_oracle_direct"
 
 
 def select_evidence_map_topk(
@@ -538,6 +585,8 @@ def build_all_evidence_map_traces(rows: Sequence[dict[str, Any]], *, top_k: int)
             (ORACLE_LIKELIHOOD_SELECTOR, "oracle_likelihood_score"),
             (DIRECT_CE_TEXT_ONLY_SELECTOR, "direct_ce_score"),
         ):
+            if not any(score_field in candidate for candidate in candidates):
+                continue
             selected_control = select_by_score(candidates, score_field=score_field, top_k=top_k, selector_name=selector_name)
             traces.append(build_evidence_map_trace(row, selected_control, selector_name=selector_name, top_k=top_k))
         for mode in ("original_pool_order_top5", "qd_union_source_score_top5"):
@@ -570,7 +619,7 @@ def select_by_score(
         key=lambda row: (
             -_safe_float(row.get(score_field), 0.0),
             -_safe_float(row.get("evidence_map_quality_score"), 0.0),
-            -_safe_float(row.get("fusion_refit_score"), 0.0),
+            -_safe_float(row.get("evidence_map_base_score"), 0.0),
             int(row.get("union_pool_rank") or 10**9),
             str(row.get("candidate_key") or ""),
         )
@@ -726,17 +775,51 @@ def background_penalty_score(*, relation: str, directness: str, role: str) -> fl
     return 0.0
 
 
-def _top_annotation_candidates(candidates: Sequence[dict[str, Any]], *, candidate_top_n: int) -> list[dict[str, Any]]:
+def _normalize_candidate_for_map(
+    candidate: dict[str, Any],
+    *,
+    event_id: str,
+    fallback_idx: int,
+    candidate_source: str,
+) -> dict[str, Any]:
+    item = dict(candidate)
+    if candidate_source == "qd_union":
+        key = str(item.get("candidate_key") or item.get("canonical_text") or item.get("text") or "").strip()
+        if not key:
+            key = f"candidate-{fallback_idx}"
+        item["candidate_key"] = key
+        item["candidate_uid"] = str(item.get("candidate_uid") or hashlib.sha1(f"{event_id}|{key}".encode("utf-8")).hexdigest()[:12])
+        item.setdefault("source_group", f"report:{item.get('report_id')}" if item.get("report_id") is not None else "")
+        item.setdefault("evidence_map_base_score", _qd_union_rank_prior(item))
+        item.setdefault("evidence_map_base_score_source", "qd_union_rank")
+        item["evidence_map_candidate_source"] = "qd_union"
+    return item
+
+
+def _top_annotation_candidates(
+    candidates: Sequence[dict[str, Any]],
+    *,
+    candidate_top_n: int,
+    candidate_source: str = "fusion",
+) -> list[dict[str, Any]]:
     rows = [dict(candidate) for candidate in candidates]
-    rows.sort(
-        key=lambda row: (
-            -_safe_float(row.get("fusion_refit_score"), 0.0),
-            -_safe_float(row.get("oracle_likelihood_score"), 0.0),
-            -_safe_float(row.get("direct_ce_score"), 0.0),
-            int(row.get("union_pool_rank") or 10**9),
-            str(row.get("candidate_key") or ""),
+    if str(candidate_source or "fusion") == "qd_union":
+        rows.sort(
+            key=lambda row: (
+                int(row.get("union_pool_rank") or 10**9),
+                str(row.get("candidate_key") or row.get("text") or ""),
+            )
         )
-    )
+    else:
+        rows.sort(
+            key=lambda row: (
+                -_safe_float(row.get("fusion_refit_score"), 0.0),
+                -_safe_float(row.get("oracle_likelihood_score"), 0.0),
+                -_safe_float(row.get("direct_ce_score"), 0.0),
+                int(row.get("union_pool_rank") or 10**9),
+                str(row.get("candidate_key") or ""),
+            )
+        )
     return rows[: int(candidate_top_n)]
 
 
@@ -972,11 +1055,22 @@ def _event_minmax(values: Sequence[float]) -> list[float]:
     return [float((value - vmin) / (vmax - vmin)) for value in arr]
 
 
+def _qd_union_rank_prior(candidate: dict[str, Any]) -> float:
+    rank = _safe_int(candidate.get("union_pool_rank"))
+    if rank is None or rank <= 0:
+        rank = _safe_int(candidate.get("qd_pool_rank"))
+    if rank is None or rank <= 0:
+        rank = _safe_int(candidate.get("baseline_rank"))
+    if rank is None or rank <= 0:
+        return 0.0
+    return float(1.0 / float(rank))
+
+
 def _evidence_map_tie_key(candidate: dict[str, Any]) -> tuple[float, float, float, int, str]:
     return (
         _safe_float(candidate.get("slot_score"), 0.0),
         _safe_float(candidate.get("evidence_map_quality_score"), 0.0),
-        _safe_float(candidate.get("fusion_refit_score"), 0.0),
+        _safe_float(candidate.get("evidence_map_base_score"), 0.0),
         -int(candidate.get("union_pool_rank") or 10**9),
         str(candidate.get("candidate_key") or ""),
     )
@@ -1063,6 +1157,15 @@ def _strip_json_fence(content: str) -> str:
 
 def _clamp01(value: float) -> float:
     return float(np.clip(value, 0.0, 1.0))
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:

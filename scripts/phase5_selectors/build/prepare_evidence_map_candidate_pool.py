@@ -17,10 +17,12 @@ DEFAULT_OUTPUT_DIR = "outputs/selectors/evidence_map_selector/v0_5a_val"
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Prepare v0.5a evidence-map annotation candidate pool from v0.4d fusion rows.")
-    p.add_argument("--input-fusion-file", default=DEFAULT_INPUT)
+    p = argparse.ArgumentParser(description="Prepare evidence-map annotation candidate pool rows.")
+    p.add_argument("--input-fusion-file", default=None)
+    p.add_argument("--input-candidate-file", default=None)
     p.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     p.add_argument("--split", default="val", choices=["train", "val", "test"])
+    p.add_argument("--candidate-source", default="fusion", choices=["fusion", "qd_union"])
     p.add_argument("--candidate-top-n", type=int, default=20)
     p.add_argument("--sample-limit", type=int, default=None)
     return p.parse_args()
@@ -31,19 +33,25 @@ def main() -> None:
     started_at = time.time()
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    rows = read_jsonl(args.input_fusion_file)
+    input_path = str(args.input_candidate_file or args.input_fusion_file or DEFAULT_INPUT)
+    rows = read_jsonl(input_path)
     if args.sample_limit is not None:
         rows = rows[: int(args.sample_limit)]
     if not rows:
-        raise ValueError(f"No rows loaded from {args.input_fusion_file}")
-    prepared = prepare_evidence_map_candidate_rows(rows, candidate_top_n=int(args.candidate_top_n))
+        raise ValueError(f"No rows loaded from {input_path}")
+    prepared = prepare_evidence_map_candidate_rows(
+        rows,
+        candidate_top_n=int(args.candidate_top_n),
+        candidate_source=str(args.candidate_source),
+    )
     output_path = out_dir / f"evidence_map_candidate_pool_{args.split}.jsonl"
     write_jsonl(prepared, output_path)
     manifest: dict[str, Any] = {
         "status": "completed",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "command": [Path(sys.argv[0]).as_posix(), *sys.argv[1:]],
-        "input_fusion_file": str(args.input_fusion_file),
+        "input_candidate_file": input_path,
+        "candidate_source": str(args.candidate_source),
         "output_dir": str(out_dir),
         "split": str(args.split),
         "candidate_top_n": int(args.candidate_top_n),

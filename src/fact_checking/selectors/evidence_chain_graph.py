@@ -200,7 +200,7 @@ def _evidence_node(candidate: dict[str, Any], *, idx: int) -> dict[str, Any]:
     directness = str(candidate.get("map_directness") or "none")
     source = _source_group(candidate)
     oracle_step = _safe_int(candidate.get("oracle_step"))
-    return {
+    node = {
         "node_id": evidence_id,
         "type": "evidence",
         "evidence_id": evidence_id,
@@ -219,13 +219,15 @@ def _evidence_node(candidate: dict[str, Any], *, idx: int) -> dict[str, Any]:
         "sent_idx": candidate.get("sent_idx"),
         "base_score": _base_score(candidate),
         "evidence_map_quality_score": _safe_float(candidate.get("evidence_map_quality_score"), 0.0),
-        "fusion_refit_score": _safe_float(candidate.get("fusion_refit_score"), 0.0),
         "union_pool_rank": candidate.get("union_pool_rank"),
         "oracle_selected": bool(candidate.get("oracle_selected")),
         "oracle_step": oracle_step if oracle_step is not None else -1,
         "candidate": dict(candidate),
         "is_background": relation in BACKGROUND_RELATIONS or directness in {"context", "none"},
     }
+    if "fusion_refit_score" in candidate:
+        node["fusion_refit_score"] = _safe_float(candidate.get("fusion_refit_score"), 0.0)
+    return node
 
 
 def _build_edges(atom_nodes: Sequence[dict[str, Any]], evidence_nodes: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -734,31 +736,31 @@ def _pipeline_candidate_scores(
             base_score,
         )
         selector_score = float(max(int(top_k) - int(selected_rank), 0)) if selected_rank is not None else 0.0
-        rows.append(
-            {
-                "candidate_idx": int(pool_idx),
-                "original_candidate_idx": int(original_idx) if original_idx is not None else int(pool_idx),
-                "candidate_uid": str(candidate.get("candidate_uid") or ""),
-                "candidate_key": str(candidate.get("candidate_key") or ""),
-                "evidence_id": evidence_id,
-                "hybrid_rank": int(hybrid_rank) if hybrid_rank is not None else int(pool_idx),
-                "hybrid_score": float(hybrid_score),
-                "retrieval_score": _safe_float(candidate.get("retrieval_score"), float(hybrid_score)),
-                "dense_score": _safe_float(candidate.get("dense_score"), 0.0),
-                "lexical_score": _safe_float(candidate.get("lexical_score"), 0.0),
-                "bm25_score": _safe_float(candidate.get("bm25_score"), 0.0),
-                "fusion_score": _safe_float(candidate.get("fusion_refit_score"), float(hybrid_score)),
-                "fusion_refit_score": _safe_float(candidate.get("fusion_refit_score"), float(hybrid_score)),
-                "direct_ce_score": _safe_float(candidate.get("direct_ce_score"), 0.0),
-                "oracle_likelihood_score": _safe_float(candidate.get("oracle_likelihood_score"), 0.0),
-                "map_score": float(map_score),
-                "evidence_map_base_score": _safe_float(candidate.get("evidence_map_base_score"), base_score),
-                "evidence_map_quality_score": _safe_float(candidate.get("evidence_map_quality_score"), 0.0),
-                "base_score": float(base_score),
-                "selector_score": selector_score,
-                "selector_selected_step": int(selected_rank) if selected_rank is not None else -1,
-            }
-        )
+        row = {
+            "candidate_idx": int(pool_idx),
+            "original_candidate_idx": int(original_idx) if original_idx is not None else int(pool_idx),
+            "candidate_uid": str(candidate.get("candidate_uid") or ""),
+            "candidate_key": str(candidate.get("candidate_key") or ""),
+            "evidence_id": evidence_id,
+            "hybrid_rank": int(hybrid_rank) if hybrid_rank is not None else int(pool_idx),
+            "hybrid_score": float(hybrid_score),
+            "retrieval_score": _safe_float(candidate.get("retrieval_score"), float(hybrid_score)),
+            "dense_score": _safe_float(candidate.get("dense_score"), 0.0),
+            "lexical_score": _safe_float(candidate.get("lexical_score"), 0.0),
+            "bm25_score": _safe_float(candidate.get("bm25_score"), 0.0),
+            "map_score": float(map_score),
+            "evidence_map_base_score": _safe_float(candidate.get("evidence_map_base_score"), base_score),
+            "evidence_map_quality_score": _safe_float(candidate.get("evidence_map_quality_score"), 0.0),
+            "base_score": float(base_score),
+            "selector_score": selector_score,
+            "selector_selected_step": int(selected_rank) if selected_rank is not None else -1,
+        }
+        for optional_field in ("fusion_refit_score", "direct_ce_score", "oracle_likelihood_score"):
+            if optional_field in candidate:
+                row[optional_field] = _safe_float(candidate.get(optional_field), 0.0)
+        if "fusion_refit_score" in row:
+            row["fusion_score"] = row["fusion_refit_score"]
+        rows.append(row)
     return rows
 
 
