@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-REMOTE="fenglin@yd.frp-ski.com:/home/fenglin/project/fact-checking/outputs/selectors/direct_evidence_cross_encoder"
+REMOTE="fenglin@yd.frp-ski.com:/home/fenglin/project/fact-checking/outputs/selectors/evidence_chain_graph"
 SSH_PORT=16880
 ALL=false
 DRY_RUN=""
