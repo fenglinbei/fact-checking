@@ -38,6 +38,7 @@ export PYTHONPATH="${PROJECT_ROOT}/src:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
 CONFIG="${CONFIG:-configs/experiment/b3_oracle_sentence_direct_verifier_1024.yaml}"
+INFER_EXPERIMENT="${INFER_EXPERIMENT:-b3_oracle_sentence_direct_verifier_1024}"
 TRAIN_RAW="${TRAIN_RAW:-data/raw/LIAR-RAW/train.json}"
 VAL_RAW="${VAL_RAW:-data/raw/LIAR-RAW/val.json}"
 TEST_RAW="${TEST_RAW:-data/raw/LIAR-RAW/test.json}"
@@ -403,7 +404,7 @@ run_infer_case() {
 
   local cmd=(
     python -m fact_checking.pipeline.run
-    "experiment=b3_oracle_sentence_direct_verifier_1024"
+    "experiment=${INFER_EXPERIMENT}"
     "pipeline.mode=infer"
     "pipeline.resume=${PIPELINE_RESUME}"
     "pipeline.force.infer=${FORCE_INFER}"

@@ -6,6 +6,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 CONFIG="${CONFIG:-configs/experiment/b3_oracle_sentence_direct_verifier_1024.yaml}"
+INFER_EXPERIMENT="${INFER_EXPERIMENT:-b3_oracle_sentence_direct_verifier_1024}"
 TRAIN_RAW="${TRAIN_RAW:-data/raw/LIAR-RAW/train.json}"
 VAL_RAW="${VAL_RAW:-data/raw/LIAR-RAW/val.json}"
 TEST_RAW="${TEST_RAW:-data/raw/LIAR-RAW/test.json}"
@@ -61,6 +62,7 @@ MERGE_LORA_CACHE_FORCE_REBUILD="${MERGE_LORA_CACHE_FORCE_REBUILD:-false}"
 TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
 export CONFIG
+export INFER_EXPERIMENT
 export TRAIN_RAW
 export VAL_RAW
 export TEST_RAW
@@ -111,7 +113,9 @@ export MERGE_LORA_CACHE_FORCE_REBUILD
 export TOKENIZERS_PARALLELISM
 
 echo "[v0.6b-full-pipeline] config       : ${CONFIG}"
+echo "[v0.6b-full-pipeline] infer exp    : ${INFER_EXPERIMENT}"
 echo "[v0.6b-full-pipeline] case         : ${CASE_NAME}"
+echo "[v0.6b-full-pipeline] finetune     : ${FINETUNE_MODE:-lora/peft}"
 echo "[v0.6b-full-pipeline] source_type  : ${SOURCE_TYPE}"
 echo "[v0.6b-full-pipeline] train src    : ${TRAIN_SOURCE}"
 echo "[v0.6b-full-pipeline] val src      : ${VAL_SOURCE}"
@@ -123,7 +127,9 @@ echo "[v0.6b-full-pipeline] sample       : ${SAMPLE_LIMIT}"
 echo "[v0.6b-full-pipeline] train/infer  : ${RUN_TRAIN}/${RUN_INFER}"
 echo "[v0.6b-full-pipeline] force flags  : build=${FORCE_BUILD} train=${FORCE_TRAIN} infer=${FORCE_INFER}"
 echo "[v0.6b-full-pipeline] train backend: ${TRAIN_BACKEND} nproc=${NPROC_PER_NODE} precision=${MIXED_PRECISION}"
+echo "[v0.6b-full-pipeline] deepspeed    : ${DEEPSPEED_CONFIG}"
 echo "[v0.6b-full-pipeline] cuda/tp      : ${CUDA_VISIBLE_DEVICES} / ${TENSOR_PARALLEL_SIZE}"
+echo "[v0.6b-full-pipeline] merge lora   : ${MERGE_LORA_CACHE}"
 echo "[v0.6b-full-pipeline] output_root  : ${OUTPUT_ROOT}"
 echo "[v0.6b-full-pipeline] run_root     : ${RUN_ROOT}"
 
