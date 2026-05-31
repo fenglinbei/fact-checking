@@ -206,8 +206,9 @@ def _build_compact_teacher_messages(
     max_evidence_chars: int | None,
 ) -> tuple[str, str]:
     system_prompt = (
-        "You map evidence to claim atoms for fact-checking. Use only the claim and "
-        "evidence text. Return valid JSON only."
+        "You are a fact-checking evidence analyst. Use only the claim and the "
+        "provided evidence passages to map evidence to atomic claim facts. "
+        "Return valid JSON only."
     )
     schema = (
         '{"claim_atoms":[{"atom_id":"A1","text":"...","type":"entity|quantity|date|comparison|cause|outcome|other","importance":1.0}],'
@@ -216,20 +217,34 @@ def _build_compact_teacher_messages(
         '"key_spans":["short quote"],"duplicate_group":"G1","confidence":0.0}]}'
     )
     lines = [
-        "Build a compact evidence map.",
-        "Output exactly these useful fields; omit any extra fields.",
+        "Task: read the claim and the evidence passages, then return one JSON object.",
+        "The JSON object must contain exactly two arrays: claim_atoms and candidate_alignments.",
+        "Use this schema and do not add other fields:",
         schema,
         "",
-        "Rules:",
-        "- Split the claim into ordered atomic facts A1, A2, ...",
-        "- Map each evidence ID to covered atom IDs, relation, directness, role, short key spans, duplicate group, and confidence.",
+        "Field guide:",
+        "- claim_atoms.atom_id: A1, A2, ... in claim order.",
+        "- claim_atoms.text: one atomic fact from the claim.",
+        "- claim_atoms.type: entity, quantity, date, comparison, cause, outcome, or other.",
+        "- claim_atoms.importance: 0.0 to 1.0; higher means more central to checking the claim.",
+        "- candidate_alignments.evidence_id: one of the evidence IDs below.",
+        "- candidate_alignments.covered_atom_ids: claim atoms addressed by the passage.",
+        "- candidate_alignments.relation: support, refute, qualify, mixed, background, or irrelevant.",
+        "- candidate_alignments.directness: direct, partial, context, or none.",
+        "- candidate_alignments.evidence_role: primary_support, primary_refute, partial_support, partial_refute, qualifying_context, background_context, duplicate, or irrelevant.",
+        "- candidate_alignments.key_spans: short substrings copied from the passage.",
+        "- candidate_alignments.duplicate_group: same group ID for near-duplicate passages; use an empty string if none.",
+        "- candidate_alignments.confidence: 0.0 to 1.0 for how certain the alignment is.",
+        "",
+        "Guidelines:",
+        "- Keep atoms small and ordered by their appearance in the claim.",
         "- Mark weak background as relation=background and directness=context or none.",
-        "- Use only IDs shown below.",
+        "- Use only the evidence IDs shown below.",
         "",
         "Claim:",
         str(row.get("claim") or "").strip(),
         "",
-        "Evidence:",
+        "Evidence passages:",
     ]
     for item in row.get("evidence_items") or []:
         evidence_id = str(item.get("evidence_id") or "")
