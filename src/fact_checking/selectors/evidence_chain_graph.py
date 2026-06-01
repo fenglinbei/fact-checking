@@ -19,7 +19,11 @@ GRAPH_VERSION = "evidence_chain_graph_v0_6b"
 CHAIN_SELECTOR = "v0_6b_chain_graph_top5"
 RULE_STEP_GRAPH_VERSION = "evidence_chain_graph_v0_6c"
 RULE_STEP_CHAIN_SELECTOR = "v0_6c_rule_step_adaptive5_10"
+SUFFICIENCY_CONTRADICTION_GRAPH_VERSION = "evidence_chain_graph_v0_6d"
+SUFFICIENCY_CONTRADICTION_SELECTOR = "v0_6d_sufficiency_contradiction_adaptive5_10"
 DEFAULT_CHUNK_MMR_FINGERPRINT = "432dfc970e75"
+DEFAULT_IMPORTANT_ATOM_THRESHOLD = 0.50
+DEFAULT_SUFFICIENCY_WEIGHTED_COVERAGE_THRESHOLD = 0.80
 
 POSITIVE_CHAIN_EDGE_TYPES = {"complements", "corroborates", "tension", "bridge_context"}
 RULE_STEP_STRONG_EDGE_TYPES = {"complements", "corroborates", "tension"}
@@ -49,6 +53,16 @@ class RuleStepEvidenceChainParams:
     min_top_k: int = 5
     max_top_k: int = 10
     chunk_mmr_fingerprint: str = DEFAULT_CHUNK_MMR_FINGERPRINT
+
+
+@dataclass(frozen=True)
+class SufficiencyContradictionEvidenceChainParams:
+    candidate_top_n: int = 20
+    min_top_k: int = 5
+    max_top_k: int = 10
+    chunk_mmr_fingerprint: str = DEFAULT_CHUNK_MMR_FINGERPRINT
+    important_atom_threshold: float = DEFAULT_IMPORTANT_ATOM_THRESHOLD
+    sufficiency_weighted_coverage_threshold: float = DEFAULT_SUFFICIENCY_WEIGHTED_COVERAGE_THRESHOLD
 
 
 def build_evidence_chain_graph_row(row: dict[str, Any], *, params: EvidenceChainParams | None = None) -> dict[str, Any]:
@@ -168,6 +182,93 @@ def build_rule_step_evidence_chain_graph_row(
     return graph_row
 
 
+def build_sufficiency_contradiction_evidence_chain_graph_row(
+    row: dict[str, Any],
+    *,
+    params: SufficiencyContradictionEvidenceChainParams | None = None,
+) -> dict[str, Any]:
+    params = params or SufficiencyContradictionEvidenceChainParams()
+    min_top_k = max(1, int(params.min_top_k))
+    max_top_k = max(min_top_k, int(params.max_top_k))
+    important_atom_threshold = float(params.important_atom_threshold)
+    sufficiency_weighted_coverage_threshold = float(params.sufficiency_weighted_coverage_threshold)
+    candidates = _sorted_candidates(row.get("candidates") or [], candidate_top_n=params.candidate_top_n)
+    atom_nodes = _atom_nodes(row)
+    evidence_nodes = [_evidence_node(candidate, idx=idx) for idx, candidate in enumerate(candidates, start=1)]
+    atom_by_id = {str(atom.get("node_id") or ""): atom for atom in atom_nodes}
+    evidence_by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    edges = _build_edges(atom_nodes, evidence_nodes)
+    edge_index = _edge_index(edges)
+    rule_result = _select_sufficiency_contradiction_evidence_ids(
+        evidence_nodes,
+        atom_by_id=atom_by_id,
+        edge_index=edge_index,
+        min_top_k=min_top_k,
+        max_top_k=max_top_k,
+        important_atom_threshold=important_atom_threshold,
+        sufficiency_weighted_coverage_threshold=sufficiency_weighted_coverage_threshold,
+    )
+    selected_ids = list(rule_result.get("evidence_ids") or [])
+    selected_candidates = [_candidate_for_evidence_id(evidence_by_id[eid]) for eid in selected_ids if eid in evidence_by_id]
+    selected_chain = _rule_step_chain_summary(
+        selected_ids,
+        evidence_nodes=evidence_nodes,
+        atom_by_id=atom_by_id,
+        edge_index=edge_index,
+        rule_result=rule_result,
+    )
+    graph_row = {
+        "event_id": str(row.get("event_id") or ""),
+        "claim": str(row.get("claim") or ""),
+        "gold_label": str(row.get("gold_label") or ""),
+        "graph_version": SUFFICIENCY_CONTRADICTION_GRAPH_VERSION,
+        "selector_name": SUFFICIENCY_CONTRADICTION_SELECTOR,
+        "params": {
+            "candidate_top_n": int(params.candidate_top_n),
+            "min_top_k": min_top_k,
+            "max_top_k": max_top_k,
+            "chunk_mmr_fingerprint": str(params.chunk_mmr_fingerprint or ""),
+            "important_atom_threshold": important_atom_threshold,
+            "sufficiency_weighted_coverage_threshold": sufficiency_weighted_coverage_threshold,
+        },
+        "fingerprint": str(params.chunk_mmr_fingerprint or ""),
+        "candidate_pool_metadata": {
+            "chunk_mmr_fingerprint": str(params.chunk_mmr_fingerprint or ""),
+        },
+        "claim_node": {"node_id": "C0", "type": "claim", "text": str(row.get("claim") or "")},
+        "atom_nodes": atom_nodes,
+        "evidence_nodes": evidence_nodes,
+        "edges": edges,
+        "chains": [selected_chain] if selected_chain.get("evidence_ids") else [],
+        "selected_chain_id": str(selected_chain.get("chain_id") or ""),
+        "selected_evidence_ids": selected_ids,
+        "selected_candidates": selected_candidates,
+        "oracle_ordered_keys": list(row.get("oracle_ordered_keys") or []),
+        "adaptive_policy": "sufficiency_contradiction_v0_6d",
+        "min_top_k": min_top_k,
+        "max_top_k": max_top_k,
+        "adaptive_evidence_count": len(selected_ids),
+        "adaptive_stop_reason": str(rule_result.get("stop_reason") or ""),
+        "selection_steps": list(rule_result.get("selection_steps") or []),
+        "adaptive_additions": [
+            dict(step)
+            for step in rule_result.get("selection_steps") or []
+            if int(step.get("step", 0)) > min_top_k or bool(step.get("fallback_used"))
+        ],
+        "sufficiency_state": dict(rule_result.get("sufficiency_state") or {}),
+        "sufficiency_important_atom_threshold": important_atom_threshold,
+        "sufficiency_weighted_coverage_threshold": sufficiency_weighted_coverage_threshold,
+        "contradiction_aware_additions": [
+            dict(step)
+            for step in rule_result.get("selection_steps") or []
+            if bool(step.get("contradiction_continuation"))
+        ],
+        "diagnostics": _graph_diagnostics(atom_nodes, evidence_nodes, edges, selected_chain),
+    }
+    graph_row["selection_trace"] = build_evidence_chain_trace(row, graph_row, top_k=max_top_k)
+    return graph_row
+
+
 def build_evidence_chain_trace(row: dict[str, Any], graph_row: dict[str, Any], *, top_k: int) -> dict[str, Any]:
     selected = list(graph_row.get("selected_candidates") or [])
     candidate_pool = _pipeline_candidate_pool(graph_row)
@@ -213,6 +314,10 @@ def build_evidence_chain_trace(row: dict[str, Any], graph_row: dict[str, Any], *
         "adaptive_stop_reason",
         "selection_steps",
         "adaptive_additions",
+        "sufficiency_state",
+        "sufficiency_important_atom_threshold",
+        "sufficiency_weighted_coverage_threshold",
+        "contradiction_aware_additions",
     ):
         if key in graph_row:
             trace[key] = graph_row[key]
@@ -295,6 +400,70 @@ def summarize_rule_step_chain_graph_rows(rows: Sequence[dict[str, Any]]) -> dict
     }
 
 
+def summarize_sufficiency_contradiction_chain_graph_rows(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    traces = [row.get("selection_trace") or {} for row in rows]
+    diagnostics = [row.get("diagnostics") or {} for row in rows]
+    edge_counts: Counter[str] = Counter()
+    selected_lengths: Counter[str] = Counter()
+    stop_reasons: Counter[str] = Counter()
+    step_rules: Counter[str] = Counter()
+    fallback_rows = 0
+    p3_rows = 0
+    sufficient_stop_rows = 0
+    contradiction_rows = 0
+    background_additions = 0
+    total_additions = 0
+    for row in rows:
+        edge_counts.update(str(edge.get("edge_type") or "") for edge in row.get("edges") or [])
+        selected_lengths[str(len(row.get("selected_evidence_ids") or []))] += 1
+        stop_reason = str(row.get("adaptive_stop_reason") or "")
+        stop_reasons[stop_reason] += 1
+        if stop_reason.startswith("sufficient_"):
+            sufficient_stop_rows += 1
+        row_has_fallback = False
+        row_has_p3 = False
+        row_has_contradiction = False
+        for step in row.get("selection_steps") or []:
+            rule = str(step.get("rule") or "")
+            step_rules[rule] += 1
+            if bool(step.get("fallback_used")):
+                row_has_fallback = True
+            if rule == "P3_bridge_context":
+                row_has_p3 = True
+            if bool(step.get("contradiction_continuation")):
+                row_has_contradiction = True
+            if int(step.get("step", 0)) > int(row.get("min_top_k") or 5):
+                total_additions += 1
+                if str(step.get("relation") or "") in BACKGROUND_RELATIONS:
+                    background_additions += 1
+        if row_has_fallback:
+            fallback_rows += 1
+        if row_has_p3:
+            p3_rows += 1
+        if row_has_contradiction:
+            contradiction_rows += 1
+    return {
+        "graph_version": SUFFICIENCY_CONTRADICTION_GRAPH_VERSION,
+        "selector_name": SUFFICIENCY_CONTRADICTION_SELECTOR,
+        "n_events": len(rows),
+        "n_edges_by_type": dict(sorted(edge_counts.items())),
+        "selected_lengths": dict(sorted(selected_lengths.items())),
+        "adaptive_stop_reasons": dict(sorted(stop_reasons.items())),
+        "selection_rules": dict(sorted(step_rules.items())),
+        "fallback_row_rate": float(fallback_rows / max(len(rows), 1)),
+        "p3_row_rate": float(p3_rows / max(len(rows), 1)),
+        "sufficiency_stop_rate": float(sufficient_stop_rows / max(len(rows), 1)),
+        "contradiction_continuation_rate": float(contradiction_rows / max(len(rows), 1)),
+        "post_min_background_addition_rate": float(background_additions / max(total_additions, 1)),
+        "mean_atom_isolate_rate": _mean(_safe_float(item.get("atom_isolate_rate"), 0.0) for item in diagnostics),
+        "mean_evidence_isolate_rate": _mean(_safe_float(item.get("evidence_isolate_rate"), 0.0) for item in diagnostics),
+        "mean_oracle_evidence_connected_rate": _mean(_safe_float(item.get("oracle_evidence_connected_rate"), 0.0) for item in diagnostics),
+        "mean_oracle_pair_edge_rate": _mean(_safe_float(item.get("oracle_pair_edge_rate"), 0.0) for item in diagnostics),
+        "mean_max_chain_atom_coverage": _mean(_safe_float(item.get("max_chain_atom_coverage"), 0.0) for item in diagnostics),
+        "selection_metrics": _summarize_traces(traces),
+    }
+
+
 def render_case_studies(rows: Sequence[dict[str, Any]], *, top_n: int = 5) -> str:
     ranked = sorted(rows, key=lambda row: _safe_float((row.get("chains") or [{}])[0].get("chain_score"), 0.0), reverse=True)
     oracle_ranked = sorted(rows, key=lambda row: _safe_float((row.get("selection_trace") or {}).get("jaccard@5"), 0.0), reverse=True)
@@ -344,6 +513,43 @@ def render_rule_step_case_studies(rows: Sequence[dict[str, Any]], *, top_n: int 
                     f"- jaccard@10: {_safe_float(trace.get('jaccard@10'), 0.0):.4f}",
                     f"- evidence ids: {row.get('selected_evidence_ids', [])}",
                     f"- rules: {[step.get('rule') for step in row.get('selection_steps') or []]}",
+                    "",
+                ]
+            )
+    return "\n".join(lines)
+
+
+def render_sufficiency_contradiction_case_studies(rows: Sequence[dict[str, Any]], *, top_n: int = 5) -> str:
+    contradiction_ranked = sorted(
+        rows,
+        key=lambda row: sum(1 for step in row.get("selection_steps") or [] if bool(step.get("contradiction_continuation"))),
+        reverse=True,
+    )
+    insufficient_ranked = sorted(
+        rows,
+        key=lambda row: str(row.get("adaptive_stop_reason") or "") == "insufficient_no_coverable_atom_candidate",
+        reverse=True,
+    )
+    lines = ["# Evidence Chain Graph v0.6d Sufficiency/Contradiction Case Studies", ""]
+    for title, items in (("Contradiction Continuations", contradiction_ranked[:top_n]), ("Insufficient Stops", insufficient_ranked[:top_n])):
+        lines.extend([f"## {title}", ""])
+        if not items:
+            lines.extend(["(none)", ""])
+            continue
+        for row in items:
+            trace = row.get("selection_trace") or {}
+            state = row.get("sufficiency_state") or {}
+            lines.extend(
+                [
+                    f"### {row.get('event_id')} len={len(row.get('selected_evidence_ids') or [])} stop={row.get('adaptive_stop_reason')}",
+                    "",
+                    f"Claim: {row.get('claim', '')}",
+                    "",
+                    f"- jaccard@5: {_safe_float(trace.get('jaccard@5'), 0.0):.4f}",
+                    f"- jaccard@10: {_safe_float(trace.get('jaccard@10'), 0.0):.4f}",
+                    f"- evidence ids: {row.get('selected_evidence_ids', [])}",
+                    f"- rules: {[step.get('rule') for step in row.get('selection_steps') or []]}",
+                    f"- sufficient: {state.get('is_sufficient')} coverage={_safe_float(state.get('selected_core_weighted_atom_coverage'), 0.0):.4f}",
                     "",
                 ]
             )
@@ -576,6 +782,116 @@ def _select_rule_step_evidence_ids(
     }
 
 
+def _select_sufficiency_contradiction_evidence_ids(
+    evidence_nodes: Sequence[dict[str, Any]],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    min_top_k: int,
+    max_top_k: int,
+    important_atom_threshold: float,
+    sufficiency_weighted_coverage_threshold: float,
+) -> dict[str, Any]:
+    by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    selected: list[str] = []
+    steps: list[dict[str, Any]] = []
+    stop_reason = ""
+
+    while len(selected) < min(max_top_k, len(evidence_nodes)):
+        fallback_used = False
+        if len(selected) < int(min_top_k):
+            pick = _best_rule_step_candidate(
+                selected,
+                evidence_nodes,
+                atom_by_id=atom_by_id,
+                edge_index=edge_index,
+            )
+            if pick is None:
+                pick = _best_rule_step_fallback(
+                    selected,
+                    evidence_nodes,
+                    atom_by_id=atom_by_id,
+                    edge_index=edge_index,
+                )
+                fallback_used = True
+            if pick is None:
+                stop_reason = "pool_exhausted_before_min_top_k"
+                break
+        else:
+            state = _sufficiency_state(
+                selected,
+                evidence_nodes,
+                atom_by_id=atom_by_id,
+                important_atom_threshold=important_atom_threshold,
+                weighted_coverage_threshold=sufficiency_weighted_coverage_threshold,
+            )
+            if bool(state.get("is_sufficient")):
+                pick = _best_tension_counter_candidate(
+                    selected,
+                    evidence_nodes,
+                    atom_by_id=atom_by_id,
+                    edge_index=edge_index,
+                )
+                if pick is None:
+                    stop_reason = "sufficient_no_contradiction_candidate"
+                    break
+            else:
+                pick = _best_sufficiency_p1_candidate(
+                    selected,
+                    evidence_nodes,
+                    atom_by_id=atom_by_id,
+                    state=state,
+                )
+                if pick is None:
+                    stop_reason = "insufficient_no_coverable_atom_candidate"
+                    break
+
+        evidence_id = str(pick["evidence_id"])
+        if evidence_id in selected or evidence_id not in by_id:
+            stop_reason = "duplicate_pick_guard"
+            break
+        selected.append(evidence_id)
+        after_state = _sufficiency_state(
+            selected,
+            evidence_nodes,
+            atom_by_id=atom_by_id,
+            important_atom_threshold=important_atom_threshold,
+            weighted_coverage_threshold=sufficiency_weighted_coverage_threshold,
+        )
+        steps.append(
+            {
+                "step": len(selected),
+                "evidence_id": evidence_id,
+                "rule": str(pick.get("rule") or ""),
+                "covered_new_atom_ids": list(pick.get("covered_new_atom_ids") or []),
+                "anchor_evidence_ids": list(pick.get("anchor_evidence_ids") or []),
+                "fallback_used": bool(fallback_used or pick.get("fallback_used")),
+                "directness": str(by_id[evidence_id].get("directness") or ""),
+                "relation": str(by_id[evidence_id].get("relation") or ""),
+                "sufficiency_after_step": after_state,
+                "shared_atom_ids": list(pick.get("shared_atom_ids") or []),
+                "edge_types": list(pick.get("edge_types") or []),
+                "contradiction_continuation": bool(pick.get("contradiction_continuation")),
+            }
+        )
+
+    if not stop_reason:
+        stop_reason = "reached_max_top_k" if len(selected) >= int(max_top_k) else "pool_exhausted"
+    final_state = _sufficiency_state(
+        selected,
+        evidence_nodes,
+        atom_by_id=atom_by_id,
+        important_atom_threshold=important_atom_threshold,
+        weighted_coverage_threshold=sufficiency_weighted_coverage_threshold,
+    )
+    return {
+        "evidence_ids": selected,
+        "selection_steps": steps,
+        "stop_reason": stop_reason,
+        "sufficiency_state": final_state,
+    }
+
+
 def _best_rule_step_candidate(
     selected: Sequence[str],
     evidence_nodes: Sequence[dict[str, Any]],
@@ -776,6 +1092,163 @@ def _best_rule_step_fallback(
             }
         )
     return _min_pick(rows)
+
+
+def _best_sufficiency_p1_candidate(
+    selected: Sequence[str],
+    evidence_nodes: Sequence[dict[str, Any]],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    state: dict[str, Any],
+) -> dict[str, Any] | None:
+    selected_set = {str(eid) for eid in selected}
+    uncovered = {str(atom_id) for atom_id in state.get("uncovered_coverable_important_atom_ids") or []}
+    if not uncovered:
+        return None
+    rows: list[dict[str, Any]] = []
+    for node in evidence_nodes:
+        evidence_id = str(node.get("node_id") or "")
+        if evidence_id in selected_set or not _is_rule_core_node(node):
+            continue
+        new_atoms = [atom_id for atom_id in _covered_atoms(node, atom_by_id=atom_by_id) if atom_id in uncovered]
+        if not new_atoms:
+            continue
+        rows.append(
+            {
+                "evidence_id": evidence_id,
+                "rule": "P1_new_important_atom_core",
+                "covered_new_atom_ids": new_atoms,
+                "anchor_evidence_ids": [],
+                "sort_key": _rule_step_sort_key(node, new_atoms, [], atom_by_id=atom_by_id, selected=evidence_nodes),
+            }
+        )
+    return _min_pick(rows)
+
+
+def _best_tension_counter_candidate(
+    selected: Sequence[str],
+    evidence_nodes: Sequence[dict[str, Any]],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    selected_set = {str(eid) for eid in selected}
+    selected_core_ids = [str(eid) for eid in selected if _is_rule_core_node(by_id.get(str(eid), {}))]
+    rows: list[dict[str, Any]] = []
+    for node in evidence_nodes:
+        evidence_id = str(node.get("node_id") or "")
+        if evidence_id in selected_set or not _is_rule_core_node(node):
+            continue
+        if _has_duplicate_with_selected(node, selected_core_ids, by_id=by_id):
+            continue
+        anchor_ids: list[str] = []
+        shared_atoms: set[str] = set()
+        edge_types: set[str] = set()
+        for anchor_id in selected_core_ids:
+            pair_edges = edge_index.get(_pair_key(evidence_id, anchor_id), [])
+            tension_edges = [edge for edge in pair_edges if str(edge.get("edge_type") or "") == "tension"]
+            if not tension_edges:
+                continue
+            edge_shared = {
+                str(atom_id)
+                for edge in tension_edges
+                for atom_id in edge.get("atom_ids") or []
+                if str(atom_id) in atom_by_id
+            }
+            if not edge_shared:
+                edge_shared = set(node.get("covered_atom_ids") or []) & set(by_id.get(anchor_id, {}).get("covered_atom_ids") or [])
+            if not edge_shared:
+                continue
+            anchor_ids.append(anchor_id)
+            shared_atoms.update(str(atom_id) for atom_id in edge_shared)
+            edge_types.update(str(edge.get("edge_type") or "") for edge in tension_edges)
+        if not anchor_ids or not shared_atoms:
+            continue
+        ordered_shared = _sort_atom_ids(shared_atoms, atom_by_id=atom_by_id)
+        rows.append(
+            {
+                "evidence_id": evidence_id,
+                "rule": "P2_tension_counter_core",
+                "covered_new_atom_ids": [],
+                "anchor_evidence_ids": anchor_ids,
+                "shared_atom_ids": ordered_shared,
+                "edge_types": sorted(edge_types),
+                "contradiction_continuation": True,
+                "sort_key": _rule_step_sort_key(
+                    node,
+                    ordered_shared,
+                    anchor_ids,
+                    atom_by_id=atom_by_id,
+                    selected=evidence_nodes,
+                    edge_rank=0,
+                ),
+            }
+        )
+    return _min_pick(rows)
+
+
+def _sufficiency_state(
+    selected: Sequence[str],
+    evidence_nodes: Sequence[dict[str, Any]],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    important_atom_threshold: float,
+    weighted_coverage_threshold: float,
+) -> dict[str, Any]:
+    by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    atom_order = {str(atom_id): idx for idx, atom_id in enumerate(atom_by_id)}
+    all_atom_ids = [str(atom_id) for atom_id in atom_by_id]
+    important_atom_ids = [
+        atom_id
+        for atom_id, atom in atom_by_id.items()
+        if _safe_float(atom.get("importance"), 1.0) >= float(important_atom_threshold)
+    ]
+    if not important_atom_ids:
+        important_atom_ids = list(all_atom_ids)
+    important_set = set(important_atom_ids)
+    core_coverable = {
+        str(atom_id)
+        for node in evidence_nodes
+        if _is_rule_core_node(node)
+        for atom_id in node.get("covered_atom_ids") or []
+        if str(atom_id) in important_set
+    }
+    selected_core_atoms = {
+        str(atom_id)
+        for evidence_id in selected
+        for node in [by_id.get(str(evidence_id), {})]
+        if _is_rule_core_node(node)
+        for atom_id in node.get("covered_atom_ids") or []
+        if str(atom_id) in atom_by_id
+    }
+    covered_important = selected_core_atoms & core_coverable
+    uncovered_coverable = core_coverable - selected_core_atoms
+    total_weight = sum(_safe_float(atom.get("importance"), 1.0) for atom in atom_by_id.values()) or 1.0
+    covered_weight = sum(_safe_float(atom_by_id[atom_id].get("importance"), 1.0) for atom_id in selected_core_atoms if atom_id in atom_by_id)
+    weighted_coverage = float(covered_weight / total_weight)
+    is_sufficient = bool(not uncovered_coverable and weighted_coverage >= float(weighted_coverage_threshold))
+    return {
+        "is_sufficient": is_sufficient,
+        "important_atom_ids": _sort_atom_ids(important_atom_ids, atom_by_id=atom_by_id),
+        "coverable_important_atom_ids": _sort_atom_ids(core_coverable, atom_by_id=atom_by_id),
+        "covered_important_atom_ids": _sort_atom_ids(covered_important, atom_by_id=atom_by_id),
+        "uncovered_coverable_important_atom_ids": _sort_atom_ids(uncovered_coverable, atom_by_id=atom_by_id),
+        "selected_core_covered_atom_ids": _sort_atom_ids(selected_core_atoms, atom_by_id=atom_by_id),
+        "selected_core_weighted_atom_coverage": weighted_coverage,
+        "important_atom_threshold": float(important_atom_threshold),
+        "weighted_coverage_threshold": float(weighted_coverage_threshold),
+        "atom_order": {atom_id: int(atom_order.get(atom_id, 10**9)) for atom_id in all_atom_ids},
+    }
+
+
+def _has_duplicate_with_selected(node: dict[str, Any], selected_ids: Sequence[str], *, by_id: dict[str, dict[str, Any]]) -> bool:
+    return any(_is_duplicate_pair(node, by_id.get(str(evidence_id), {})) for evidence_id in selected_ids)
+
+
+def _sort_atom_ids(atom_ids: Iterable[Any], *, atom_by_id: dict[str, dict[str, Any]]) -> list[str]:
+    atom_order = {str(atom_id): idx for idx, atom_id in enumerate(atom_by_id)}
+    return sorted({str(atom_id) for atom_id in atom_ids if str(atom_id) in atom_by_id}, key=lambda atom_id: atom_order.get(atom_id, 10**9))
 
 
 def _min_pick(rows: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
