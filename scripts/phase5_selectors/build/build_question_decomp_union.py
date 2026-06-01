@@ -88,6 +88,8 @@ def main() -> None:
                 {
                     "event_id": event_id,
                     "claim": union_row.get("claim", ""),
+                    "label": union_row.get("label", ""),
+                    "gold_label": union_row.get("gold_label", ""),
                     "candidates": selected,
                 }
             )
@@ -95,6 +97,8 @@ def main() -> None:
             {
                 "event_id": event_id,
                 "claim": union_row.get("claim", ""),
+                "label": union_row.get("label", ""),
+                "gold_label": union_row.get("gold_label", ""),
                 "union_pool_size": len(union_row.get("candidates") or []),
                 "source_counts": _source_counts(union_row),
                 "rule_selected_texts": {
@@ -104,8 +108,8 @@ def main() -> None:
             }
         )
 
-    oracle_results = args.oracle_results or _default_oracle_results(str(args.split))
-    oracle_rows = read_jsonl(oracle_results)
+    oracle_results = args.oracle_results if args.oracle_results is not None else _default_oracle_results(str(args.split))
+    oracle_rows = read_jsonl(oracle_results) if oracle_results and Path(oracle_results).exists() else []
     if args.sample_limit is not None:
         oracle_rows = oracle_rows[: int(args.sample_limit)]
     metrics = compute_union_metrics(
@@ -113,6 +117,7 @@ def main() -> None:
         rule_rows=rule_rows,
         oracle_texts=oracle_selected_texts_by_event(oracle_rows),
     )
+    metrics["oracle_metrics_available"] = bool(oracle_rows)
 
     union_pool_path = out_dir / f"union_candidate_pool_{args.split}.jsonl"
     trace_path = out_dir / f"union_trace_{args.split}.jsonl"

@@ -1,0 +1,40 @@
+# @package _global_
+# RAWFC original 3-label verifier for v0.6c rule-step adaptive evidence-chain graph traces.
+
+defaults:
+  - b3_oracle_sentence_direct_verifier_1024
+  - _self_
+
+label_schema: rawfc3
+
+experiment:
+  name: v0_6c_rawfc3_rule_step_adaptive5_10
+
+baseline:
+  variant: v0_6c_rawfc3_rule_step_adaptive5_10
+  label_schema: rawfc3
+  chunking_strategy: rawfc_closed_evidence
+
+build:
+  data:
+    dataset: rawfc
+    label_schema: rawfc3
+    train_path: data/raw/RAWFC/train.json
+    val_path: data/raw/RAWFC/val.json
+    test_path: data/raw/RAWFC/test.json
+    sample_limit: 0
+  prompt:
+    label_schema: rawfc3
+
+sft_train:
+  label_schema: rawfc3
+  label_token_ce:
+    early_stopping_metric: macro_f1
+    class_weights:
+      false: 1.0
+      half: 1.0
+      true: 1.0
+
+swanlab:
+  project: fact-checking-rawfc-v0-6c
+  experiment_name: v0_6c_rawfc3_rule_step_adaptive5_10

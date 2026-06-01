@@ -1,8 +1,8 @@
 import re
 
-from fact_checking.data.constants import LABEL2ID, LETTER2LABEL
+from fact_checking.data.constants import label2id_for_schema, labels_for_schema, letter2label_for_schema, letter_order_for_schema
 
-_LABEL_PATTERNS = [
+_LIAR_LABEL_PATTERNS = [
     ("pants-fire", r"\bpants\s*-?\s*fire\b"),
     ("barely-true", r"\bbarely\s*-?\s*true\b"),
     ("half-true", r"\bhalf\s*-?\s*true\b"),
@@ -11,8 +11,11 @@ _LABEL_PATTERNS = [
     ("true", r"\btrue\b"),
 ]
 
-_LETTER_LINE_PATTERN = re.compile(r"(?mi)^\s*label\s*:\s*([A-F])\b")
-_BARE_LETTER_PATTERN = re.compile(r"(?is)^\s*([A-F])\s*$")
+_RAWFC_LABEL_PATTERNS = [
+    ("false", r"\bfalse\b"),
+    ("half", r"\bhalf\b|\bhalf\s*-?\s*true\b|\bpartly\s+true\b"),
+    ("true", r"\btrue\b"),
+]
 
 
 def _normalize_for_match(text: str) -> str:
@@ -23,35 +26,53 @@ def _normalize_for_match(text: str) -> str:
     return clean
 
 
-def _parse_label_id(raw_text: str) -> int:
+def _allowed_letters_pattern(label_schema: str | None) -> str:
+    letters = "".join(re.escape(letter) for letter in letter_order_for_schema(label_schema))
+    return f"[{letters}]"
+
+
+def _label_patterns(label_schema: str | None) -> list[tuple[str, str]]:
+    labels = labels_for_schema(label_schema)
+    if labels == ["false", "half", "true"]:
+        return _RAWFC_LABEL_PATTERNS
+    return [item for item in _LIAR_LABEL_PATTERNS if item[0] in set(labels)]
+
+
+def _parse_label_id(raw_text: str, *, label_schema: str | None = None) -> int:
+    letter_pattern = _allowed_letters_pattern(label_schema)
+    letter_line_pattern = re.compile(rf"(?mi)^\s*label\s*:\s*({letter_pattern})\b")
+    bare_letter_pattern = re.compile(rf"(?is)^\s*({letter_pattern})\s*$")
+    letter2label = letter2label_for_schema(label_schema)
+    label2id = label2id_for_schema(label_schema)
+
     # 1. Letter-form output (Label: A/B/C/D/E/F) — primary path under label_format=letter.
-    letter_match = _LETTER_LINE_PATTERN.search(raw_text)
+    letter_match = letter_line_pattern.search(raw_text)
     if letter_match:
         letter = letter_match.group(1).upper()
-        label = LETTER2LABEL.get(letter)
+        label = letter2label.get(letter)
         if label is not None:
-            return LABEL2ID[label]
+            return label2id[label]
 
     # 2. Some constrained decoders return only the selected letter.
-    bare_letter_match = _BARE_LETTER_PATTERN.match(raw_text)
+    bare_letter_match = bare_letter_pattern.match(raw_text)
     if bare_letter_match:
         letter = bare_letter_match.group(1).upper()
-        label = LETTER2LABEL.get(letter)
+        label = letter2label.get(letter)
         if label is not None:
-            return LABEL2ID[label]
+            return label2id[label]
 
     # 3. Legacy full-name 'Label: <name>' line.
     label_line_match = re.search(r"(?mi)^\s*label\s*:\s*([^\n\r]+)", raw_text)
     if label_line_match:
         clean = _normalize_for_match(label_line_match.group(1))
-        for label, pattern in _LABEL_PATTERNS:
+        for label, pattern in _label_patterns(label_schema):
             if re.search(pattern, clean):
-                return LABEL2ID[label]
+                return label2id[label]
 
     # 4. Fallback: scan whole text for any label keyword.
     clean = _normalize_for_match(raw_text)
-    for label, pattern in _LABEL_PATTERNS:
+    for label, pattern in _label_patterns(label_schema):
         if re.search(pattern, clean):
-            return LABEL2ID[label]
+            return label2id[label]
 
     return -1

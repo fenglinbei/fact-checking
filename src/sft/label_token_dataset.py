@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
-from fact_checking.data.constants import LABEL2ID
+from fact_checking.data.constants import label2id_for_schema
 from sft.data.types import PreparedSample
 
 
@@ -19,6 +19,7 @@ class LabelTokenDataset(Dataset):
         *,
         max_length: int,
         label_prefix: str,
+        label_schema: str | None = None,
     ) -> None:
         self.samples = samples
         self.tokenized: list[dict[str, Any]] = []
@@ -50,7 +51,8 @@ class LabelTokenDataset(Dataset):
             attention_mask = [1] * len(input_ids)
             gold_id = int(sample.gold_id)
             if gold_id < 0:
-                gold_id = LABEL2ID.get(sample.gold_label, -1)
+                sample_schema = str(getattr(sample, "label_schema", "") or label_schema or "liar6")
+                gold_id = label2id_for_schema(sample_schema).get(sample.gold_label, -1)
             if gold_id < 0:
                 raise ValueError(f"Invalid gold label for sample {sample_idx}: {sample.gold_label!r}")
 

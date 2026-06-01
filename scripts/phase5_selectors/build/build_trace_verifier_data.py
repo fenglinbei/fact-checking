@@ -55,6 +55,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--train-raw", default="data/raw/LIAR-RAW/train.json")
     p.add_argument("--val-raw", default="data/raw/LIAR-RAW/val.json")
     p.add_argument("--test-raw", default="data/raw/LIAR-RAW/test.json")
+    p.add_argument("--dataset", default=None, help="Raw split format: liar_raw or rawfc.")
+    p.add_argument("--label-schema", default=None, help="Label schema: liar6 or rawfc3.")
     p.add_argument("--output-dir", required=True)
     p.add_argument("--selection-mode", default="trace", choices=SELECTION_MODES)
     p.add_argument("--trace-prompt-style", default="plain", choices=TRACE_PROMPT_STYLES)
@@ -78,6 +80,14 @@ def main() -> None:
 
     cfg = _load_experiment_config(args.config)
     prompt_cfg = dict((cfg.get("build", {}) or {}).get("prompt", {}) or {})
+    label_schema = str(
+        args.label_schema
+        or prompt_cfg.get("label_schema")
+        or ((cfg.get("build", {}) or {}).get("data", {}) or {}).get("label_schema")
+        or cfg.get("label_schema")
+        or "liar6"
+    )
+    prompt_cfg["label_schema"] = label_schema
     if args.prompt_model_name_or_path:
         prompt_cfg["model_name_or_path"] = args.prompt_model_name_or_path
     if args.model_base_path and prompt_cfg.get("model_name_or_path"):
@@ -105,6 +115,8 @@ def main() -> None:
             source_type=source_type,
             source_path=Path(source_path),
             raw_path=Path(raw_path),
+            dataset=args.dataset,
+            label_schema=label_schema,
             tokenizer=tokenizer,
             prompt_cfg=prompt_cfg,
             selection_mode=str(args.selection_mode),
@@ -130,6 +142,7 @@ def main() -> None:
         cfg=cfg,
         output_dir=output_dir,
         split_paths=split_paths,
+        label_schema=label_schema,
         model_base_path=args.model_base_path,
         train_model_name_or_path=args.train_model_name_or_path,
     )
@@ -147,6 +160,7 @@ def main() -> None:
         "expected_chunk_mmr_fingerprint": args.expected_chunk_mmr_fingerprint,
         "val_only": bool(args.val_only),
         "prompt_model_name_or_path": str(prompt_cfg["model_name_or_path"]),
+        "label_schema": label_schema,
         "split_paths": split_paths,
         "train_config": str(train_config_path),
         "splits": reports,
@@ -179,6 +193,8 @@ def _build_split(
     source_type: str,
     source_path: Path,
     raw_path: Path,
+    dataset: str | None,
+    label_schema: str,
     tokenizer: Any,
     prompt_cfg: dict[str, Any],
     selection_mode: str,
@@ -190,7 +206,10 @@ def _build_split(
     sample_limit: int | None,
     show_progress: bool,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    raw_by_event = {sample.event_id: sample for sample in load_split(raw_path)}
+    raw_by_event = {
+        sample.event_id: sample
+        for sample in load_split(raw_path, dataset=dataset, label_schema=label_schema)
+    }
     source_rows = _read_jsonl(source_path)
     if sample_limit is not None:
         source_rows = source_rows[: int(sample_limit)]
@@ -268,6 +287,7 @@ def _build_split(
             "event_id": sample.event_id,
             "claim": claim,
             "label": sample.label,
+            "label_schema": label_schema,
             "explain": sample.explain,
             "candidates": candidates,
         }
@@ -587,6 +607,7 @@ def _build_train_config(
     cfg: dict[str, Any],
     output_dir: Path,
     split_paths: dict[str, str],
+    label_schema: str | None,
     model_base_path: str | None,
     train_model_name_or_path: str | None,
 ) -> dict[str, Any]:
@@ -594,8 +615,18 @@ def _build_train_config(
     if model_base_path and train_model:
         train_model = _resolve_model_path(train_model, model_base_path)
     sft_train = dict(cfg.get("sft_train", {}) or {})
+    resolved_label_schema = str(
+        label_schema
+        or sft_train.get("label_schema")
+        or cfg.get("label_schema")
+        or ((cfg.get("build", {}) or {}).get("prompt", {}) or {}).get("label_schema")
+        or ((cfg.get("build", {}) or {}).get("data", {}) or {}).get("label_schema")
+        or "liar6"
+    )
+    sft_train["label_schema"] = resolved_label_schema
     sft_train["resolved_output_dir"] = True
     train_cfg = {
+        "label_schema": resolved_label_schema,
         "output_dir": str(output_dir / "train"),
         "data": {
             "train_candidates": split_paths["train"],
@@ -606,6 +637,7 @@ def _build_train_config(
         "baseline": dict(cfg.get("baseline", {}) or {}),
         "sft_train": sft_train,
     }
+    train_cfg["baseline"]["label_schema"] = resolved_label_schema
     for key in ("tracking", "wandb", "swanlab"):
         if key in cfg:
             train_cfg[key] = cfg[key]

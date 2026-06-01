@@ -244,7 +244,14 @@ def premmr_worker(
     os.environ["CUDA_VISIBLE_DEVICES"] = visible_gpu_for_worker(gpu_id, run_summary)
     os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
-    samples = load_split(data_cfg[f"{split_name}_path"])
+    samples = load_split(
+        data_cfg[f"{split_name}_path"],
+        dataset=data_cfg.get("dataset"),
+        label_schema=data_cfg.get("label_schema"),
+    )
+    sample_limit = int(data_cfg.get("sample_limit", 0) or 0)
+    if sample_limit > 0:
+        samples = samples[:sample_limit]
     num_gpus = run_summary["num_gpus"]
     chunk_size = (len(samples) + num_gpus - 1) // num_gpus
     samples_chunk = samples[gpu_id * chunk_size : (gpu_id + 1) * chunk_size]
@@ -340,7 +347,14 @@ def compute_pre_mmr_split(
                 precision=run_summary["precision"],
             )
         )
-        samples = load_split(data_cfg[f"{split_name}_path"])
+        samples = load_split(
+            data_cfg[f"{split_name}_path"],
+            dataset=data_cfg.get("dataset"),
+            label_schema=data_cfg.get("label_schema"),
+        )
+        sample_limit = int(data_cfg.get("sample_limit", 0) or 0)
+        if sample_limit > 0:
+            samples = samples[:sample_limit]
         prefetch_size = run_summary["prefetch_size"]
         sentence_source = str(run_summary.get("sentence_source", "content"))
         sentence_min_char_len = int(run_summary.get("sentence_min_char_len", 10))

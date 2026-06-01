@@ -138,7 +138,8 @@ def prepare_evidence_map_candidate_rows(
             {
                 "event_id": str(row.get("event_id") or ""),
                 "claim": str(row.get("claim") or ""),
-                "gold_label": str(row.get("gold_label") or ""),
+                "label": str(row.get("label") or ""),
+                "gold_label": str(row.get("gold_label") or row.get("label") or ""),
                 "oracle_ordered_keys": list(row.get("oracle_ordered_keys") or []),
                 "oracle_selected_count": int(row.get("oracle_selected_count") or len(row.get("oracle_ordered_keys") or [])),
                 "candidate_top_n": int(candidate_top_n),

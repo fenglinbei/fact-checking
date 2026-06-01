@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 from tqdm.auto import tqdm
 
-from fact_checking.data.constants import LABELS, LETTER_ORDER
+from fact_checking.data.constants import LABELS, labels_for_schema, letter_order_for_schema
 from sft.infer_common import (
     build_inference_context,
     build_label_decoding_prompt,
@@ -177,9 +177,9 @@ def _choice_payload_prompt_logprobs(choice: dict[str, Any]) -> Any:
     return None
 
 
-def _build_label_token_ids(tokenizer, label_prefix: str) -> dict[str, int]:
+def _build_label_token_ids(tokenizer, label_prefix: str, *, letter_order: list[str]) -> dict[str, int]:
     token_ids: dict[str, int] = {}
-    for letter in LETTER_ORDER:
+    for letter in letter_order:
         text = label_choice_text(label_prefix, letter)
         ids = tokenizer(text, add_special_tokens=False, truncation=False)["input_ids"]
         if len(ids) != 1:
@@ -196,14 +196,15 @@ def _score_label_logprobs(
     sample,
     tokenizer,
     label_prefix: str,
+    letter_order: list[str],
     max_tokens: int,
     temperature: float,
     extra_body: dict[str, Any] | None,
 ) -> dict[str, float]:
-    label_token_ids = _build_label_token_ids(tokenizer, label_prefix)
+    label_token_ids = _build_label_token_ids(tokenizer, label_prefix, letter_order=letter_order)
     prompts = [
         build_label_scoring_prompt(sample, label_prefix, letter)
-        for letter in LETTER_ORDER
+        for letter in letter_order
     ]
     request_extra = dict(extra_body or {})
     request_extra["prompt_logprobs"] = int(request_extra.get("prompt_logprobs", 0))
@@ -214,14 +215,14 @@ def _score_label_logprobs(
         extra_body=request_extra,
     )
     choices = data.get("choices", [])
-    if len(choices) != len(LETTER_ORDER):
-        raise RuntimeError(f"vLLM returned {len(choices)} choices for {len(LETTER_ORDER)} label scoring prompts.")
+    if len(choices) != len(letter_order):
+        raise RuntimeError(f"vLLM returned {len(choices)} choices for {len(letter_order)} label scoring prompts.")
     choices_by_index = {
         int(choice.get("index", idx)): choice
         for idx, choice in enumerate(choices)
     }
     scores: dict[str, float] = {}
-    for idx, letter in enumerate(LETTER_ORDER):
+    for idx, letter in enumerate(letter_order):
         choice = choices_by_index.get(idx)
         if choice is None:
             raise RuntimeError(f"vLLM response is missing choice index={idx} for label={letter}.")
@@ -230,10 +231,10 @@ def _score_label_logprobs(
     return scores
 
 
-def _argmax_label_logprobs(scores: dict[str, float]) -> int:
+def _argmax_label_logprobs(scores: dict[str, float], *, letter_order: list[str]) -> int:
     best_idx = 0
     best_score = float("-inf")
-    for idx, letter in enumerate(LETTER_ORDER):
+    for idx, letter in enumerate(letter_order):
         score = float(scores[letter])
         if score > best_score:
             best_idx = idx
@@ -301,6 +302,8 @@ def run_api_inference(
             if value is not None
         }
         label_decoding_cfg = dict(infer_cfg.get("label_decoding", {}) or {})
+        labels = labels_for_schema(context.label_schema)
+        letter_order = letter_order_for_schema(context.label_schema)
         use_label_decoding = bool(label_decoding_cfg.get("enabled", True)) and _is_letter_label_only_task(
             context.samples
         )
@@ -312,7 +315,7 @@ def run_api_inference(
                 "'prompt_logprobs', 'guided_choice', or 'generate'."
             )
         use_label_scoring = use_label_decoding and label_mode == "prompt_logprobs"
-        label_choices = [f" {letter}" for letter in LETTER_ORDER]
+        label_choices = [f" {letter}" for letter in letter_order]
         label_extra_body: dict[str, Any] | None = dict(decoding_extra_body) if decoding_extra_body else None
         use_guided_choice = (
             use_label_decoding
@@ -365,12 +368,13 @@ def run_api_inference(
                     sample=sample,
                     tokenizer=context.tokenizer,
                     label_prefix=label_prefix,
+                    letter_order=letter_order,
                     max_tokens=label_score_max_tokens,
                     temperature=temperature,
                     extra_body=label_scoring_extra_body,
                 )
-                pred_id = _argmax_label_logprobs(label_logprobs)
-                raw_completion = label_choice_text(label_prefix, LETTER_ORDER[pred_id])
+                pred_id = _argmax_label_logprobs(label_logprobs, letter_order=letter_order)
+                raw_completion = label_choice_text(label_prefix, letter_order[pred_id])
                 raw_output = f"{label_prefix}{raw_completion}"
             else:
                 if use_label_decoding:
@@ -384,7 +388,7 @@ def run_api_inference(
                     extra_body=extra_body,
                 )
                 raw_output = f"{label_prefix}{raw_completion}" if use_label_decoding else raw_completion
-                pred_id = _parse_label_id(raw_output)
+                pred_id = _parse_label_id(raw_output, label_schema=context.label_schema)
             if pred_id == int(sample.gold_id):
                 correct += 1
             if pred_id < 0:
@@ -402,7 +406,7 @@ def run_api_inference(
                     "raw_output": raw_output,
                     "raw_completion": raw_completion,
                     "pred_id": int(pred_id),
-                    "pred_label": label_name_from_id(int(pred_id)),
+                    "pred_label": label_name_from_id(int(pred_id), context.label_schema),
                     "gold_id": int(sample.gold_id),
                     "gold_label": sample.gold_label,
                     "gold_explain": sample.gold_explain,
@@ -412,7 +416,7 @@ def run_api_inference(
             )
         progress.close()
 
-        eval_metrics = _summarize_prediction_records(prediction_records)
+        eval_metrics = _summarize_prediction_records(prediction_records, labels=labels)
         artifacts = _save_eval_artifacts(
             eval_dir=eval_path,
             metrics=_build_serializable_metrics(eval_metrics),
@@ -421,6 +425,7 @@ def run_api_inference(
             prediction_records=eval_metrics.get("prediction_records", []),
             predictions_filename=f"{split}_predictions.jsonl",
             title=f"Confusion Matrix ({split}/{checkpoint}, API)",
+            labels=labels,
         )
         return artifacts
     finally:
@@ -433,7 +438,12 @@ def _base_url(infer_cfg: dict[str, Any]) -> str:
     return str(infer_cfg.get("base_url") or f"http://{host}:{port}/v1")
 
 
-def _summarize_prediction_records(prediction_records: list[dict[str, object]]) -> dict[str, object]:
+def _summarize_prediction_records(
+    prediction_records: list[dict[str, object]],
+    *,
+    labels: list[str] | None = None,
+) -> dict[str, object]:
+    active_labels = list(labels or LABELS)
     if not prediction_records:
         return {
             "accuracy": 0.0,
@@ -442,14 +452,14 @@ def _summarize_prediction_records(prediction_records: list[dict[str, object]]) -
             "macro_f1": 0.0,
             "parse_error_rate": 0.0,
             "per_class": {},
-            "confusion_matrix": np.zeros((len(LABELS), len(LABELS) + 1), dtype=np.int64),
-            "confusion_labels": LABELS + ["parse_error"],
+            "confusion_matrix": np.zeros((len(active_labels), len(active_labels) + 1), dtype=np.int64),
+            "confusion_labels": active_labels + ["parse_error"],
             "prediction_records": [],
         }
     pred_ids = np.asarray([int(record["pred_id"]) for record in prediction_records], dtype=np.int64)
     gold_ids = np.asarray([int(record["gold_id"]) for record in prediction_records], dtype=np.int64)
-    metrics = _compute_classification_metrics(pred_ids, gold_ids)
-    confusion_matrix, confusion_labels = _build_confusion_matrix(pred_ids, gold_ids)
+    metrics = _compute_classification_metrics(pred_ids, gold_ids, labels=active_labels)
+    confusion_matrix, confusion_labels = _build_confusion_matrix(pred_ids, gold_ids, labels=active_labels)
     metrics["confusion_matrix"] = confusion_matrix
     metrics["confusion_labels"] = confusion_labels
     metrics["prediction_records"] = sorted(prediction_records, key=lambda record: int(record["sample_idx"]))
@@ -478,8 +488,10 @@ def _save_eval_artifacts(
     prediction_records: list[dict[str, object]],
     predictions_filename: str,
     title: str,
+    labels: list[str] | None = None,
 ) -> dict[str, str]:
     eval_dir.mkdir(parents=True, exist_ok=True)
+    display_labels = list(labels or LABELS)
     metrics_path = eval_dir / "metrics.json"
     confusion_data_path = eval_dir / "confusion_matrix.json"
     confusion_png_path = eval_dir / "confusion_matrix.png"
@@ -489,7 +501,7 @@ def _save_eval_artifacts(
     confusion_data_path.write_text(
         json.dumps(
             {
-                "gold_labels": LABELS,
+                "gold_labels": display_labels,
                 "pred_labels": confusion_labels,
                 "matrix": confusion_matrix.tolist(),
             },
@@ -515,8 +527,8 @@ def _save_eval_artifacts(
     im = ax.imshow(confusion_matrix, cmap="Blues")
     ax.set_xticks(np.arange(len(confusion_labels)))
     ax.set_xticklabels(confusion_labels, rotation=45, ha="right")
-    ax.set_yticks(np.arange(len(LABELS)))
-    ax.set_yticklabels(LABELS)
+    ax.set_yticks(np.arange(len(display_labels)))
+    ax.set_yticklabels(display_labels)
     ax.set_xlabel("Predicted")
     ax.set_ylabel("Gold")
     ax.set_title(title)

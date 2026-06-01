@@ -6,13 +6,20 @@ from typing import Any
 
 from transformers import AutoTokenizer
 
-from fact_checking.data.constants import LABEL_DEFINITIONS, LABEL_LETTERS, LABEL2ID
+from fact_checking.data.constants import (
+    label2id_for_schema,
+    label_definitions_for_schema,
+    label_letters_for_schema,
+    task_name_for_schema,
+)
 from sft.data.labels import normalize_gold_label
 
-DEFAULT_SYSTEM_PROMPT = (
-    "You are a careful fact-checking assistant for LIAR-RAW claims. "
-    "Classify claims using only the claim and retrieved evidence supplied by the user."
-)
+def default_system_prompt(label_schema: str | None = None) -> str:
+    task_name = task_name_for_schema(label_schema)
+    return (
+        f"You are a careful fact-checking assistant for {task_name} claims. "
+        "Classify claims using only the claim and retrieved evidence supplied by the user."
+    )
 
 
 def load_prompt_tokenizer(model_name_or_path: str) -> AutoTokenizer:
@@ -33,10 +40,10 @@ def count_target_tokens(target: str, tokenizer: AutoTokenizer) -> int:
     return len(ids)
 
 
-def build_system_message(system_prompt: str | None) -> str:
+def build_system_message(system_prompt: str | None, label_schema: str | None = None) -> str:
     if system_prompt and str(system_prompt).strip():
         return str(system_prompt).strip()
-    return DEFAULT_SYSTEM_PROMPT
+    return default_system_prompt(label_schema)
 
 
 def format_evidence_block(evidence_texts: list[str]) -> str:
@@ -44,28 +51,37 @@ def format_evidence_block(evidence_texts: list[str]) -> str:
     return "\n".join(lines)
 
 
-def label_definitions_text(label_format: str = "name") -> str:
+def label_definitions_text(label_format: str = "name", label_schema: str | None = None) -> str:
+    label_definitions = label_definitions_for_schema(label_schema)
+    label_letters = label_letters_for_schema(label_schema)
     if label_format == "letter":
         return "\n".join(
-            f"- {LABEL_LETTERS[label]} ({label}): {LABEL_DEFINITIONS[label]}"
-            for label in LABEL_DEFINITIONS
+            f"- {label_letters[label]} ({label}): {label_definitions[label]}"
+            for label in label_definitions
         )
-    return "\n".join(f"- {label}: {LABEL_DEFINITIONS[label]}" for label in LABEL_DEFINITIONS)
+    return "\n".join(f"- {label}: {label_definitions[label]}" for label in label_definitions)
 
 
 def build_user_content(
-    claim: str, evidence_texts: list[str], output_mode: str, label_format: str = "name"
+    claim: str,
+    evidence_texts: list[str],
+    output_mode: str,
+    label_format: str = "name",
+    label_schema: str | None = None,
 ) -> str:
     evidence_block = format_evidence_block(evidence_texts)
     evidence_display = evidence_block.strip() if evidence_block.strip() else "(no evidence available)"
 
-    label_placeholder = "<a single letter from A-F>" if label_format == "letter" else "<label>"
+    label_letters = list(label_letters_for_schema(label_schema).values())
+    label_range = f"{label_letters[0]}-{label_letters[-1]}" if len(label_letters) > 1 else label_letters[0]
+    label_placeholder = f"<a single letter from {label_range}>" if label_format == "letter" else "<label>"
+    task_name = task_name_for_schema(label_schema)
 
     if output_mode == "explanation_label":
         return (
-            "Classify the claim into exactly one LIAR-RAW label and provide a concise evidence-grounded explanation.\n\n"
+            f"Classify the claim into exactly one {task_name} label and provide a concise evidence-grounded explanation.\n\n"
             "Labels:\n"
-            f"{label_definitions_text(label_format)}\n\n"
+            f"{label_definitions_text(label_format, label_schema)}\n\n"
             "Rules:\n"
             "- Use the retrieved evidence as the primary source.\n"
             "- Do not invent facts not supported by the evidence.\n"
@@ -77,9 +93,9 @@ def build_user_content(
             f"Evidence:\n{evidence_display}"
         )
     return (
-        "Classify the claim into exactly one LIAR-RAW label.\n\n"
+        f"Classify the claim into exactly one {task_name} label.\n\n"
         "Labels:\n"
-        f"{label_definitions_text(label_format)}\n\n"
+        f"{label_definitions_text(label_format, label_schema)}\n\n"
         "Rules:\n"
         "- Use the retrieved evidence as the primary source.\n"
         "- Do not invent facts not supported by the evidence.\n"
@@ -105,8 +121,9 @@ def render_prompt(
     system_msg: str,
     output_mode: str,
     label_format: str,
+    label_schema: str | None = None,
 ) -> tuple[str, int]:
-    user_content = build_user_content(claim, evidence_texts, output_mode, label_format)
+    user_content = build_user_content(claim, evidence_texts, output_mode, label_format, label_schema)
     prompt = build_chat_prompt(tokenizer, system_msg, user_content)
     return prompt, count_tokens(prompt, tokenizer, add_special_tokens=False)
 
@@ -125,6 +142,7 @@ def truncate_single_evidence_to_budget(
     system_msg: str,
     output_mode: str,
     label_format: str,
+    label_schema: str | None,
     budget: int,
 ) -> tuple[list[str], str, int, bool]:
     """Shorten one evidence item until the full chat prompt fits the prompt budget."""
@@ -149,6 +167,7 @@ def truncate_single_evidence_to_budget(
             system_msg=system_msg,
             output_mode=output_mode,
             label_format=label_format,
+            label_schema=label_schema,
         )
         if prompt_tokens <= budget:
             best_text = candidate_text
@@ -168,12 +187,14 @@ def truncate_single_evidence_to_budget(
         system_msg=system_msg,
         output_mode=output_mode,
         label_format=label_format,
+        label_schema=label_schema,
     )
     return [], no_evidence_prompt, no_evidence_tokens, True
 
 
 def build_target(row: dict, gold_label: str, output_mode: str, label_format: str = "name") -> str:
-    target_label = LABEL_LETTERS[gold_label] if label_format == "letter" else gold_label
+    label_schema = str(row.get("label_schema") or "").strip() or None
+    target_label = label_letters_for_schema(label_schema)[gold_label] if label_format == "letter" else gold_label
     if output_mode == "explanation_label":
         explanation = str(row.get("explain", "")).strip() or "The available evidence supports this label."
         return f"Explanation: {explanation}\nLabel: {target_label}"
@@ -207,10 +228,12 @@ def auto_truncate_evidence(
     row: dict,
     gold_label: str,
     label_format: str = "name",
+    label_schema: str | None = None,
 ) -> dict:
     """Remove evidence items from the tail until the prompt fits within max_length."""
-    system_msg = build_system_message(system_prompt)
-    target = build_target(row, gold_label, output_mode, label_format)
+    system_msg = build_system_message(system_prompt, label_schema)
+    row_for_target = {**row, "label_schema": label_schema or row.get("label_schema", "")}
+    target = build_target(row_for_target, gold_label, output_mode, label_format)
     target_token_count = count_target_tokens(target, tokenizer)
     budget = max(0, int(max_length) - target_token_count)
 
@@ -224,6 +247,7 @@ def auto_truncate_evidence(
         system_msg=system_msg,
         output_mode=output_mode,
         label_format=label_format,
+        label_schema=label_schema,
     )
 
     was_truncated = False
@@ -238,6 +262,7 @@ def auto_truncate_evidence(
             system_msg=system_msg,
             output_mode=output_mode,
             label_format=label_format,
+            label_schema=label_schema,
         )
 
     if prompt_tokens > budget and len(kept) == 1:
@@ -248,6 +273,7 @@ def auto_truncate_evidence(
             system_msg=system_msg,
             output_mode=output_mode,
             label_format=label_format,
+            label_schema=label_schema,
             budget=budget,
         )
         was_truncated = True
@@ -271,7 +297,9 @@ def build_training_row(
     prompt_cfg: dict,
 ) -> dict:
     row = retrieval_result
-    gold_label = normalize_gold_label(row)
+    prompt_cfg = dict(prompt_cfg or {})
+    label_schema = str(prompt_cfg.get("label_schema") or row.get("label_schema") or "").strip() or None
+    gold_label = normalize_gold_label(row, label_schema=label_schema)
     if not gold_label:
         return copy_optional_build_row_metadata(
             {**row, "gold_label": "", "gold_id": -1, "gold_explain": "",
@@ -289,6 +317,7 @@ def build_training_row(
     output_mode = str(prompt_cfg.get("output_mode", "label_only")).strip().lower()
     label_format = str(prompt_cfg.get("label_format", "name")).strip().lower()
     system_prompt = prompt_cfg.get("system_prompt") or None
+    label2id = label2id_for_schema(label_schema)
 
     if auto_length and evidence_texts:
         result = auto_truncate_evidence(
@@ -301,17 +330,19 @@ def build_training_row(
             row=row,
             gold_label=gold_label,
             label_format=label_format,
+            label_schema=label_schema,
         )
         return copy_optional_build_row_metadata({
             "event_id": row.get("event_id", ""),
             "claim": row.get("claim", ""),
             "label": row.get("label", ""),
+            "label_schema": label_schema or "liar6",
             "explain": row.get("explain", ""),
             "candidates": candidates,
             "prompt": result["prompt"],
             "target": result["target"],
             "gold_label": gold_label,
-            "gold_id": LABEL2ID.get(gold_label, -1),
+            "gold_id": label2id.get(gold_label, -1),
             "gold_explain": str(row.get("explain", "")).strip(),
             "prompt_add_special_tokens": False,
             "preserve_prompt_prefix": True,
@@ -323,10 +354,11 @@ def build_training_row(
             "evidence_text_truncated": result["evidence_text_truncated"],
         }, row)
 
-    system_msg = build_system_message(system_prompt)
-    target = build_target(row, gold_label, output_mode, label_format)
+    system_msg = build_system_message(system_prompt, label_schema)
+    row_for_target = {**row, "label_schema": label_schema or "liar6"}
+    target = build_target(row_for_target, gold_label, output_mode, label_format)
     target_token_count = count_target_tokens(target, tokenizer)
-    user_content = build_user_content(str(row.get("claim", "")), evidence_texts, output_mode, label_format)
+    user_content = build_user_content(str(row.get("claim", "")), evidence_texts, output_mode, label_format, label_schema)
     prompt = build_chat_prompt(tokenizer, system_msg, user_content)
     prompt_token_count = count_tokens(prompt, tokenizer, add_special_tokens=False)
 
@@ -334,12 +366,13 @@ def build_training_row(
         "event_id": row.get("event_id", ""),
         "claim": row.get("claim", ""),
         "label": row.get("label", ""),
+        "label_schema": label_schema or "liar6",
         "explain": row.get("explain", ""),
         "candidates": candidates,
         "prompt": prompt,
         "target": target,
         "gold_label": gold_label,
-        "gold_id": LABEL2ID.get(gold_label, -1),
+        "gold_id": label2id.get(gold_label, -1),
         "gold_explain": str(row.get("explain", "")).strip(),
         "prompt_add_special_tokens": False,
         "preserve_prompt_prefix": True,

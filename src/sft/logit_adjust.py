@@ -7,7 +7,7 @@ from typing import Any
 
 import torch
 
-from fact_checking.data.constants import LABEL2ID, LABELS, LETTER_ORDER
+from fact_checking.data.constants import label2id_for_schema, labels_for_schema, letter_order_for_schema
 from fact_checking.data.io import load_jsonl
 from sft.data.labels import normalize_gold_label
 from sft.data.types import PreparedSample
@@ -24,37 +24,41 @@ def build_logit_bias(logit_adjust_cfg: dict) -> dict[str, float]:
     return {str(int(tid)): float(-tau * lp) for tid, lp in zip(letter_token_ids, log_priors)}
 
 
-def compute_priors_from_samples(samples: list[PreparedSample]) -> list[float]:
+def compute_priors_from_samples(samples: list[PreparedSample], *, label_schema: str | None = None) -> list[float]:
     """Estimate class priors from a list of PreparedSample."""
-    counts = [0] * len(LABELS)
+    labels = labels_for_schema(label_schema)
+    label2id = label2id_for_schema(label_schema)
+    counts = [0] * len(labels)
     for sample in samples:
-        gid = LABEL2ID.get(getattr(sample, "gold_label", ""), -1)
+        gid = label2id.get(getattr(sample, "gold_label", ""), -1)
         if gid >= 0:
             counts[gid] += 1
     total = sum(counts)
-    floor = 1.0 / max(total, len(LABELS))
+    floor = 1.0 / max(total, len(labels))
     if total <= 0:
-        priors = [1.0 / len(LABELS)] * len(LABELS)
+        priors = [1.0 / len(labels)] * len(labels)
     else:
         priors = [(c / total) if c > 0 else floor for c in counts]
     return priors
 
 
-def compute_priors_from_jsonl(jsonl_path: str | Path) -> list[float]:
+def compute_priors_from_jsonl(jsonl_path: str | Path, *, label_schema: str | None = None) -> list[float]:
     """Estimate class priors from a build-stage JSONL file."""
     rows = load_jsonl(jsonl_path)
-    counts = [0] * len(LABELS)
+    labels = labels_for_schema(label_schema)
+    label2id = label2id_for_schema(label_schema)
+    counts = [0] * len(labels)
     total = 0
     for row in rows:
-        gold_label = normalize_gold_label(row)
+        gold_label = normalize_gold_label(row, label_schema=label_schema)
         if not gold_label:
             continue
-        gid = LABEL2ID[gold_label]
+        gid = label2id[gold_label]
         counts[gid] += 1
         total += 1
-    floor = 1.0 / max(total, len(LABELS))
+    floor = 1.0 / max(total, len(labels))
     if total <= 0:
-        return [1.0 / len(LABELS)] * len(LABELS)
+        return [1.0 / len(labels)] * len(labels)
     return [(c / total) if c > 0 else floor for c in counts]
 
 
@@ -82,9 +86,16 @@ def build_logit_adjust_cfg_from_train_config(
         return None
 
     tau = float(cfg_block.get("tau", 1.0))
+    label_schema = str(
+        sft_cfg.get("label_schema")
+        or train_config.get("label_schema")
+        or (train_config.get("baseline", {}) or {}).get("label_schema")
+        or "liar6"
+    )
+    letter_order = letter_order_for_schema(label_schema)
 
     letter_token_ids: list[int] = []
-    for letter in LETTER_ORDER:
+    for letter in letter_order:
         ids = tokenizer(" " + letter, add_special_tokens=False)["input_ids"]
         if len(ids) != 1:
             return None  # Letter is not a single token; logit_adjust cannot work
@@ -95,14 +106,15 @@ def build_logit_adjust_cfg_from_train_config(
     data_cfg = train_config.get("data", {})
     train_path = data_cfg.get("train_candidates", "")
     if train_path and Path(train_path).exists():
-        priors = compute_priors_from_jsonl(train_path)
+        priors = compute_priors_from_jsonl(train_path, label_schema=label_schema)
     else:
-        priors = [1.0 / len(LABELS)] * len(LABELS)
+        priors = [1.0 / len(letter_order)] * len(letter_order)
 
     log_priors = [math.log(p) for p in priors]
     return {
         "enabled": True,
         "tau": tau,
+        "label_schema": label_schema,
         "letter_token_ids": letter_token_ids,
         "log_priors": log_priors,
         "prefix_token_ids": prefix_token_ids,

@@ -119,6 +119,8 @@ def main() -> None:
             {
                 "event_id": qd_row["event_id"],
                 "claim": qd_row["claim"],
+                "label": qd_row.get("label", ""),
+                "gold_label": qd_row.get("gold_label") or qd_row.get("label", ""),
                 "questions": qd_row["questions"],
                 "question_routes": qd_row["question_routes"],
                 "baseline_top5_overlap": qd_row.get("baseline_top5_overlap", []),
@@ -128,6 +130,8 @@ def main() -> None:
             {
                 "event_id": qd_row["event_id"],
                 "claim": qd_row["claim"],
+                "label": qd_row.get("label", ""),
+                "gold_label": qd_row.get("gold_label") or qd_row.get("label", ""),
                 "candidates": qd_row["merged_candidate_pool"],
             }
         )
@@ -135,12 +139,14 @@ def main() -> None:
             {
                 "event_id": qd_row["event_id"],
                 "claim": qd_row["claim"],
+                "label": qd_row.get("label", ""),
+                "gold_label": qd_row.get("gold_label") or qd_row.get("label", ""),
                 "candidates": qd_row["selected_evidence"],
             }
         )
 
-    oracle_results = args.oracle_results or _default_oracle_results(str(args.split))
-    oracle_rows = read_jsonl(oracle_results)
+    oracle_results = args.oracle_results if args.oracle_results is not None else _default_oracle_results(str(args.split))
+    oracle_rows = read_jsonl(oracle_results) if oracle_results and Path(oracle_results).exists() else []
     if args.sample_limit is not None:
         oracle_rows = oracle_rows[: int(args.sample_limit)]
     metrics = compute_retrieval_metrics(
@@ -149,6 +155,7 @@ def main() -> None:
         baseline_rows=baseline_rows,
         oracle_texts=oracle_selected_texts_by_event(oracle_rows),
     )
+    metrics["oracle_metrics_available"] = bool(oracle_rows)
 
     trace_path = output_dir / f"retrieval_trace_{args.split}.jsonl"
     merged_path = output_dir / f"merged_candidate_pool_{args.split}.jsonl"

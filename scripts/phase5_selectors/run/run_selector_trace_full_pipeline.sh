@@ -42,6 +42,8 @@ INFER_EXPERIMENT="${INFER_EXPERIMENT:-b3_oracle_sentence_direct_verifier_1024}"
 TRAIN_RAW="${TRAIN_RAW:-data/raw/LIAR-RAW/train.json}"
 VAL_RAW="${VAL_RAW:-data/raw/LIAR-RAW/val.json}"
 TEST_RAW="${TEST_RAW:-data/raw/LIAR-RAW/test.json}"
+RAW_DATASET="${RAW_DATASET:-}"
+LABEL_SCHEMA="${LABEL_SCHEMA:-}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/selector_trace_verifier/stage2_sentence}"
 RUN_ROOT="${RUN_ROOT:-outputs/runs/b3_selector_trace_full_pipeline}"
 
@@ -304,6 +306,12 @@ build_case() {
     --expected-chunk-mmr-fingerprint "${EXPECTED_CHUNK_MMR_FINGERPRINT}"
     --model-base-path "${MODEL_BASE_PATH}"
   )
+  if [[ -n "${RAW_DATASET}" ]]; then
+    args+=(--dataset "${RAW_DATASET}")
+  fi
+  if [[ -n "${LABEL_SCHEMA}" ]]; then
+    args+=(--label-schema "${LABEL_SCHEMA}")
+  fi
   if [[ "${source_type}" == "trace" ]]; then
     args+=(--train-trace "${train_source}" --val-trace "${val_source}")
   elif [[ "${source_type}" == "oracle_results" ]]; then

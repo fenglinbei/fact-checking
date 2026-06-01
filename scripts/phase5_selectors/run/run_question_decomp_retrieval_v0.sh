@@ -16,8 +16,8 @@ fi
 
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/selectors/question_decomp_retrieval/qwen_v0_${SPLIT}}"
 QUESTION_CACHE_DIR="${QUESTION_CACHE_DIR:-outputs/selectors/question_decomp_retrieval/question_cache}"
-QUESTION_BASE_URL="${QUESTION_BASE_URL:-http://127.0.0.1:8000/v1}"
-QUESTION_MODEL="${QUESTION_MODEL:-/data/models/Qwen2.5-7B-Instruct}"
+QUESTION_BASE_URL="${QUESTION_BASE_URL:-https://api.deepseek.com}"
+QUESTION_MODEL="${QUESTION_MODEL:-deepseek-v4-flash}"
 QUESTION_API_KEY_ENV="${QUESTION_API_KEY_ENV:-QUESTION_API_KEY}"
 QUESTION_API_TIMEOUT="${QUESTION_API_TIMEOUT:-120}"
 API_MAX_RETRIES="${API_MAX_RETRIES:-5}"

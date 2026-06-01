@@ -4,12 +4,11 @@ import json
 from pathlib import Path
 from typing import Iterable
 
-import matplotlib.pyplot as plt
 import numpy as np
 from accelerate import Accelerator
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from fact_checking.data.constants import LABEL2ID, LABELS
+from fact_checking.data.constants import LABELS, label2id_for_schema
 from fact_checking.data.types import SampleRecord, SentenceRecord
 from fact_checking.utils.logging import init_logger
 from fact_checking.utils.text import clean_text, robust_sentence_split
@@ -27,12 +26,14 @@ def load_prebuilt_samples(rows: list[dict]) -> list[PreparedSample]:
         gold_label = str(row.get("gold_label", ""))
         if not gold_label:
             continue
+        label_schema = str(row.get("label_schema") or "liar6")
+        label2id = label2id_for_schema(label_schema)
         samples.append(PreparedSample(
             prompt=str(row["prompt"]),
             target=str(row["target"]),
             prompt_add_special_tokens=bool(row.get("prompt_add_special_tokens", False)),
             preserve_prompt_prefix=bool(row.get("preserve_prompt_prefix", True)),
-            gold_id=int(row.get("gold_id", LABEL2ID.get(gold_label, -1))),
+            gold_id=int(row.get("gold_id", label2id.get(gold_label, -1))),
             gold_label=gold_label,
             gold_explain=str(row.get("gold_explain", "")),
             prompt_token_count=int(row.get("prompt_token_count", 0)),
@@ -42,6 +43,7 @@ def load_prebuilt_samples(rows: list[dict]) -> list[PreparedSample]:
             claim=str(row.get("claim", "")),
             no_evidence=int(row.get("evidence_count", 0)) == 0,
             long_claim=len(str(row.get("claim", "")).split()) > 64,
+            label_schema=label_schema,
         ))
     return samples
 
@@ -230,24 +232,15 @@ def save_model(
     accelerator.wait_for_everyone()
 
 
-def load_split(path: str | Path) -> list[SampleRecord]:
-    with Path(path).open("r", encoding="utf-8") as f:
-        payload = json.load(f)
-    records: list[SampleRecord] = []
-    for item in payload:
-        label = clean_text(str(item["label"])).lower()
-        if label not in LABEL2ID:
-            raise ValueError(f"Unknown label: {label!r} in {path}")
-        records.append(
-            SampleRecord(
-                event_id=str(item["event_id"]),
-                claim=clean_text(str(item["claim"])),
-                label=label,
-                explain=clean_text(str(item.get("explain", ""))),
-                reports=item.get("reports", []),
-            )
-        )
-    return records
+def load_split(
+    path: str | Path,
+    *,
+    dataset: str | None = None,
+    label_schema: str | None = None,
+) -> list[SampleRecord]:
+    from fact_checking.data.io import load_split as _load_split
+
+    return _load_split(path, dataset=dataset, label_schema=label_schema)
 
 
 def iter_sentences(sample: SampleRecord, min_char_len: int = 10) -> Iterable[SentenceRecord]:
@@ -278,8 +271,10 @@ def save_eval_artifacts(
     prediction_records: list[dict[str, object]] | None = None,
     predictions_filename: str = "predictions.jsonl",
     title: str = "Confusion Matrix",
+    labels: list[str] | None = None,
 ) -> dict[str, str]:
     eval_dir.mkdir(parents=True, exist_ok=True)
+    display_labels = list(labels or LABELS)
 
     metrics_path = eval_dir / "metrics.json"
     with metrics_path.open("w", encoding="utf-8") as f:
@@ -289,7 +284,7 @@ def save_eval_artifacts(
     with confusion_data_path.open("w", encoding="utf-8") as f:
         json.dump(
             {
-                "gold_labels": LABELS,
+                "gold_labels": display_labels,
                 "pred_labels": confusion_labels,
                 "matrix": confusion_matrix.tolist(),
             },
@@ -298,12 +293,25 @@ def save_eval_artifacts(
             indent=2,
         )
 
+    predictions_path = eval_dir / predictions_filename
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        with predictions_path.open("w", encoding="utf-8") as f:
+            for record in prediction_records or []:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        return {
+            "metrics_path": str(metrics_path),
+            "confusion_data_path": str(confusion_data_path),
+            "predictions_path": str(predictions_path),
+        }
+
     fig, ax = plt.subplots(figsize=(10, 6))
     im = ax.imshow(confusion_matrix, cmap="Blues")
     ax.set_xticks(np.arange(len(confusion_labels)))
     ax.set_xticklabels(confusion_labels, rotation=45, ha="right")
-    ax.set_yticks(np.arange(len(LABELS)))
-    ax.set_yticklabels(LABELS)
+    ax.set_yticks(np.arange(len(display_labels)))
+    ax.set_yticklabels(display_labels)
     ax.set_xlabel("Predicted")
     ax.set_ylabel("Gold")
     ax.set_title(title)
@@ -316,7 +324,6 @@ def save_eval_artifacts(
     fig.savefig(confusion_png_path, dpi=200)
     plt.close(fig)
 
-    predictions_path = eval_dir / predictions_filename
     with predictions_path.open("w", encoding="utf-8") as f:
         for record in prediction_records or []:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -336,6 +343,7 @@ def _save_eval_artifacts(
     confusion_matrix: np.ndarray,
     confusion_labels: list[str],
     prediction_records: list[dict[str, object]] | None = None,
+    labels: list[str] | None = None,
 ) -> dict[str, str]:
     step_dir = output_dir / "eval" / f"step-{global_step}"
     return save_eval_artifacts(
@@ -346,4 +354,5 @@ def _save_eval_artifacts(
         prediction_records=prediction_records,
         predictions_filename="val_predictions.jsonl",
         title=f"Confusion Matrix @ step {global_step}",
+        labels=labels,
     )

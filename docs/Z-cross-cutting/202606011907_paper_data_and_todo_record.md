@@ -188,6 +188,63 @@ trace-lite 设计约束：
 - mean_oracle_pair_edge_rate
 - mean_max_chain_atom_coverage
 
+### 5.1 Literature Comparison Baselines
+
+推荐论文主表口径：
+
+```text
+LIAR-RAW, 6-way veracity classification, raw reports / closed evidence setting, macro-P / macro-R / macro-F1.
+```
+
+当前 v0.6c 主结果应写成：
+
+```text
+v0.6c: LIAR-RAW macro-P / macro-R / macro-F1 = 39.74 / 34.86 / 35.45
+```
+
+注意：`macro_f1` 是 per-class F1 的 macro average，不是由 macro-P 和 macro-R 再调和得到。
+
+主对比表建议只放 raw-report / near raw-report setting。`best variant` 表示同一论文中按数据集选该方法公开报告的最好变体；如果变体不同，需要在 caption 或脚注中说明。
+
+| method | setting note | LIAR-RAW / LIAR P/R/F1 | RAWFC P/R/F1 | comparison handling |
+| --- | --- | ---: | ---: | --- |
+| CofCED | dataset paper; raw reports | 29.48 / 29.55 / 28.93 | 52.99 / 50.99 / 51.07 | main baseline |
+| FactLLaMAKnow | LIAR-family; LLaMA LoRA + external knowledge | 32.46 / 32.05 / 30.44 | 56.11 / 55.50 / 55.65 | near-comparable, note LIAR naming |
+| L-Defense | raw reports + competing wisdom; best variant per dataset | 31.63 / 31.71 / 31.40 | 61.72 / 61.01 / 61.20 | main baseline |
+| G-Defense | raw reports + graph-enhanced defense; best variant per dataset | 34.17 / 32.37 / 32.49 | 66.29 / 65.49 / 65.50 | main baseline, note variant/backbone |
+| DeReC-qwen | dense retrieval + DeBERTa classifier | 35.94 / 32.24 / 33.13 | 65.58 / 64.56 / 64.60 | main baseline |
+| FFRR(d+q) | feedback-trained retrieval + reader | 34.50 / 32.60 / 33.50 | 56.50 / 57.40 / 57.00 | main baseline |
+| DelphiAgent GPT-4o | training-free multi-agent fact-checking | 31.33 / 28.36 / 28.36 | 68.05 / 68.03 / 68.04 | report separately or main-with-LLM note |
+| v0.6c | rule-step adaptive evidence-chain graph | 39.74 / 34.86 / 35.45 | not run | our main method |
+| KG-CRAFT Llama 3.3 | KG + contrastive questions + strong LLM | 77.38 / 70.67 / 73.87 | 81.63 / 81.53 / 81.58 | include as strong-LLM upper reference |
+
+Non-main higher-score or different-evidence-setting methods:
+
+| method | why not direct main-table comparison | LIAR-RAW / LIAR P/R/F1 | RAWFC P/R/F1 | recommended handling |
+| --- | --- | ---: | ---: | --- |
+| HiSS | GPT-3.5/text-davinci-003 + web/search; paper table uses LIAR + RAWFC | 46.80 / 31.30 / 37.50 | 53.40 / 54.40 / 53.90 | put in external-search baselines |
+| RAFTS | external Wikipedia/document retrieval + contrastive arguments; paper table uses LIAR + RAWFC | 47.10 / 37.90 / 42.00 | 62.80 / 52.60 / 57.30 | put in external-retrieval baselines |
+| AFEV / Fact in Fragments | atomic fact extraction + reranking + dynamic demonstrations; table uses LIAR + RAWFC, not strict LIAR-RAW | 48.20 / 40.30 / 43.90 | 63.30 / 57.60 / 60.20 | put in external/LIAR-family baselines |
+| RAV | uses author-written explanations / gold evidence on LIAR-RAW and RAWFC | F1 29.33 | F1 67.53 | gold-evidence table only |
+| Entailed Opinion / TBE-3 | uses gold evidence / entailed justifications | 55 / 54 / 54 | 88 / 88 / 88 | gold-evidence upper reference |
+| LQ-FJS | reports relative gains only in accessible abstract; video/multimodal system | +7.2 F1 over SOTA | +4.5 F1 over SOTA | related work or unverifiable-relative table, not main baseline |
+
+Source pointers for this literature table:
+
+- CofCED: https://aclanthology.org/2022.coling-1.230.pdf
+- FactLLaMA: https://arxiv.org/pdf/2309.00240
+- HiSS: https://aclanthology.org/2023.ijcnlp-main.64.pdf
+- RAFTS: https://aclanthology.org/2024.acl-long.556.pdf
+- FFRR: https://aclanthology.org/2024.lrec-main.1209.pdf
+- L-Defense: https://openreview.net/pdf?id=WurgtxoLt3
+- G-Defense: https://arxiv.org/pdf/2604.06666
+- DeReC: https://aclanthology.org/2025.ldk-1.26.pdf
+- AFEV: https://arxiv.org/pdf/2506.07446
+- RAV: https://aclanthology.org/2025.emnlp-industry.167.pdf
+- Entailed Opinion / TBE-3: https://arxiv.org/pdf/2505.15050
+- KG-CRAFT: https://aclanthology.org/2026.eacl-long.302.pdf
+- LQ-FJS: https://www.sciencedirect.com/science/article/pii/S0169023X25001028
+
 ## 6. Suggested Run Commands
 
 默认 plain v0.6c：
@@ -248,3 +305,35 @@ bash scripts/phase5_selectors/run/run_v0_6c_rule_step_adaptive5_10_all_pipelines
 - [ ] 跑 v0.6e trace-lite on v0.6c FullFT。
 - [ ] 汇总 macro-F1 / accuracy / per-class F1 / health metrics。
 - [ ] 形成 AAAI paper ablation table 和 narrative。
+
+## 9. Pending LLM Backbone Comparison Groups
+
+目标：基于当前 v0.6c 实现，对 verifier backbone 做 9B 以下模型对比。替换 backbone 时需要同时更新 `build.prompt.model_name_or_path` 和 `train.model_name_or_path`，并先确认 label-token CE 的 `Label:` + `A-F` 单 token 约束。
+
+适配难度分组：
+
+| group | model | local status | difficulty | notes |
+| --- | --- | --- | --- | --- |
+| A. 基本 drop-in | `/data/models/Qwen2.5-3B-Instruct` | 本地已有 | 低 | Qwen2 架构；label-token 检查通过；LoRA target 可直接复用。 |
+| A. 基本 drop-in | `/data/models/Qwen2.5-1.5B-Instruct` | 本地已有 | 低 | Qwen2 架构；适合做小模型下界。 |
+| A. 基本 drop-in | `/data/models/Qwen3-1.7B` | 本地已有 | 低 | `Qwen3ForCausalLM`；label-token 检查通过；需要控制 thinking / non-thinking 输出风格。 |
+| A. 基本 drop-in | `/data/models/Qwen3-8B` | 本地已有 | 低 | `Qwen3ForCausalLM`；自然的强小模型对照。 |
+| A. 基本 drop-in | `/data/models/DeepSeek-R1-Distill-Qwen-7B` | 本地已有 | 低 | 底座是 Qwen2；主要风险是 reasoning-distill 风格可能影响 label-only 输出。 |
+| B. 下载后大概率 drop-in | `Qwen/Qwen3-4B-Instruct-2507` | 需下载 | 低-中 | 4B 非 thinking instruct 版本；下载后先跑 tokenizer、LoRA、vLLM smoke。 |
+| C. 中等适配 | `/data/models/Meta-Llama-3.1-8B-Instruct` | 本地已有 | 中 | `LlamaForCausalLM`；label-token 检查通过；需确认 chat template、license/gated 来源和 vLLM 启动。 |
+| C. 中等适配 | `microsoft/Phi-4-mini-instruct` | 需下载 | 中 | 3.8B/128K；需要确认 Phi 架构下 LoRA target module 名称。 |
+| D. 高适配成本 | `/data/models/gemma-4-E2B` | 本地已有 | 中-高 | 本地 config 为 `Gemma4ForConditionalGeneration`；当前训练路径是纯 `AutoTokenizer` + `AutoModelForCausalLM`，需先确认纯文本 CausalLM SFT 是否可行。 |
+| D. 高适配成本 | `mistralai/Ministral-3-8B-Instruct-2512` | 需下载 | 高 | 新 Mistral 3 / 多模态路线；vLLM 可能需要 `tokenizer_mode=mistral`、`config_format=mistral`、`load_format=mistral` 等特殊参数。 |
+
+建议执行顺序：
+
+1. 第一批：`Qwen2.5-1.5B-Instruct`、`Qwen2.5-3B-Instruct`、`Qwen3-1.7B`、`Qwen3-8B`、`DeepSeek-R1-Distill-Qwen-7B`。
+2. 第二批：`Qwen3-4B-Instruct-2507`、`Meta-Llama-3.1-8B-Instruct`、`Phi-4-mini-instruct`。
+3. 第三批：`gemma-4-E2B`、`Ministral-3-8B-Instruct-2512`，作为新架构适配实验，不建议和第一批混跑。
+
+待做 smoke checks：
+
+- [ ] 每个 tokenizer 检查 `Label:` 后 `A-F` 是否均为单 token。
+- [ ] 每个 backbone 跑 `prompt_length_stats_only` 或最小训练样本，确认 prompt tokenization 和 cache 正常。
+- [ ] 每个非 Qwen 模型先检查 LoRA target module 名称。
+- [ ] 每个新下载模型先跑 1 个 checkpoint 的 vLLM label decoding smoke。

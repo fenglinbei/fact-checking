@@ -8,6 +8,7 @@ from transformers import AutoTokenizer
 
 from fact_checking.data.io import load_jsonl
 from fact_checking.config import load_yaml
+from fact_checking.data.constants import labels_for_schema
 from sft.data.io import load_prebuilt_samples
 from sft.data.types import PreparedSample
 from sft.runtime.adapters import checkpoint_has_hf_artifacts, checkpoint_has_peft_adapter
@@ -28,6 +29,8 @@ class InferenceContext:
     max_length: int
     samples: list[PreparedSample]
     eval_output_dir: Path
+    label_schema: str
+    labels: list[str]
 
 
 def build_label_decoding_prompt(sample: PreparedSample, label_prefix: str) -> str:
@@ -97,6 +100,13 @@ def build_inference_context(
     data_cfg = cfg["data"]
     baseline_cfg = cfg["baseline"]
     train_cfg = cfg["sft_train"]
+    label_schema = str(
+        train_cfg.get("label_schema")
+        or cfg.get("label_schema")
+        or baseline_cfg.get("label_schema")
+        or "liar6"
+    )
+    labels = labels_for_schema(label_schema)
     model_name_or_path = str(
         cfg.get("model_name_or_path")
         or baseline_cfg.get("model_name_or_path", "")
@@ -136,15 +146,16 @@ def build_inference_context(
         max_length=max_length,
         samples=samples,
         eval_output_dir=resolved_run_dir / "eval" / split / checkpoint_name,
+        label_schema=label_schema,
+        labels=labels,
     )
 
 
-def label_name_from_id(label_id: int) -> str:
+def label_name_from_id(label_id: int, label_schema: str | None = None) -> str:
     """Map a label index to its string name; returns 'parse_error' for out-of-range ids."""
-    from fact_checking.data.constants import LABELS
-
-    if 0 <= int(label_id) < len(LABELS):
-        return LABELS[int(label_id)]
+    labels = labels_for_schema(label_schema)
+    if 0 <= int(label_id) < len(labels):
+        return labels[int(label_id)]
     return "parse_error"
 
 
@@ -155,12 +166,13 @@ def build_vllm_prediction_record(
     *,
     use_label_decoding: bool,
     label_prefix: str = "Label:",
+    label_schema: str | None = None,
 ) -> dict[str, object]:
     """Build a single prediction record dict for vLLM inference results."""
     from sft.parser import _parse_label_id
 
     raw_output = f"{label_prefix}{raw_completion}" if use_label_decoding else raw_completion
-    pred_id = _parse_label_id(raw_output)
+    pred_id = _parse_label_id(raw_output, label_schema=label_schema)
     return {
         "sample_idx": sample_idx,
         "prompt": sample.prompt,
@@ -168,7 +180,7 @@ def build_vllm_prediction_record(
         "raw_output": raw_output,
         "raw_completion": raw_completion,
         "pred_id": int(pred_id),
-        "pred_label": label_name_from_id(int(pred_id)),
+        "pred_label": label_name_from_id(int(pred_id), label_schema),
         "gold_id": int(sample.gold_id),
         "gold_label": sample.gold_label,
         "gold_explain": sample.gold_explain,

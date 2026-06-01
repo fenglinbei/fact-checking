@@ -178,6 +178,7 @@ def build_question_decomp_retrieval_row(
         "event_id": event_id,
         "claim": str(question_row.get("claim") or sample.claim),
         "label": getattr(sample, "label", ""),
+        "gold_label": getattr(sample, "label", ""),
         "questions": questions,
         "question_routes": per_question_routes,
         "merged_candidate_pool": pool,
@@ -315,6 +316,7 @@ def build_baseline_claim_mmr_row(
         "event_id": sample.event_id,
         "claim": sample.claim,
         "label": sample.label,
+        "gold_label": sample.label,
         "candidates": candidates,
     }
 

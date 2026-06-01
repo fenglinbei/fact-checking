@@ -1,0 +1,31 @@
+# @package _global_
+# Full fine-tuning variant of RAWFC v0.6c rule-step adaptive verifier.
+
+defaults:
+  - v0_6c_rawfc3_rule_step_adaptive5_10
+  - _self_
+
+experiment:
+  name: v0_6c_rawfc3_rule_step_adaptive5_10_fullft
+
+baseline:
+  variant: v0_6c_rawfc3_rule_step_adaptive5_10_fullft
+
+train:
+  deepspeed_config: configs/deepspeed_zero3_bsz2_ga4.json
+
+sft_train:
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-6
+  early_stopping_patience: 6
+  lora:
+    enabled: false
+
+infer:
+  merge_lora_cache:
+    enabled: false
+
+swanlab:
+  project: fact-checking-rawfc-v0-6c-fullft
+  experiment_name: v0_6c_rawfc3_rule_step_adaptive5_10_fullft

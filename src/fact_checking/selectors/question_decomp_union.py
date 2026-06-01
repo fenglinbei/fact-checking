@@ -24,6 +24,8 @@ def build_union_pool_row(
 ) -> dict[str, Any]:
     event_id = str(qd_pool_row.get("event_id") or baseline_row.get("event_id") or "")
     claim = str(qd_pool_row.get("claim") or baseline_row.get("claim") or "")
+    label = str(qd_pool_row.get("label") or baseline_row.get("label") or "")
+    gold_label = str(qd_pool_row.get("gold_label") or baseline_row.get("gold_label") or label)
     merged: dict[str, dict[str, Any]] = {}
     for rank, candidate in enumerate(baseline_row.get("candidates") or [], start=1):
         key = _candidate_key(candidate)
@@ -74,6 +76,8 @@ def build_union_pool_row(
     return {
         "event_id": event_id,
         "claim": claim,
+        "label": label,
+        "gold_label": gold_label,
         "candidates": candidates,
     }
 

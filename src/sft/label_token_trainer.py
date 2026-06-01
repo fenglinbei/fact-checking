@@ -15,7 +15,7 @@ from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler, set_seed
 
 from fact_checking.config import load_yaml, save_yaml
-from fact_checking.data.constants import LABELS, LETTER_ORDER
+from fact_checking.data.constants import labels_for_schema, letter_order_for_schema
 from fact_checking.data.io import load_jsonl
 from fact_checking.utils.logging import init_logger
 from sft.data.io import _save_eval_artifacts, load_prebuilt_samples, save_model
@@ -44,14 +44,19 @@ def _choice_text(label_prefix: str, letter: str) -> str:
     return letter if label_prefix.endswith((" ", "\n", "\t")) else " " + letter
 
 
-def _build_label_token_ids(tokenizer: AutoTokenizer, *, label_prefix: str) -> tuple[list[int], dict[str, Any]]:
+def _build_label_token_ids(
+    tokenizer: AutoTokenizer,
+    *,
+    label_prefix: str,
+    letter_order: list[str],
+) -> tuple[list[int], dict[str, Any]]:
     prefix_ids = tokenizer(label_prefix, add_special_tokens=False, truncation=False)["input_ids"]
     if not prefix_ids:
         raise ValueError(f"label_prefix={label_prefix!r} produced no tokens.")
 
     token_ids: list[int] = []
     token_texts: dict[str, str] = {}
-    for letter in LETTER_ORDER:
+    for letter in letter_order:
         token_text = _choice_text(label_prefix, letter)
         ids = tokenizer(token_text, add_special_tokens=False, truncation=False)["input_ids"]
         if len(ids) != 1:
@@ -64,15 +69,15 @@ def _build_label_token_ids(tokenizer: AutoTokenizer, *, label_prefix: str) -> tu
     return token_ids, {
         "label_prefix": label_prefix,
         "prefix_token_ids": [int(x) for x in prefix_ids],
-        "label_token_ids": {letter: int(token_id) for letter, token_id in zip(LETTER_ORDER, token_ids)},
+        "label_token_ids": {letter: int(token_id) for letter, token_id in zip(letter_order, token_ids)},
         "label_token_texts": token_texts,
     }
 
 
-def _class_weight_tensor(train_cfg: dict[str, Any]) -> torch.Tensor:
+def _class_weight_tensor(train_cfg: dict[str, Any], *, labels: list[str]) -> torch.Tensor:
     label_cfg = train_cfg.get("label_token_ce", {}) or {}
     configured = label_cfg.get("class_weights", {}) or {}
-    weights = [float(configured.get(label, 1.0)) for label in LABELS]
+    weights = [float(configured.get(label, 1.0)) for label in labels]
     return torch.tensor(weights, dtype=torch.float32)
 
 
@@ -93,9 +98,9 @@ def _forward_label_logits(
     return next_token_logits.index_select(1, label_token_ids.to(next_token_logits.device))
 
 
-def _label_name(label_id: int) -> str:
-    if 0 <= int(label_id) < len(LABELS):
-        return LABELS[int(label_id)]
+def _label_name(label_id: int, *, labels: list[str]) -> str:
+    if 0 <= int(label_id) < len(labels):
+        return labels[int(label_id)]
     return "parse_error"
 
 
@@ -136,6 +141,8 @@ def _evaluate_label_token(
     label_token_ids: torch.Tensor,
     class_weights: torch.Tensor,
     label_prefix: str,
+    labels: list[str],
+    letter_order: list[str],
     eval_logger,
     log_predictions_limit: int,
 ) -> dict[str, Any]:
@@ -192,6 +199,7 @@ def _evaluate_label_token(
         metrics = build_eval_metrics(
             np.asarray([], dtype=np.int64),
             np.asarray([], dtype=np.int64),
+            labels=labels,
             prediction_records=[],
             eval_logger=eval_logger,
             log_predictions_limit=log_predictions_limit,
@@ -208,7 +216,7 @@ def _evaluate_label_token(
     if accelerator.is_main_process and dataset_samples is not None:
         for sample_idx, pred_id, gold_id in zip(sample_indices_np.tolist(), pred_np.tolist(), gold_np.tolist()):
             sample = dataset_samples[int(sample_idx)]
-            letter = LETTER_ORDER[int(pred_id)]
+            letter = letter_order[int(pred_id)]
             prediction_records.append(
                 {
                     "sample_idx": int(sample_idx),
@@ -216,7 +224,7 @@ def _evaluate_label_token(
                     "target": str(sample.target),
                     "raw_output": f"{label_prefix}{_choice_text(label_prefix, letter)}",
                     "pred_id": int(pred_id),
-                    "pred_label": _label_name(int(pred_id)),
+                    "pred_label": _label_name(int(pred_id), labels=labels),
                     "gold_id": int(gold_id),
                     "gold_label": str(sample.gold_label),
                     "gold_explain": str(sample.gold_explain),
@@ -226,6 +234,7 @@ def _evaluate_label_token(
     metrics = build_eval_metrics(
         pred_np,
         gold_np,
+        labels=labels,
         prediction_records=prediction_records if accelerator.is_main_process else [],
         eval_logger=eval_logger,
         log_predictions_limit=log_predictions_limit,
@@ -253,6 +262,14 @@ def main() -> None:
     train_cfg = cfg["sft_train"]
     label_cfg = train_cfg.get("label_token_ce", {}) or {}
     label_prefix = str(label_cfg.get("label_prefix", "Label:"))
+    label_schema = str(
+        train_cfg.get("label_schema")
+        or cfg.get("label_schema")
+        or baseline_cfg.get("label_schema")
+        or "liar6"
+    )
+    labels = labels_for_schema(label_schema)
+    letter_order = letter_order_for_schema(label_schema)
 
     set_seed(int(train_cfg.get("seed", 42)))
     mixed_precision = "bf16" if bool(train_cfg.get("bf16", True)) else "no"
@@ -298,9 +315,13 @@ def main() -> None:
         tokenizer.pad_token = tokenizer.eos_token
 
     max_length = int(train_cfg.get("max_length", 2048))
-    label_token_id_list, token_meta = _build_label_token_ids(tokenizer, label_prefix=label_prefix)
+    label_token_id_list, token_meta = _build_label_token_ids(
+        tokenizer,
+        label_prefix=label_prefix,
+        letter_order=letter_order,
+    )
     label_token_ids = torch.tensor(label_token_id_list, dtype=torch.long)
-    class_weights = _class_weight_tensor(train_cfg)
+    class_weights = _class_weight_tensor(train_cfg, labels=labels)
 
     train_prompt_summary = summarize_prebuilt_prompts(train_samples, max_length=max_length, split="train")
     val_prompt_summary = summarize_prebuilt_prompts(val_samples, max_length=max_length, split="val")
@@ -318,7 +339,9 @@ def main() -> None:
         meta_path = output_dir / "label_token_ce_meta.json"
         meta = {
             **token_meta,
-            "class_weights": {label: float(weight) for label, weight in zip(LABELS, class_weights.tolist())},
+            "label_schema": label_schema,
+            "labels": labels,
+            "class_weights": {label: float(weight) for label, weight in zip(labels, class_weights.tolist())},
             "early_stopping_metric": str(label_cfg.get("early_stopping_metric", "macro_f1_plus_true_side")),
             "true_side_metric_weight": float(label_cfg.get("true_side_metric_weight", 0.5)),
         }
@@ -368,8 +391,20 @@ def main() -> None:
     if padding_strategy not in {"max_length", "longest"}:
         raise ValueError(f"Unsupported sft_train.padding={padding_strategy}. Use 'max_length' or 'longest'.")
     use_length_bucket = bool(train_cfg.get("use_length_bucket", True))
-    train_ds = LabelTokenDataset(train_samples, tokenizer, max_length=max_length, label_prefix=label_prefix)
-    val_ds = LabelTokenDataset(val_samples, tokenizer, max_length=max_length, label_prefix=label_prefix)
+    train_ds = LabelTokenDataset(
+        train_samples,
+        tokenizer,
+        max_length=max_length,
+        label_prefix=label_prefix,
+        label_schema=label_schema,
+    )
+    val_ds = LabelTokenDataset(
+        val_samples,
+        tokenizer,
+        max_length=max_length,
+        label_prefix=label_prefix,
+        label_schema=label_schema,
+    )
     collator = LabelTokenCollator(tokenizer=tokenizer, pad_to_multiple_of=8)
     num_workers = int(train_cfg.get("dataloader_num_workers", 0))
     train_dl = build_dataloader(
@@ -455,6 +490,8 @@ def main() -> None:
             label_token_ids=label_token_ids,
             class_weights=class_weights,
             label_prefix=label_prefix,
+            labels=labels,
+            letter_order=letter_order,
             eval_logger=active_logger,
             log_predictions_limit=int(train_cfg.get("eval_log_predictions", 5)),
         )
@@ -535,6 +572,7 @@ def main() -> None:
                 confusion_matrix=eval_metrics["confusion_matrix"],
                 confusion_labels=eval_metrics["confusion_labels"],
                 prediction_records=eval_metrics.get("prediction_records", []),
+                labels=labels,
             )
             active_logger.info(
                 "[eval] artifacts saved: metrics=%s confusion=%s",

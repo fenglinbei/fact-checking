@@ -6,18 +6,45 @@ import re
 from pathlib import Path
 from typing import Any, Iterable
 
-from fact_checking.data.constants import LABEL2ID
+from fact_checking.data.constants import RAWFC_NUMERIC_LABELS, label2id_for_schema, normalize_label_schema
 from fact_checking.data.types import SampleRecord, SentenceRecord
 from fact_checking.utils.text import clean_text, robust_sentence_split
 
 
-def load_split(path: str | Path) -> list[SampleRecord]:
+def load_split(
+    path: str | Path,
+    *,
+    dataset: str | None = None,
+    label_schema: str | None = None,
+) -> list[SampleRecord]:
+    path = Path(path)
+    dataset_name = _normalize_dataset(dataset, path=path, label_schema=label_schema)
+    if dataset_name == "rawfc":
+        return _load_rawfc_split(path, label_schema=label_schema or "rawfc3")
+    return _load_liar_raw_split(path, label_schema=label_schema or "liar6")
+
+
+def _normalize_dataset(dataset: str | None, *, path: Path, label_schema: str | None) -> str:
+    raw = str(dataset or "").strip().lower().replace("-", "_")
+    if raw in {"rawfc", "raw_fc"}:
+        return "rawfc"
+    if raw in {"", "liar", "liar_raw", "liar6"}:
+        if label_schema and normalize_label_schema(label_schema) == "rawfc3":
+            return "rawfc"
+        if any(part.lower() == "rawfc" for part in path.parts):
+            return "rawfc"
+        return "liar_raw"
+    raise ValueError(f"Unsupported dataset={dataset!r}. Use liar_raw or rawfc.")
+
+
+def _load_liar_raw_split(path: Path, *, label_schema: str) -> list[SampleRecord]:
+    label2id = label2id_for_schema(label_schema)
     with Path(path).open("r", encoding="utf-8") as f:
         payload = json.load(f)
     records: list[SampleRecord] = []
     for item in payload:
         label = clean_text(str(item["label"])).lower()
-        if label not in LABEL2ID:
+        if label not in label2id:
             raise ValueError(f"Unknown label: {label!r} in {path}")
         records.append(
             SampleRecord(
@@ -30,6 +57,56 @@ def load_split(path: str | Path) -> list[SampleRecord]:
         )
     return records
 
+
+def _load_rawfc_split(path: Path, *, label_schema: str) -> list[SampleRecord]:
+    label2id = label2id_for_schema(label_schema)
+    with path.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+    records: list[SampleRecord] = []
+    for item in payload:
+        label = _rawfc_label_name(item.get("label"), path=path)
+        if label not in label2id:
+            raise ValueError(f"Unknown RAWFC label: {label!r} in {path}")
+        evidence_items = item.get("evidence") or []
+        if not isinstance(evidence_items, list):
+            evidence_items = [evidence_items]
+        reports: list[dict[str, Any]] = []
+        for idx, evidence in enumerate(evidence_items):
+            content = clean_text(str(evidence))
+            if not content:
+                continue
+            reports.append(
+                {
+                    "report_id": idx,
+                    "content": content,
+                    "domain": None,
+                    "link": None,
+                    "rawfc_evidence_idx": idx,
+                }
+            )
+        records.append(
+            SampleRecord(
+                event_id=str(item["id"]),
+                claim=clean_text(str(item["claim"])),
+                label=label,
+                explain=clean_text(str(item.get("explanation", ""))),
+                reports=reports,
+            )
+        )
+    return records
+
+
+def _rawfc_label_name(value: Any, *, path: Path) -> str:
+    if value in RAWFC_NUMERIC_LABELS:
+        return RAWFC_NUMERIC_LABELS[value]
+    text = clean_text(str(value)).lower()
+    if text in RAWFC_NUMERIC_LABELS:
+        return RAWFC_NUMERIC_LABELS[text]
+    if text in {"true", "false", "half"}:
+        return text
+    raise ValueError(f"Unknown RAWFC numeric label: {value!r} in {path}")
+
+
 def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with Path(path).open("r", encoding="utf-8") as f:
@@ -38,6 +115,7 @@ def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
             if line:
                 rows.append(json.loads(line))
     return rows
+
 
 def _coerce_evidence_label(value: Any) -> bool:
     if isinstance(value, bool):

@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from fact_checking.data.constants import LABELS
+from fact_checking.data.constants import LABELS, labels_for_schema
 from fact_checking.utils.logging import init_logger
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
 from sft.parser import _parse_label_id
@@ -51,13 +51,14 @@ def build_eval_metrics(
     pred_ids: np.ndarray,
     gold_ids: np.ndarray,
     *,
+    labels: list[str] | None = None,
     prediction_records: list[dict[str, object]] | None = None,
     eval_logger: Logger | None = None,
     log_predictions_limit: int = 5,
     log_prediction_examples: bool = True,
 ) -> dict[str, object]:
-    metrics = _compute_classification_metrics(pred_ids, gold_ids)
-    confusion_matrix, confusion_labels = _build_confusion_matrix(pred_ids, gold_ids)
+    metrics = _compute_classification_metrics(pred_ids, gold_ids, labels=labels)
+    confusion_matrix, confusion_labels = _build_confusion_matrix(pred_ids, gold_ids, labels=labels)
     metrics["confusion_matrix"] = confusion_matrix
     metrics["confusion_labels"] = confusion_labels
 
@@ -76,9 +77,11 @@ def build_eval_metrics(
 def summarize_prediction_records(
     prediction_records: list[dict[str, object]],
     *,
+    labels: list[str] | None = None,
     eval_logger: Logger | None = None,
     log_predictions_limit: int = 5,
 ) -> dict[str, object]:
+    active_labels = labels or LABELS
     if not prediction_records:
         return {
             "accuracy": 0.0,
@@ -87,8 +90,8 @@ def summarize_prediction_records(
             "macro_f1": 0.0,
             "parse_error_rate": 0.0,
             "per_class": {},
-            "confusion_matrix": np.zeros((len(LABELS), len(LABELS) + 1), dtype=np.int64),
-            "confusion_labels": LABELS + ["parse_error"],
+            "confusion_matrix": np.zeros((len(active_labels), len(active_labels) + 1), dtype=np.int64),
+            "confusion_labels": active_labels + ["parse_error"],
             "prediction_records": [],
         }
 
@@ -97,6 +100,7 @@ def summarize_prediction_records(
     return build_eval_metrics(
         pred_np,
         gold_np,
+        labels=active_labels,
         prediction_records=prediction_records,
         eval_logger=eval_logger,
         log_predictions_limit=log_predictions_limit,
@@ -117,8 +121,8 @@ def _predict_with_logit_adjust(
 ) -> tuple[list[int], torch.Tensor]:
     """One forward pass with 'Label:' appended; restricted argmax over letter tokens.
 
-    Returns (pred_label_ids, continuation_ids). pred_label_ids[i] == LABELS index since
-    LETTER_ORDER is aligned with LABELS.
+    Returns (pred_label_ids, continuation_ids). pred_label_ids[i] follows the
+    active label schema order.
     """
     batch_size = input_ids.shape[0]
     device = input_ids.device
@@ -183,6 +187,8 @@ def evaluate(
         generation_pad_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
     eos_id_for_pred = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else generation_pad_id
     dataset_samples = getattr(getattr(dataloader, "dataset", None), "samples", None)
+    label_schema = _dataset_label_schema(dataset_samples)
+    active_labels = labels_for_schema(label_schema)
     eval_progress = tqdm(
         total=len(dataloader),
         desc="eval",
@@ -223,7 +229,7 @@ def evaluate(
                     pred_ids: list[int] = []
                     for i in range(continuation_ids.shape[0]):
                         raw_pred = tokenizer.decode(continuation_ids[i], skip_special_tokens=True)
-                        pred_ids.append(_parse_label_id(raw_pred))
+                        pred_ids.append(_parse_label_id(raw_pred, label_schema=label_schema))
 
                 pred_tensor = torch.tensor(pred_ids, dtype=torch.long, device=gold_ids.device)
                 continuation_ids = accelerator.pad_across_processes(
@@ -262,7 +268,7 @@ def evaluate(
                                     "target": str(sample["target"]),
                                     "raw_output": raw_output,
                                     "pred_id": int(pred_id),
-                                    "pred_label": label_name_from_id(int(pred_id)),
+                                    "pred_label": label_name_from_id(int(pred_id), label_schema),
                                     "gold_id": int(gold_id),
                                     "gold_label": str(sample["gold_label"]),
                                     "gold_explain": str(sample["gold_explain"]),
@@ -280,6 +286,7 @@ def evaluate(
         model.train()
         return summarize_prediction_records(
             [],
+            labels=active_labels,
             eval_logger=eval_logger,
             log_predictions_limit=log_predictions_limit,
         )
@@ -289,6 +296,7 @@ def evaluate(
     metrics = build_eval_metrics(
         pred_np,
         gold_np,
+        labels=active_labels,
         prediction_records=all_prediction_records if accelerator.is_main_process else [],
         eval_logger=eval_logger,
         log_predictions_limit=log_predictions_limit,
@@ -296,3 +304,15 @@ def evaluate(
     )
     model.train()
     return metrics
+
+
+def _dataset_label_schema(dataset_samples: object) -> str:
+    if not dataset_samples:
+        return "liar6"
+    try:
+        first = dataset_samples[0]  # type: ignore[index]
+    except Exception:
+        return "liar6"
+    if isinstance(first, dict):
+        return str(first.get("label_schema") or "liar6")
+    return str(getattr(first, "label_schema", "liar6") or "liar6")

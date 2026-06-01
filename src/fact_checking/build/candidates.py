@@ -670,7 +670,14 @@ def _build_worker(
     os.environ["CUDA_VISIBLE_DEVICES"] = visible_gpu_for_worker(gpu_id, run_summary)
     os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
-    samples = load_split(data_cfg[f"{split_name}_path"])
+    samples = load_split(
+        data_cfg[f"{split_name}_path"],
+        dataset=data_cfg.get("dataset"),
+        label_schema=data_cfg.get("label_schema"),
+    )
+    sample_limit = int(data_cfg.get("sample_limit", 0) or 0)
+    if sample_limit > 0:
+        samples = samples[:sample_limit]
     num_gpus = run_summary["num_gpus"]
     chunk_size = (len(samples) + num_gpus - 1) // num_gpus
     samples_chunk = samples[gpu_id * chunk_size : (gpu_id + 1) * chunk_size]
@@ -695,6 +702,7 @@ def _build_worker(
         "max_length": run_summary["prompt_max_length"],
         "output_mode": run_summary["prompt_output_mode"],
         "label_format": run_summary["prompt_label_format"],
+        "label_schema": run_summary.get("prompt_label_schema"),
         "system_prompt": run_summary.get("prompt_system_prompt"),
     }
 
@@ -876,6 +884,12 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         "prompt_max_length": int(prompt_cfg.get("max_length", 2048)),
         "prompt_output_mode": str(prompt_cfg.get("output_mode", "label_only")).strip().lower(),
         "prompt_label_format": str(prompt_cfg.get("label_format", "name")).strip().lower(),
+        "prompt_label_schema": str(
+            prompt_cfg.get("label_schema")
+            or data_cfg.get("label_schema")
+            or cfg.get("label_schema")
+            or "liar6"
+        ).strip().lower(),
         "prompt_system_prompt": prompt_cfg.get("system_prompt") or None,
     }
 
@@ -949,6 +963,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
         "max_length": run_summary["prompt_max_length"],
         "output_mode": run_summary["prompt_output_mode"],
         "label_format": run_summary["prompt_label_format"],
+        "label_schema": run_summary.get("prompt_label_schema"),
         "system_prompt": run_summary.get("prompt_system_prompt"),
     }
 

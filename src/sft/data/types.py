@@ -19,3 +19,4 @@ class PreparedSample:
     claim: str = ""
     no_evidence: bool = False
     long_claim: bool = False
+    label_schema: str = "liar6"
