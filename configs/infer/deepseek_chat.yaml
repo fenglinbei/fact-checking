@@ -1,0 +1,26 @@
+# @package _global_
+infer:
+  config_path: outputs/selector_trace_verifier/stage2_sentence/v0_6c_rule_step_adaptive5_10/train.resolved.yaml
+  provider: deepseek_chat
+  split: val
+  checkpoint: no_thinking
+  model: deepseek-v4-flash
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY
+  request_timeout_seconds: 120
+  max_tokens: 16
+  max_new_tokens: null
+  temperature: 0.0
+  thinking:
+    type: disabled
+  reasoning_effort: null
+  mode_label: no_thinking
+  concurrency: 1
+  requests_per_minute: 60
+  max_retries: 4
+  retry_base_sleep: 2.0
+  retry_max_sleep: 60.0
+  resume: true
+  force: false
+  retry_failed: true
+  sample_limit: null

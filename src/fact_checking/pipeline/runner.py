@@ -234,6 +234,15 @@ class PipelineRunner:
     def _force_phase(self, phase: str) -> bool:
         return bool(self.cfg.get("pipeline", {}).get("force", {}).get(phase, False))
 
+    def _deepseek_infer_reusable(self, eval_dir: Path, infer_cfg: dict[str, Any]) -> bool:
+        manifest = read_json(eval_dir / "deepseek_infer_manifest.json")
+        status = str(manifest.get("status") or "")
+        if status == "completed":
+            return True
+        if status == "completed_with_parse_errors" and not bool(infer_cfg.get("retry_failed", True)):
+            return True
+        return False
+
     def _run_build(self, manifest: dict[str, Any]) -> dict[str, Path]:
         build_paths = build_split_paths(self.state.build_dir)
         build_manifest_path = self.state.build_dir / "manifest.json"
@@ -334,8 +343,11 @@ class PipelineRunner:
     def _run_infer(self, manifest: dict[str, Any], *, config_path: Path | None = None) -> None:
         train_dir = self._train_dir()
         infer_cfg = dict(self.cfg.get("infer", {}) or {})
+        provider = str(infer_cfg.get("provider", "vllm_openai")).strip().lower()
         infer_kind = str(infer_cfg.get("kind", "generative")).strip().lower()
-        if infer_kind == "classifier":
+        if provider == "deepseek_chat":
+            from fact_checking.infer.deepseek import run_deepseek_inference as run_inference
+        elif infer_kind == "classifier":
             from sft.classifier_infer import run_classifier_inference as run_inference
         else:
             from fact_checking.infer.api import run_api_inference as run_inference
@@ -348,9 +360,12 @@ class PipelineRunner:
         can_reuse = (
             self._resume_enabled()
             and not self._force_phase("infer")
+            and not bool(infer_cfg.get("force", False))
             and phase_done(manifest, "infer")
             and metrics_path.exists()
         )
+        if can_reuse and provider == "deepseek_chat":
+            can_reuse = self._deepseek_infer_reusable(metrics_path.parent, infer_cfg)
         if can_reuse:
             print(f"[pipeline] infer: reuse metrics={metrics_path}", flush=True)
             mark_phase(
@@ -367,13 +382,15 @@ class PipelineRunner:
             return
 
         checkpoint_dir = train_dir / checkpoint
-        if not checkpoint_dir.exists():
+        requires_checkpoint = provider != "deepseek_chat"
+        if requires_checkpoint and not checkpoint_dir.exists():
             raise FileNotFoundError(
                 f"[pipeline] infer: checkpoint dir not found: {checkpoint_dir}. "
                 f"Train may not have saved '{checkpoint}'. Inspect logs at {self.state.run_dir / 'logs' / 'train.log'}."
             )
         print(
-            f"[pipeline] infer: starting split={split} checkpoint={checkpoint_dir} infer_dir={infer_dir}",
+            f"[pipeline] infer: starting provider={provider} split={split} "
+            f"checkpoint={checkpoint_dir if requires_checkpoint else checkpoint} infer_dir={infer_dir}",
             flush=True,
         )
 
