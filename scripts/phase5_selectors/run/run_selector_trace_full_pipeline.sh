@@ -395,12 +395,13 @@ run_infer_case() {
   local run_dir="${RUN_ROOT}/${label}_${checkpoint_slug}"
   local config_path="${build_dir}/train.resolved.yaml"
   local train_dir=""
-  train_dir="$(resolve_train_run_dir "${build_dir}/train" "${checkpoint}")"
 
   if [[ "${RUN_INFER}" != "true" ]]; then
     echo "[selector-trace-full] skip infer case=${label} RUN_INFER=${RUN_INFER}"
     return 0
   fi
+
+  train_dir="$(resolve_train_run_dir "${build_dir}/train" "${checkpoint}")"
 
   local cmd=(
     python -m fact_checking.pipeline.run

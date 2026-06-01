@@ -9,10 +9,13 @@ from pathlib import Path
 from fact_checking.selectors.evidence_chain_graph import (
     CHAIN_SELECTOR,
     RULE_STEP_CHAIN_SELECTOR,
+    SUFFICIENCY_CONTRADICTION_SELECTOR,
     EvidenceChainParams,
     RuleStepEvidenceChainParams,
+    SufficiencyContradictionEvidenceChainParams,
     build_evidence_chain_graph_row,
     build_rule_step_evidence_chain_graph_row,
+    build_sufficiency_contradiction_evidence_chain_graph_row,
 )
 from scripts.phase5_selectors.visualize.render_evidence_chain_graph_html import (
     load_or_build_translations,
@@ -252,6 +255,191 @@ class EvidenceChainGraphTest(unittest.TestCase):
         self.assertIn("jaccard@10", trace)
         self.assertNotIn("post_order", graph["chains"][0])
 
+    def test_sufficiency_v0_6d_preserves_v0_6c_prefix_before_min_top_k(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99),
+                _candidate("E02", atoms=["A2"], relation="support", directness="direct", source="report:2", base=0.98),
+                _candidate("E03", atoms=["A1"], relation="support", directness="direct", source="report:3", base=0.97),
+                _candidate("E04", atoms=["A2"], relation="support", directness="direct", source="report:4", base=0.96),
+                _candidate("E05", atoms=["A1"], relation="support", directness="direct", source="report:5", base=0.95),
+                _candidate("E06", atoms=["A1"], relation="refute", directness="direct", source="report:6", base=0.94),
+            ]
+        )
+
+        old_graph = build_rule_step_evidence_chain_graph_row(row, params=RuleStepEvidenceChainParams(min_top_k=5, max_top_k=10))
+        new_graph = build_sufficiency_contradiction_evidence_chain_graph_row(
+            row,
+            params=SufficiencyContradictionEvidenceChainParams(min_top_k=5, max_top_k=10),
+        )
+
+        self.assertEqual(new_graph["selector_name"], SUFFICIENCY_CONTRADICTION_SELECTOR)
+        self.assertEqual(new_graph["selected_evidence_ids"][:5], old_graph["selected_evidence_ids"][:5])
+
+    def test_sufficiency_v0_6d_stops_at_five_without_contradiction(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99),
+                _candidate("E02", atoms=["A2"], relation="support", directness="direct", source="report:2", base=0.98),
+                _candidate("E03", atoms=["A1"], relation="support", directness="direct", source="report:3", base=0.97),
+                _candidate("E04", atoms=["A2"], relation="support", directness="direct", source="report:4", base=0.96),
+                _candidate("E05", atoms=["A1"], relation="support", directness="direct", source="report:5", base=0.95),
+                _candidate("E06", atoms=["A2"], relation="support", directness="direct", source="report:6", base=0.94),
+                _candidate("E07", atoms=["A1"], relation="background", directness="context", source="report:1", sent_idx=2, base=0.93),
+            ]
+        )
+
+        graph = build_sufficiency_contradiction_evidence_chain_graph_row(
+            row,
+            params=SufficiencyContradictionEvidenceChainParams(min_top_k=5, max_top_k=10),
+        )
+
+        self.assertEqual(len(graph["selected_evidence_ids"]), 5)
+        self.assertEqual(graph["adaptive_stop_reason"], "sufficient_no_contradiction_candidate")
+        self.assertTrue(graph["sufficiency_state"]["is_sufficient"])
+
+    def test_sufficiency_v0_6d_continues_for_tension_counter_evidence(self) -> None:
+        row = _row_with_atoms(
+            [{"atom_id": "A1", "text": "Atom 1", "type": "other", "importance": 1.0}],
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99),
+                _candidate("E02", atoms=["A1"], relation="support", directness="direct", source="report:2", base=0.98),
+                _candidate("E03", atoms=["A1"], relation="support", directness="direct", source="report:3", base=0.97),
+                _candidate("E04", atoms=["A1"], relation="support", directness="direct", source="report:4", base=0.96),
+                _candidate("E05", atoms=["A1"], relation="support", directness="direct", source="report:5", base=0.95),
+                _candidate("E06", atoms=["A1"], relation="refute", directness="direct", source="report:6", base=0.94),
+            ],
+        )
+
+        graph = build_sufficiency_contradiction_evidence_chain_graph_row(
+            row,
+            params=SufficiencyContradictionEvidenceChainParams(min_top_k=5, max_top_k=10),
+        )
+        trace = graph["selection_trace"]
+
+        self.assertEqual(graph["selected_evidence_ids"][5], "E06")
+        self.assertEqual(graph["selection_steps"][5]["rule"], "P2_tension_counter_core")
+        self.assertTrue(graph["selection_steps"][5]["contradiction_continuation"])
+        self.assertEqual(graph["contradiction_aware_additions"][0]["evidence_id"], "E06")
+        self.assertIn("sufficiency_state", trace)
+        self.assertIn("contradiction_aware_additions", trace)
+
+    def test_sufficiency_v0_6d_prioritizes_uncovered_important_atom_after_min(self) -> None:
+        row = _row_with_atoms(
+            [{"atom_id": f"A{i}", "text": f"Atom {i}", "type": "other", "importance": 1.0} for i in range(1, 7)],
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99),
+                _candidate("E02", atoms=["A2"], relation="support", directness="direct", source="report:2", base=0.98),
+                _candidate("E03", atoms=["A3"], relation="support", directness="direct", source="report:3", base=0.97),
+                _candidate("E04", atoms=["A4"], relation="support", directness="direct", source="report:4", base=0.96),
+                _candidate("E05", atoms=["A5"], relation="support", directness="direct", source="report:5", base=0.95),
+                _candidate("E06", atoms=["A1"], relation="refute", directness="direct", source="report:6", base=0.94),
+                _candidate("E07", atoms=["A6"], relation="support", directness="direct", source="report:7", base=0.50),
+            ],
+        )
+
+        graph = build_sufficiency_contradiction_evidence_chain_graph_row(
+            row,
+            params=SufficiencyContradictionEvidenceChainParams(min_top_k=5, max_top_k=10),
+        )
+
+        self.assertEqual(graph["selected_evidence_ids"][5], "E07")
+        self.assertEqual(graph["selection_steps"][5]["rule"], "P1_new_important_atom_core")
+        self.assertEqual(graph["selection_steps"][5]["covered_new_atom_ids"], ["A6"])
+
+    def test_sufficiency_v0_6d_does_not_use_fallback_after_min_top_k(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", base=0.90),
+                _candidate("E02", atoms=[], relation="irrelevant", directness="none", base=0.80),
+                _candidate("E03", atoms=[], relation="irrelevant", directness="none", base=0.70),
+                _candidate("E04", atoms=[], relation="background", directness="context", base=0.60),
+                _candidate("E05", atoms=[], relation="irrelevant", directness="none", base=0.50),
+                _candidate("E06", atoms=[], relation="irrelevant", directness="none", base=0.40),
+            ]
+        )
+
+        graph = build_sufficiency_contradiction_evidence_chain_graph_row(
+            row,
+            params=SufficiencyContradictionEvidenceChainParams(min_top_k=5, max_top_k=10),
+        )
+
+        self.assertEqual(len(graph["selected_evidence_ids"]), 5)
+        self.assertEqual(graph["adaptive_stop_reason"], "insufficient_no_coverable_atom_candidate")
+        self.assertTrue(any(step["fallback_used"] for step in graph["selection_steps"][:5]))
+        self.assertFalse(any(step["fallback_used"] for step in graph["selection_steps"][5:]))
+
+    def test_sufficiency_v0_6d_skips_duplicate_tension_and_caps_at_ten(self) -> None:
+        one_atom = [{"atom_id": "A1", "text": "Atom 1", "type": "other", "importance": 1.0}]
+        duplicate_row = _row_with_atoms(
+            one_atom,
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99, duplicate="G1"),
+                _candidate("E02", atoms=["A1"], relation="support", directness="direct", source="report:2", base=0.98),
+                _candidate("E03", atoms=["A1"], relation="support", directness="direct", source="report:3", base=0.97),
+                _candidate("E04", atoms=["A1"], relation="support", directness="direct", source="report:4", base=0.96),
+                _candidate("E05", atoms=["A1"], relation="support", directness="direct", source="report:5", base=0.95),
+                _candidate("E06", atoms=["A1"], relation="refute", directness="direct", source="report:6", base=0.94, duplicate="G1"),
+            ],
+        )
+        capped_row = _row_with_atoms(
+            one_atom,
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99),
+                _candidate("E02", atoms=["A1"], relation="support", directness="direct", source="report:2", base=0.98),
+                _candidate("E03", atoms=["A1"], relation="support", directness="direct", source="report:3", base=0.97),
+                _candidate("E04", atoms=["A1"], relation="support", directness="direct", source="report:4", base=0.96),
+                _candidate("E05", atoms=["A1"], relation="support", directness="direct", source="report:5", base=0.95),
+                *[
+                    _candidate(f"E{i:02d}", atoms=["A1"], relation="refute", directness="direct", source=f"report:{i}", base=0.95 - i * 0.01)
+                    for i in range(6, 13)
+                ],
+            ],
+        )
+
+        duplicate_graph = build_sufficiency_contradiction_evidence_chain_graph_row(
+            duplicate_row,
+            params=SufficiencyContradictionEvidenceChainParams(min_top_k=5, max_top_k=10),
+        )
+        capped_graph = build_sufficiency_contradiction_evidence_chain_graph_row(
+            capped_row,
+            params=SufficiencyContradictionEvidenceChainParams(min_top_k=5, max_top_k=10),
+        )
+
+        self.assertNotIn("E06", duplicate_graph["selected_evidence_ids"])
+        self.assertEqual(duplicate_graph["adaptive_stop_reason"], "sufficient_no_contradiction_candidate")
+        self.assertEqual(len(capped_graph["selected_evidence_ids"]), 10)
+        self.assertEqual(capped_graph["adaptive_stop_reason"], "reached_max_top_k")
+
+    def test_sufficiency_v0_6d_trace_coordinates_and_fields(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99),
+                _candidate("E02", atoms=["A2"], relation="support", directness="direct", source="report:2", base=0.98),
+                _candidate("E03", atoms=["A1"], relation="support", directness="direct", source="report:3", base=0.97),
+                _candidate("E04", atoms=["A2"], relation="support", directness="direct", source="report:4", base=0.96),
+                _candidate("E05", atoms=["A1"], relation="support", directness="direct", source="report:5", base=0.95),
+                _candidate("E06", atoms=["A1"], relation="refute", directness="direct", source="report:6", base=0.94),
+            ]
+        )
+
+        graph = build_sufficiency_contradiction_evidence_chain_graph_row(
+            row,
+            params=SufficiencyContradictionEvidenceChainParams(min_top_k=5, max_top_k=10),
+        )
+        trace = graph["selection_trace"]
+        pool = trace["candidate_pool"]
+
+        self.assertEqual(trace["selector_name"], SUFFICIENCY_CONTRADICTION_SELECTOR)
+        self.assertEqual(trace["adaptive_policy"], "sufficiency_contradiction_v0_6d")
+        self.assertIn("sufficiency_state", graph)
+        self.assertIn("sufficiency_state", trace)
+        self.assertIn("sufficiency_important_atom_threshold", trace)
+        self.assertIn("sufficiency_weighted_coverage_threshold", trace)
+        self.assertEqual([pool[idx]["evidence_id"] for idx in trace["selector_ordered_indices"]], graph["selected_evidence_ids"])
+        self.assertEqual([step["evidence_id"] for step in graph["selection_steps"]], graph["selected_evidence_ids"])
+        self.assertTrue(all(0 <= idx < len(pool) for idx in trace["selector_ordered_indices"]))
+
     def test_oracle_zero_step_is_preserved_and_rendered_as_one_based_badge(self) -> None:
         graph = build_evidence_chain_graph_row(_row([_candidate("E01", atoms=["A1"], base=0.9, oracle=True)]), params=EvidenceChainParams(top_k=1))
         args = Namespace(chain_graph="chain_graph.jsonl", max_candidates=20, max_chains=8)
@@ -348,6 +536,12 @@ def _row(candidates: list[dict], *, gold_label: str = "true") -> dict:
         },
         "candidates": candidates,
     }
+
+
+def _row_with_atoms(atoms: list[dict], candidates: list[dict], *, gold_label: str = "true") -> dict:
+    row = _row(candidates, gold_label=gold_label)
+    row["evidence_map"] = {"claim_atoms": atoms}
+    return row
 
 
 def _candidate(
