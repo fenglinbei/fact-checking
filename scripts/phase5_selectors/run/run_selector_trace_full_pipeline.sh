@@ -58,6 +58,7 @@ TRAIN_SOURCE="${TRAIN_SOURCE:-${TRAIN_TRACE_PATH:-${ORACLE_TRAIN}}}"
 VAL_SOURCE="${VAL_SOURCE:-${VAL_TRACE_PATH:-${TRACE_PATH:-${ORACLE_VAL}}}}"
 TEST_SOURCE="${TEST_SOURCE:-}"
 TRACE_SELECTION_MODE="${TRACE_SELECTION_MODE:-hybrid_score_topk}"
+TRACE_PROMPT_STYLE="${TRACE_PROMPT_STYLE:-plain}"
 EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME:-}"
 RANDOM_SEED="${RANDOM_SEED:-0}"
 RANDOM_SEEDS="${RANDOM_SEEDS:-${RANDOM_SEED}}"
@@ -297,6 +298,7 @@ build_case() {
     --val-raw "${VAL_RAW}"
     --output-dir "${output_dir}"
     --selection-mode "${mode}"
+    --trace-prompt-style "${TRACE_PROMPT_STYLE}"
     --top-k "${TOP_K}"
     --random-seed "${seed}"
     --expected-chunk-mmr-fingerprint "${EXPECTED_CHUNK_MMR_FINGERPRINT}"
@@ -331,7 +333,7 @@ build_case() {
     args+=(--sample-limit "${SAMPLE_LIMIT}")
   fi
 
-  echo "[selector-trace-full] build-data case=${label} source_type=${source_type} mode=${mode} seed=${seed} output=${output_dir}"
+  echo "[selector-trace-full] build-data case=${label} source_type=${source_type} mode=${mode} seed=${seed} trace_prompt_style=${TRACE_PROMPT_STYLE} output=${output_dir}"
   if [[ "${DRY_RUN}" == "true" ]]; then
     printf '[selector-trace-full] dry-run build: python scripts/phase5_selectors/build/build_trace_verifier_data.py'
     printf ' %q' "${args[@]}"
@@ -470,6 +472,7 @@ main() {
   echo "[selector-trace-full] output_root=${OUTPUT_ROOT}"
   echo "[selector-trace-full] run_root=${RUN_ROOT}"
   echo "[selector-trace-full] train_backend=${TRAIN_BACKEND} nproc=${NPROC_PER_NODE}"
+  echo "[selector-trace-full] trace_prompt_style=${TRACE_PROMPT_STYLE}"
   echo "[selector-trace-full] cases=${labels[*]}"
   echo "[selector-trace-full] checkpoints=${checkpoints[*]}"
 

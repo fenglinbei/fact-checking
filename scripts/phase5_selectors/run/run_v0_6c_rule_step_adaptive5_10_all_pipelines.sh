@@ -14,6 +14,7 @@ MIN_TOP_K="${MIN_TOP_K:-5}"
 MAX_TOP_K="${MAX_TOP_K:-10}"
 CHUNK_MMR_FINGERPRINT="${CHUNK_MMR_FINGERPRINT:-432dfc970e75}"
 SAMPLE_LIMIT="${SAMPLE_LIMIT:-0}"
+TRACE_PROMPT_STYLE="${TRACE_PROMPT_STYLE:-plain}"
 
 TRAIN_TRACE="${TRAIN_TRACE:-outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_train/selection_trace_train.jsonl}"
 VAL_TRACE="${VAL_TRACE:-outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_val/selection_trace_val.jsonl}"
@@ -30,6 +31,7 @@ FULLFT_INFER_EXPERIMENT="${FULLFT_INFER_EXPERIMENT:-b3_oracle_sentence_direct_ve
 echo "[v0.6c-all] graph build : ${RUN_GRAPH_BUILD}"
 echo "[v0.6c-all] lora/fullft : ${RUN_LORA}/${RUN_FULLFT}"
 echo "[v0.6c-all] top_n/min/max: ${CANDIDATE_TOP_N}/${MIN_TOP_K}/${MAX_TOP_K}"
+echo "[v0.6c-all] trace prompt: ${TRACE_PROMPT_STYLE}"
 echo "[v0.6c-all] train trace : ${TRAIN_TRACE}"
 echo "[v0.6c-all] val trace   : ${VAL_TRACE}"
 
@@ -60,6 +62,7 @@ if [[ "${RUN_LORA}" == "true" ]]; then
   TRAIN_SOURCE="${TRAIN_TRACE}" \
   VAL_SOURCE="${VAL_TRACE}" \
   TRACE_SELECTION_MODE=trace \
+  TRACE_PROMPT_STYLE="${TRACE_PROMPT_STYLE}" \
   TOP_K="${MAX_TOP_K}" \
   EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME}" \
   EXPECTED_CHUNK_MMR_FINGERPRINT="${CHUNK_MMR_FINGERPRINT}" \
@@ -75,6 +78,7 @@ if [[ "${RUN_FULLFT}" == "true" ]]; then
   TRAIN_SOURCE="${TRAIN_TRACE}" \
   VAL_SOURCE="${VAL_TRACE}" \
   TRACE_SELECTION_MODE=trace \
+  TRACE_PROMPT_STYLE="${TRACE_PROMPT_STYLE}" \
   TOP_K="${MAX_TOP_K}" \
   EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME}" \
   EXPECTED_CHUNK_MMR_FINGERPRINT="${CHUNK_MMR_FINGERPRINT}" \

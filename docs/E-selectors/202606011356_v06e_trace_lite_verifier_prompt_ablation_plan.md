@@ -1,4 +1,4 @@
-# v0.6d Trace-Lite Verifier Prompt Ablation Plan
+# v0.6e Trace-Lite Verifier Prompt Ablation Plan
 
 日期：2026-06-01
 
@@ -6,7 +6,7 @@
 
 ## 1. 目标
 
-在不改变 v0.6d selector、候选池、evidence 数量和 evidence 顺序的前提下，新增一个 verifier prompt ablation：
+在不改变 v0.6c selector、候选池、evidence 数量和 evidence 顺序的前提下，新增一个 verifier prompt ablation：
 
 ```text
 plain verifier prompt
@@ -22,9 +22,22 @@ selected evidence 固定时，轻量 evidence-map 结构标签是否能帮助 ve
 
 这里的 trace-lite 只使用 downstream 已有、oracle-free 的 map 字段，不生成 rationale，不暴露 selector rule，不加入 scores / oracle / gold 信息。
 
+本计划编号升级为 v0.6e。v0.6d 已用于 sufficiency + contradiction selector 实验，且现有 full-pipeline 结果显示 v0.6c 指标更高；因此本轮 trace-lite prompt ablation 以 v0.6c 作为主 selector 底座。v0.6d 只保留为可选 robustness check，不作为主结论来源。
+
 ## 2. 背景与约束
 
-v0.5c 的 prompt diagnostic 已经证明 `map_full` 对旧 verifier 是明显 OOD：同一 oracle evidence 下，`map_full` 相比 `plain_original` macro-F1 下降约 0.35。因此 v0.6d 不应复用 full map prompt。
+v0.5c 的 prompt diagnostic 已经证明 `map_full` 对旧 verifier 是明显 OOD：同一 oracle evidence 下，`map_full` 相比 `plain_original` macro-F1 下降约 0.35。因此 v0.6e 不应复用 full map prompt。
+
+现有 v0.6c / v0.6d full-pipeline 对比：
+
+| selector | train mode | accuracy | macro-F1 |
+| --- | --- | ---: | ---: |
+| v0.6c | LoRA | 0.3336 | 0.3354 |
+| v0.6d | LoRA | 0.3163 | 0.3115 |
+| v0.6c | FullFT | 0.3454 | 0.3546 |
+| v0.6d | FullFT | 0.3422 | 0.3497 |
+
+因此主实验必须固定 v0.6c selected evidence，比同一 selector 下的 `plain` 与 `trace_lite`。不得用 v0.6c trace-lite 直接对比 v0.6d plain 来证明 prompt 效果。
 
 本轮 trace-lite 的设计原则是：
 
@@ -222,34 +235,42 @@ build-data args 追加：
 [selector-trace-full] trace_prompt_style=<style>
 ```
 
-### 4.3 v0.6d ablation runner
+### 4.3 v0.6e ablation runner
 
-不改变 `run_v0_6d_sufficiency_contradiction_all_pipelines.sh` 默认行为。默认仍为 `plain`。
+不改变 `run_v0_6c_rule_step_adaptive5_10_all_pipelines.sh` 默认行为。默认仍为 `plain`。
 
 新增一个薄 wrapper：
 
 ```text
-scripts/phase5_selectors/run/run_v0_6d_trace_lite_prompt_ablation_all_pipelines.sh
+scripts/phase5_selectors/run/run_v0_6e_trace_lite_on_v0_6c_all_pipelines.sh
 ```
 
 该 wrapper 固定：
 
 ```bash
 TRACE_PROMPT_STYLE=trace_lite
-LORA_CASE_NAME=v0_6d_sufficiency_contradiction_trace_lite
-FULLFT_CASE_NAME=v0_6d_sufficiency_contradiction_trace_lite_fullft
+LORA_CASE_NAME=v0_6e_trace_lite_on_v0_6c
+FULLFT_CASE_NAME=v0_6e_trace_lite_on_v0_6c_fullft
 ```
 
-其余参数沿用 v0.6d：
+其余参数沿用 v0.6c：
 
 ```bash
 SOURCE_TYPE=trace
 TRACE_SELECTION_MODE=trace
 TOP_K=10
-EXPECTED_SELECTOR_NAME=v0_6d_sufficiency_contradiction_adaptive5_10
-TRAIN_TRACE=outputs/selectors/evidence_chain_graph/v0_6d_sufficiency_contradiction_train/selection_trace_train.jsonl
-VAL_TRACE=outputs/selectors/evidence_chain_graph/v0_6d_sufficiency_contradiction_val/selection_trace_val.jsonl
+EXPECTED_SELECTOR_NAME=v0_6c_rule_step_adaptive5_10
+TRAIN_TRACE=outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_train/selection_trace_train.jsonl
+VAL_TRACE=outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_val/selection_trace_val.jsonl
 ```
+
+可选 robustness check 才考虑复用 v0.6d trace：
+
+```text
+v0_6e_trace_lite_on_v0_6d_sufficiency_contradiction
+```
+
+该 check 只用于判断 trace-lite prompt 效果是否跨 selector 稳定，不参与主结论。
 
 ## 5. 实验矩阵
 
@@ -257,10 +278,19 @@ VAL_TRACE=outputs/selectors/evidence_chain_graph/v0_6d_sufficiency_contradiction
 
 | selector | prompt style | train mode | case name |
 | --- | --- | --- | --- |
+| v0.6c | plain | LoRA | `v0_6c_rule_step_adaptive5_10` |
+| v0.6c | trace_lite | LoRA | `v0_6e_trace_lite_on_v0_6c` |
+| v0.6c | plain | FullFT | `v0_6c_rule_step_adaptive5_10_fullft` |
+| v0.6c | trace_lite | FullFT | `v0_6e_trace_lite_on_v0_6c_fullft` |
+
+可选稳健性对照：
+
+| selector | prompt style | train mode | case name |
+| --- | --- | --- | --- |
 | v0.6d | plain | LoRA | `v0_6d_sufficiency_contradiction_adaptive5_10` |
-| v0.6d | trace_lite | LoRA | `v0_6d_sufficiency_contradiction_trace_lite` |
+| v0.6d | trace_lite | LoRA | `v0_6e_trace_lite_on_v0_6d_sufficiency_contradiction` |
 | v0.6d | plain | FullFT | `v0_6d_sufficiency_contradiction_adaptive5_10_fullft` |
-| v0.6d | trace_lite | FullFT | `v0_6d_sufficiency_contradiction_trace_lite_fullft` |
+| v0.6d | trace_lite | FullFT | `v0_6e_trace_lite_on_v0_6d_sufficiency_contradiction_fullft` |
 
 可选 follow-up：
 
@@ -311,8 +341,10 @@ Smoke checks：
 ```bash
 SAMPLE_LIMIT=20 RUN_GRAPH_BUILD=false RUN_TRAIN=false RUN_INFER=false \
 TRACE_PROMPT_STYLE=trace_lite \
-OUTPUT_ROOT=outputs/selector_trace_verifier/smoke_v0_6d_trace_lite \
-bash scripts/phase5_selectors/run/run_v0_6d_sufficiency_contradiction_all_pipelines.sh
+LORA_CASE_NAME=smoke_v0_6e_trace_lite_on_v0_6c \
+FULLFT_CASE_NAME=smoke_v0_6e_trace_lite_on_v0_6c_fullft \
+OUTPUT_ROOT=outputs/selector_trace_verifier/smoke_v0_6e_trace_lite_on_v0_6c \
+bash scripts/phase5_selectors/run/run_v0_6c_rule_step_adaptive5_10_all_pipelines.sh
 ```
 
 检查：
@@ -325,35 +357,37 @@ bash scripts/phase5_selectors/run/run_v0_6d_sufficiency_contradiction_all_pipeli
 Full acceptance：
 
 - trace-lite LoRA / FullFT 都产出 `build_report.json`、`train.resolved.yaml`、checkpoint、val inference metrics。
-- plain v0.6d 目录不被覆盖。
-- selector trace 不需要重建。
+- plain v0.6c 目录不被覆盖。
+- v0.6c selector trace 不需要重建。
+- v0.6d sufficiency + contradiction 结果保持为已完成历史对照，不因本 ablation 被覆盖。
 
 ## 8. 运行方式
 
-默认 plain v0.6d：
+默认 plain v0.6c：
 
 ```bash
-bash scripts/phase5_selectors/run/run_v0_6d_sufficiency_contradiction_all_pipelines.sh
+bash scripts/phase5_selectors/run/run_v0_6c_rule_step_adaptive5_10_all_pipelines.sh
 ```
 
 trace-lite ablation：
 
 ```bash
-bash scripts/phase5_selectors/run/run_v0_6d_trace_lite_prompt_ablation_all_pipelines.sh
+bash scripts/phase5_selectors/run/run_v0_6e_trace_lite_on_v0_6c_all_pipelines.sh
 ```
 
 或手动指定：
 
 ```bash
 TRACE_PROMPT_STYLE=trace_lite \
-LORA_CASE_NAME=v0_6d_sufficiency_contradiction_trace_lite \
-FULLFT_CASE_NAME=v0_6d_sufficiency_contradiction_trace_lite_fullft \
-bash scripts/phase5_selectors/run/run_v0_6d_sufficiency_contradiction_all_pipelines.sh
+LORA_CASE_NAME=v0_6e_trace_lite_on_v0_6c \
+FULLFT_CASE_NAME=v0_6e_trace_lite_on_v0_6c_fullft \
+bash scripts/phase5_selectors/run/run_v0_6c_rule_step_adaptive5_10_all_pipelines.sh
 ```
 
 ## 9. Assumptions
 
-- v0.6d selector trace 已存在，并且 selector name 为 `v0_6d_sufficiency_contradiction_adaptive5_10`。
+- v0.6c selector trace 已存在，并且 selector name 为 `v0_6c_rule_step_adaptive5_10`。
+- v0.6d sufficiency + contradiction 实验已完成，且当前指标低于 v0.6c；因此不再作为 trace-lite 主实验底座。
 - evidence map 字段来自 v0.6b compact map，不重新跑 API。
 - 本 ablation 只比较 verifier prompt rendering，不改变 selected set。
 - trace-lite 不作为默认主方法，先作为 ablation；若显著提升且 truncation 健康，再考虑升级为主 pipeline 默认。

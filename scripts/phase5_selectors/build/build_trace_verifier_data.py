@@ -15,9 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from hydra import compose, initialize_config_dir
-from hydra.core.global_hydra import GlobalHydra
-from omegaconf import OmegaConf
 from tqdm.auto import tqdm
 
 from fact_checking.build.candidates import _build_training_row, _load_prompt_tokenizer
@@ -43,6 +40,7 @@ SELECTION_MODES = (
     "same_set_candidate_pool_order",
     "same_set_random_order",
 )
+TRACE_PROMPT_STYLES = ("plain", "trace_lite")
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,6 +57,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--test-raw", default="data/raw/LIAR-RAW/test.json")
     p.add_argument("--output-dir", required=True)
     p.add_argument("--selection-mode", default="trace", choices=SELECTION_MODES)
+    p.add_argument("--trace-prompt-style", default="plain", choices=TRACE_PROMPT_STYLES)
     p.add_argument("--expected-selector-name", default="")
     p.add_argument("--top-k", type=int, default=DEFAULT_SELECTOR_TOP_K)
     p.add_argument("--random-seed", type=int, default=0)
@@ -109,6 +108,7 @@ def main() -> None:
             tokenizer=tokenizer,
             prompt_cfg=prompt_cfg,
             selection_mode=str(args.selection_mode),
+            trace_prompt_style=str(args.trace_prompt_style),
             expected_selector_name=str(args.expected_selector_name or ""),
             top_k=int(args.top_k),
             random_seed=int(args.random_seed),
@@ -140,6 +140,7 @@ def main() -> None:
         "config": args.config,
         "output_dir": str(output_dir),
         "selection_mode": args.selection_mode,
+        "trace_prompt_style": args.trace_prompt_style,
         "expected_selector_name": args.expected_selector_name,
         "top_k": int(args.top_k),
         "random_seed": int(args.random_seed),
@@ -181,6 +182,7 @@ def _build_split(
     tokenizer: Any,
     prompt_cfg: dict[str, Any],
     selection_mode: str,
+    trace_prompt_style: str,
     expected_selector_name: str,
     top_k: int,
     random_seed: int,
@@ -202,6 +204,7 @@ def _build_split(
     label_counter: Counter[str] = Counter()
     prompt_tokens: list[int] = []
     evidence_counts: list[int] = []
+    evidence_counts_before: list[int] = []
 
     iterator = tqdm(
         source_rows,
@@ -252,14 +255,24 @@ def _build_split(
             skipped["no_selected_evidence"] += 1
             continue
 
+        if trace_prompt_style == "trace_lite":
+            claim, candidates = _apply_trace_lite_prompt_fields(
+                claim=sample.claim,
+                candidates=candidates,
+                claim_atoms=trace.get("claim_atoms") or [],
+            )
+        else:
+            claim = sample.claim
+
         retrieval_row = {
             "event_id": sample.event_id,
-            "claim": sample.claim,
+            "claim": claim,
             "label": sample.label,
             "explain": sample.explain,
             "candidates": candidates,
         }
         training_row = build_training_row(retrieval_row, tokenizer, prompt_cfg)
+        training_row["trace_prompt_style"] = trace_prompt_style
         training_row["selector_trace"] = {
             "source_type": source_type,
             "source_path": str(source_path),
@@ -290,6 +303,9 @@ def _build_split(
         label_counter[str(training_row.get("gold_label", ""))] += 1
         prompt_tokens.append(int(training_row.get("prompt_token_count", 0)))
         evidence_counts.append(int(training_row.get("evidence_count", 0)))
+        evidence_counts_before.append(
+            int(training_row.get("evidence_count_before", training_row.get("evidence_count", 0)))
+        )
 
     report = {
         "split": split,
@@ -297,6 +313,7 @@ def _build_split(
         "source_path": str(source_path),
         "raw_path": str(raw_path),
         "selection_mode": selection_mode,
+        "trace_prompt_style": trace_prompt_style,
         "top_k": int(top_k),
         "random_seed": int(random_seed),
         "n_source_rows": len(source_rows),
@@ -313,8 +330,60 @@ def _build_split(
         ),
         "prompt_token_count": _summary(prompt_tokens),
         "evidence_count": _summary(evidence_counts),
+        "evidence_count_before": _summary(evidence_counts_before),
     }
     return out_rows, report
+
+
+def _apply_trace_lite_prompt_fields(
+    *,
+    claim: str,
+    candidates: list[dict[str, Any]],
+    claim_atoms: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
+    atom_lines: list[str] = []
+    for atom in claim_atoms:
+        if not isinstance(atom, dict):
+            continue
+        atom_id = _compact_whitespace(atom.get("atom_id") or atom.get("node_id") or "")
+        atom_text = _compact_whitespace(atom.get("text") or "")
+        if atom_id and atom_text:
+            atom_lines.append(f"{atom_id}: {atom_text}")
+
+    rendered_claim = str(claim)
+    if atom_lines:
+        rendered_claim = f"{rendered_claim.rstrip()}\n\nClaim atoms:\n" + "\n".join(atom_lines)
+
+    rendered_candidates: list[dict[str, Any]] = []
+    for candidate in candidates:
+        copied = dict(candidate)
+        covers = _render_covered_atom_ids(copied.get("covered_atom_ids"))
+        relation = _compact_whitespace(copied.get("map_relation") or "") or "unknown"
+        directness = _compact_whitespace(copied.get("map_directness") or "") or "unknown"
+        text = str(copied.get("text", "")).strip()
+        copied["text"] = f"[covers={covers}; relation={relation}; directness={directness}]\n{text}"
+        rendered_candidates.append(copied)
+    return rendered_claim, rendered_candidates
+
+
+def _render_covered_atom_ids(value: Any) -> str:
+    if value is None:
+        return "none"
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, list):
+        items = value
+    else:
+        items = list(value) if isinstance(value, tuple) else []
+    rendered = [_compact_whitespace(item) for item in items]
+    rendered = [item for item in rendered if item]
+    if not rendered:
+        return "none"
+    return ",".join(rendered)
+
+
+def _compact_whitespace(value: Any) -> str:
+    return " ".join(str(value).split())
 
 
 def _resolve_split_source(split: str, trace_path: str | None, oracle_path: str | None) -> tuple[str, str]:
@@ -489,6 +558,10 @@ def _trace_fingerprint(trace: dict[str, Any]) -> str:
 
 
 def _load_experiment_config(config_path: str) -> dict[str, Any]:
+    from hydra import compose, initialize_config_dir
+    from hydra.core.global_hydra import GlobalHydra
+    from omegaconf import OmegaConf
+
     project_root = Path(__file__).resolve().parents[3]
     path = Path(config_path)
     if not path.is_absolute():

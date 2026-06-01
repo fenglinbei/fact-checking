@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-REMOTE="fenglin@yd.frp-ski.com:/home/fenglin/project/fact-checking/outputs/selectors/"
+REMOTE="fenglin@yd.frp-ski.com:/home/fenglin/project/fact-checking/outputs/"
 SSH_PORT=16880
 ALL=false
 DRY_RUN=""
@@ -14,7 +14,7 @@ for arg in "${@}"; do
     esac
 done
 
-SRC="outputs/selectors/evidence_map_selector"
+SRC="outputs/runs"
 
 EXCLUDES=()
 if [ "$ALL" != true ]; then
