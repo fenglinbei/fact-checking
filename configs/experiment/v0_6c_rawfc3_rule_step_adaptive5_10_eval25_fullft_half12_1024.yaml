@@ -1,0 +1,23 @@
+# @package _global_
+# RAWFC eval25 FullFT 1024-token half=1.2 class-weight ablation.
+
+defaults:
+  - v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_clean_weight_1024
+  - _self_
+
+experiment:
+  name: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_half12_1024
+
+baseline:
+  variant: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_half12_1024
+
+sft_train:
+  label_token_ce:
+    early_stopping_metric: macro_f1
+    class_weights:
+      'false': 1.0
+      half: 1.2
+      'true': 1.0
+
+swanlab:
+  experiment_name: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_half12_1024

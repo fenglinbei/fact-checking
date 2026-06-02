@@ -1,0 +1,15 @@
+# @package _global_
+# RAWFC eval25 FullFT max-length branch for adaptive3_8 graph budget.
+
+defaults:
+  - v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_maxlen1536_bsz1_ga8
+  - _self_
+
+experiment:
+  name: v0_6c_rawfc3_rule_step_adaptive3_8_eval25_fullft_maxlen1536_bsz1_ga8
+
+baseline:
+  variant: v0_6c_rawfc3_rule_step_adaptive3_8_eval25_fullft_maxlen1536_bsz1_ga8
+
+swanlab:
+  experiment_name: v0_6c_rawfc3_rule_step_adaptive3_8_eval25_fullft_maxlen1536_bsz1_ga8
