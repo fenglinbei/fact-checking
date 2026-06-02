@@ -1,0 +1,30 @@
+# @package _global_
+# RAWFC eval25 FullFT 1024-token clean class-weight ablation.
+
+defaults:
+  - v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft
+  - _self_
+
+experiment:
+  name: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_clean_weight_1024
+
+baseline:
+  variant: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_clean_weight_1024
+
+build:
+  prompt:
+    max_length: 1024
+
+sft_train:
+  max_length: 1024
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
+  label_token_ce:
+    early_stopping_metric: macro_f1
+    class_weights:
+      'false': 1.0
+      half: 1.0
+      'true': 1.0
+
+swanlab:
+  experiment_name: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_clean_weight_1024
