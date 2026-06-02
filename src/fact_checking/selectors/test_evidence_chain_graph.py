@@ -16,6 +16,7 @@ from fact_checking.selectors.evidence_chain_graph import (
     build_evidence_chain_graph_row,
     build_rule_step_evidence_chain_graph_row,
     build_sufficiency_contradiction_evidence_chain_graph_row,
+    rule_step_chain_selector_name,
 )
 from scripts.phase5_selectors.visualize.render_evidence_chain_graph_html import (
     load_or_build_translations,
@@ -164,6 +165,26 @@ class EvidenceChainGraphTest(unittest.TestCase):
         self.assertEqual(graph["selector_name"], RULE_STEP_CHAIN_SELECTOR)
         self.assertEqual(graph["selected_evidence_ids"][0], "E02")
         self.assertEqual(graph["selection_steps"][0]["rule"], "anchor_core")
+
+    def test_rule_step_selector_name_tracks_budget(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", base=0.90),
+                _candidate("E02", atoms=["A2"], relation="support", directness="direct", base=0.80),
+                _candidate("E03", atoms=[], relation="background", directness="context", base=0.70),
+                _candidate("E04", atoms=[], relation="irrelevant", directness="none", base=0.60),
+                _candidate("E05", atoms=[], relation="irrelevant", directness="none", base=0.50),
+                _candidate("E06", atoms=[], relation="irrelevant", directness="none", base=0.40),
+                _candidate("E07", atoms=[], relation="irrelevant", directness="none", base=0.30),
+                _candidate("E08", atoms=[], relation="irrelevant", directness="none", base=0.20),
+            ]
+        )
+
+        graph = build_rule_step_evidence_chain_graph_row(row, params=RuleStepEvidenceChainParams(min_top_k=5, max_top_k=8))
+
+        self.assertEqual(rule_step_chain_selector_name(5, 8), "v0_6c_rule_step_adaptive5_8")
+        self.assertEqual(graph["selector_name"], "v0_6c_rule_step_adaptive5_8")
+        self.assertEqual(graph["selection_trace"]["selector_name"], "v0_6c_rule_step_adaptive5_8")
 
     def test_rule_step_p1_beats_p2_and_uses_claim_atom_order(self) -> None:
         row = _row(

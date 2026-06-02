@@ -14,11 +14,11 @@ if str(SRC_ROOT) not in sys.path:
 
 from fact_checking.selectors.evidence_chain_graph import (
     DEFAULT_CHUNK_MMR_FINGERPRINT,
-    RULE_STEP_CHAIN_SELECTOR,
     RULE_STEP_GRAPH_VERSION,
     RuleStepEvidenceChainParams,
     build_rule_step_evidence_chain_graph_row,
     render_rule_step_case_studies,
+    rule_step_chain_selector_name,
     summarize_rule_step_chain_graph_rows,
 )
 from fact_checking.utils.io import read_jsonl, save_json, write_jsonl
@@ -67,14 +67,14 @@ def main() -> None:
     (output_dir / "case_studies.md").write_text(render_rule_step_case_studies(graph_rows), encoding="utf-8")
 
     print(f"Wrote {len(graph_rows)} graph rows to {output_dir}")
-    print(f"Selector: {RULE_STEP_CHAIN_SELECTOR}")
+    print(f"Selector: {rule_step_chain_selector_name(int(args.min_top_k), int(args.max_top_k))}")
     print(f"Diagnostics: {output_dir / 'graph_diagnostics.json'}")
 
 
 def _manifest(*, args: argparse.Namespace, input_path: Path, rows: list[dict[str, Any]], graph_rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "graph_version": RULE_STEP_GRAPH_VERSION,
-        "selector_name": RULE_STEP_CHAIN_SELECTOR,
+        "selector_name": rule_step_chain_selector_name(int(args.min_top_k), int(args.max_top_k)),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "input": str(input_path),
         "output_dir": str(args.output_dir),

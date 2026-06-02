@@ -120,6 +120,25 @@ def test_plain_prompt_style_preserves_existing_prompt_shape(tmp_path: Path) -> N
     assert rows[0]["candidates"][0]["text"] == "Evidence one."
 
 
+def test_rawfc_boundaries_prompt_style_uses_rawfc_three_label_boundaries() -> None:
+    prompt_cfg = build_trace_verifier_data._prompt_cfg_for_trace_style(
+        {"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        trace_prompt_style="rawfc_boundaries",
+        label_schema="rawfc3",
+    )
+
+    system_prompt = prompt_cfg["system_prompt"]
+
+    assert "RAWFC claims" in system_prompt
+    assert "false means the evidence contradicts or refutes the main claim" in system_prompt
+    assert "half means the evidence supports part of the claim" in system_prompt
+    assert "true means the evidence supports the main claim" in system_prompt
+    assert "pants-fire" not in system_prompt
+    assert "barely-true" not in system_prompt
+    assert "half-true" not in system_prompt
+    assert "mostly-true" not in system_prompt
+
+
 def _write_minimal_inputs(tmp_path: Path) -> tuple[Path, Path]:
     raw_path = tmp_path / "val.json"
     raw_path.write_text(

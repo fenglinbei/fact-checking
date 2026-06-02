@@ -1,0 +1,19 @@
+# @package _global_
+# RAWFC eval25 FullFT max-length variant using per-device batch 1 and GA 8.
+
+defaults:
+  - v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_maxlen1536
+  - _self_
+
+experiment:
+  name: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_maxlen1536_bsz1_ga8
+
+baseline:
+  variant: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_maxlen1536_bsz1_ga8
+
+sft_train:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+
+swanlab:
+  experiment_name: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_maxlen1536_bsz1_ga8

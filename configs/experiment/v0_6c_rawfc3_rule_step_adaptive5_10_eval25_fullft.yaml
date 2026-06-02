@@ -1,0 +1,30 @@
+# @package _global_
+# Full fine-tuning RAWFC v0.6c tuning branch with eval_steps=25.
+
+defaults:
+  - v0_6c_rawfc3_rule_step_adaptive5_10_eval25
+  - _self_
+
+experiment:
+  name: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft
+
+baseline:
+  variant: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft
+
+train:
+  deepspeed_config: configs/deepspeed_zero3_bsz2_ga4.json
+
+sft_train:
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-6
+  lora:
+    enabled: false
+
+infer:
+  merge_lora_cache:
+    enabled: false
+
+swanlab:
+  project: fact-checking-rawfc-v0-6c-eval25-fullft
+  experiment_name: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft

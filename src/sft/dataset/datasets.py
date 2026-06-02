@@ -75,6 +75,7 @@ class EvalPromptDataset(Dataset):
                 "gold_id": sample.gold_id,
                 "gold_label": sample.gold_label,
                 "gold_explain": sample.gold_explain,
+                "label_schema": sample.label_schema,
             }
             for idx, sample in enumerate(samples)
         ]

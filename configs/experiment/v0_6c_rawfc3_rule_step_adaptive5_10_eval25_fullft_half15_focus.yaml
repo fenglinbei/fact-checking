@@ -1,0 +1,25 @@
+# @package _global_
+# RAWFC eval25 FullFT variant more strongly emphasizing half-label F1.
+
+defaults:
+  - v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft
+  - _self_
+
+experiment:
+  name: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_half15_focus
+
+baseline:
+  variant: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_half15_focus
+
+sft_train:
+  label_token_ce:
+    early_stopping_metric: macro_f1_plus_focus_label
+    focus_label: half
+    focus_metric_weight: 0.3
+    class_weights:
+      'false': 1.0
+      half: 1.5
+      'true': 1.0
+
+swanlab:
+  experiment_name: v0_6c_rawfc3_rule_step_adaptive5_10_eval25_fullft_half15_focus

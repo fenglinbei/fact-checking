@@ -26,17 +26,26 @@ RUN_LORA="${RUN_LORA:-true}"
 RUN_FULLFT="${RUN_FULLFT:-false}"
 RUN_TRAIN="${RUN_TRAIN:-true}"
 RUN_INFER="${RUN_INFER:-true}"
+RUN_API_INFER="${RUN_API_INFER:-${RUN_INFER}}"
+RUN_LABEL_TOKEN_INFER="${RUN_LABEL_TOKEN_INFER:-false}"
 
 SAMPLE_LIMIT="${SAMPLE_LIMIT:-0}"
 CANDIDATE_TOP_N="${CANDIDATE_TOP_N:-20}"
 MIN_TOP_K="${MIN_TOP_K:-5}"
 MAX_TOP_K="${MAX_TOP_K:-10}"
-EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME:-v0_6c_rule_step_adaptive5_10}"
+GRAPH_BUDGET_SLUG="adaptive${MIN_TOP_K}_${MAX_TOP_K}"
+EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME:-v0_6c_rule_step_${GRAPH_BUDGET_SLUG}}"
 TRACE_PROMPT_STYLE="${TRACE_PROMPT_STYLE:-plain}"
 INFER_SPLIT="${INFER_SPLIT:-test}"
 
-RUN_TEACHER="${RUN_TEACHER:-false}"
 MOCK_EVIDENCE_MAPS="${MOCK_EVIDENCE_MAPS:-false}"
+if [[ -z "${RUN_TEACHER+x}" ]]; then
+  if [[ "${MOCK_EVIDENCE_MAPS}" == "true" || "${MOCK_EVIDENCE_MAPS}" == "1" || "${MOCK_EVIDENCE_MAPS}" == "True" ]]; then
+    RUN_TEACHER=false
+  else
+    RUN_TEACHER=true
+  fi
+fi
 if [[ -z "${MOCK_QUESTIONS+x}" ]]; then
   if [[ "${MOCK_EVIDENCE_MAPS}" == "true" && "${RUN_TRAIN}" != "true" && "${RUN_INFER}" != "true" ]]; then
     MOCK_QUESTIONS=true
@@ -45,19 +54,22 @@ if [[ -z "${MOCK_QUESTIONS+x}" ]]; then
   fi
 fi
 
-QUESTION_OUTPUT_ROOT="${QUESTION_OUTPUT_ROOT:-outputs/selectors/question_decomp_retrieval/rawfc_qwen_v0}"
+QUESTION_OUTPUT_ROOT="${QUESTION_OUTPUT_ROOT:-outputs/selectors/question_decomp_retrieval/rawfc_deepseek_v0}"
 QUESTION_CACHE_DIR="${QUESTION_CACHE_DIR:-outputs/selectors/question_decomp_retrieval/rawfc_question_cache}"
 EVIDENCE_MAP_ROOT="${EVIDENCE_MAP_ROOT:-outputs/selectors/evidence_map_selector/rawfc_v0_6b}"
-GRAPH_ROOT="${GRAPH_ROOT:-outputs/selectors/evidence_chain_graph/rawfc_v0_6c_adaptive5_10}"
+GRAPH_ROOT="${GRAPH_ROOT:-outputs/selectors/evidence_chain_graph/rawfc_v0_6c_${GRAPH_BUDGET_SLUG}}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/selector_trace_verifier/rawfc_v0_6c}"
 RUN_ROOT="${RUN_ROOT:-outputs/runs/rawfc_v0_6c_selector_trace_full_pipeline}"
 
 QUESTION_BASE_URL="${QUESTION_BASE_URL:-https://api.deepseek.com}"
 QUESTION_MODEL="${QUESTION_MODEL:-deepseek-v4-flash}"
 QUESTION_API_KEY_ENV="${QUESTION_API_KEY_ENV:-QUESTION_API_KEY}"
+TEACHER_BASE_URL="${TEACHER_BASE_URL:-https://api.deepseek.com}"
+TEACHER_MODEL="${TEACHER_MODEL:-deepseek-v4-flash}"
+TEACHER_API_KEY_ENV="${TEACHER_API_KEY_ENV:-DEEPSEEK_API_KEY}"
 QUESTION_API_TIMEOUT="${QUESTION_API_TIMEOUT:-120}"
 API_MAX_RETRIES="${API_MAX_RETRIES:-5}"
-API_CONCURRENCY="${API_CONCURRENCY:-1}"
+API_CONCURRENCY="${API_CONCURRENCY:-64}"
 API_PARSE_MAX_RETRIES="${API_PARSE_MAX_RETRIES:-2}"
 API_RETRY_INITIAL_DELAY="${API_RETRY_INITIAL_DELAY:-1.0}"
 API_RETRY_MAX_DELAY="${API_RETRY_MAX_DELAY:-30.0}"
@@ -90,8 +102,8 @@ QD_RRF_WEIGHT="${QD_RRF_WEIGHT:-1.0}"
 QD_QUESTION_HIT_WEIGHT="${QD_QUESTION_HIT_WEIGHT:-0.004}"
 QD_MAX_HYBRID_WEIGHT="${QD_MAX_HYBRID_WEIGHT:-0.01}"
 
-LORA_CASE_NAME="${LORA_CASE_NAME:-v0_6c_rawfc3_rule_step_adaptive5_10}"
-FULLFT_CASE_NAME="${FULLFT_CASE_NAME:-v0_6c_rawfc3_rule_step_adaptive5_10_fullft}"
+LORA_CASE_NAME="${LORA_CASE_NAME:-v0_6c_rawfc3_rule_step_${GRAPH_BUDGET_SLUG}}"
+FULLFT_CASE_NAME="${FULLFT_CASE_NAME:-v0_6c_rawfc3_rule_step_${GRAPH_BUDGET_SLUG}_fullft}"
 FULLFT_DEEPSPEED_CONFIG="${FULLFT_DEEPSPEED_CONFIG:-configs/deepspeed_zero3_bsz2_ga4.json}"
 
 SAMPLE_SUFFIX=""
@@ -166,7 +178,9 @@ echo "[rawfc-v0.6c] chunk fingerprint  : ${CHUNK_MMR_FINGERPRINT}"
 echo "[rawfc-v0.6c] cache/qd/map/graph : ${RUN_CACHE_BUILD}/${RUN_QD}/${RUN_EVIDENCE_MAP}/${RUN_GRAPH_BUILD}"
 echo "[rawfc-v0.6c] lora/fullft        : ${RUN_LORA}/${RUN_FULLFT}"
 echo "[rawfc-v0.6c] train/infer        : ${RUN_TRAIN}/${RUN_INFER}"
+echo "[rawfc-v0.6c] api/label infer    : ${RUN_API_INFER}/${RUN_LABEL_TOKEN_INFER}"
 echo "[rawfc-v0.6c] teacher/mock maps  : ${RUN_TEACHER}/${MOCK_EVIDENCE_MAPS}"
+echo "[rawfc-v0.6c] teacher model/env  : ${TEACHER_MODEL}/${TEACHER_API_KEY_ENV}"
 echo "[rawfc-v0.6c] mock questions     : ${MOCK_QUESTIONS}"
 
 if [[ "${RUN_CACHE_BUILD}" == "true" || "${RUN_CACHE_BUILD}" == "1" ]]; then
@@ -274,6 +288,9 @@ build_split_upstream() {
     ORACLE_RESULTS="" \
     RUN_TEACHER="${RUN_TEACHER}" \
     MOCK_EVIDENCE_MAPS="${MOCK_EVIDENCE_MAPS}" \
+    TEACHER_BASE_URL="${TEACHER_BASE_URL}" \
+    TEACHER_MODEL="${TEACHER_MODEL}" \
+    TEACHER_API_KEY_ENV="${TEACHER_API_KEY_ENV}" \
     BUILD_VERIFIER_DATA=false \
     SAMPLE_LIMIT="${CHILD_SAMPLE_LIMIT}" \
     CONFIG="${LORA_CONFIG}" \
@@ -329,6 +346,8 @@ run_trace_pipeline() {
     SPLIT="${INFER_SPLIT}" \
     RUN_TRAIN="${RUN_TRAIN}" \
     RUN_INFER="${RUN_INFER}" \
+    RUN_API_INFER="${RUN_API_INFER}" \
+    RUN_LABEL_TOKEN_INFER="${RUN_LABEL_TOKEN_INFER}" \
     OUTPUT_ROOT="${OUTPUT_ROOT}" \
     RUN_ROOT="${RUN_ROOT}" \
     bash scripts/phase5_selectors/run/run_selector_trace_full_pipeline.sh

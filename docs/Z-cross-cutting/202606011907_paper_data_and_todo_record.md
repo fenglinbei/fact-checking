@@ -51,6 +51,38 @@ outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_val/selection_trace_va
 - 后续 trace-lite prompt ablation 应固定 v0.6c selector、候选池、evidence 数量和 evidence 顺序。
 - v0.6d 可作为 robustness check，但不作为主实验结论来源。
 
+### 2.1 RAWFC Result Snapshot
+
+RAWFC 于 2026-06-02 跑通 v0.6c 适配版：
+
+```text
+RAWFC original 3-way labels: false / half / true
+selector: v0_6c_rule_step_adaptive5_10
+label_schema: rawfc3
+prompt style: plain
+evidence setting: RAWFC closed raw evidence
+```
+
+该结果来自 LIAR-RAW v0.6c 主实验的同样设置：同一 rule-step adaptive evidence-chain graph、同一 plain verifier prompt、同一训练/推理 wrapper 逻辑和基本超参；仅替换为 RAWFC loader、`rawfc3` 标签集合和 RAWFC 闭集 evidence。当前尚未针对 RAWFC 专门调参，因此仍可能有调整空间。
+
+当前 test 结果如下。FullFT label-token logits 与训练期 validation eval 口径一致，可作为 RAWFC 当前主引用；LoRA 和生成式 native inference 作为辅助记录保留。
+
+| dataset | selector | train mode | split | accuracy | macro-P | macro-R | macro-F1 | false F1 | half F1 | true F1 | note |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| RAWFC | v0.6c | LoRA | test | 58.00 | 59.59 | 58.04 | 55.10 | 63.24 | 36.17 | 65.88 | LIAR-RAW 同设置，未做 RAWFC 专门调参 |
+| RAWFC | v0.6c | FullFT | test | 60.50 | 63.52 | 60.47 | 60.95 | 62.07 | 56.25 | 64.52 | label-token logits，validation 同口径，未做 RAWFC 专门调参 |
+
+辅助记录：
+
+- LoRA test metrics: `outputs/runs/rawfc_v0_6c_selector_trace_full_pipeline/v0_6c_rawfc3_rule_step_adaptive5_10_best/infer/test/best/7531fe25d0da/api/metrics.json`
+- LoRA test confusion matrix: false/half/true rows vs false/half/true/parse_error columns = `[[43,7,16,0],[19,17,31,0],[8,3,56,0]]`。
+- FullFT label-token test metrics: `outputs/selector_trace_verifier/rawfc_v0_6c/v0_6c_rawfc3_rule_step_adaptive5_10_fullft/train/eval/test/best/label_token/metrics.json`
+- FullFT label-token test confusion matrix: false/half/true rows vs false/half/true/parse_error columns = `[[36,25,5,0],[10,45,12,0],[4,23,40,0]]`。
+- FullFT 生成式 native test metrics: `outputs/selector_trace_verifier/rawfc_v0_6c/v0_6c_rawfc3_rule_step_adaptive5_10_fullft/train/eval/test/best/metrics.rawfc3_corrected.json`，accuracy `58.50`、macro-P/R/F1 `58.48 / 58.56 / 58.39`。
+- FullFT validation best checkpoint 对应 step-200 eval：accuracy `61.06`、macro-P/R/F1 `62.60 / 61.01 / 61.39`。
+- FullFT 生成式 native test 由 `sft.infer` 生成；旧版 native eval 未把 `rawfc3` schema 透传到 metrics，原始 `metrics.json` 会显示 LIAR 六类标签。这里采用同一 `test_predictions.jsonl` 重新计算的 `rawfc3` corrected metrics，代码侧已修复 schema 透传。
+- Evidence-map teacher 已真实调用 DeepSeek，不是 mock；train/test 共有 4 条因 `finish_reason=length` 走 `fallback_missing_annotation`，后续可通过更高 `MAX_TOKENS` 或重跑缺失 annotation 进一步清理。
+
 ## 3. AAAI-Style Ablation Angles
 
 ### 3.1 Structural Selector Utility
@@ -200,9 +232,12 @@ LIAR-RAW, 6-way veracity classification, raw reports / closed evidence setting, 
 
 ```text
 v0.6c: LIAR-RAW macro-P / macro-R / macro-F1 = 39.74 / 34.86 / 35.45
+v0.6c: RAWFC macro-P / macro-R / macro-F1 = 63.52 / 60.47 / 60.95
 ```
 
 注意：`macro_f1` 是 per-class F1 的 macro average，不是由 macro-P 和 macro-R 再调和得到。
+
+RAWFC 数字来自同 LIAR-RAW v0.6c 设置的 FullFT label-token test inference，和训练期 validation eval 口径一致，尚未针对 RAWFC 做专门调参；LoRA test 结果为 `59.59 / 58.04 / 55.10`，FullFT 生成式 native test 结果为 `58.48 / 58.56 / 58.39`，见 2.1 辅助表。
 
 主对比表建议只放 raw-report / near raw-report setting。`best variant` 表示同一论文中按数据集选该方法公开报告的最好变体；如果变体不同，需要在 caption 或脚注中说明。
 
@@ -215,7 +250,7 @@ v0.6c: LIAR-RAW macro-P / macro-R / macro-F1 = 39.74 / 34.86 / 35.45
 | DeReC-qwen | dense retrieval + DeBERTa classifier | 35.94 / 32.24 / 33.13 | 65.58 / 64.56 / 64.60 | main baseline |
 | FFRR(d+q) | feedback-trained retrieval + reader | 34.50 / 32.60 / 33.50 | 56.50 / 57.40 / 57.00 | main baseline |
 | DelphiAgent GPT-4o | training-free multi-agent fact-checking | 31.33 / 28.36 / 28.36 | 68.05 / 68.03 / 68.04 | report separately or main-with-LLM note |
-| v0.6c | rule-step adaptive evidence-chain graph | 39.74 / 34.86 / 35.45 | not run | our main method |
+| **v0.6c (Ours)** | rule-step adaptive evidence-chain graph | 39.74 / 34.86 / 35.45 | 63.52 / 60.47 / 60.95 | our main method; RAWFC uses LIAR-RAW same setting, not RAWFC-tuned |
 | KG-CRAFT Llama 3.3 | KG + contrastive questions + strong LLM | 77.38 / 70.67 / 73.87 | 81.63 / 81.53 / 81.58 | include as strong-LLM upper reference |
 
 Non-main higher-score or different-evidence-setting methods:

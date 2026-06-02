@@ -62,7 +62,7 @@ def build_eval_metrics(
     metrics["confusion_matrix"] = confusion_matrix
     metrics["confusion_labels"] = confusion_labels
 
-    ordered_records = list(prediction_records or [])
+    ordered_records = deduplicate_prediction_records(prediction_records or [])
     ordered_records.sort(key=lambda record: int(record["sample_idx"]))
     if log_prediction_examples:
         _log_prediction_examples(
@@ -72,6 +72,54 @@ def build_eval_metrics(
         )
     metrics["prediction_records"] = ordered_records
     return metrics
+
+
+def deduplicate_by_sample_idx(
+    pred_ids: np.ndarray,
+    gold_ids: np.ndarray,
+    sample_indices: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Keep one gathered prediction per original sample index.
+
+    Accelerate may repeat examples during distributed evaluation to make each
+    process see equally sized batches. The repeated rows should not contribute
+    to validation metrics or prediction artifacts.
+    """
+    pred_arr = np.asarray(pred_ids, dtype=np.int64)
+    gold_arr = np.asarray(gold_ids, dtype=np.int64)
+    sample_arr = np.asarray(sample_indices, dtype=np.int64)
+    if len(pred_arr) != len(gold_arr) or len(pred_arr) != len(sample_arr):
+        raise ValueError(
+            "pred_ids, gold_ids, and sample_indices must have the same length "
+            f"({len(pred_arr)}, {len(gold_arr)}, {len(sample_arr)})."
+        )
+    if len(sample_arr) == 0:
+        return pred_arr, gold_arr, sample_arr
+
+    seen: set[int] = set()
+    keep: list[int] = []
+    for array_idx in np.argsort(sample_arr, kind="stable").tolist():
+        sample_idx = int(sample_arr[array_idx])
+        if sample_idx < 0 or sample_idx in seen:
+            continue
+        seen.add(sample_idx)
+        keep.append(int(array_idx))
+    keep_arr = np.asarray(keep, dtype=np.int64)
+    return pred_arr[keep_arr], gold_arr[keep_arr], sample_arr[keep_arr]
+
+
+def deduplicate_prediction_records(
+    prediction_records: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    seen: set[int] = set()
+    deduped: list[dict[str, object]] = []
+    for record in prediction_records:
+        sample_idx = int(record["sample_idx"])
+        if sample_idx < 0 or sample_idx in seen:
+            continue
+        seen.add(sample_idx)
+        deduped.append(record)
+    return deduped
 
 
 def summarize_prediction_records(
@@ -179,6 +227,7 @@ def evaluate(
 
     all_pred_ids: list[torch.Tensor] = []
     all_gold_ids: list[torch.Tensor] = []
+    all_sample_indices: list[torch.Tensor] = []
     all_prediction_records: list[dict[str, object]] = []
     pad_id = -100
     sample_pad_id = -1
@@ -248,6 +297,7 @@ def evaluate(
                 if valid_mask.any():
                     all_pred_ids.append(gathered_pred[valid_mask].cpu())
                     all_gold_ids.append(gathered_gold[valid_mask].cpu())
+                    all_sample_indices.append(gathered_sample_indices[valid_mask].cpu())
                     if accelerator.is_main_process and dataset_samples is not None:
                         valid_pred = gathered_pred[valid_mask].cpu().tolist()
                         valid_gold = gathered_gold[valid_mask].cpu().tolist()
@@ -293,6 +343,8 @@ def evaluate(
 
     pred_np = torch.cat(all_pred_ids).numpy()
     gold_np = torch.cat(all_gold_ids).numpy()
+    sample_indices_np = torch.cat(all_sample_indices).numpy()
+    pred_np, gold_np, _ = deduplicate_by_sample_idx(pred_np, gold_np, sample_indices_np)
     metrics = build_eval_metrics(
         pred_np,
         gold_np,

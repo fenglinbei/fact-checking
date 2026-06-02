@@ -12,8 +12,11 @@ build/
 !src/fact_checking/build/
 !src/fact_checking/build/**
 src/fact_checking/build/**/__pycache__/
+src/fact_checking/build/**/*.py[codz]
 !scripts/phase5_selectors/build/
 !scripts/phase5_selectors/build/**
+scripts/phase5_selectors/build/**/__pycache__/
+scripts/phase5_selectors/build/**/*.py[codz]
 develop-eggs/
 dist/
 downloads/

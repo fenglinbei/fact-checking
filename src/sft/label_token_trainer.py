@@ -21,7 +21,7 @@ from fact_checking.utils.logging import init_logger
 from sft.data.io import _save_eval_artifacts, load_prebuilt_samples, save_model
 from sft.data.sampling import select_mini_val_rows
 from sft.dataset.loaders import build_dataloader
-from sft.eval import build_eval_metrics
+from sft.eval import build_eval_metrics, deduplicate_by_sample_idx
 from sft.label_token_dataset import LabelTokenCollator, LabelTokenDataset
 from sft.prompting.stats import (
     build_prompt_snapshots,
@@ -30,7 +30,7 @@ from sft.prompting.stats import (
     save_prompt_statistics,
     summarize_prebuilt_prompts,
 )
-from sft.runtime.adapters import apply_lora_if_enabled, lora_enabled
+from sft.runtime.adapters import apply_lora_if_enabled, checkpoint_has_hf_artifacts, lora_enabled
 from sft.runtime.config import apply_runtime_output_layout
 from sft.runtime.deps import flash_attn2_available, fla_fast_path_available
 from sft.runtime.device import maybe_empty_cache
@@ -127,10 +127,47 @@ def _selection_score(metrics: dict[str, Any], train_cfg: dict[str, Any]) -> floa
         return float(metrics["accuracy"])
     if metric in {"macro_f1_plus_true_side", "macro_f1+true_side"}:
         return macro_f1 + float(label_cfg.get("true_side_metric_weight", 0.5)) * true_side
+    if metric in {"macro_f1_plus_focus_label", "macro_f1+focus_label", "macro_f1_plus_label"}:
+        focus_label = str(label_cfg.get("focus_label", "") or "").strip()
+        if not focus_label:
+            raise ValueError(
+                "sft_train.label_token_ce.focus_label is required when "
+                "early_stopping_metric=macro_f1_plus_focus_label."
+            )
+        per_class = metrics.get("per_class", {}) or {}
+        focus_metrics = per_class.get(focus_label, {}) if isinstance(per_class, dict) else {}
+        if not isinstance(focus_metrics, dict):
+            focus_metrics = {}
+        focus_f1 = float(focus_metrics.get("f1", 0.0))
+        return macro_f1 + float(label_cfg.get("focus_metric_weight", 0.3)) * focus_f1
     raise ValueError(
         "Unsupported sft_train.label_token_ce.early_stopping_metric="
-        f"{metric!r}. Use macro_f1, true_side_macro_f1, accuracy, or macro_f1_plus_true_side."
+        f"{metric!r}. Use macro_f1, true_side_macro_f1, accuracy, "
+        "macro_f1_plus_true_side, or macro_f1_plus_focus_label."
     )
+
+
+def _is_distributed_teardown_oom(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "out of memory" in text and ("nccl" in text or "destroy_process_group" in text)
+
+
+def _end_training_after_final_checkpoint(
+    accelerator: Accelerator,
+    output_dir: Path,
+    active_logger,
+) -> None:
+    try:
+        accelerator.end_training()
+    except Exception as exc:
+        final_dir = output_dir / "final"
+        if checkpoint_has_hf_artifacts(final_dir) and _is_distributed_teardown_oom(exc):
+            active_logger.warning(
+                "[WARN] Ignoring distributed teardown CUDA OOM after final checkpoint was saved: %s",
+                exc,
+            )
+            return
+        raise
 
 
 def _evaluate_label_token(
@@ -211,6 +248,7 @@ def _evaluate_label_token(
     pred_np = torch.cat(all_pred_ids).numpy()
     gold_np = torch.cat(all_gold_ids).numpy()
     sample_indices_np = torch.cat(all_sample_indices).numpy()
+    pred_np, gold_np, sample_indices_np = deduplicate_by_sample_idx(pred_np, gold_np, sample_indices_np)
 
     prediction_records: list[dict[str, object]] = []
     if accelerator.is_main_process and dataset_samples is not None:
@@ -344,6 +382,8 @@ def main() -> None:
             "class_weights": {label: float(weight) for label, weight in zip(labels, class_weights.tolist())},
             "early_stopping_metric": str(label_cfg.get("early_stopping_metric", "macro_f1_plus_true_side")),
             "true_side_metric_weight": float(label_cfg.get("true_side_metric_weight", 0.5)),
+            "focus_label": str(label_cfg.get("focus_label", "") or ""),
+            "focus_metric_weight": float(label_cfg.get("focus_metric_weight", 0.3)),
         }
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         active_logger.info("[INFO] label-token CE metadata saved to %s", meta_path)
@@ -650,7 +690,7 @@ def main() -> None:
         run_eval_and_maybe_save_best(global_step)
 
     save_model(accelerator, model, tokenizer, output_dir / "final")
-    accelerator.end_training()
+    _end_training_after_final_checkpoint(accelerator, output_dir, active_logger)
 
 
 if __name__ == "__main__":

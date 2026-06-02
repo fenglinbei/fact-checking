@@ -39,6 +39,10 @@ DIRECTNESS_VALUES = {"direct", "partial"}
 POLAR_RELATIONS = {"support", "refute", "qualify", "mixed"}
 
 
+def rule_step_chain_selector_name(min_top_k: int, max_top_k: int) -> str:
+    return f"v0_6c_rule_step_adaptive{int(min_top_k)}_{int(max_top_k)}"
+
+
 @dataclass(frozen=True)
 class EvidenceChainParams:
     candidate_top_n: int = 20
@@ -131,6 +135,7 @@ def build_rule_step_evidence_chain_graph_row(
         min_top_k=min_top_k,
         max_top_k=max_top_k,
     )
+    selector_name = rule_step_chain_selector_name(min_top_k, max_top_k)
     selected_ids = list(rule_result.get("evidence_ids") or [])
     selected_candidates = [_candidate_for_evidence_id(evidence_by_id[eid]) for eid in selected_ids if eid in evidence_by_id]
     selected_chain = _rule_step_chain_summary(
@@ -145,7 +150,7 @@ def build_rule_step_evidence_chain_graph_row(
         "claim": str(row.get("claim") or ""),
         "gold_label": str(row.get("gold_label") or ""),
         "graph_version": RULE_STEP_GRAPH_VERSION,
-        "selector_name": RULE_STEP_CHAIN_SELECTOR,
+        "selector_name": selector_name,
         "params": {
             "candidate_top_n": int(params.candidate_top_n),
             "min_top_k": min_top_k,

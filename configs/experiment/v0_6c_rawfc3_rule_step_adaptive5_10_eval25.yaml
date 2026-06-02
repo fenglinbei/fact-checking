@@ -1,0 +1,21 @@
+# @package _global_
+# RAWFC v0.6c tuning branch with denser validation evaluation.
+
+defaults:
+  - v0_6c_rawfc3_rule_step_adaptive5_10
+  - _self_
+
+experiment:
+  name: v0_6c_rawfc3_rule_step_adaptive5_10_eval25
+
+baseline:
+  variant: v0_6c_rawfc3_rule_step_adaptive5_10_eval25
+
+sft_train:
+  eval_steps: 25
+  save_steps: 50
+  early_stopping_patience: 8
+
+swanlab:
+  project: fact-checking-rawfc-v0-6c-eval25
+  experiment_name: v0_6c_rawfc3_rule_step_adaptive5_10_eval25

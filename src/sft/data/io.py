@@ -163,6 +163,37 @@ def _export_zero3_checkpoint_to_hf(
     return True
 
 
+def _drop_zero3_placeholder_safetensors(output_path: Path) -> None:
+    single_file = output_path / "model.safetensors"
+    index_file = output_path / "model.safetensors.index.json"
+    if not single_file.exists() or not index_file.exists():
+        return
+
+    try:
+        from safetensors import safe_open
+
+        has_zero_tensor = False
+        with safe_open(str(single_file), framework="pt", device="cpu") as handle:
+            keys = list(handle.keys())
+            for key in keys:
+                if 0 in tuple(handle.get_tensor(key).shape):
+                    has_zero_tensor = True
+                    break
+    except Exception as exc:
+        logger.warning("[WARN] Could not inspect %s for ZeRO-3 placeholders: %s", single_file, exc)
+        return
+
+    if not has_zero_tensor:
+        return
+
+    single_file.unlink()
+    logger.warning(
+        "[WARN] Removed ZeRO-3 placeholder %s because sharded Hugging Face weights are available via %s.",
+        single_file,
+        index_file,
+    )
+
+
 def save_model(
     accelerator: Accelerator,
     model: AutoModelForCausalLM,
@@ -210,6 +241,7 @@ def save_model(
 
         if accelerator.is_main_process:
             tokenizer.save_pretrained(str(output_path))
+            _drop_zero3_placeholder_safetensors(output_path)
 
     except ValueError as exc:
         if "stage3_gather_16bit_weights_on_model_save" not in str(exc):
@@ -228,6 +260,7 @@ def save_model(
                 ds_ckpt_dir,
             )
             _export_zero3_checkpoint_to_hf(unwrapped, tokenizer, ds_ckpt_dir, output_path)
+            _drop_zero3_placeholder_safetensors(output_path)
 
     accelerator.wait_for_everyone()
 

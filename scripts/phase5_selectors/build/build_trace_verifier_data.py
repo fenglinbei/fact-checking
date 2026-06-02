@@ -40,7 +40,15 @@ SELECTION_MODES = (
     "same_set_candidate_pool_order",
     "same_set_random_order",
 )
-TRACE_PROMPT_STYLES = ("plain", "trace_lite")
+TRACE_PROMPT_STYLES = ("plain", "trace_lite", "rawfc_boundaries")
+
+RAWFC_BOUNDARIES_SYSTEM_PROMPT = (
+    "You are a careful fact-checking assistant for RAWFC claims. "
+    "Classify claims using only the claim and retrieved evidence supplied by the user. "
+    "Use these label boundaries: false means the evidence contradicts or refutes the main claim; "
+    "half means the evidence supports part of the claim but leaves important qualifiers, context, "
+    "or mixed factual status; true means the evidence supports the main claim."
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -213,6 +221,11 @@ def _build_split(
     source_rows = _read_jsonl(source_path)
     if sample_limit is not None:
         source_rows = source_rows[: int(sample_limit)]
+    prompt_cfg_for_style = _prompt_cfg_for_trace_style(
+        prompt_cfg,
+        trace_prompt_style=trace_prompt_style,
+        label_schema=label_schema,
+    )
 
     out_rows: list[dict[str, Any]] = []
     metric_traces: list[dict[str, Any]] = []
@@ -291,7 +304,7 @@ def _build_split(
             "explain": sample.explain,
             "candidates": candidates,
         }
-        training_row = build_training_row(retrieval_row, tokenizer, prompt_cfg)
+        training_row = build_training_row(retrieval_row, tokenizer, prompt_cfg_for_style)
         training_row["trace_prompt_style"] = trace_prompt_style
         training_row["selector_trace"] = {
             "source_type": source_type,
@@ -384,6 +397,21 @@ def _apply_trace_lite_prompt_fields(
         copied["text"] = f"[covers={covers}; relation={relation}; directness={directness}]\n{text}"
         rendered_candidates.append(copied)
     return rendered_claim, rendered_candidates
+
+
+def _prompt_cfg_for_trace_style(
+    prompt_cfg: dict[str, Any],
+    *,
+    trace_prompt_style: str,
+    label_schema: str,
+) -> dict[str, Any]:
+    styled = dict(prompt_cfg)
+    if trace_prompt_style != "rawfc_boundaries":
+        return styled
+    if str(label_schema).strip().lower() != "rawfc3":
+        raise ValueError("trace_prompt_style=rawfc_boundaries is only supported with label_schema=rawfc3.")
+    styled["system_prompt"] = RAWFC_BOUNDARIES_SYSTEM_PROMPT
+    return styled
 
 
 def _render_covered_atom_ids(value: Any) -> str:

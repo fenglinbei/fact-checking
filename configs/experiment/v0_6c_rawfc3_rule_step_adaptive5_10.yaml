@@ -31,9 +31,9 @@ sft_train:
   label_token_ce:
     early_stopping_metric: macro_f1
     class_weights:
-      false: 1.0
+      'false': 1.0
       half: 1.0
-      true: 1.0
+      'true': 1.0
 
 swanlab:
   project: fact-checking-rawfc-v0-6c

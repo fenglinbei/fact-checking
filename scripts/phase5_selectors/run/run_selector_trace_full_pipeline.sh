@@ -75,6 +75,8 @@ FORCE_BUILD="${FORCE_BUILD:-false}"
 RUN_TRAIN="${RUN_TRAIN:-true}"
 FORCE_TRAIN="${FORCE_TRAIN:-false}"
 RUN_INFER="${RUN_INFER:-true}"
+RUN_API_INFER="${RUN_API_INFER:-${RUN_INFER}}"
+RUN_LABEL_TOKEN_INFER="${RUN_LABEL_TOKEN_INFER:-false}"
 FORCE_INFER="${FORCE_INFER:-true}"
 PIPELINE_RESUME="${PIPELINE_RESUME:-true}"
 
@@ -406,8 +408,8 @@ run_infer_case() {
   local config_path="${build_dir}/train.resolved.yaml"
   local train_dir=""
 
-  if [[ "${RUN_INFER}" != "true" ]]; then
-    echo "[selector-trace-full] skip infer case=${label} RUN_INFER=${RUN_INFER}"
+  if [[ "${RUN_API_INFER}" != "true" ]]; then
+    echo "[selector-trace-full] skip API infer case=${label} RUN_API_INFER=${RUN_API_INFER}"
     return 0
   fi
 
@@ -439,6 +441,38 @@ run_infer_case() {
   echo "[selector-trace-full] infer case=${label} checkpoint=${checkpoint} train_dir=${train_dir} port=${port} run_dir=${run_dir}"
   if [[ "${DRY_RUN}" == "true" ]]; then
     printf '[selector-trace-full] dry-run infer:'
+    printf ' %q' "${cmd[@]}"
+    printf '\n'
+    return 0
+  fi
+  "${cmd[@]}"
+}
+
+run_label_token_infer_case() {
+  local label="$1"
+  local checkpoint="$2"
+  local build_dir="$3"
+  local config_path="${build_dir}/train.resolved.yaml"
+  local train_dir=""
+  local cmd=()
+
+  if [[ "${RUN_LABEL_TOKEN_INFER}" != "true" ]]; then
+    echo "[selector-trace-full] skip label-token infer case=${label} RUN_LABEL_TOKEN_INFER=${RUN_LABEL_TOKEN_INFER}"
+    return 0
+  fi
+
+  train_dir="$(resolve_train_run_dir "${build_dir}/train" "${checkpoint}")"
+  cmd=(
+    python -m sft.label_token_infer
+    --run-dir "${train_dir}"
+    --checkpoint "${checkpoint}"
+    --split "${SPLIT}"
+    --config "${config_path}"
+  )
+
+  echo "[selector-trace-full] label-token infer case=${label} checkpoint=${checkpoint} train_dir=${train_dir} split=${SPLIT}"
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    printf '[selector-trace-full] dry-run label-token infer:'
     printf ' %q' "${cmd[@]}"
     printf '\n'
     return 0
@@ -481,6 +515,7 @@ main() {
   echo "[selector-trace-full] run_root=${RUN_ROOT}"
   echo "[selector-trace-full] train_backend=${TRAIN_BACKEND} nproc=${NPROC_PER_NODE}"
   echo "[selector-trace-full] trace_prompt_style=${TRACE_PROMPT_STYLE}"
+  echo "[selector-trace-full] infer api/label_token=${RUN_API_INFER}/${RUN_LABEL_TOKEN_INFER}"
   echo "[selector-trace-full] cases=${labels[*]}"
   echo "[selector-trace-full] checkpoints=${checkpoints[*]}"
 
@@ -497,6 +532,7 @@ main() {
     train_case "${label}" "${build_dir}"
     for checkpoint in "${checkpoints[@]}"; do
       run_infer_case "${label}" "${checkpoint}" "${build_dir}" "$((PORT_BASE + port_index))"
+      run_label_token_infer_case "${label}" "${checkpoint}" "${build_dir}"
       port_index=$((port_index + 1))
     done
   done
