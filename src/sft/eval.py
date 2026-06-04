@@ -54,7 +54,7 @@ def build_eval_metrics(
     labels: list[str] | None = None,
     prediction_records: list[dict[str, object]] | None = None,
     eval_logger: Logger | None = None,
-    log_predictions_limit: int = 5,
+    log_predictions_limit: int = 0,
     log_prediction_examples: bool = True,
 ) -> dict[str, object]:
     metrics = _compute_classification_metrics(pred_ids, gold_ids, labels=labels)
@@ -72,6 +72,54 @@ def build_eval_metrics(
         )
     metrics["prediction_records"] = ordered_records
     return metrics
+
+
+def log_eval_summary(
+    eval_metrics: dict[str, object],
+    *,
+    eval_logger: Logger | None = None,
+    prefix: str = "[eval]",
+    step: int | None = None,
+    split: str | None = None,
+    checkpoint: str | None = None,
+    extra_metrics: dict[str, float] | None = None,
+) -> None:
+    active_logger = eval_logger or module_logger
+    fields: list[str] = [prefix]
+    if step is not None:
+        fields.append(f"step={int(step)}")
+    if split is not None:
+        fields.append(f"split={split}")
+    if checkpoint is not None:
+        fields.append(f"checkpoint={checkpoint}")
+    if "eval_loss" in eval_metrics:
+        fields.append(f"loss={float(eval_metrics.get('eval_loss', float('nan'))):.4f}")
+    fields.extend(
+        [
+            f"accuracy={float(eval_metrics['accuracy']):.4f}",
+            f"macro_precision={float(eval_metrics['macro_precision']):.4f}",
+            f"macro_recall={float(eval_metrics['macro_recall']):.4f}",
+            f"macro_f1={float(eval_metrics['macro_f1']):.4f}",
+            f"parse_error_rate={float(eval_metrics['parse_error_rate']):.4f}",
+        ]
+    )
+    for name, value in (extra_metrics or {}).items():
+        fields.append(f"{name}={float(value):.4f}")
+    active_logger.info(" ".join(fields))
+
+    per_class = eval_metrics.get("per_class", {}) or {}
+    if isinstance(per_class, dict) and per_class:
+        active_logger.info("%s per_class:", prefix)
+        for label in sorted(per_class.keys()):
+            label_metrics = per_class[label]
+            if isinstance(label_metrics, dict):
+                active_logger.info(
+                    "  - %s: P=%.4f R=%.4f F1=%.4f",
+                    label,
+                    float(label_metrics.get("precision", 0.0)),
+                    float(label_metrics.get("recall", 0.0)),
+                    float(label_metrics.get("f1", 0.0)),
+                )
 
 
 def deduplicate_by_sample_idx(
@@ -127,7 +175,7 @@ def summarize_prediction_records(
     *,
     labels: list[str] | None = None,
     eval_logger: Logger | None = None,
-    log_predictions_limit: int = 5,
+    log_predictions_limit: int = 0,
 ) -> dict[str, object]:
     active_labels = labels or LABELS
     if not prediction_records:
@@ -204,7 +252,7 @@ def evaluate(
     max_length: int,
     max_new_tokens: int = 24,
     eval_logger: Logger | None = None,
-    log_predictions_limit: int = 5,
+    log_predictions_limit: int = 0,
     logit_adjust_cfg: dict | None = None,
 ) -> dict[str, object]:
     del max_length

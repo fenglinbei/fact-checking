@@ -28,7 +28,7 @@ from fact_checking.utils.logging import init_logger
 from sft.classifier_dataset import ClassifierDataset
 from sft.data.io import _save_eval_artifacts
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
-from sft.runtime.config import apply_runtime_output_layout
+from sft.runtime.config import apply_runtime_output_layout, resolve_artifact_dir
 
 logger = init_logger(__name__)
 
@@ -66,8 +66,16 @@ def _make_compute_metrics(capture: _MetricsCapture, *, loss_kind: str = "ce", la
 class EvalArtifactsCallback(TrainerCallback):
     """Mirror sft.trainer eval logic: print summary + per-class lines and save artifacts."""
 
-    def __init__(self, output_dir: Path, capture: _MetricsCapture, *, labels: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        output_dir: Path,
+        capture: _MetricsCapture,
+        *,
+        labels: list[str] | None = None,
+        eval_root: Path | None = None,
+    ) -> None:
         self.output_dir = Path(output_dir)
+        self.eval_root = Path(eval_root) if eval_root is not None else self.output_dir / "eval"
         self.capture = capture
         self.labels = labels
 
@@ -133,6 +141,7 @@ class EvalArtifactsCallback(TrainerCallback):
             confusion_matrix=cm,
             confusion_labels=cm_labels,
             prediction_records=None,
+            eval_root=self.eval_root,
         )
         logger.info(
             "[eval] artifacts saved: metrics=%s confusion=%s",
@@ -195,6 +204,7 @@ def main() -> None:
     set_seed(int(train_cfg.get("seed", 42)))
 
     output_dir = Path(cfg.get("output_dir", "outputs/runs/train"))
+    eval_root = resolve_artifact_dir(cfg, "eval_output_dir", output_dir, "eval")
     output_dir.mkdir(parents=True, exist_ok=True)
     save_yaml(cfg, output_dir / "config.resolved.yaml")
     logger.info("[INFO] resolved config saved to %s", output_dir / "config.resolved.yaml")
@@ -273,7 +283,7 @@ def main() -> None:
         data_collator=collator,
         compute_metrics=_make_compute_metrics(capture, loss_kind=loss_kind, labels=effective_labels),
         callbacks=[
-            EvalArtifactsCallback(output_dir=output_dir, capture=capture, labels=effective_labels),
+            EvalArtifactsCallback(output_dir=output_dir, capture=capture, labels=effective_labels, eval_root=eval_root),
             swanlab_callback,
         ],
     )

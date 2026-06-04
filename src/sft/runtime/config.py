@@ -5,6 +5,19 @@ from datetime import datetime
 from pathlib import Path
 
 
+def sibling_artifact_dir(output_dir: Path, leaf: str) -> Path:
+    if output_dir.name == "train":
+        return output_dir.parent / leaf
+    return output_dir / leaf
+
+
+def resolve_artifact_dir(cfg: dict, key: str, output_dir: Path, leaf: str) -> Path:
+    configured = str(cfg.get(key, "") or "").strip()
+    if configured:
+        return Path(configured)
+    return sibling_artifact_dir(output_dir, leaf)
+
+
 def apply_runtime_output_layout(cfg: dict) -> dict:
     baseline_cfg = cfg.setdefault("baseline", {})
     train_cfg = cfg.setdefault("sft_train", {})

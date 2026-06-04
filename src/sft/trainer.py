@@ -32,7 +32,7 @@ from sft.prompting.stats import (
     summarize_prebuilt_prompts,
 )
 from sft.runtime.adapters import lora_enabled
-from sft.runtime.config import apply_runtime_output_layout
+from sft.runtime.config import apply_runtime_output_layout, resolve_artifact_dir
 from sft.runtime.device import maybe_empty_cache
 from sft.runtime.tracking import log_metrics
 from sft.train_utils import setup_accelerator_and_tracker, setup_model_and_tokenizer
@@ -158,6 +158,8 @@ def main() -> None:
     val_samples = load_prebuilt_samples(val_rows)
 
     output_dir = Path(cfg.get("output_dir", "outputs/runs/train"))
+    eval_root = resolve_artifact_dir(cfg, "eval_output_dir", output_dir, "eval")
+    prompt_stats_dir = resolve_artifact_dir(cfg, "prompt_stats_output_dir", output_dir, "prompt_stats")
     if accelerator.is_main_process:
         output_dir.mkdir(parents=True, exist_ok=True)
     accelerator.wait_for_everyone()
@@ -226,6 +228,7 @@ def main() -> None:
             val_summary=val_prompt_summary,
             train_snapshots=train_prompt_snapshots,
             val_snapshots=val_prompt_snapshots,
+            stats_dir=prompt_stats_dir,
         )
         logger.info("[INFO] prompt statistics saved to %s", prompt_stats_path)
 
@@ -481,7 +484,7 @@ def main() -> None:
                                 eval_metrics = online_vllm_evaluator.evaluate(
                                     model=accelerator.unwrap_model(model),
                                     max_new_tokens=int(train_cfg.get("max_new_tokens", baseline_cfg.get("max_new_tokens", 24))),
-                                    log_predictions_limit=int(train_cfg.get("eval_log_predictions", 5)),
+                                    log_predictions_limit=int(train_cfg.get("eval_log_predictions", 0)),
                                 )
                             except Exception:
                                 eval_metrics = None
@@ -502,7 +505,7 @@ def main() -> None:
                             max_length=max_length,
                             max_new_tokens=int(train_cfg.get("max_new_tokens", baseline_cfg.get("max_new_tokens", 24))),
                             eval_logger=logger,
-                            log_predictions_limit=int(train_cfg.get("eval_log_predictions", 5)),
+                            log_predictions_limit=int(train_cfg.get("eval_log_predictions", 0)),
                             logit_adjust_cfg=logit_adjust_cfg,
                         )
                     macro_f1 = float(eval_metrics["macro_f1"])
@@ -575,6 +578,7 @@ def main() -> None:
                             confusion_matrix=eval_metrics["confusion_matrix"],
                             confusion_labels=eval_metrics["confusion_labels"],
                             prediction_records=eval_metrics.get("prediction_records", []),
+                            eval_root=eval_root,
                         )
                         log_metrics(
                             accelerator,

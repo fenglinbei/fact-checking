@@ -117,16 +117,19 @@ def _collect_eval_rows(output_dir: Path) -> list[dict[str, Any]]:
 
 def _collect_build_reports(output_dir: Path) -> dict[str, Any]:
     reports: dict[str, Any] = {}
-    for report_path in sorted((output_dir / "verifier_data").glob("*/build_report.json")):
+    report_paths = list((output_dir / "verifier_data").glob("*/build_report.json"))
+    report_paths.extend((output_dir / "verifier_data").glob("*/build/build_report.json"))
+    for report_path in sorted(set(report_paths)):
+        selector_slug = report_path.parent.parent.name if report_path.parent.name == "build" else report_path.parent.name
         try:
             report = json.loads(report_path.read_text(encoding="utf-8"))
         except Exception as exc:
-            reports[report_path.parent.name] = {"path": str(report_path), "error": str(exc)}
+            reports[selector_slug] = {"path": str(report_path), "error": str(exc)}
             continue
         split_reports = report.get("splits") if isinstance(report.get("splits"), dict) else {}
         val_report = split_reports.get("val") or next(iter(split_reports.values()), {})
         metrics = val_report.get("selection_metrics") if isinstance(val_report, dict) else {}
-        reports[report_path.parent.name] = {
+        reports[selector_slug] = {
             "path": str(report_path),
             "expected_selector_name": report.get("expected_selector_name"),
             "n_rows": _as_int(val_report.get("n_rows")),

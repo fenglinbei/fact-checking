@@ -226,7 +226,9 @@ def _get_nested_float(data: dict[str, Any], path: tuple[str, ...]) -> float | No
 
 
 def _read_prompt_stats(run_dir: Path) -> tuple[dict[str, float], Path, bool]:
-    path = run_dir / "train" / "prompt_stats" / "prompt_stats.json"
+    path = run_dir / "prompt_stats" / "prompt_stats.json"
+    if not path.exists():
+        path = run_dir / "train" / "prompt_stats" / "prompt_stats.json"
     if not path.exists():
         return {}, path, False
     data = _read_json(path)
@@ -722,7 +724,7 @@ def write_markdown_summary(
                 "",
                 "## Missing Prompt Stats",
                 "",
-                "These runs are missing `train/prompt_stats/prompt_stats.json`; prompt-stat panels skip them.",
+                "These runs are missing `prompt_stats/prompt_stats.json`; prompt-stat panels skip them.",
                 "",
                 _markdown_table(["source_root", "run_name", "top_k", "expected_path"], missing_prompt_rows),
             ]

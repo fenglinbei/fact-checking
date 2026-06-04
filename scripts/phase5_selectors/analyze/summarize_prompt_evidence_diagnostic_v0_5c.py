@@ -139,9 +139,15 @@ def _collect_eval_rows(*, output_dir: Path, split: str) -> list[dict[str, Any]]:
 def _collect_build_reports(*, output_dir: Path) -> dict[str, dict[str, Any]]:
     reports: dict[str, dict[str, Any]] = {}
     root = output_dir / "verifier_data"
-    for report_path in sorted(root.glob("*/*/build_report.json")):
-        evidence_source = report_path.parents[1].name
-        prompt_style = report_path.parent.name
+    report_paths = list(root.glob("*/*/build_report.json"))
+    report_paths.extend(root.glob("*/*/build/build_report.json"))
+    for report_path in sorted(set(report_paths)):
+        if report_path.parent.name == "build":
+            evidence_source = report_path.parents[2].name
+            prompt_style = report_path.parents[1].name
+        else:
+            evidence_source = report_path.parents[1].name
+            prompt_style = report_path.parent.name
         key = f"{evidence_source}/{prompt_style}"
         report = _read_json(report_path)
         reports[key] = {

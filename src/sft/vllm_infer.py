@@ -4,7 +4,7 @@ import argparse
 
 from fact_checking.utils.logging import init_logger
 from sft.data.io import save_eval_artifacts
-from sft.eval import summarize_prediction_records
+from sft.eval import log_eval_summary, summarize_prediction_records
 from sft.infer_common import (
     build_inference_context,
     build_label_decoding_prompt,
@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split", type=str, choices=["train", "val", "test"], default="test")
     parser.add_argument("--config", type=str, default=None)
     parser.add_argument("--max-new-tokens", type=int, default=None)
-    parser.add_argument("--log-predictions", type=int, default=5)
+    parser.add_argument("--log-predictions", type=int, default=0)
     parser.add_argument("--tensor-parallel-size", type=int, default=1)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     parser.add_argument("--dtype", type=str, default="auto")
@@ -120,6 +120,12 @@ def main() -> None:
         prediction_records,
         eval_logger=logger,
         log_predictions_limit=int(args.log_predictions),
+    )
+    log_eval_summary(
+        eval_metrics,
+        eval_logger=logger,
+        split=context.split,
+        checkpoint=context.checkpoint_name,
     )
     artifacts = save_eval_artifacts(
         eval_dir=context.eval_output_dir / "vllm",

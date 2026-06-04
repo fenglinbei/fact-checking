@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import hashlib
-import logging
 import os
 import re
 import shutil
@@ -21,6 +20,7 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from fact_checking.data.constants import LABELS, labels_for_schema, letter_order_for_schema
+from fact_checking.utils.logging import init_logger
 from sft.infer_common import (
     build_inference_context,
     build_label_decoding_prompt,
@@ -28,12 +28,13 @@ from sft.infer_common import (
     label_choice_text,
     label_name_from_id,
 )
+from sft.eval import log_eval_summary
 from sft.logit_adjust import build_logit_bias, build_logit_adjust_cfg_from_train_config, load_logit_adjust_cfg
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
 from sft.parser import _parse_label_id
 from sft.runtime.adapters import checkpoint_has_hf_artifacts, checkpoint_has_peft_adapter
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 
 _MERGED_LORA_CACHE_VERSION = 2
 _MERGED_LORA_IMPL = "peft_from_pretrained_merge_and_unload"
@@ -417,6 +418,7 @@ def run_api_inference(
         progress.close()
 
         eval_metrics = _summarize_prediction_records(prediction_records, labels=labels)
+        log_eval_summary(eval_metrics, eval_logger=logger, split=split, checkpoint=checkpoint)
         artifacts = _save_eval_artifacts(
             eval_dir=eval_path,
             metrics=_build_serializable_metrics(eval_metrics),

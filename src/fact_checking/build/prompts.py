@@ -105,12 +105,44 @@ def build_user_content(
     )
 
 
-def build_chat_prompt(tokenizer: AutoTokenizer, system_msg: str, user_content: str) -> str:
+def _chat_template_cfg(chat_template: dict[str, Any] | None) -> dict[str, Any]:
+    cfg = dict(chat_template or {})
+    mode = str(cfg.get("mode") or "tokenizer_default").strip().lower()
+    if mode != "tokenizer_default":
+        raise ValueError(f"Unsupported build.prompt.chat_template.mode={mode!r}; use tokenizer_default.")
+    return cfg
+
+
+def _append_user_suffix(user_content: str, suffix: str) -> str:
+    suffix = str(suffix or "").strip()
+    if not suffix:
+        return user_content
+    stripped = user_content.rstrip()
+    if stripped.endswith(suffix):
+        return stripped
+    return f"{stripped}\n\n{suffix}"
+
+
+def build_chat_prompt(
+    tokenizer: AutoTokenizer,
+    system_msg: str,
+    user_content: str,
+    *,
+    chat_template: dict[str, Any] | None = None,
+) -> str:
+    chat_cfg = _chat_template_cfg(chat_template)
+    user_content = _append_user_suffix(user_content, str(chat_cfg.get("user_suffix") or ""))
     messages = [
         {"role": "system", "content": system_msg},
         {"role": "user", "content": user_content},
     ]
-    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    template_kwargs = dict(chat_cfg.get("template_kwargs") or {})
+    return tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=bool(chat_cfg.get("add_generation_prompt", True)),
+        **template_kwargs,
+    )
 
 
 def render_prompt(
@@ -122,9 +154,10 @@ def render_prompt(
     output_mode: str,
     label_format: str,
     label_schema: str | None = None,
+    chat_template: dict[str, Any] | None = None,
 ) -> tuple[str, int]:
     user_content = build_user_content(claim, evidence_texts, output_mode, label_format, label_schema)
-    prompt = build_chat_prompt(tokenizer, system_msg, user_content)
+    prompt = build_chat_prompt(tokenizer, system_msg, user_content, chat_template=chat_template)
     return prompt, count_tokens(prompt, tokenizer, add_special_tokens=False)
 
 
@@ -144,6 +177,7 @@ def truncate_single_evidence_to_budget(
     label_format: str,
     label_schema: str | None,
     budget: int,
+    chat_template: dict[str, Any] | None = None,
 ) -> tuple[list[str], str, int, bool]:
     """Shorten one evidence item until the full chat prompt fits the prompt budget."""
     token_ids = tokenizer(
@@ -168,6 +202,7 @@ def truncate_single_evidence_to_budget(
             output_mode=output_mode,
             label_format=label_format,
             label_schema=label_schema,
+            chat_template=chat_template,
         )
         if prompt_tokens <= budget:
             best_text = candidate_text
@@ -188,6 +223,7 @@ def truncate_single_evidence_to_budget(
         output_mode=output_mode,
         label_format=label_format,
         label_schema=label_schema,
+        chat_template=chat_template,
     )
     return [], no_evidence_prompt, no_evidence_tokens, True
 
@@ -229,6 +265,7 @@ def auto_truncate_evidence(
     gold_label: str,
     label_format: str = "name",
     label_schema: str | None = None,
+    chat_template: dict[str, Any] | None = None,
 ) -> dict:
     """Remove evidence items from the tail until the prompt fits within max_length."""
     system_msg = build_system_message(system_prompt, label_schema)
@@ -248,6 +285,7 @@ def auto_truncate_evidence(
         output_mode=output_mode,
         label_format=label_format,
         label_schema=label_schema,
+        chat_template=chat_template,
     )
 
     was_truncated = False
@@ -263,6 +301,7 @@ def auto_truncate_evidence(
             output_mode=output_mode,
             label_format=label_format,
             label_schema=label_schema,
+            chat_template=chat_template,
         )
 
     if prompt_tokens > budget and len(kept) == 1:
@@ -275,6 +314,7 @@ def auto_truncate_evidence(
             label_format=label_format,
             label_schema=label_schema,
             budget=budget,
+            chat_template=chat_template,
         )
         was_truncated = True
 
@@ -317,6 +357,7 @@ def build_training_row(
     output_mode = str(prompt_cfg.get("output_mode", "label_only")).strip().lower()
     label_format = str(prompt_cfg.get("label_format", "name")).strip().lower()
     system_prompt = prompt_cfg.get("system_prompt") or None
+    chat_template = prompt_cfg.get("chat_template") if isinstance(prompt_cfg.get("chat_template"), dict) else None
     label2id = label2id_for_schema(label_schema)
 
     if auto_length and evidence_texts:
@@ -331,6 +372,7 @@ def build_training_row(
             gold_label=gold_label,
             label_format=label_format,
             label_schema=label_schema,
+            chat_template=chat_template,
         )
         return copy_optional_build_row_metadata({
             "event_id": row.get("event_id", ""),
@@ -359,7 +401,7 @@ def build_training_row(
     target = build_target(row_for_target, gold_label, output_mode, label_format)
     target_token_count = count_target_tokens(target, tokenizer)
     user_content = build_user_content(str(row.get("claim", "")), evidence_texts, output_mode, label_format, label_schema)
-    prompt = build_chat_prompt(tokenizer, system_msg, user_content)
+    prompt = build_chat_prompt(tokenizer, system_msg, user_content, chat_template=chat_template)
     prompt_token_count = count_tokens(prompt, tokenizer, add_special_tokens=False)
 
     return copy_optional_build_row_metadata({

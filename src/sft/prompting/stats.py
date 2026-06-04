@@ -183,8 +183,9 @@ def save_prompt_statistics(
     val_summary: dict[str, object],
     train_snapshots: dict[str, list[dict[str, object]]] | None = None,
     val_snapshots: dict[str, list[dict[str, object]]] | None = None,
+    stats_dir: Path | None = None,
 ) -> Path:
-    stats_dir = output_dir / "prompt_stats"
+    stats_dir = Path(stats_dir) if stats_dir is not None else output_dir / "prompt_stats"
     stats_dir.mkdir(parents=True, exist_ok=True)
     stats_path = stats_dir / "prompt_stats.json"
     with stats_path.open("w", encoding="utf-8") as f:

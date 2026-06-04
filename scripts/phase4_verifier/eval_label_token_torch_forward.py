@@ -78,7 +78,7 @@ def _parse_args() -> argparse.Namespace:
         default=True,
         help="Deduplicate gathered prediction records by sample_idx before reporting main metrics.",
     )
-    parser.add_argument("--eval-log-predictions", type=int, default=5)
+    parser.add_argument("--eval-log-predictions", type=int, default=0)
     parser.add_argument("--log-level", type=str, default="INFO")
     return parser.parse_args()
 

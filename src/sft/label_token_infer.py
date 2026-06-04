@@ -11,12 +11,15 @@ from fact_checking.data.constants import labels_for_schema, letter_order_for_sch
 from fact_checking.utils.logging import init_logger
 from sft.data.io import save_eval_artifacts
 from sft.dataset.loaders import build_dataloader
+from sft.eval import log_eval_summary
 from sft.infer_common import build_inference_context, build_serializable_metrics
 from sft.label_token_dataset import LabelTokenCollator, LabelTokenDataset
 from sft.label_token_trainer import (
     _build_label_token_ids,
     _class_weight_tensor,
     _evaluate_label_token,
+    _selection_score,
+    _true_side_macro_f1,
 )
 from sft.runtime.adapters import checkpoint_has_peft_adapter
 from sft.runtime.deps import flash_attn2_available
@@ -33,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--per-device-eval-batch-size", type=int, default=None)
     parser.add_argument("--dataloader-num-workers", type=int, default=None)
-    parser.add_argument("--log-predictions", type=int, default=5)
+    parser.add_argument("--log-predictions", type=int, default=0)
     return parser.parse_args()
 
 
@@ -125,6 +128,18 @@ def main() -> None:
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
+        true_side = _true_side_macro_f1(eval_metrics)
+        selection_score = _selection_score(eval_metrics, train_cfg)
+        log_eval_summary(
+            eval_metrics,
+            eval_logger=logger,
+            split=context.split,
+            checkpoint=context.checkpoint_name,
+            extra_metrics={
+                "true_side_macro_f1": true_side,
+                "selection_score": selection_score,
+            },
+        )
         metrics = build_serializable_metrics(eval_metrics)
         metrics.update(
             {
@@ -133,6 +148,8 @@ def main() -> None:
                 "checkpoint": context.checkpoint_name,
                 "split": context.split,
                 "eval_loss": float(eval_metrics.get("eval_loss", float("nan"))),
+                "true_side_macro_f1": true_side,
+                "selection_score": selection_score,
             }
         )
         eval_dir = Path(args.output_dir) if args.output_dir else context.eval_output_dir / "label_token"

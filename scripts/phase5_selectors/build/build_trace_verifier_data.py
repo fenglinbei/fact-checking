@@ -84,7 +84,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    build_dir = output_dir / "build"
+    build_dir.mkdir(parents=True, exist_ok=True)
 
     cfg = _load_experiment_config(args.config)
     prompt_cfg = dict((cfg.get("build", {}) or {}).get("prompt", {}) or {})
@@ -136,7 +137,7 @@ def main() -> None:
             sample_limit=args.sample_limit,
             show_progress=not args.no_progress,
         )
-        out_path = output_dir / f"build_{split}.jsonl"
+        out_path = build_dir / f"build_{split}.jsonl"
         write_jsonl(out_path, rows)
         split_paths[split] = str(out_path)
         reports[split] = report
@@ -148,7 +149,7 @@ def main() -> None:
 
     train_config = _build_train_config(
         cfg=cfg,
-        output_dir=output_dir,
+        run_dir=output_dir,
         split_paths=split_paths,
         label_schema=label_schema,
         model_base_path=args.model_base_path,
@@ -160,6 +161,7 @@ def main() -> None:
     report = {
         "config": args.config,
         "output_dir": str(output_dir),
+        "build_dir": str(build_dir),
         "selection_mode": args.selection_mode,
         "trace_prompt_style": args.trace_prompt_style,
         "expected_selector_name": args.expected_selector_name,
@@ -178,9 +180,9 @@ def main() -> None:
             "Use selection_mode=same_set_random_order with multiple wrapper seeds to estimate random-order means.",
         ],
     }
-    write_json(output_dir / "build_report.json", report)
+    write_json(build_dir / "build_report.json", report)
 
-    print(f"Wrote selector trace verifier data to {output_dir}")
+    print(f"Wrote selector trace verifier data to {build_dir}")
     for split, split_report in reports.items():
         print(
             "{split}: rows={rows} skipped={skipped} trunc={trunc:.4f} "
@@ -633,7 +635,7 @@ def _load_experiment_config(config_path: str) -> dict[str, Any]:
 def _build_train_config(
     *,
     cfg: dict[str, Any],
-    output_dir: Path,
+    run_dir: Path,
     split_paths: dict[str, str],
     label_schema: str | None,
     model_base_path: str | None,
@@ -655,7 +657,9 @@ def _build_train_config(
     sft_train["resolved_output_dir"] = True
     train_cfg = {
         "label_schema": resolved_label_schema,
-        "output_dir": str(output_dir / "train"),
+        "output_dir": str(run_dir / "train"),
+        "eval_output_dir": str(run_dir / "eval"),
+        "prompt_stats_output_dir": str(run_dir / "prompt_stats"),
         "data": {
             "train_candidates": split_paths["train"],
             "val_candidates": split_paths["val"],

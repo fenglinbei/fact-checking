@@ -131,16 +131,19 @@ def _collect_eval_rows(*, output_dir: Path) -> list[dict[str, Any]]:
 
 def _collect_build_reports(*, output_dir: Path) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for report_path in sorted((output_dir / "verifier_data").glob("*/build_report.json")):
+    report_paths = list((output_dir / "verifier_data").glob("*/build_report.json"))
+    report_paths.extend((output_dir / "verifier_data").glob("*/build/build_report.json"))
+    for report_path in sorted(set(report_paths)):
+        selector_slug = report_path.parent.parent.name if report_path.parent.name == "build" else report_path.parent.name
         try:
             report = json.loads(report_path.read_text(encoding="utf-8"))
         except Exception as exc:
-            out[report_path.parent.name] = {"error": str(exc), "path": str(report_path)}
+            out[selector_slug] = {"error": str(exc), "path": str(report_path)}
             continue
         split_reports = report.get("splits") if isinstance(report.get("splits"), dict) else None
         if split_reports:
             val_report = split_reports.get("val") or next(iter(split_reports.values()))
-            out[report_path.parent.name] = {
+            out[selector_slug] = {
                 "path": str(report_path),
                 "expected_selector_name": report.get("expected_selector_name"),
                 "n_rows": val_report.get("n_rows"),
@@ -149,7 +152,7 @@ def _collect_build_reports(*, output_dir: Path) -> dict[str, Any]:
                 "evidence_count": val_report.get("evidence_count"),
             }
         else:
-            out[report_path.parent.name] = {
+            out[selector_slug] = {
                 "path": str(report_path),
                 "expected_selector_name": report.get("expected_selector_name"),
                 "n_rows": report.get("n_rows"),

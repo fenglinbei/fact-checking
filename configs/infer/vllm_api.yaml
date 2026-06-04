@@ -10,7 +10,7 @@ infer:
   base_url: null
   wait_seconds: 180
   request_timeout_seconds: 120
-  log_predictions: 5
+  log_predictions: 0
   cuda_visible_devices: "0"
   tensor_parallel_size: 1
   gpu_memory_utilization: 0.90

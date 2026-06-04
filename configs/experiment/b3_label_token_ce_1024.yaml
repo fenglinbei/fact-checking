@@ -22,7 +22,7 @@ train:
 
 sft_train:
   max_new_tokens: 1
-  eval_log_predictions: 5
+  eval_log_predictions: 0
   logit_adjust:
     enabled: false
   label_token_ce:

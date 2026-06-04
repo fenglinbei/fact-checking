@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import re
 import socket
@@ -22,11 +21,13 @@ from tqdm.auto import tqdm
 from fact_checking.config import load_yaml
 from fact_checking.data.constants import LABEL2ID, LABELS
 from fact_checking.utils.io import read_jsonl, save_json
+from fact_checking.utils.logging import init_logger
 from sft.data.types import PreparedSample
+from sft.eval import log_eval_summary
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
 from sft.parser import _parse_label_id
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
@@ -292,6 +293,7 @@ def run_deepseek_inference(
     _write_jsonl(latest_predictions_path, latest_records, mode="w")
 
     eval_metrics = _summarize_prediction_records(latest_records)
+    log_eval_summary(eval_metrics, eval_logger=logger, split=split, checkpoint=mode_label)
     metrics = _build_serializable_metrics(eval_metrics, n_expected=len(jobs))
     artifacts = _save_eval_artifacts(
         eval_dir=eval_path,

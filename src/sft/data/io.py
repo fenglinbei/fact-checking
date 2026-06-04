@@ -377,8 +377,9 @@ def _save_eval_artifacts(
     confusion_labels: list[str],
     prediction_records: list[dict[str, object]] | None = None,
     labels: list[str] | None = None,
+    eval_root: Path | None = None,
 ) -> dict[str, str]:
-    step_dir = output_dir / "eval" / f"step-{global_step}"
+    step_dir = (Path(eval_root) if eval_root is not None else output_dir / "eval") / f"step-{global_step}"
     return save_eval_artifacts(
         eval_dir=step_dir,
         metrics=metrics,

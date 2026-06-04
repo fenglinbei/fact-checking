@@ -31,7 +31,7 @@ from sft.prompting.stats import (
     summarize_prebuilt_prompts,
 )
 from sft.runtime.adapters import apply_lora_if_enabled, checkpoint_has_hf_artifacts, lora_enabled
-from sft.runtime.config import apply_runtime_output_layout
+from sft.runtime.config import apply_runtime_output_layout, resolve_artifact_dir
 from sft.runtime.deps import flash_attn2_available, fla_fast_path_available
 from sft.runtime.device import maybe_empty_cache
 from sft.runtime.tracking import log_metrics
@@ -333,6 +333,8 @@ def main() -> None:
     val_samples = load_prebuilt_samples(val_rows)
 
     output_dir = Path(cfg.get("output_dir", "outputs/runs/train"))
+    eval_root = resolve_artifact_dir(cfg, "eval_output_dir", output_dir, "eval")
+    prompt_stats_dir = resolve_artifact_dir(cfg, "prompt_stats_output_dir", output_dir, "prompt_stats")
     if accelerator.is_main_process:
         output_dir.mkdir(parents=True, exist_ok=True)
     accelerator.wait_for_everyone()
@@ -372,6 +374,7 @@ def main() -> None:
             val_summary=val_prompt_summary,
             train_snapshots=build_prompt_snapshots(train_samples, split="train"),
             val_snapshots=build_prompt_snapshots(val_samples, split="val"),
+            stats_dir=prompt_stats_dir,
         )
         active_logger.info("[INFO] prompt statistics saved to %s", prompt_stats_path)
         meta_path = output_dir / "label_token_ce_meta.json"
@@ -533,7 +536,7 @@ def main() -> None:
             labels=labels,
             letter_order=letter_order,
             eval_logger=active_logger,
-            log_predictions_limit=int(train_cfg.get("eval_log_predictions", 5)),
+            log_predictions_limit=int(train_cfg.get("eval_log_predictions", 0)),
         )
         score = _selection_score(eval_metrics, train_cfg)
         macro_f1 = float(eval_metrics["macro_f1"])
@@ -613,6 +616,7 @@ def main() -> None:
                 confusion_labels=eval_metrics["confusion_labels"],
                 prediction_records=eval_metrics.get("prediction_records", []),
                 labels=labels,
+                eval_root=eval_root,
             )
             active_logger.info(
                 "[eval] artifacts saved: metrics=%s confusion=%s",

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """从已有 build JSONL 生成 prompt_stats 并回填到运行目录。
 
-适用场景：只跑了 build + infer（没有 train）的实验，缺少 train/prompt_stats/。
+适用场景：只跑了 build + infer（没有 train）的实验，缺少 prompt_stats/。
 直接从 build 缓存的 JSONL 文件（已包含 prompt_token_count、evidence_count 等字段）
-计算统计信息，写入各子运行的 train/prompt_stats/ 目录。
+计算统计信息，写入各子运行的 prompt_stats/ 目录。
 
 用法:
     # 试运行：查看哪些子运行需要回填
@@ -115,8 +115,9 @@ def backfill(run_dir: Path, *, max_length: int | None = None, dry_run: bool = Fa
     for sub_run in sub_runs:
         manifest = _read_manifest(sub_run / "manifest.json")
 
-        target_dir = sub_run / "train" / "prompt_stats"
-        if (target_dir / "prompt_stats.json").exists():
+        target_dir = sub_run / "prompt_stats"
+        legacy_target_dir = sub_run / "train" / "prompt_stats"
+        if (target_dir / "prompt_stats.json").exists() or (legacy_target_dir / "prompt_stats.json").exists():
             print(f"[SKIP] {sub_run.name}")
             skipped += 1
             continue
@@ -154,11 +155,12 @@ def backfill(run_dir: Path, *, max_length: int | None = None, dry_run: bool = Fa
         log_prompt_summary(val_summary)
 
         save_prompt_statistics(
-            target_dir.parent,
+            sub_run,
             train_summary=train_summary,
             val_summary=val_summary,
             train_snapshots=train_snapshots,
             val_snapshots=val_snapshots,
+            stats_dir=target_dir,
         )
         print(f"[OK] {sub_run.name}  max_length={ml}")
         ok += 1

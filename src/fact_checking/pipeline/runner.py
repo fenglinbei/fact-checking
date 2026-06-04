@@ -63,12 +63,22 @@ def _sync_prompt_stats(build_dir: Path, run_dir: Path) -> None:
     prompt_stats_src = build_dir / "prompt_stats"
     if not prompt_stats_src.is_dir():
         return
-    train_dir = run_dir / "train"
-    train_dir.mkdir(parents=True, exist_ok=True)
-    target_dir = train_dir / "prompt_stats"
+    target_dir = run_dir / "prompt_stats"
     if target_dir.exists():
         shutil.rmtree(target_dir)
     shutil.copytree(prompt_stats_src, target_dir)
+
+
+def _sync_build_outputs(build_dir: Path, run_build_dir: Path) -> dict[str, Path]:
+    run_build_dir.mkdir(parents=True, exist_ok=True)
+    run_paths = build_split_paths(run_build_dir)
+    for split, source_path in build_split_paths(build_dir).items():
+        if source_path.exists():
+            shutil.copy2(source_path, run_paths[split])
+    report_path = build_dir / "build_report.json"
+    if report_path.exists():
+        shutil.copy2(report_path, run_build_dir / "build_report.json")
+    return run_paths
 
 
 @dataclass(frozen=True)
@@ -244,7 +254,7 @@ class PipelineRunner:
         return False
 
     def _run_build(self, manifest: dict[str, Any]) -> dict[str, Path]:
-        build_paths = build_split_paths(self.state.build_dir)
+        cache_build_paths = build_split_paths(self.state.build_dir)
         build_manifest_path = self.state.build_dir / "manifest.json"
         build_manifest = read_json(build_manifest_path)
         can_reuse = (
@@ -252,32 +262,35 @@ class PipelineRunner:
             and not self._force_phase("build")
             and build_manifest.get("status") == "completed"
             and build_manifest.get("build_id") == self.state.build_id
-            and paths_exist(build_paths)
+            and paths_exist(cache_build_paths)
         )
         if can_reuse:
+            run_build_paths = _sync_build_outputs(self.state.build_dir, self._run_build_dir())
             mark_phase(
                 manifest,
                 "build",
                 {
                     "build_id": self.state.build_id,
-                    "output_dir": str(self.state.build_dir),
-                    "outputs": {key: str(value) for key, value in build_paths.items()},
+                    "output_dir": str(self._run_build_dir()),
+                    "cache_output_dir": str(self.state.build_dir),
+                    "outputs": {key: str(value) for key, value in run_build_paths.items()},
                     "reused": True,
                 },
             )
             self._save_manifest(manifest)
             _sync_prompt_stats(self.state.build_dir, self.state.run_dir)
-            return build_paths
+            return run_build_paths
 
         result = run_build(self.cfg["build"], output_dir=self.state.build_dir)
-        build_paths = {split: path.resolve() for split, path in result.split_paths.items()}
+        cache_build_paths = {split: path.resolve() for split, path in result.split_paths.items()}
+        run_build_paths = _sync_build_outputs(self.state.build_dir, self._run_build_dir())
         write_json(
             build_manifest_path,
             {
                 "status": "completed",
                 "build_id": self.state.build_id,
                 "output_dir": str(self.state.build_dir),
-                "outputs": {key: str(value) for key, value in build_paths.items()},
+                "outputs": {key: str(value) for key, value in cache_build_paths.items()},
             },
         )
         mark_phase(
@@ -285,14 +298,15 @@ class PipelineRunner:
             "build",
             {
                 "build_id": self.state.build_id,
-                "output_dir": str(self.state.build_dir),
-                "outputs": {key: str(value) for key, value in build_paths.items()},
+                "output_dir": str(self._run_build_dir()),
+                "cache_output_dir": str(self.state.build_dir),
+                "outputs": {key: str(value) for key, value in run_build_paths.items()},
                 "reused": False,
             },
         )
         self._save_manifest(manifest)
         _sync_prompt_stats(self.state.build_dir, self.state.run_dir)
-        return build_paths
+        return run_build_paths
 
     def _run_train(self, manifest: dict[str, Any], build_paths: dict[str, Path]) -> None:
         train_dir = self._train_dir()
@@ -355,7 +369,7 @@ class PipelineRunner:
         split = str(infer_cfg.get("split", "test"))
         checkpoint = str(infer_cfg.get("checkpoint", self.cfg.get("train", {}).get("checkpoint_for_infer", "best")))
         infer_id = fingerprint({"infer": infer_cfg})
-        infer_dir = self.state.run_dir / "infer" / split / checkpoint / infer_id
+        infer_dir = self._eval_dir() / split / checkpoint / infer_id
         metrics_path = infer_dir / "api" / "metrics.json"
         can_reuse = (
             self._resume_enabled()
@@ -431,12 +445,20 @@ class PipelineRunner:
             return path if path.is_absolute() else self.project_root / path
         return self.state.run_dir / "train"
 
+    def _run_build_dir(self) -> Path:
+        return self.state.run_dir / "build"
+
+    def _eval_dir(self) -> Path:
+        return self.state.run_dir / "eval"
+
     def _write_train_config(self, build_paths: dict[str, Path], train_dir: Path) -> Path:
         train_dir.mkdir(parents=True, exist_ok=True)
         sft_train = dict(self.cfg.get("sft_train", {}) or {})
         sft_train["resolved_output_dir"] = True
         train_cfg = {
             "output_dir": str(train_dir),
+            "eval_output_dir": str(self._eval_dir()),
+            "prompt_stats_output_dir": str(self.state.run_dir / "prompt_stats"),
             "data": {
                 "train_candidates": str(build_paths["train"]),
                 "val_candidates": str(build_paths["val"]),

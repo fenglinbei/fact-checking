@@ -10,7 +10,7 @@ from fact_checking.utils.logging import init_logger
 from sft.data.io import save_eval_artifacts
 from sft.dataset.datasets import EvalPromptDataset
 from sft.dataset.loaders import build_eval_dataloader
-from sft.eval import evaluate
+from sft.eval import evaluate, log_eval_summary
 from sft.infer_common import build_inference_context, build_serializable_metrics
 from sft.logit_adjust import build_logit_adjust_cfg_from_train_config, load_logit_adjust_cfg
 from sft.runtime.deps import flash_attn2_available
@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--per-device-eval-batch-size", type=int, default=None)
     parser.add_argument("--dataloader-num-workers", type=int, default=None)
     parser.add_argument("--max-new-tokens", type=int, default=None)
-    parser.add_argument("--log-predictions", type=int, default=5)
+    parser.add_argument("--log-predictions", type=int, default=0)
     return parser.parse_args()
 
 
@@ -111,6 +111,12 @@ def main() -> None:
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
+        log_eval_summary(
+            eval_metrics,
+            eval_logger=logger,
+            split=context.split,
+            checkpoint=context.checkpoint_name,
+        )
         artifacts = save_eval_artifacts(
             eval_dir=context.eval_output_dir,
             metrics=build_serializable_metrics(eval_metrics),

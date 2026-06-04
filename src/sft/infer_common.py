@@ -12,6 +12,7 @@ from fact_checking.data.constants import labels_for_schema
 from sft.data.io import load_prebuilt_samples
 from sft.data.types import PreparedSample
 from sft.runtime.adapters import checkpoint_has_hf_artifacts, checkpoint_has_peft_adapter
+from sft.runtime.config import sibling_artifact_dir
 
 
 @dataclass
@@ -131,6 +132,8 @@ def build_inference_context(
     max_length = int(train_cfg.get("max_length", 2048))
     rows = load_jsonl(split_map[split])
     samples = load_prebuilt_samples(rows)
+    eval_root_cfg = str(cfg.get("eval_output_dir", "") or "").strip()
+    eval_root = Path(eval_root_cfg) if eval_root_cfg else sibling_artifact_dir(resolved_run_dir, "eval")
 
     return InferenceContext(
         run_dir=resolved_run_dir,
@@ -145,7 +148,7 @@ def build_inference_context(
         tokenizer=tokenizer,
         max_length=max_length,
         samples=samples,
-        eval_output_dir=resolved_run_dir / "eval" / split / checkpoint_name,
+        eval_output_dir=eval_root / split / checkpoint_name,
         label_schema=label_schema,
         labels=labels,
     )

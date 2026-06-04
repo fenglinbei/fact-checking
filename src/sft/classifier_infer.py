@@ -15,9 +15,13 @@ from transformers import (
 
 from fact_checking.config import load_yaml
 from fact_checking.data.constants import LABELS, LABELS_3CLASS, LABEL_MAP_6TO3
+from fact_checking.utils.logging import init_logger
 from sft.classifier_dataset import ClassifierDataset
 from sft.data.io import save_eval_artifacts
+from sft.eval import log_eval_summary
 from sft.metrics import _build_confusion_matrix, _compute_classification_metrics
+
+logger = init_logger(__name__)
 
 
 def _label_name(idx: int, *, labels: list[str] | None = None) -> str:
@@ -132,6 +136,7 @@ def run_classifier_inference(
     pred_arr = np.asarray(pred_ids, dtype=np.int64)
     gold_arr = np.asarray(gold_ids, dtype=np.int64)
     metrics = _compute_classification_metrics(pred_arr, gold_arr, labels=effective_labels)
+    log_eval_summary(metrics, eval_logger=logger, split=split, checkpoint=str(checkpoint))
     cm, cm_labels = _build_confusion_matrix(pred_arr, gold_arr, labels=effective_labels)
     artifacts = save_eval_artifacts(
         eval_dir=eval_path,

@@ -291,7 +291,7 @@ build_case() {
   local expected_selector="$7"
   local output_dir="$8"
 
-  if [[ "${FORCE_BUILD}" != "true" && -f "${output_dir}/train.resolved.yaml" && -f "${output_dir}/build_report.json" ]]; then
+  if [[ "${FORCE_BUILD}" != "true" && -f "${output_dir}/train.resolved.yaml" && -f "${output_dir}/build/build_report.json" ]]; then
     echo "[selector-trace-full] reuse build case=${label} dir=${output_dir}"
     return 0
   fi
@@ -355,9 +355,9 @@ build_case() {
 
 train_case() {
   local label="$1"
-  local build_dir="$2"
-  local train_dir="${build_dir}/train"
-  local config_path="${build_dir}/train.resolved.yaml"
+  local run_dir="$2"
+  local train_dir="${run_dir}/train"
+  local config_path="${run_dir}/train.resolved.yaml"
 
   if [[ "${RUN_TRAIN}" != "true" ]]; then
     echo "[selector-trace-full] skip train case=${label} RUN_TRAIN=${RUN_TRAIN}"
@@ -400,12 +400,12 @@ train_case() {
 run_infer_case() {
   local label="$1"
   local checkpoint="$2"
-  local build_dir="$3"
+  local run_dir="$3"
   local port="$4"
   local checkpoint_slug=""
   checkpoint_slug="$(slugify "${checkpoint}")"
-  local run_dir="${RUN_ROOT}/${label}_${checkpoint_slug}"
-  local config_path="${build_dir}/train.resolved.yaml"
+  local infer_run_dir="${RUN_ROOT}/${label}_${checkpoint_slug}"
+  local config_path="${run_dir}/train.resolved.yaml"
   local train_dir=""
 
   if [[ "${RUN_API_INFER}" != "true" ]]; then
@@ -413,7 +413,7 @@ run_infer_case() {
     return 0
   fi
 
-  train_dir="$(resolve_train_run_dir "${build_dir}/train" "${checkpoint}")"
+  train_dir="$(resolve_train_run_dir "${run_dir}/train" "${checkpoint}")"
 
   local cmd=(
     python -m fact_checking.pipeline.run
@@ -421,7 +421,7 @@ run_infer_case() {
     "pipeline.mode=infer"
     "pipeline.resume=${PIPELINE_RESUME}"
     "pipeline.force.infer=${FORCE_INFER}"
-    "$(hydra_string_override pipeline.run_dir "${run_dir}")"
+    "$(hydra_string_override pipeline.run_dir "${infer_run_dir}")"
     "$(hydra_string_override train.run_dir "${train_dir}")"
     "$(hydra_string_override infer.config_path "${config_path}")"
     "$(hydra_string_override infer.split "${SPLIT}")"
@@ -438,7 +438,7 @@ run_infer_case() {
     "infer.merge_lora_cache.force_rebuild=${MERGE_LORA_CACHE_FORCE_REBUILD}"
   )
 
-  echo "[selector-trace-full] infer case=${label} checkpoint=${checkpoint} train_dir=${train_dir} port=${port} run_dir=${run_dir}"
+  echo "[selector-trace-full] infer case=${label} checkpoint=${checkpoint} train_dir=${train_dir} port=${port} run_dir=${infer_run_dir}"
   if [[ "${DRY_RUN}" == "true" ]]; then
     printf '[selector-trace-full] dry-run infer:'
     printf ' %q' "${cmd[@]}"
@@ -451,8 +451,8 @@ run_infer_case() {
 run_label_token_infer_case() {
   local label="$1"
   local checkpoint="$2"
-  local build_dir="$3"
-  local config_path="${build_dir}/train.resolved.yaml"
+  local run_dir="$3"
+  local config_path="${run_dir}/train.resolved.yaml"
   local train_dir=""
   local cmd=()
 
@@ -461,7 +461,7 @@ run_label_token_infer_case() {
     return 0
   fi
 
-  train_dir="$(resolve_train_run_dir "${build_dir}/train" "${checkpoint}")"
+  train_dir="$(resolve_train_run_dir "${run_dir}/train" "${checkpoint}")"
   cmd=(
     python -m sft.label_token_infer
     --run-dir "${train_dir}"
@@ -527,12 +527,12 @@ main() {
     local mode="${modes[$idx]}"
     local seed="${seeds[$idx]}"
     local expected_selector="${expected[$idx]}"
-    local build_dir="${OUTPUT_ROOT}/${label}"
-    build_case "${label}" "${source_type}" "${train_source}" "${val_source}" "${mode}" "${seed}" "${expected_selector}" "${build_dir}"
-    train_case "${label}" "${build_dir}"
+    local run_dir="${OUTPUT_ROOT}/${label}"
+    build_case "${label}" "${source_type}" "${train_source}" "${val_source}" "${mode}" "${seed}" "${expected_selector}" "${run_dir}"
+    train_case "${label}" "${run_dir}"
     for checkpoint in "${checkpoints[@]}"; do
-      run_infer_case "${label}" "${checkpoint}" "${build_dir}" "$((PORT_BASE + port_index))"
-      run_label_token_infer_case "${label}" "${checkpoint}" "${build_dir}"
+      run_infer_case "${label}" "${checkpoint}" "${run_dir}" "$((PORT_BASE + port_index))"
+      run_label_token_infer_case "${label}" "${checkpoint}" "${run_dir}"
       port_index=$((port_index + 1))
     done
   done
