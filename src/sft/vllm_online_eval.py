@@ -15,6 +15,7 @@ from fact_checking.utils.logging import init_logger
 from sft.data.types import PreparedSample
 from sft.eval import summarize_prediction_records
 from sft.infer_common import (
+    build_label_decoding_input_ids,
     build_label_decoding_prompt,
     build_vllm_prediction_record,
     create_vllm_logit_processors,
@@ -377,14 +378,27 @@ class OnlineVLLMEvaluator:
             logits_processors=logits_processors if logits_processors else None,
         )
         label_prefix = "Label:"
-        outputs = self.llm.generate(
-            prompts=[
+        prompt_token_ids = [
+            build_label_decoding_input_ids(sample, self.llm.get_tokenizer(), label_prefix)
+            if use_label_decoding
+            else sample.prompt_input_ids
+            for sample in self.samples
+        ]
+        if any(ids is not None for ids in prompt_token_ids) and not all(ids is not None for ids in prompt_token_ids):
+            raise ValueError("Mixed pre-tokenized and string prompts are not supported in one online vLLM batch.")
+
+        generate_kwargs = {
+            "sampling_params": sampling_params,
+            "use_tqdm": self.cfg.use_tqdm,
+        }
+        if all(ids is not None for ids in prompt_token_ids):
+            generate_kwargs["prompt_token_ids"] = prompt_token_ids
+        else:
+            generate_kwargs["prompts"] = [
                 build_label_decoding_prompt(sample, label_prefix) if use_label_decoding else sample.prompt
                 for sample in self.samples
-            ],
-            sampling_params=sampling_params,
-            use_tqdm=self.cfg.use_tqdm,
-        )
+            ]
+        outputs = self.llm.generate(**generate_kwargs)
 
         prediction_records: list[dict[str, object]] = []
         for sample_idx, (sample, output) in enumerate(zip(self.samples, outputs)):

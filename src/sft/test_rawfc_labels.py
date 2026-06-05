@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import numpy as np
+import torch
+import torch.nn.functional as F
 
 from sft.eval import build_eval_metrics
 from sft.eval import deduplicate_by_sample_idx
-from sft.label_token_trainer import _selection_score
+from sft.label_token_trainer import _compute_label_token_losses, _selection_score
 from sft.metrics import _build_confusion_matrix
 from sft.parser import _parse_label_id
 
@@ -65,3 +67,60 @@ def test_focus_label_selection_score_adds_focus_f1_weight() -> None:
     }
 
     assert abs(_selection_score(metrics, train_cfg) - 0.68) < 1e-12
+
+
+def test_ordinal_loss_disabled_matches_weighted_cross_entropy() -> None:
+    logits = torch.tensor([[2.0, 0.0, -1.0], [0.1, 0.2, 0.3]], dtype=torch.float32)
+    gold_ids = torch.tensor([0, 2], dtype=torch.long)
+    class_weights = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+    train_cfg = {
+        "label_token_ce": {
+            "ordinal_loss": {
+                "enabled": False,
+                "alpha": 0.2,
+            }
+        }
+    }
+
+    losses = _compute_label_token_losses(
+        label_logits=logits,
+        gold_ids=gold_ids,
+        class_weights=class_weights,
+        train_cfg=train_cfg,
+    )
+
+    expected = F.cross_entropy(logits, gold_ids, weight=class_weights)
+    assert torch.allclose(losses["loss"], expected)
+    assert torch.allclose(losses["ce_loss"], expected)
+    assert float(losses["ordinal_loss"]) == 0.0
+
+
+def test_ordinal_loss_penalizes_farther_label_probability_more() -> None:
+    gold_ids = torch.tensor([0], dtype=torch.long)
+    class_weights = torch.ones(3, dtype=torch.float32)
+    train_cfg = {
+        "label_token_ce": {
+            "ordinal_loss": {
+                "enabled": True,
+                "alpha": 1.0,
+                "normalize_distance": False,
+            }
+        }
+    }
+    near_wrong_logits = torch.tensor([[0.0, 4.0, 0.0]], dtype=torch.float32)
+    far_wrong_logits = torch.tensor([[0.0, 0.0, 4.0]], dtype=torch.float32)
+
+    near_losses = _compute_label_token_losses(
+        label_logits=near_wrong_logits,
+        gold_ids=gold_ids,
+        class_weights=class_weights,
+        train_cfg=train_cfg,
+    )
+    far_losses = _compute_label_token_losses(
+        label_logits=far_wrong_logits,
+        gold_ids=gold_ids,
+        class_weights=class_weights,
+        train_cfg=train_cfg,
+    )
+
+    assert float(far_losses["ordinal_loss"]) > float(near_losses["ordinal_loss"])

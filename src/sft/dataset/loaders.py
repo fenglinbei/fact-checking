@@ -8,6 +8,7 @@ from transformers.trainer_pt_utils import LengthGroupedSampler
 
 from sft.dataset.collators import CausalLMSFTCollator
 from sft.dataset.datasets import EvalPromptDataset
+from sft.runtime.model_loading import is_mistral_common_tokenizer
 
 
 def build_dataloader(
@@ -51,6 +52,7 @@ def build_eval_dataloader(
 ) -> DataLoader:
     def _collate_fn(items):
         prompts = [str(x["prompt"]) for x in items]
+        prompt_input_ids = [x.get("prompt_input_ids") for x in items]
         prompt_add_special_tokens = bool(items[0].get("prompt_add_special_tokens", True))
         preserve_prompt_prefix = bool(items[0].get("preserve_prompt_prefix", False))
         if any(bool(x.get("prompt_add_special_tokens", True)) != prompt_add_special_tokens for x in items):
@@ -60,6 +62,44 @@ def build_eval_dataloader(
 
         gold_ids = torch.tensor([int(x["gold_id"]) for x in items], dtype=torch.long)
         sample_indices = torch.tensor([int(x["sample_idx"]) for x in items], dtype=torch.long)
+
+        if any(ids is not None for ids in prompt_input_ids):
+            if not all(isinstance(ids, list) for ids in prompt_input_ids):
+                raise ValueError("Mixed pre-tokenized and string prompts are not supported in one eval batch.")
+            pad_id = tokenizer.pad_token_id
+            if pad_id is None:
+                raise ValueError("tokenizer.pad_token_id must be set before building eval batches.")
+
+            normalized_ids = [[int(token_id) for token_id in ids] for ids in prompt_input_ids]
+            if preserve_prompt_prefix and any(len(ids) > max_length for ids in normalized_ids):
+                raise ValueError(
+                    "Protected eval prompt is longer than max_length after evidence truncation. "
+                    "Increase sft_train.max_length or reduce evidence/context length."
+                )
+            if not preserve_prompt_prefix:
+                normalized_ids = [ids[-max_length:] for ids in normalized_ids]
+
+            target_len = max_length if padding == "max_length" else max(len(ids) for ids in normalized_ids)
+            input_ids: list[list[int]] = []
+            attention_mask: list[list[int]] = []
+            for ids in normalized_ids:
+                pad_len = max(0, target_len - len(ids))
+                input_ids.append([pad_id] * pad_len + ids)
+                attention_mask.append([0] * pad_len + [1] * len(ids))
+
+            return {
+                "input_ids": torch.tensor(input_ids, dtype=torch.long),
+                "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+                "gold_ids": gold_ids,
+                "sample_indices": sample_indices,
+            }
+
+        if is_mistral_common_tokenizer(tokenizer):
+            raise ValueError(
+                "MistralCommon tokenizers require build rows with prompt_input_ids. "
+                "Rebuild this run with FORCE_BUILD=true so chat prompts are stored from "
+                "apply_chat_template(tokenize=True)."
+            )
 
         old_padding_side = tokenizer.padding_side
         old_truncation_side = getattr(tokenizer, "truncation_side", "right")

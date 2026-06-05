@@ -20,6 +20,18 @@ logger = init_logger(__name__)
 _LORA_KEY_MARKERS = (".lora_A.", ".lora_B.", ".lora_embedding_A.", ".lora_embedding_B.")
 
 
+def _coerce_prompt_input_ids(value: object) -> list[int] | None:
+    if not isinstance(value, list):
+        return None
+    ids: list[int] = []
+    for item in value:
+        try:
+            ids.append(int(item))
+        except (TypeError, ValueError):
+            return None
+    return ids
+
+
 def load_prebuilt_samples(rows: list[dict]) -> list[PreparedSample]:
     samples: list[PreparedSample] = []
     for row in rows:
@@ -44,6 +56,7 @@ def load_prebuilt_samples(rows: list[dict]) -> list[PreparedSample]:
             no_evidence=int(row.get("evidence_count", 0)) == 0,
             long_claim=len(str(row.get("claim", "")).split()) > 64,
             label_schema=label_schema,
+            prompt_input_ids=_coerce_prompt_input_ids(row.get("prompt_input_ids")),
         ))
     return samples
 

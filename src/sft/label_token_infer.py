@@ -5,7 +5,6 @@ from pathlib import Path
 
 import torch
 from accelerate import Accelerator
-from transformers import AutoModelForCausalLM
 
 from fact_checking.data.constants import labels_for_schema, letter_order_for_schema
 from fact_checking.utils.logging import init_logger
@@ -23,6 +22,7 @@ from sft.label_token_trainer import (
 )
 from sft.runtime.adapters import checkpoint_has_peft_adapter
 from sft.runtime.deps import flash_attn2_available
+from sft.runtime.model_loading import load_causal_lm_compatible_model
 
 logger = init_logger(__name__)
 
@@ -74,10 +74,10 @@ def main() -> None:
         except ImportError as exc:
             raise RuntimeError("LoRA label-token inference requires the `peft` package.") from exc
 
-        model = AutoModelForCausalLM.from_pretrained(context.model_name_or_path, **model_kwargs)
+        model = load_causal_lm_compatible_model(context.model_name_or_path, **model_kwargs)
         model = PeftModel.from_pretrained(model, str(context.checkpoint_dir))
     else:
-        model = AutoModelForCausalLM.from_pretrained(str(context.checkpoint_dir), **model_kwargs)
+        model = load_causal_lm_compatible_model(str(context.checkpoint_dir), **model_kwargs)
 
     label_token_id_list, _ = _build_label_token_ids(
         context.tokenizer,
@@ -119,6 +119,7 @@ def main() -> None:
         accelerator=accelerator,
         label_token_ids=label_token_ids,
         class_weights=class_weights,
+        train_cfg=train_cfg,
         label_prefix=label_prefix,
         labels=labels,
         letter_order=letter_order,
@@ -148,6 +149,8 @@ def main() -> None:
                 "checkpoint": context.checkpoint_name,
                 "split": context.split,
                 "eval_loss": float(eval_metrics.get("eval_loss", float("nan"))),
+                "eval_ce_loss": float(eval_metrics.get("eval_ce_loss", float("nan"))),
+                "eval_ordinal_loss": float(eval_metrics.get("eval_ordinal_loss", float("nan"))),
                 "true_side_macro_f1": true_side,
                 "selection_score": selection_score,
             }

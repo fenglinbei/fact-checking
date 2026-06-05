@@ -7,6 +7,7 @@ from sft.data.io import save_eval_artifacts
 from sft.eval import log_eval_summary, summarize_prediction_records
 from sft.infer_common import (
     build_inference_context,
+    build_label_decoding_input_ids,
     build_label_decoding_prompt,
     build_serializable_metrics,
     build_vllm_prediction_record,
@@ -94,14 +95,26 @@ def main() -> None:
     )
 
     label_prefix = "Label:"
+    prompt_token_ids = [
+        build_label_decoding_input_ids(sample, context.tokenizer, label_prefix)
+        if use_label_decoding
+        else sample.prompt_input_ids
+        for sample in context.samples
+    ]
+    if any(ids is not None for ids in prompt_token_ids) and not all(ids is not None for ids in prompt_token_ids):
+        raise ValueError("Mixed pre-tokenized and string prompts are not supported in one vLLM batch.")
+
     generate_kwargs = {
-        "prompts": [
-            build_label_decoding_prompt(sample, label_prefix) if use_label_decoding else sample.prompt
-            for sample in context.samples
-        ],
         "sampling_params": sampling_params,
         "use_tqdm": True,
     }
+    if all(ids is not None for ids in prompt_token_ids):
+        generate_kwargs["prompt_token_ids"] = prompt_token_ids
+    else:
+        generate_kwargs["prompts"] = [
+            build_label_decoding_prompt(sample, label_prefix) if use_label_decoding else sample.prompt
+            for sample in context.samples
+        ]
     if lora_request is not None:
         generate_kwargs["lora_request"] = lora_request
     outputs = llm.generate(**generate_kwargs)

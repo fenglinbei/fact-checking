@@ -77,6 +77,7 @@ FORCE_TRAIN="${FORCE_TRAIN:-false}"
 RUN_INFER="${RUN_INFER:-true}"
 RUN_API_INFER="${RUN_API_INFER:-${RUN_INFER}}"
 RUN_LABEL_TOKEN_INFER="${RUN_LABEL_TOKEN_INFER:-false}"
+FORCE_LABEL_TOKEN_INFER="${FORCE_LABEL_TOKEN_INFER:-false}"
 FORCE_INFER="${FORCE_INFER:-true}"
 PIPELINE_RESUME="${PIPELINE_RESUME:-true}"
 
@@ -175,6 +176,42 @@ resolve_train_run_dir() {
   echo "[selector-trace-full] checkpoint ${checkpoint} not found under ${train_root}" >&2
   echo "[selector-trace-full] expected either ${train_root}/${checkpoint} or ${train_root}/*/${checkpoint}" >&2
   exit 1
+}
+
+label_token_infer_complete() {
+  local train_dir="$1"
+  local checkpoint="$2"
+  local split="$3"
+  local config_path="$4"
+  python - "$train_dir" "$checkpoint" "$split" "$config_path" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+train_dir = Path(sys.argv[1])
+checkpoint = sys.argv[2]
+split = sys.argv[3]
+config_path = Path(sys.argv[4])
+
+try:
+    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+except FileNotFoundError:
+    raise SystemExit(1)
+
+eval_root_cfg = str(cfg.get("eval_output_dir", "") or "").strip()
+eval_root = Path(eval_root_cfg) if eval_root_cfg else train_dir.parent / "eval"
+eval_dir = eval_root / split / Path(checkpoint).name / "label_token"
+required = [
+    eval_dir / "metrics.json",
+    eval_dir / "confusion_matrix.json",
+    eval_dir / f"{split}_predictions.jsonl",
+]
+if all(path.exists() and path.stat().st_size > 0 for path in required):
+    print(eval_dir)
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
 }
 
 append_case() {
@@ -462,6 +499,14 @@ run_label_token_infer_case() {
   fi
 
   train_dir="$(resolve_train_run_dir "${run_dir}/train" "${checkpoint}")"
+  if [[ "${FORCE_LABEL_TOKEN_INFER}" != "true" && "${FORCE_LABEL_TOKEN_INFER}" != "1" ]]; then
+    local existing_eval_dir=""
+    if existing_eval_dir="$(label_token_infer_complete "${train_dir}" "${checkpoint}" "${SPLIT}" "${config_path}")"; then
+      echo "[selector-trace-full] reuse label-token infer case=${label} checkpoint=${checkpoint} dir=${existing_eval_dir}"
+      return 0
+    fi
+  fi
+
   cmd=(
     python -m sft.label_token_infer
     --run-dir "${train_dir}"

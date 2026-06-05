@@ -4,7 +4,6 @@ import argparse
 
 import torch
 from accelerate import Accelerator
-from transformers import AutoModelForCausalLM
 
 from fact_checking.utils.logging import init_logger
 from sft.data.io import save_eval_artifacts
@@ -14,6 +13,7 @@ from sft.eval import evaluate, log_eval_summary
 from sft.infer_common import build_inference_context, build_serializable_metrics
 from sft.logit_adjust import build_logit_adjust_cfg_from_train_config, load_logit_adjust_cfg
 from sft.runtime.deps import flash_attn2_available
+from sft.runtime.model_loading import load_causal_lm_compatible_model
 
 logger = init_logger(__name__)
 
@@ -62,13 +62,13 @@ def main() -> None:
                 "This checkpoint is a LoRA adapter and requires the `peft` package for inference."
             ) from exc
 
-        model = AutoModelForCausalLM.from_pretrained(
+        model = load_causal_lm_compatible_model(
             context.model_name_or_path,
             **model_kwargs,
         )
         model = PeftModel.from_pretrained(model, str(context.checkpoint_dir))
     else:
-        model = AutoModelForCausalLM.from_pretrained(str(context.checkpoint_dir), **model_kwargs)
+        model = load_causal_lm_compatible_model(str(context.checkpoint_dir), **model_kwargs)
 
     eval_dataset = EvalPromptDataset(context.samples)
     eval_dataloader = build_eval_dataloader(

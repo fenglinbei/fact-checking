@@ -31,9 +31,10 @@ from sft.prompting.stats import (
     save_prompt_statistics,
     summarize_prebuilt_prompts,
 )
-from sft.runtime.adapters import lora_enabled
+from sft.runtime.adapters import freeze_modules_by_prefix, lora_enabled
 from sft.runtime.config import apply_runtime_output_layout, resolve_artifact_dir
 from sft.runtime.device import maybe_empty_cache
+from sft.runtime.model_loading import load_causal_lm_compatible_model, load_compatible_tokenizer
 from sft.runtime.tracking import log_metrics
 from sft.train_utils import setup_accelerator_and_tracker, setup_model_and_tokenizer
 from sft.vllm_online_eval import OnlineVLLMEvaluator, online_vllm_eval_enabled
@@ -175,15 +176,14 @@ def main() -> None:
         cfg.get("model_name_or_path")
         or baseline_cfg.get("model_name_or_path", "/data/models/Qwen3.5-9B")
     )
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = load_compatible_tokenizer(model_name_or_path, trust_remote_code=True)
 
     max_length = int(train_cfg.get("max_length", 2048))
 
     train_instances = [
         {
             "prompt": sample.prompt,
+            "prompt_input_ids": sample.prompt_input_ids,
             "target": sample.target,
             "prompt_add_special_tokens": sample.prompt_add_special_tokens,
             "preserve_prompt_prefix": sample.preserve_prompt_prefix,
@@ -193,6 +193,7 @@ def main() -> None:
     val_instances = [
         {
             "prompt": sample.prompt,
+            "prompt_input_ids": sample.prompt_input_ids,
             "target": sample.target,
             "prompt_add_special_tokens": sample.prompt_add_special_tokens,
             "preserve_prompt_prefix": sample.preserve_prompt_prefix,
@@ -264,7 +265,12 @@ def main() -> None:
             "This is separate from flash-attn and does not block training."
         )
 
-    model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **model_kwargs)
+    model = load_causal_lm_compatible_model(model_name_or_path, **model_kwargs)
+    model = freeze_modules_by_prefix(
+        model,
+        train_cfg,
+        logger=logger if accelerator.is_main_process else None,
+    )
 
     gradient_checkpointing = bool(train_cfg.get("gradient_checkpointing", True))
     if gradient_checkpointing:

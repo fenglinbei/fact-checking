@@ -20,3 +20,4 @@ class PreparedSample:
     no_evidence: bool = False
     long_claim: bool = False
     label_schema: str = "liar6"
+    prompt_input_ids: list[int] | None = None

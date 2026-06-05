@@ -9,6 +9,7 @@ from transformers import AutoTokenizer
 
 from fact_checking.data.constants import label2id_for_schema
 from sft.data.types import PreparedSample
+from sft.runtime.model_loading import is_mistral_common_tokenizer
 
 
 class LabelTokenDataset(Dataset):
@@ -28,16 +29,26 @@ class LabelTokenDataset(Dataset):
         prefix_ids = tokenizer(label_prefix, add_special_tokens=False, truncation=False)["input_ids"]
         if not prefix_ids:
             raise ValueError(f"label_prefix={label_prefix!r} produced no tokens.")
+        requires_prompt_input_ids = is_mistral_common_tokenizer(tokenizer)
 
         for sample_idx, sample in enumerate(samples):
-            prompt_text = sample.prompt.rstrip()
-            if sample.prompt_add_special_tokens:
-                prompt_text += " "
-            prompt_ids = tokenizer(
-                prompt_text,
-                add_special_tokens=sample.prompt_add_special_tokens,
-                truncation=False,
-            )["input_ids"]
+            if sample.prompt_input_ids is not None:
+                prompt_ids = list(sample.prompt_input_ids)
+            elif requires_prompt_input_ids:
+                raise ValueError(
+                    "MistralCommon tokenizers require build rows with prompt_input_ids. "
+                    "Rebuild this run with FORCE_BUILD=true so chat prompts are stored from "
+                    "apply_chat_template(tokenize=True)."
+                )
+            else:
+                prompt_text = sample.prompt.rstrip()
+                if sample.prompt_add_special_tokens:
+                    prompt_text += " "
+                prompt_ids = tokenizer(
+                    prompt_text,
+                    add_special_tokens=sample.prompt_add_special_tokens,
+                    truncation=False,
+                )["input_ids"]
             input_ids = list(prompt_ids) + list(prefix_ids)
 
             if len(input_ids) > max_length:

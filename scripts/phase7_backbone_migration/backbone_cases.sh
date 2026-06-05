@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared registry for RAWFC v0.6c A-group backbone migration runs.
+# Shared registry for RAWFC v0.6c backbone migration runs.
 
 BACKBONE_CASE_ORDER=(
   qwen25_15b
@@ -10,9 +10,21 @@ BACKBONE_CASE_ORDER=(
   dsr1_qwen7b
 )
 
+BACKBONE_TRANSFER_CASE_ORDER=(
+  llama31_8b
+  phi4_mini
+  gemma4_e4b
+  ministral3_8b
+)
+
 backbone_default_csv() {
   local IFS=,
   printf "%s" "${BACKBONE_CASE_ORDER[*]}"
+}
+
+backbone_transfer_csv() {
+  local IFS=,
+  printf "%s" "${BACKBONE_TRANSFER_CASE_ORDER[*]}"
 }
 
 backbone_path() {
@@ -23,6 +35,10 @@ backbone_path() {
     qwen3_4b_2507) printf "%s" "/data/models/Qwen3-4B-Instruct-2507" ;;
     qwen3_8b) printf "%s" "/data/models/Qwen3-8B" ;;
     dsr1_qwen7b) printf "%s" "/data/models/DeepSeek-R1-Distill-Qwen-7B" ;;
+    llama31_8b) printf "%s" "/data/models/Meta-Llama-3.1-8B-Instruct" ;;
+    phi4_mini) printf "%s" "/data/models/Phi-4-mini-instruct" ;;
+    gemma4_e4b) printf "%s" "/data/models/gemma-4-E4B-it" ;;
+    ministral3_8b) printf "%s" "/data/models/Ministral-3-8B-Instruct-2512" ;;
     *) return 1 ;;
   esac
 }
@@ -35,6 +51,10 @@ backbone_size_b() {
     qwen3_4b_2507) printf "%s" "4.0" ;;
     qwen3_8b) printf "%s" "8.0" ;;
     dsr1_qwen7b) printf "%s" "7.0" ;;
+    llama31_8b) printf "%s" "8.0" ;;
+    phi4_mini) printf "%s" "3.8" ;;
+    gemma4_e4b) printf "%s" "8.0" ;;
+    ministral3_8b) printf "%s" "8.4" ;;
     *) return 1 ;;
   esac
 }
@@ -47,6 +67,10 @@ backbone_size_tenths() {
     qwen3_4b_2507) printf "%s" "40" ;;
     qwen3_8b) printf "%s" "80" ;;
     dsr1_qwen7b) printf "%s" "70" ;;
+    llama31_8b) printf "%s" "80" ;;
+    phi4_mini) printf "%s" "38" ;;
+    gemma4_e4b) printf "%s" "80" ;;
+    ministral3_8b) printf "%s" "84" ;;
     *) return 1 ;;
   esac
 }
@@ -59,6 +83,10 @@ backbone_label() {
     qwen3_4b_2507) printf "%s" "Qwen3-4B-Instruct-2507" ;;
     qwen3_8b) printf "%s" "Qwen3-8B" ;;
     dsr1_qwen7b) printf "%s" "DeepSeek-R1-Distill-Qwen-7B" ;;
+    llama31_8b) printf "%s" "Meta-Llama-3.1-8B-Instruct" ;;
+    phi4_mini) printf "%s" "Phi-4-mini-instruct" ;;
+    gemma4_e4b) printf "%s" "Gemma-4-E4B-it" ;;
+    ministral3_8b) printf "%s" "Ministral-3-8B-Instruct-2512" ;;
     *) return 1 ;;
   esac
 }

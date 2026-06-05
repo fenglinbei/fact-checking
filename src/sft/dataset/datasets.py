@@ -65,10 +65,11 @@ class SFTDatasetBuilder:
 
 class EvalPromptDataset(Dataset):
     def __init__(self, samples: list[PreparedSample]) -> None:
-        self.samples: list[dict[str, str | int | bool]] = [
+        self.samples: list[dict[str, str | int | bool | list[int] | None]] = [
             {
                 "sample_idx": idx,
                 "prompt": sample.prompt,
+                "prompt_input_ids": sample.prompt_input_ids,
                 "target": sample.target,
                 "prompt_add_special_tokens": sample.prompt_add_special_tokens,
                 "preserve_prompt_prefix": sample.preserve_prompt_prefix,
@@ -83,5 +84,5 @@ class EvalPromptDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx: int) -> dict[str, str | int | bool]:
+    def __getitem__(self, idx: int) -> dict[str, str | int | bool | list[int] | None]:
         return self.samples[idx]

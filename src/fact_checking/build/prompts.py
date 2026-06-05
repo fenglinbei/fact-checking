@@ -12,6 +12,7 @@ from fact_checking.data.constants import (
     label_letters_for_schema,
     task_name_for_schema,
 )
+from sft.runtime.model_loading import is_mistral_common_tokenizer, load_compatible_tokenizer
 from sft.data.labels import normalize_gold_label
 
 def default_system_prompt(label_schema: str | None = None) -> str:
@@ -23,10 +24,7 @@ def default_system_prompt(label_schema: str | None = None) -> str:
 
 
 def load_prompt_tokenizer(model_name_or_path: str) -> AutoTokenizer:
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    return tokenizer
+    return load_compatible_tokenizer(model_name_or_path, trust_remote_code=True)
 
 
 def count_tokens(text: str, tokenizer: AutoTokenizer, *, add_special_tokens: bool = False) -> int:
@@ -123,6 +121,68 @@ def _append_user_suffix(user_content: str, suffix: str) -> str:
     return f"{stripped}\n\n{suffix}"
 
 
+def _uses_tokenized_chat_template(tokenizer: AutoTokenizer) -> bool:
+    return is_mistral_common_tokenizer(tokenizer)
+
+
+def _as_input_ids(encoded: Any) -> list[int]:
+    input_ids = encoded.get("input_ids") if hasattr(encoded, "get") else encoded
+    if hasattr(input_ids, "tolist"):
+        input_ids = input_ids.tolist()
+    if input_ids and isinstance(input_ids, list) and isinstance(input_ids[0], list):
+        if len(input_ids) != 1:
+            raise ValueError(f"Expected a single chat prompt, got {len(input_ids)} tokenized prompts.")
+        input_ids = input_ids[0]
+    if not isinstance(input_ids, list):
+        raise TypeError(f"Expected tokenized chat template input_ids as a list, got {type(input_ids).__name__}.")
+    return [int(token_id) for token_id in input_ids]
+
+
+def _readable_chat_prompt(system_msg: str, user_content: str, *, add_generation_prompt: bool) -> str:
+    prompt = f"System:\n{system_msg}\n\nUser:\n{user_content}"
+    if add_generation_prompt:
+        prompt += "\n\nAssistant:\n"
+    return prompt
+
+
+def build_chat_prompt_with_input_ids(
+    tokenizer: AutoTokenizer,
+    system_msg: str,
+    user_content: str,
+    *,
+    chat_template: dict[str, Any] | None = None,
+) -> tuple[str, list[int] | None]:
+    chat_cfg = _chat_template_cfg(chat_template)
+    user_content = _append_user_suffix(user_content, str(chat_cfg.get("user_suffix") or ""))
+    messages = [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": user_content},
+    ]
+    template_kwargs = dict(chat_cfg.get("template_kwargs") or {})
+    add_generation_prompt = bool(chat_cfg.get("add_generation_prompt", True))
+    if _uses_tokenized_chat_template(tokenizer):
+        encoded = tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=add_generation_prompt,
+            **template_kwargs,
+        )
+        return (
+            _readable_chat_prompt(system_msg, user_content, add_generation_prompt=add_generation_prompt),
+            _as_input_ids(encoded),
+        )
+
+    return (
+        tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=add_generation_prompt,
+            **template_kwargs,
+        ),
+        None,
+    )
+
+
 def build_chat_prompt(
     tokenizer: AutoTokenizer,
     system_msg: str,
@@ -137,6 +197,12 @@ def build_chat_prompt(
         {"role": "user", "content": user_content},
     ]
     template_kwargs = dict(chat_cfg.get("template_kwargs") or {})
+    if _uses_tokenized_chat_template(tokenizer):
+        return _readable_chat_prompt(
+            system_msg,
+            user_content,
+            add_generation_prompt=bool(chat_cfg.get("add_generation_prompt", True)),
+        )
     return tokenizer.apply_chat_template(
         messages,
         tokenize=False,
@@ -156,9 +222,47 @@ def render_prompt(
     label_schema: str | None = None,
     chat_template: dict[str, Any] | None = None,
 ) -> tuple[str, int]:
+    payload = render_prompt_payload(
+        claim=claim,
+        evidence_texts=evidence_texts,
+        tokenizer=tokenizer,
+        system_msg=system_msg,
+        output_mode=output_mode,
+        label_format=label_format,
+        label_schema=label_schema,
+        chat_template=chat_template,
+    )
+    return str(payload["prompt"]), int(payload["prompt_token_count"])
+
+
+def render_prompt_payload(
+    *,
+    claim: str,
+    evidence_texts: list[str],
+    tokenizer: AutoTokenizer,
+    system_msg: str,
+    output_mode: str,
+    label_format: str,
+    label_schema: str | None = None,
+    chat_template: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     user_content = build_user_content(claim, evidence_texts, output_mode, label_format, label_schema)
-    prompt = build_chat_prompt(tokenizer, system_msg, user_content, chat_template=chat_template)
-    return prompt, count_tokens(prompt, tokenizer, add_special_tokens=False)
+    prompt, prompt_input_ids = build_chat_prompt_with_input_ids(
+        tokenizer,
+        system_msg,
+        user_content,
+        chat_template=chat_template,
+    )
+    prompt_token_count = (
+        len(prompt_input_ids)
+        if prompt_input_ids is not None
+        else count_tokens(prompt, tokenizer, add_special_tokens=False)
+    )
+    return {
+        "prompt": prompt,
+        "prompt_input_ids": prompt_input_ids,
+        "prompt_token_count": prompt_token_count,
+    }
 
 
 def decode_token_prefix(tokenizer: AutoTokenizer, token_ids: list[int], length: int) -> str:
@@ -178,7 +282,7 @@ def truncate_single_evidence_to_budget(
     label_schema: str | None,
     budget: int,
     chat_template: dict[str, Any] | None = None,
-) -> tuple[list[str], str, int, bool]:
+) -> tuple[list[str], str, int, list[int] | None, bool]:
     """Shorten one evidence item until the full chat prompt fits the prompt budget."""
     token_ids = tokenizer(
         evidence_text,
@@ -189,12 +293,13 @@ def truncate_single_evidence_to_budget(
     best_text: str | None = None
     best_prompt: str | None = None
     best_tokens: int | None = None
+    best_input_ids: list[int] | None = None
     left = 0
     right = len(token_ids)
     while left <= right:
         mid = (left + right) // 2
         candidate_text = decode_token_prefix(tokenizer, token_ids, mid)
-        prompt, prompt_tokens = render_prompt(
+        payload = render_prompt_payload(
             claim=claim,
             evidence_texts=[candidate_text],
             tokenizer=tokenizer,
@@ -204,18 +309,21 @@ def truncate_single_evidence_to_budget(
             label_schema=label_schema,
             chat_template=chat_template,
         )
+        prompt = str(payload["prompt"])
+        prompt_tokens = int(payload["prompt_token_count"])
         if prompt_tokens <= budget:
             best_text = candidate_text
             best_prompt = prompt
             best_tokens = prompt_tokens
+            best_input_ids = payload.get("prompt_input_ids")
             left = mid + 1
         else:
             right = mid - 1
 
     if best_text is not None and best_prompt is not None and best_tokens is not None:
-        return [best_text], best_prompt, best_tokens, best_text.strip() != evidence_text.strip()
+        return [best_text], best_prompt, best_tokens, best_input_ids, best_text.strip() != evidence_text.strip()
 
-    no_evidence_prompt, no_evidence_tokens = render_prompt(
+    no_evidence_payload = render_prompt_payload(
         claim=claim,
         evidence_texts=[],
         tokenizer=tokenizer,
@@ -225,7 +333,13 @@ def truncate_single_evidence_to_budget(
         label_schema=label_schema,
         chat_template=chat_template,
     )
-    return [], no_evidence_prompt, no_evidence_tokens, True
+    return (
+        [],
+        str(no_evidence_payload["prompt"]),
+        int(no_evidence_payload["prompt_token_count"]),
+        no_evidence_payload.get("prompt_input_ids"),
+        True,
+    )
 
 
 def build_target(row: dict, gold_label: str, output_mode: str, label_format: str = "name") -> str:
@@ -277,7 +391,7 @@ def auto_truncate_evidence(
     evidence_count_before = len(evidence_texts)
     kept = list(evidence_texts)
 
-    prompt, prompt_tokens = render_prompt(
+    prompt_payload = render_prompt_payload(
         claim=claim,
         evidence_texts=kept,
         tokenizer=tokenizer,
@@ -287,13 +401,16 @@ def auto_truncate_evidence(
         label_schema=label_schema,
         chat_template=chat_template,
     )
+    prompt = str(prompt_payload["prompt"])
+    prompt_tokens = int(prompt_payload["prompt_token_count"])
+    prompt_input_ids = prompt_payload.get("prompt_input_ids")
 
     was_truncated = False
     evidence_text_truncated = False
     while prompt_tokens > budget and len(kept) > 1:
         kept.pop()
         was_truncated = True
-        prompt, prompt_tokens = render_prompt(
+        prompt_payload = render_prompt_payload(
             claim=claim,
             evidence_texts=kept,
             tokenizer=tokenizer,
@@ -303,9 +420,12 @@ def auto_truncate_evidence(
             label_schema=label_schema,
             chat_template=chat_template,
         )
+        prompt = str(prompt_payload["prompt"])
+        prompt_tokens = int(prompt_payload["prompt_token_count"])
+        prompt_input_ids = prompt_payload.get("prompt_input_ids")
 
     if prompt_tokens > budget and len(kept) == 1:
-        kept, prompt, prompt_tokens, evidence_text_truncated = truncate_single_evidence_to_budget(
+        kept, prompt, prompt_tokens, prompt_input_ids, evidence_text_truncated = truncate_single_evidence_to_budget(
             claim=claim,
             evidence_text=kept[0],
             tokenizer=tokenizer,
@@ -321,6 +441,7 @@ def auto_truncate_evidence(
     return {
         "prompt": prompt,
         "target": target,
+        "prompt_input_ids": prompt_input_ids,
         "prompt_token_count": prompt_tokens,
         "target_token_count": target_token_count,
         "evidence_count": len(kept),
@@ -383,6 +504,7 @@ def build_training_row(
             "candidates": candidates,
             "prompt": result["prompt"],
             "target": result["target"],
+            "prompt_input_ids": result.get("prompt_input_ids"),
             "gold_label": gold_label,
             "gold_id": label2id.get(gold_label, -1),
             "gold_explain": str(row.get("explain", "")).strip(),
@@ -401,8 +523,17 @@ def build_training_row(
     target = build_target(row_for_target, gold_label, output_mode, label_format)
     target_token_count = count_target_tokens(target, tokenizer)
     user_content = build_user_content(str(row.get("claim", "")), evidence_texts, output_mode, label_format, label_schema)
-    prompt = build_chat_prompt(tokenizer, system_msg, user_content, chat_template=chat_template)
-    prompt_token_count = count_tokens(prompt, tokenizer, add_special_tokens=False)
+    prompt, prompt_input_ids = build_chat_prompt_with_input_ids(
+        tokenizer,
+        system_msg,
+        user_content,
+        chat_template=chat_template,
+    )
+    prompt_token_count = (
+        len(prompt_input_ids)
+        if prompt_input_ids is not None
+        else count_tokens(prompt, tokenizer, add_special_tokens=False)
+    )
 
     return copy_optional_build_row_metadata({
         "event_id": row.get("event_id", ""),
@@ -413,6 +544,7 @@ def build_training_row(
         "candidates": candidates,
         "prompt": prompt,
         "target": target,
+        "prompt_input_ids": prompt_input_ids,
         "gold_label": gold_label,
         "gold_id": label2id.get(gold_label, -1),
         "gold_explain": str(row.get("explain", "")).strip(),

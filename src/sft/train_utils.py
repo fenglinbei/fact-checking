@@ -9,9 +9,10 @@ import torch
 from accelerate import Accelerator
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from sft.runtime.adapters import apply_lora_if_enabled
+from sft.runtime.adapters import apply_lora_if_enabled, freeze_modules_by_prefix
 from sft.runtime.device import enable_tf32_if_available
 from sft.runtime.deps import flash_attn2_available, fla_fast_path_available
+from sft.runtime.model_loading import load_causal_lm_compatible_model, load_compatible_tokenizer
 from sft.runtime.tracking import build_tracking_setup
 
 
@@ -49,9 +50,7 @@ def setup_model_and_tokenizer(
     use_flash_attention_2 = bool(model_cfg.get("use_flash_attention_2", True))
     use_fused_linear_attention = bool(model_cfg.get("use_fused_linear_attention", False))
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = load_compatible_tokenizer(model_name_or_path, trust_remote_code=True)
 
     model_kwargs: dict[str, Any] = {}
     if use_flash_attention_2:
@@ -68,12 +67,13 @@ def setup_model_and_tokenizer(
         else:
             logger.info("FusedLinearAttention requested but not installed/available. Skipping.")
 
-    model = AutoModelForCausalLM.from_pretrained(
+    model = load_causal_lm_compatible_model(
         model_name_or_path,
         trust_remote_code=True,
         torch_dtype=torch.bfloat16 if model_cfg.get("bf16", True) else torch.float32,
         **model_kwargs,
     )
+    model = freeze_modules_by_prefix(model, model_cfg, logger=logger)
 
     if bool(model_cfg.get("gradient_checkpointing_enable", True)):
         model.gradient_checkpointing_enable({"use_reentrant": False})

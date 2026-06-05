@@ -14,6 +14,9 @@ def build_cache_name(
     data_hash.update(str(len(instances)).encode("utf-8"))
     for row in instances:
         data_hash.update(str(row["prompt"]).encode("utf-8"))
+        prompt_input_ids = row.get("prompt_input_ids")
+        if isinstance(prompt_input_ids, list):
+            data_hash.update(",".join(str(int(token_id)) for token_id in prompt_input_ids).encode("utf-8"))
         data_hash.update(str(row["target"]).encode("utf-8"))
         data_hash.update(str(bool(row.get("prompt_add_special_tokens", True))).encode("utf-8"))
         data_hash.update(str(bool(row.get("preserve_prompt_prefix", False))).encode("utf-8"))

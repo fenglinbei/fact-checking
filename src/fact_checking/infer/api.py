@@ -672,7 +672,7 @@ def _merge_lora_to_dir(
     output_dir: Path,
 ) -> Path:
     from peft import PeftModel
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from sft.runtime.model_loading import load_causal_lm_compatible_model, load_compatible_tokenizer
 
     adapter_dir = Path(adapter_dir)
     tokenizer_dir = Path(tokenizer_dir)
@@ -689,7 +689,7 @@ def _merge_lora_to_dir(
         )
 
     torch_dtype = _torch_dtype_for_merge(dtype)
-    model = AutoModelForCausalLM.from_pretrained(base_model, torch_dtype=torch_dtype, trust_remote_code=True)
+    model = load_causal_lm_compatible_model(base_model, torch_dtype=torch_dtype, trust_remote_code=True)
     peft_model = PeftModel.from_pretrained(model, str(adapter_dir), is_trainable=False)
     peft_model.eval()
     model_lora_keys = _filter_lora_state_keys(name for name, _ in peft_model.named_parameters())
@@ -708,7 +708,7 @@ def _merge_lora_to_dir(
     merged.save_pretrained(output_dir)
     del merged, peft_model
 
-    tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_dir), trust_remote_code=True)
+    tokenizer = load_compatible_tokenizer(str(tokenizer_dir), trust_remote_code=True)
     tokenizer.save_pretrained(output_dir)
     return output_dir
 

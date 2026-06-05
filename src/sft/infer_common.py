@@ -13,6 +13,7 @@ from sft.data.io import load_prebuilt_samples
 from sft.data.types import PreparedSample
 from sft.runtime.adapters import checkpoint_has_hf_artifacts, checkpoint_has_peft_adapter
 from sft.runtime.config import sibling_artifact_dir
+from sft.runtime.model_loading import is_mistral_common_tokenizer, load_compatible_tokenizer
 
 
 @dataclass
@@ -40,6 +41,18 @@ def build_label_decoding_prompt(sample: PreparedSample, label_prefix: str) -> st
     if sample.prompt_add_special_tokens:
         prompt_text += " "
     return prompt_text + label_prefix
+
+
+def build_label_decoding_input_ids(
+    sample: PreparedSample,
+    tokenizer: AutoTokenizer,
+    label_prefix: str,
+) -> list[int] | None:
+    """Return the pre-tokenized label-decoding prompt when build-time ids are available."""
+    if sample.prompt_input_ids is None:
+        return None
+    prefix_ids = tokenizer(label_prefix, add_special_tokens=False, truncation=False)["input_ids"]
+    return list(sample.prompt_input_ids) + [int(token_id) for token_id in prefix_ids]
 
 
 def label_choice_text(label_prefix: str, letter: str) -> str:
@@ -125,13 +138,17 @@ def build_inference_context(
     tokenizer_dir = checkpoint_dir
     if is_peft_adapter and not (checkpoint_dir / "tokenizer_config.json").exists():
         tokenizer_dir = Path(str(baseline_cfg.get("model_name_or_path") or model_name_or_path))
-    tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_dir), trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = load_compatible_tokenizer(str(tokenizer_dir), trust_remote_code=True)
 
     max_length = int(train_cfg.get("max_length", 2048))
     rows = load_jsonl(split_map[split])
     samples = load_prebuilt_samples(rows)
+    if is_mistral_common_tokenizer(tokenizer) and any(sample.prompt_input_ids is None for sample in samples):
+        raise ValueError(
+            f"{split} split build rows are missing prompt_input_ids for a MistralCommon tokenizer. "
+            "Rebuild the run with FORCE_BUILD=true so prompts are generated with "
+            "apply_chat_template(tokenize=True)."
+        )
     eval_root_cfg = str(cfg.get("eval_output_dir", "") or "").strip()
     eval_root = Path(eval_root_cfg) if eval_root_cfg else sibling_artifact_dir(resolved_run_dir, "eval")
 
@@ -201,7 +218,7 @@ def create_vllm_logit_processors(logit_adjust_cfg: dict | None) -> list:
 
 def build_serializable_metrics(eval_metrics: dict[str, object]) -> dict[str, object]:
     prediction_records = eval_metrics.get("prediction_records", [])
-    return {
+    payload = {
         "num_samples": len(prediction_records) if isinstance(prediction_records, list) else 0,
         "accuracy": float(eval_metrics["accuracy"]),
         "macro_precision": float(eval_metrics["macro_precision"]),
@@ -210,3 +227,7 @@ def build_serializable_metrics(eval_metrics: dict[str, object]) -> dict[str, obj
         "parse_error_rate": float(eval_metrics["parse_error_rate"]),
         "per_class": eval_metrics.get("per_class", {}),
     }
+    for key in ("eval_loss", "eval_ce_loss", "eval_ordinal_loss"):
+        if key in eval_metrics:
+            payload[key] = float(eval_metrics[key])
+    return payload

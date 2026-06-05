@@ -341,34 +341,117 @@ bash scripts/phase5_selectors/run/run_v0_6c_rule_step_adaptive5_10_all_pipelines
 - [ ] 汇总 macro-F1 / accuracy / per-class F1 / health metrics。
 - [ ] 形成 AAAI paper ablation table 和 narrative。
 
-## 9. Pending LLM Backbone Comparison Groups
+## 9. LLM Backbone Migration Status and Results
 
-目标：基于当前 v0.6c 实现，对 verifier backbone 做 9B 以下模型对比。替换 backbone 时需要同时更新 `build.prompt.model_name_or_path` 和 `train.model_name_or_path`，并先确认 label-token CE 的 `Label:` + `A-F` 单 token 约束。
+目标：基于当前 v0.6c 实现，对 verifier backbone 做 9B 以下模型对比。替换 backbone 时需要同时更新 `build.prompt.model_name_or_path` 和 `train.model_name_or_path`，并先确认 label-token CE 的 `Label:` 后标签字母单 token 约束。RAWFC `rawfc3` 使用 `A-C`；LIAR-RAW 6-way 使用 `A-F`。
+
+统一口径：
+
+- dataset / selector: RAWFC `rawfc3` + `v0_6c_rule_step_adaptive5_10`
+- output root: `outputs/selector_trace_verifier/rawfc_v0_6c_eval25_backbone`
+- 指标来源：label-token logits test eval，`eval/test/best/label_token/metrics.json` 或旧 layout 下的 `train/eval/test/best/label_token/metrics.json`
+- 完整 test 定义：`num_samples=200` 且 `parse_error_rate=0.0`
+- `qwen25_7b` LoRA 只有旧 API/generative test metric，FullFT 为 eval25 label-token metric；表内保留星号说明。
+- `ministral3_8b` 的 FullFT 汇总采用 `outputs/selector_trace_verifier/rawfc_v0_6c_eval25_backbone/v0_6c_rawfc3_rule_step_adaptive5_10_eval25_ministral3_8b_fullft_mm_text_effective`。
+
+### 9.1 Current Status Summary
+
+按 FullFT validation macro-F1 排序。数值单位为百分比；test 单元格格式为 `Acc / Macro-F1`。
+
+| rank by FullFT val F1 | model | size | LoRA val F1@step | LoRA test Acc/F1 | FullFT val F1@step | FullFT test Acc/F1 | best test F1 |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | Meta-Llama-3.1-8B-Instruct | 8B | 61.59@150 | 60.50 / 60.77 | 68.32@100 | 67.00 / 67.23 | **67.23 FullFT** |
+| 2 | Ministral-3-8B-Instruct-2512 | 8.4B | 68.81@225 | 60.50 / 60.91 | 64.74@25 | 62.50 / 61.41 | **61.41 FullFT** |
+| 3 | Qwen3-8B | 8B | 56.87@125 | 56.00 / 55.79 | 63.75@175 | 62.00 / 62.27 | **62.27 FullFT** |
+| 4 | Gemma-4-E4B-it | 8B | 59.46@200 | 59.50 / 59.19 | 62.85@175 | 65.50 / 65.78 | **65.78 FullFT** |
+| 5 | Qwen3-4B-Instruct-2507 | 4B | 60.69@225 | 60.50 / 59.96 | 62.42@175 | 67.00 / 67.11 | **67.11 FullFT** |
+| 6 | Qwen2.5-7B-Instruct | 7B | 51.70@200 | 58.00 / 55.10* | 60.53@175 | 62.50 / 62.94 | **62.94 FullFT** |
+| 7 | Phi-4-mini-instruct | 3.8B | 56.68@250 | 57.50 / 56.99 | 60.26@200 | 62.50 / 63.06 | **63.06 FullFT** |
+| 8 | DeepSeek-R1-Distill-Qwen-7B | 7B | 49.01@225 | 55.50 / 54.21 | 58.77@375 | 60.00 / 60.04 | **60.04 FullFT** |
+| 9 | Qwen2.5-3B-Instruct | 3B | 52.96@150 | 58.00 / 56.98 | 57.50@150 | 58.50 / 57.55 | **57.55 FullFT** |
+| 10 | Qwen3-1.7B | 1.7B | 52.48@225 | 52.00 / 51.36 | 55.26@250 | 54.50 / 54.82 | **54.82 FullFT** |
+| 11 | Qwen2.5-1.5B-Instruct | 1.5B | 47.95@250 | 49.50 / 47.53 | 54.90@175 | 57.00 / 57.33 | **57.33 FullFT** |
+
+`*` Qwen2.5-7B LoRA 为旧 API/generative metric，不是 label-token logits 口径。
+
+### 9.2 Completed Full-Test Metrics
+
+下表只列 `num_samples=200` 的 test 结果，数值为百分比；所有已完成 full-test 行 `parse_error_rate=0.0`。单元格格式为 `Acc; Macro-P/R/F1; false/half/true F1`。排序与 9.1 一致。
+
+| rank by FullFT val F1 | backbone case | LoRA result | FullFT result | status |
+| ---: | --- | --- | --- | --- |
+| 1 | `llama31_8b` | 60.50; 61.94 / 60.55 / 60.77; 65.71 / 51.06 / 65.55 | 67.00; 67.71 / 67.02 / 67.23; 69.12 / 57.97 / 74.60 | 完成 |
+| 2 | `ministral3_8b` | 60.50; 62.12 / 60.52 / 60.91; 65.12 / 53.69 / 63.93 | 62.50; 62.11 / 62.54 / 61.41; 70.23 / 45.61 / 68.39 | 完成；FullFT 使用 `fullft_mm_text_effective` 目录 |
+| 3 | `qwen3_8b` | 56.00; 55.75 / 56.04 / 55.79; 60.43 / 47.24 / 59.70 | 62.00; 62.66 / 62.02 / 62.27; 67.18 / 51.43 / 68.22 | 完成 |
+| 4 | `gemma4_e4b` | 59.50; 59.18 / 59.54 / 59.19; 62.41 / 48.00 / 67.16 | 65.50; 66.92 / 65.50 / 65.78; 69.35 / 61.33 / 66.67 | 完成 |
+| 5 | `qwen3_4b_2507` | 60.50; 59.98 / 60.56 / 59.96; 66.67 / 47.54 / 65.67 | 67.00; 67.38 / 67.04 / 67.11; 72.06 / 58.39 / 70.87 | 完成 |
+| 6 | `qwen25_7b` | 58.00; 59.59 / 58.04 / 55.10; 63.24 / 36.17 / 65.88 | 62.50; 65.18 / 62.48 / 62.94; 64.46 / 58.23 / 66.12 | 完成；LoRA 为旧 API/generative metric |
+| 7 | `phi4_mini` | 57.50; 56.81 / 57.54 / 56.99; 62.32 / 43.90 / 64.75 | 62.50; 64.62 / 62.52 / 63.06; 68.75 / 54.30 / 66.12 | 完成 |
+| 8 | `dsr1_qwen7b` | 55.50; 55.21 / 55.50 / 54.21; 57.81 / 41.07 / 63.75 | 60.00; 62.59 / 59.94 / 60.04; 57.66 / 57.86 / 64.62 | 完成 |
+| 9 | `qwen25_3b` | 58.00; 57.37 / 58.03 / 56.98; 61.31 / 43.86 / 65.77 | 58.50; 57.77 / 58.50 / 57.55; 58.02 / 45.76 / 68.87 | 完成 |
+| 10 | `qwen3_17b` | 52.00; 51.16 / 52.03 / 51.36; 55.07 / 38.02 / 60.99 | 54.50; 57.32 / 54.48 / 54.82; 53.66 / 52.17 / 58.62 | 完成 |
+| 11 | `qwen25_15b` | 49.50; 47.61 / 49.56 / 47.53; 54.42 / 28.30 / 59.86 | 57.00; 57.85 / 57.02 / 57.33; 63.49 / 47.89 / 60.61 | 完成 |
+
+当前观察：
+
+- 按 FullFT val F1 排序时，`ministral3_8b` 排名第 2，但 test F1 只有 `61.41`，说明该模型 val/test gap 明显，不宜只按 val 排序解释泛化能力。
+- 按 test F1 看，FullFT top tier 是 `llama31_8b`、`qwen3_4b_2507` 和 `gemma4_e4b`；其中 `llama31_8b` 与 `qwen3_4b_2507` 仍只差 `0.12` F1。
+- `gemma4_e4b` FullFT 补齐后达到 `65.78` test macro-F1，是 transfer 组里仅次于 Llama/Qwen3-4B 的强结果。
+- `qwen25_7b` FullFT test F1 为 `62.94`，低于 `gemma4_e4b`、`qwen3_4b_2507` 和 `llama31_8b`，但高于 `qwen3_8b` 和 `dsr1_qwen7b`。
+
+### 9.3 Significance Check for Close Models
+
+方法：对同一 200 条 RAWFC test 样本做 paired bootstrap，固定 `sample_idx` 对齐两个模型预测，有放回重采样 20,000 次。下表的差值均为 `A - B`，单位为 percentage points；CI 为 percentile 95% CI，`p_boot` 为双侧 bootstrap tail probability。该检查用于判断相近模型是否足以支持排序性结论，不替代多 seed 训练稳定性分析。当前表尚未补算 `gemma4_e4b` FullFT 和 `ministral3_8b` mm_text_effective FullFT。
+
+| comparison | mode | Δ Macro-F1, 95% CI, p_boot | Δ Acc, 95% CI, p_boot | A-only / B-only correct | interpretation |
+| --- | --- | --- | --- | --- | --- |
+| `llama31_8b - qwen3_4b_2507` | FullFT | +0.12 `[-6.96, +7.42]`, p=0.9746 | +0.00 `[-7.00, +7.00]`, p=1.0000 | 26 / 26 | 无显著差异；只能写成 tied top tier。 |
+| `phi4_mini - qwen3_8b` | FullFT | +0.78 `[-5.17, +6.56]`, p=0.7899 | +0.50 `[-5.50, +6.50]`, p=0.9309 | 19 / 18 | 无显著差异；Phi 略高但证据不足。 |
+| `qwen25_3b - qwen25_15b` | FullFT | +0.22 `[-7.00, +7.43]`, p=0.9585 | +1.50 `[-6.00, +8.50]`, p=0.7523 | 29 / 26 | 无显著差异；3B 与 1.5B 不应做强排序。 |
+| `llama31_8b - qwen3_4b_2507` | LoRA | +0.82 `[-6.34, +8.02]`, p=0.8318 | +0.00 `[-7.00, +7.00]`, p=1.0000 | 26 / 26 | 无显著差异；LoRA 下两者也基本持平。 |
+| `phi4_mini - qwen25_3b` | LoRA | +0.01 `[-6.36, +6.27]`, p=0.9924 | -0.50 `[-6.50, +5.50]`, p=0.9414 | 19 / 20 | 无显著差异；几乎完全持平。 |
+
+论文表述建议：
+
+- `llama31_8b` 和 `qwen3_4b_2507` 在 FullFT 下应写作 top-tier tie，而不是显著胜出关系。
+- 对 `phi4_mini` vs `qwen3_8b`、`qwen25_3b` vs `qwen25_15b` 这类小差值，只报告点估计和 CI；避免写“模型 A 优于模型 B”。
+- 当前 test split 只有 200 条，bootstrap CI 很宽；若需要支持 backbone ranking，后续应补多 seed 或更大评测集。
+
+### 9.4 Smoke / In-Progress Records
+
+| backbone case | train mode | status | available metric | notes |
+| --- | --- | --- | --- | --- |
+| `gemma4_e4b` | LoRA smoke32 | superseded / smoke | n=32 Acc/F1 = 56.25 / 48.23 | 已有正式 LoRA full test，smoke 仅保留为适配记录。 |
+| `gemma4_e4b` | FullFT smoke32 | superseded / smoke | N/A | 已有正式 FullFT full test，smoke 仅保留为适配记录。 |
+| `ministral3_8b` | LoRA smoke32 | superseded / smoke | n=32 Acc/F1 = 37.50 / 37.37 | 已有正式 LoRA full test，smoke 不可与 200-sample full test 横比。 |
+| `ministral3_8b` | FullFT smoke32 | superseded / smoke | N/A | 已有正式 FullFT full test；主表采用 mm_text_effective 目录。 |
+
+### 9.5 Adaptation Difficulty Groups
 
 适配难度分组：
 
 | group | model | local status | difficulty | notes |
 | --- | --- | --- | --- | --- |
-| A. 基本 drop-in | `/data/models/Qwen2.5-3B-Instruct` | 本地已有 | 低 | Qwen2 架构；label-token 检查通过；LoRA target 可直接复用。 |
-| A. 基本 drop-in | `/data/models/Qwen2.5-1.5B-Instruct` | 本地已有 | 低 | Qwen2 架构；适合做小模型下界。 |
-| A. 基本 drop-in | `/data/models/Qwen3-1.7B` | 本地已有 | 低 | `Qwen3ForCausalLM`；label-token 检查通过；需要控制 thinking / non-thinking 输出风格。 |
-| A. 基本 drop-in | `/data/models/Qwen3-8B` | 本地已有 | 低 | `Qwen3ForCausalLM`；自然的强小模型对照。 |
-| A. 基本 drop-in | `/data/models/DeepSeek-R1-Distill-Qwen-7B` | 本地已有 | 低 | 底座是 Qwen2；主要风险是 reasoning-distill 风格可能影响 label-only 输出。 |
-| B. 下载后大概率 drop-in | `Qwen/Qwen3-4B-Instruct-2507` | 需下载 | 低-中 | 4B 非 thinking instruct 版本；下载后先跑 tokenizer、LoRA、vLLM smoke。 |
-| C. 中等适配 | `/data/models/Meta-Llama-3.1-8B-Instruct` | 本地已有 | 中 | `LlamaForCausalLM`；label-token 检查通过；需确认 chat template、license/gated 来源和 vLLM 启动。 |
-| C. 中等适配 | `microsoft/Phi-4-mini-instruct` | 需下载 | 中 | 3.8B/128K；需要确认 Phi 架构下 LoRA target module 名称。 |
-| D. 高适配成本 | `/data/models/gemma-4-E2B` | 本地已有 | 中-高 | 本地 config 为 `Gemma4ForConditionalGeneration`；当前训练路径是纯 `AutoTokenizer` + `AutoModelForCausalLM`，需先确认纯文本 CausalLM SFT 是否可行。 |
-| D. 高适配成本 | `mistralai/Ministral-3-8B-Instruct-2512` | 需下载 | 高 | 新 Mistral 3 / 多模态路线；vLLM 可能需要 `tokenizer_mode=mistral`、`config_format=mistral`、`load_format=mistral` 等特殊参数。 |
+| A. 基本 drop-in | `/data/models/Qwen2.5-3B-Instruct` | 本地已有 / 已完成 | 低 | Qwen2 架构；label-token 检查通过；LoRA target 可直接复用。 |
+| A. 基本 drop-in | `/data/models/Qwen2.5-1.5B-Instruct` | 本地已有 / 已完成 | 低 | Qwen2 架构；适合做小模型下界。 |
+| A. 基本 drop-in | `/data/models/Qwen3-1.7B` | 本地已有 / 已完成 | 低 | `Qwen3ForCausalLM`；label-token 检查通过；需要控制 thinking / non-thinking 输出风格。 |
+| A. 基本 drop-in | `/data/models/Qwen3-8B` | 本地已有 / 已完成 | 低 | `Qwen3ForCausalLM`；自然的强小模型对照。 |
+| A. 基本 drop-in | `/data/models/DeepSeek-R1-Distill-Qwen-7B` | 本地已有 / 已完成 | 低 | 底座是 Qwen2；主要风险是 reasoning-distill 风格可能影响 label-only 输出。 |
+| B. 下载后大概率 drop-in | `/data/models/Qwen3-4B-Instruct-2507` | 本地已有 / 已完成 | 低-中 | 4B 非 thinking instruct 版本；已纳入 phase7 backbone migration。 |
+| C. 中等适配 | `/data/models/Meta-Llama-3.1-8B-Instruct` | 本地已有 / 已完成 | 中 | `LlamaForCausalLM`；label-token 检查通过；LoRA + FullFT full test 已完成。 |
+| C. 中等适配 | `/data/models/Phi-4-mini-instruct` | 本地已有 / 已完成 | 中 | 3.8B/128K；LoRA + FullFT full test 已完成。 |
+| D. 高适配成本 | `google/gemma-4-E4B-it` -> `/data/models/gemma-4-E4B-it` | 本地已有 / 已完成 | 中-高 | 4.5B effective / 8B with embeddings；LoRA + FullFT full test 已完成。 |
+| D. 高适配成本 | `mistralai/Ministral-3-8B-Instruct-2512` -> `/data/models/Ministral-3-8B-Instruct-2512` | 本地已有 / 已完成 | 高 | 新 Mistral 3 / 多模态路线；LoRA + FullFT full test 已完成，FullFT 主表采用 mm_text_effective。 |
 
 建议执行顺序：
 
-1. 第一批：`Qwen2.5-1.5B-Instruct`、`Qwen2.5-3B-Instruct`、`Qwen3-1.7B`、`Qwen3-8B`、`DeepSeek-R1-Distill-Qwen-7B`。
-2. 第二批：`Qwen3-4B-Instruct-2507`、`Meta-Llama-3.1-8B-Instruct`、`Phi-4-mini-instruct`。
-3. 第三批：`gemma-4-E2B`、`Ministral-3-8B-Instruct-2512`，作为新架构适配实验，不建议和第一批混跑。
+1. 第一批已完成：`Qwen2.5-1.5B-Instruct`、`Qwen2.5-3B-Instruct`、`Qwen3-1.7B`、`Qwen3-8B`、`DeepSeek-R1-Distill-Qwen-7B`。
+2. 第二批已完成：`Qwen3-4B-Instruct-2507`、`Meta-Llama-3.1-8B-Instruct`、`Phi-4-mini-instruct`。
+3. 第三批已完成：`gemma-4-E4B-it`、`Ministral-3-8B-Instruct-2512`；作为新架构适配实验，保留 smoke 和 text-effective 适配记录。
 
 待做 smoke checks：
 
-- [ ] 每个 tokenizer 检查 `Label:` 后 `A-F` 是否均为单 token。
-- [ ] 每个 backbone 跑 `prompt_length_stats_only` 或最小训练样本，确认 prompt tokenization 和 cache 正常。
-- [ ] 每个非 Qwen 模型先检查 LoRA target module 名称。
-- [ ] 每个新下载模型先跑 1 个 checkpoint 的 vLLM label decoding smoke。
+- [x] 已完成 A/B/C 组 tokenizer `Label:` 后单 token 检查和正式 full-test 结果汇总。
+- [x] `gemma4_e4b` / `ministral3_8b` 已有 label-token CE meta，说明 rawfc3 标签 token 检查可走通。
+- [x] 完成 `gemma4_e4b` FullFT 正式训练和 200-sample test eval。
+- [x] 完成 `ministral3_8b` LoRA / FullFT 正式训练和 200-sample test eval。

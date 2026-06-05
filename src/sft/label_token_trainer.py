@@ -30,10 +30,16 @@ from sft.prompting.stats import (
     save_prompt_statistics,
     summarize_prebuilt_prompts,
 )
-from sft.runtime.adapters import apply_lora_if_enabled, checkpoint_has_hf_artifacts, lora_enabled
+from sft.runtime.adapters import (
+    apply_lora_if_enabled,
+    checkpoint_has_hf_artifacts,
+    freeze_modules_by_prefix,
+    lora_enabled,
+)
 from sft.runtime.config import apply_runtime_output_layout, resolve_artifact_dir
 from sft.runtime.deps import flash_attn2_available, fla_fast_path_available
 from sft.runtime.device import maybe_empty_cache
+from sft.runtime.model_loading import load_causal_lm_compatible_model, load_compatible_tokenizer
 from sft.runtime.tracking import log_metrics
 from sft.train_utils import setup_accelerator_and_tracker
 
@@ -79,6 +85,66 @@ def _class_weight_tensor(train_cfg: dict[str, Any], *, labels: list[str]) -> tor
     configured = label_cfg.get("class_weights", {}) or {}
     weights = [float(configured.get(label, 1.0)) for label in labels]
     return torch.tensor(weights, dtype=torch.float32)
+
+
+def _ordinal_loss_cfg(train_cfg: dict[str, Any]) -> dict[str, Any]:
+    label_cfg = train_cfg.get("label_token_ce", {}) or {}
+    cfg = label_cfg.get("ordinal_loss", {}) or {}
+    if not isinstance(cfg, dict):
+        raise TypeError("sft_train.label_token_ce.ordinal_loss must be a mapping when configured.")
+    return cfg
+
+
+def _ordinal_loss_meta(train_cfg: dict[str, Any]) -> dict[str, Any]:
+    cfg = _ordinal_loss_cfg(train_cfg)
+    return {
+        "enabled": bool(cfg.get("enabled", False)),
+        "alpha": float(cfg.get("alpha", 0.0)),
+        "normalize_distance": bool(cfg.get("normalize_distance", True)),
+        "distance": "absolute_rank",
+    }
+
+
+def _weighted_mean(values: torch.Tensor, sample_weights: torch.Tensor) -> torch.Tensor:
+    denominator = sample_weights.sum().clamp_min(torch.finfo(torch.float32).eps)
+    return (values * sample_weights).sum() / denominator
+
+
+def _compute_label_token_losses(
+    *,
+    label_logits: torch.Tensor,
+    gold_ids: torch.Tensor,
+    class_weights: torch.Tensor,
+    train_cfg: dict[str, Any],
+) -> dict[str, torch.Tensor]:
+    logits = label_logits.float()
+    gold_ids = gold_ids.to(device=logits.device, dtype=torch.long)
+    weights = class_weights.to(device=logits.device, dtype=torch.float32)
+    sample_weights = weights[gold_ids]
+
+    ce_per_sample = F.cross_entropy(logits, gold_ids, reduction="none")
+    ce_loss = _weighted_mean(ce_per_sample, sample_weights)
+
+    ordinal_cfg = _ordinal_loss_cfg(train_cfg)
+    ordinal_enabled = bool(ordinal_cfg.get("enabled", False))
+    ordinal_alpha = float(ordinal_cfg.get("alpha", 0.0))
+    ordinal_loss = logits.new_zeros(())
+    if ordinal_enabled and logits.shape[-1] > 1:
+        ranks = torch.arange(logits.shape[-1], device=logits.device, dtype=torch.float32)
+        gold_ranks = ranks[gold_ids]
+        distances = (ranks.unsqueeze(0) - gold_ranks.unsqueeze(1)).abs()
+        if bool(ordinal_cfg.get("normalize_distance", True)):
+            distances = distances / float(logits.shape[-1] - 1)
+        probs = torch.softmax(logits, dim=-1)
+        ordinal_per_sample = (probs * distances).sum(dim=-1)
+        ordinal_loss = _weighted_mean(ordinal_per_sample, sample_weights)
+
+    loss = ce_loss + ordinal_alpha * ordinal_loss if ordinal_enabled else ce_loss
+    return {
+        "loss": loss,
+        "ce_loss": ce_loss,
+        "ordinal_loss": ordinal_loss,
+    }
 
 
 def _forward_label_logits(
@@ -177,6 +243,7 @@ def _evaluate_label_token(
     accelerator: Accelerator,
     label_token_ids: torch.Tensor,
     class_weights: torch.Tensor,
+    train_cfg: dict[str, Any],
     label_prefix: str,
     labels: list[str],
     letter_order: list[str],
@@ -189,6 +256,8 @@ def _evaluate_label_token(
     all_gold_ids: list[torch.Tensor] = []
     all_sample_indices: list[torch.Tensor] = []
     all_losses: list[torch.Tensor] = []
+    all_ce_losses: list[torch.Tensor] = []
+    all_ordinal_losses: list[torch.Tensor] = []
     pad_id = -100
     sample_pad_id = -1
     dataset_samples = getattr(getattr(dataloader, "dataset", None), "samples", None)
@@ -203,10 +272,11 @@ def _evaluate_label_token(
         for batch in dataloader:
             gold_ids = batch["gold_ids"]
             label_logits = _forward_label_logits(model, batch, label_token_ids)
-            loss = F.cross_entropy(
-                label_logits.float(),
-                gold_ids,
-                weight=class_weights.to(label_logits.device, dtype=torch.float32),
+            losses = _compute_label_token_losses(
+                label_logits=label_logits,
+                gold_ids=gold_ids,
+                class_weights=class_weights,
+                train_cfg=train_cfg,
             )
             pred_ids = label_logits.argmax(dim=-1).to(torch.long)
 
@@ -226,7 +296,11 @@ def _evaluate_label_token(
                 all_gold_ids.append(gathered_gold[valid_mask].cpu())
                 all_sample_indices.append(gathered_sample_indices[valid_mask].cpu())
 
-            all_losses.append(accelerator.gather_for_metrics(loss.detach().float().unsqueeze(0)).cpu())
+            all_losses.append(accelerator.gather_for_metrics(losses["loss"].detach().float().unsqueeze(0)).cpu())
+            all_ce_losses.append(accelerator.gather_for_metrics(losses["ce_loss"].detach().float().unsqueeze(0)).cpu())
+            all_ordinal_losses.append(
+                accelerator.gather_for_metrics(losses["ordinal_loss"].detach().float().unsqueeze(0)).cpu()
+            )
             progress.update(1)
 
     progress.close()
@@ -243,6 +317,8 @@ def _evaluate_label_token(
             log_prediction_examples=accelerator.is_main_process,
         )
         metrics["eval_loss"] = float("nan")
+        metrics["eval_ce_loss"] = float("nan")
+        metrics["eval_ordinal_loss"] = float("nan")
         return metrics
 
     pred_np = torch.cat(all_pred_ids).numpy()
@@ -280,8 +356,12 @@ def _evaluate_label_token(
     )
     if all_losses:
         metrics["eval_loss"] = float(torch.cat(all_losses).mean().item())
+        metrics["eval_ce_loss"] = float(torch.cat(all_ce_losses).mean().item())
+        metrics["eval_ordinal_loss"] = float(torch.cat(all_ordinal_losses).mean().item())
     else:
         metrics["eval_loss"] = float("nan")
+        metrics["eval_ce_loss"] = float("nan")
+        metrics["eval_ordinal_loss"] = float("nan")
     model.train()
     return metrics
 
@@ -350,9 +430,7 @@ def main() -> None:
         cfg.get("model_name_or_path")
         or baseline_cfg.get("model_name_or_path", "/data/models/Qwen3.5-9B")
     )
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = load_compatible_tokenizer(model_name_or_path, trust_remote_code=True)
 
     max_length = int(train_cfg.get("max_length", 2048))
     label_token_id_list, token_meta = _build_label_token_ids(
@@ -383,6 +461,7 @@ def main() -> None:
             "label_schema": label_schema,
             "labels": labels,
             "class_weights": {label: float(weight) for label, weight in zip(labels, class_weights.tolist())},
+            "ordinal_loss": _ordinal_loss_meta(train_cfg),
             "early_stopping_metric": str(label_cfg.get("early_stopping_metric", "macro_f1_plus_true_side")),
             "true_side_metric_weight": float(label_cfg.get("true_side_metric_weight", 0.5)),
             "focus_label": str(label_cfg.get("focus_label", "") or ""),
@@ -417,7 +496,12 @@ def main() -> None:
             "This is separate from flash-attn and does not block training."
         )
 
-    model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **model_kwargs)
+    model = load_causal_lm_compatible_model(model_name_or_path, **model_kwargs)
+    model = freeze_modules_by_prefix(
+        model,
+        train_cfg,
+        logger=active_logger if accelerator.is_main_process else None,
+    )
     gradient_checkpointing = bool(train_cfg.get("gradient_checkpointing", True))
     if gradient_checkpointing:
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
@@ -532,6 +616,7 @@ def main() -> None:
             accelerator=accelerator,
             label_token_ids=label_token_ids,
             class_weights=class_weights,
+            train_cfg=train_cfg,
             label_prefix=label_prefix,
             labels=labels,
             letter_order=letter_order,
@@ -545,9 +630,12 @@ def main() -> None:
 
         if accelerator.is_main_process:
             active_logger.info(
-                "[eval] step=%d loss=%.4f accuracy=%.4f macro_f1=%.4f true_side_macro_f1=%.4f selection_score=%.4f",
+                "[eval] step=%d loss=%.4f ce_loss=%.4f ordinal_loss=%.4f "
+                "accuracy=%.4f macro_f1=%.4f true_side_macro_f1=%.4f selection_score=%.4f",
                 step,
                 float(eval_metrics.get("eval_loss", float("nan"))),
+                float(eval_metrics.get("eval_ce_loss", float("nan"))),
+                float(eval_metrics.get("eval_ordinal_loss", float("nan"))),
                 float(eval_metrics["accuracy"]),
                 macro_f1,
                 true_side,
@@ -570,6 +658,8 @@ def main() -> None:
             accelerator,
             {
                 "eval/loss": float(eval_metrics.get("eval_loss", float("nan"))),
+                "eval/ce_loss": float(eval_metrics.get("eval_ce_loss", float("nan"))),
+                "eval/ordinal_loss": float(eval_metrics.get("eval_ordinal_loss", float("nan"))),
                 "eval/accuracy": float(eval_metrics["accuracy"]),
                 "eval/macro_precision": float(eval_metrics["macro_precision"]),
                 "eval/macro_recall": float(eval_metrics["macro_recall"]),
@@ -603,6 +693,8 @@ def main() -> None:
                 metrics={
                     "step": step,
                     "eval_loss": float(eval_metrics.get("eval_loss", float("nan"))),
+                    "eval_ce_loss": float(eval_metrics.get("eval_ce_loss", float("nan"))),
+                    "eval_ordinal_loss": float(eval_metrics.get("eval_ordinal_loss", float("nan"))),
                     "accuracy": float(eval_metrics["accuracy"]),
                     "macro_precision": float(eval_metrics["macro_precision"]),
                     "macro_recall": float(eval_metrics["macro_recall"]),
@@ -647,11 +739,13 @@ def main() -> None:
         for batch in train_dl:
             with accelerator.accumulate(model):
                 label_logits = _forward_label_logits(model, batch, label_token_ids)
-                loss = F.cross_entropy(
-                    label_logits.float(),
-                    batch["gold_ids"],
-                    weight=class_weights.to(label_logits.device, dtype=torch.float32),
+                losses = _compute_label_token_losses(
+                    label_logits=label_logits,
+                    gold_ids=batch["gold_ids"],
+                    class_weights=class_weights,
+                    train_cfg=train_cfg,
                 )
+                loss = losses["loss"]
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), max_grad_norm)
@@ -665,10 +759,22 @@ def main() -> None:
 
                 if global_step % logging_steps == 0:
                     train_loss = accelerator.gather_for_metrics(loss.detach().float().unsqueeze(0)).mean().item()
+                    train_ce_loss = accelerator.gather_for_metrics(
+                        losses["ce_loss"].detach().float().unsqueeze(0)
+                    ).mean().item()
+                    train_ordinal_loss = accelerator.gather_for_metrics(
+                        losses["ordinal_loss"].detach().float().unsqueeze(0)
+                    ).mean().item()
                     lr = scheduler.get_last_lr()[0]
                     log_metrics(
                         accelerator,
-                        {"train/loss": train_loss, "train/lr": lr, "train/epoch": epoch},
+                        {
+                            "train/loss": train_loss,
+                            "train/ce_loss": train_ce_loss,
+                            "train/ordinal_loss": train_ordinal_loss,
+                            "train/lr": lr,
+                            "train/epoch": epoch,
+                        },
                         step=global_step,
                         backend=tracking_setup.backend,
                     )

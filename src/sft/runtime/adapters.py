@@ -17,6 +17,11 @@ DEFAULT_LORA_TARGET_MODULES = [
 ]
 
 
+def _matches_module_prefix(name: str, prefix: str) -> bool:
+    normalized = prefix.rstrip(".")
+    return name == normalized or name.startswith(normalized + ".")
+
+
 def lora_enabled(train_cfg: dict[str, Any]) -> bool:
     lora_cfg = train_cfg.get("lora", {})
     if isinstance(lora_cfg, dict):
@@ -45,6 +50,49 @@ def _module_list(
         return [part.strip() for part in normalized.split(",") if part.strip()]
 
     return [str(item) for item in value]  # type: ignore[operator]
+
+
+def freeze_modules_by_prefix(
+    model: AutoModelForCausalLM,
+    train_cfg: dict[str, Any],
+    *,
+    logger: Any | None = None,
+) -> AutoModelForCausalLM:
+    prefixes = _module_list(train_cfg.get("freeze_module_prefixes"), allow_none=True)
+    if not prefixes:
+        return model
+    if isinstance(prefixes, str):
+        prefixes = [prefixes]
+    prefixes = [prefix.rstrip(".") for prefix in prefixes if prefix.strip()]
+    if not prefixes:
+        return model
+
+    total_params = 0
+    frozen_params = 0
+    matched_prefixes: set[str] = set()
+    for name, param in model.named_parameters():
+        total_params += param.numel()
+        for prefix in prefixes:
+            if _matches_module_prefix(name, prefix):
+                param.requires_grad_(False)
+                frozen_params += param.numel()
+                matched_prefixes.add(prefix)
+                break
+
+    if logger is not None:
+        pct = 100.0 * frozen_params / max(total_params, 1)
+        logger.info(
+            "[INFO] Frozen parameters by prefix: %d / %d (%.4f%%), prefixes=%s",
+            frozen_params,
+            total_params,
+            pct,
+            prefixes,
+        )
+        unmatched = [prefix for prefix in prefixes if prefix not in matched_prefixes]
+        if unmatched:
+            logger.warning("[WARN] freeze_module_prefixes matched no parameters: %s", unmatched)
+
+    return model
 
 
 def apply_lora_if_enabled(

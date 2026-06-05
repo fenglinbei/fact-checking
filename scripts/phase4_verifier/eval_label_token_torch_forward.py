@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from fact_checking.data.constants import LABELS, LETTER_ORDER
+from fact_checking.data.constants import LABELS, LETTER_ORDER, letter_order_for_schema
 from sft.infer_common import build_inference_context
 
 
@@ -385,7 +385,12 @@ def main() -> None:
     )
     label_cfg = context.train_cfg.get("label_token_ce", {}) or {}
     label_prefix = str(args.label_prefix if args.label_prefix is not None else label_cfg.get("label_prefix", "Label:"))
-    label_token_id_list, token_meta = _build_label_token_ids(context.tokenizer, label_prefix=label_prefix)
+    letter_order = letter_order_for_schema(context.label_schema)
+    label_token_id_list, token_meta = _build_label_token_ids(
+        context.tokenizer,
+        label_prefix=label_prefix,
+        letter_order=letter_order,
+    )
     _validate_label_token_meta(
         meta=_read_label_token_meta(context.run_dir),
         token_meta=token_meta,
@@ -421,6 +426,7 @@ def main() -> None:
         context.tokenizer,
         max_length=context.max_length,
         label_prefix=label_prefix,
+        label_schema=context.label_schema,
     )
     dataloader = build_dataloader(
         dataset,
@@ -432,7 +438,7 @@ def main() -> None:
     )
 
     label_token_ids = torch.tensor(label_token_id_list, dtype=torch.long)
-    class_weights = _class_weight_tensor(context.train_cfg)
+    class_weights = _class_weight_tensor(context.train_cfg, labels=context.labels)
     model, dataloader = accelerator.prepare(model, dataloader)
 
     eval_metrics = _evaluate_label_token(
@@ -441,7 +447,10 @@ def main() -> None:
         accelerator=accelerator,
         label_token_ids=label_token_ids,
         class_weights=class_weights,
+        train_cfg=context.train_cfg,
         label_prefix=label_prefix,
+        labels=context.labels,
+        letter_order=letter_order,
         eval_logger=logger,
         log_predictions_limit=int(args.eval_log_predictions),
     )
