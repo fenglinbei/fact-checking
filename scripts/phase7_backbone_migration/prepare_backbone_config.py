@@ -301,6 +301,7 @@ def _prepare_config(args: argparse.Namespace, project_root: Path) -> dict[str, A
         _set_path(payload, "infer.merge_lora_cache.enabled", False)
         if float(args.size_b) >= 7.0:
             _set_path(payload, "sft_train.per_device_train_batch_size", 1)
+            _set_path(payload, "sft_train.per_device_eval_batch_size", 1)
             _set_path(payload, "sft_train.gradient_accumulation_steps", 8)
         fullft_deepspeed_config = str(args.deepspeed_config or "")
         if fullft_deepspeed_config:
