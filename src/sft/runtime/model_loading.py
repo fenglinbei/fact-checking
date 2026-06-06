@@ -24,7 +24,6 @@ _REMOTE_CODE_DISABLED_MARKERS = {
 _MISTRAL_COMMON_TOKENIZER_CLASSES = {
     "mistralcommonbackend",
     "mistralcommontokenizer",
-    "tokenizersbackend",
 }
 
 _MISTRAL_COMMON_MODEL_TYPES = {
@@ -99,6 +98,10 @@ def _uses_mistral_common_tokenizer(model_name_or_path: str) -> bool:
     model_type = str(config.get("model_type", "")).lower()
     text_config = config.get("text_config") if isinstance(config.get("text_config"), dict) else {}
     text_model_type = str(text_config.get("model_type", "")).lower()
+    if tokenizer_class == "tokenizersbackend" and not (
+        model_type in _MISTRAL_COMMON_MODEL_TYPES or text_model_type in _MISTRAL_COMMON_MODEL_TYPES
+    ):
+        return False
     return (path / "tekken.json").exists() and (
         model_type in _MISTRAL_COMMON_MODEL_TYPES or text_model_type in _MISTRAL_COMMON_MODEL_TYPES
     )
