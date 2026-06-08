@@ -100,6 +100,7 @@ def _ordinal_loss_meta(train_cfg: dict[str, Any]) -> dict[str, Any]:
     return {
         "enabled": bool(cfg.get("enabled", False)),
         "alpha": float(cfg.get("alpha", 0.0)),
+        "alpha_warmup_ratio": float(cfg.get("alpha_warmup_ratio", 0.0)),
         "normalize_distance": bool(cfg.get("normalize_distance", True)),
         "distance": "absolute_rank",
     }
@@ -116,6 +117,8 @@ def _compute_label_token_losses(
     gold_ids: torch.Tensor,
     class_weights: torch.Tensor,
     train_cfg: dict[str, Any],
+    global_step: int = 0,
+    max_train_steps: int = 1,
 ) -> dict[str, torch.Tensor]:
     logits = label_logits.float()
     gold_ids = gold_ids.to(device=logits.device, dtype=torch.long)
@@ -139,7 +142,15 @@ def _compute_label_token_losses(
         ordinal_per_sample = (probs * distances).sum(dim=-1)
         ordinal_loss = _weighted_mean(ordinal_per_sample, sample_weights)
 
-    loss = ce_loss + ordinal_alpha * ordinal_loss if ordinal_enabled else ce_loss
+    effective_alpha = ordinal_alpha
+    if ordinal_enabled:
+        alpha_warmup_ratio = float(ordinal_cfg.get("alpha_warmup_ratio", 0.0))
+        if alpha_warmup_ratio > 0:
+            warmup_steps = max(1, int(alpha_warmup_ratio * float(max_train_steps)))
+            warmup_factor = min(1.0, float(global_step) / float(warmup_steps))
+            effective_alpha = ordinal_alpha * warmup_factor
+
+    loss = ce_loss + effective_alpha * ordinal_loss if ordinal_enabled else ce_loss
     return {
         "loss": loss,
         "ce_loss": ce_loss,
@@ -193,6 +204,14 @@ def _selection_score(metrics: dict[str, Any], train_cfg: dict[str, Any]) -> floa
         return float(metrics["accuracy"])
     if metric in {"macro_f1_plus_true_side", "macro_f1+true_side"}:
         return macro_f1 + float(label_cfg.get("true_side_metric_weight", 0.5)) * true_side
+    if metric in {"macro_f1_plus_true_side_plus_mae", "macro_f1+true_side+mae", "calibrated"}:
+        mae_norm = float(metrics.get("ordinal_mae_norm", 0.5))
+        mae_weight = float(label_cfg.get("mae_metric_weight", 0.3))
+        return (
+            macro_f1
+            + float(label_cfg.get("true_side_metric_weight", 0.5)) * true_side
+            + mae_weight * (1.0 - mae_norm)
+        )
     if metric in {"macro_f1_plus_focus_label", "macro_f1+focus_label", "macro_f1_plus_label"}:
         focus_label = str(label_cfg.get("focus_label", "") or "").strip()
         if not focus_label:
@@ -209,7 +228,8 @@ def _selection_score(metrics: dict[str, Any], train_cfg: dict[str, Any]) -> floa
     raise ValueError(
         "Unsupported sft_train.label_token_ce.early_stopping_metric="
         f"{metric!r}. Use macro_f1, true_side_macro_f1, accuracy, "
-        "macro_f1_plus_true_side, or macro_f1_plus_focus_label."
+        "macro_f1_plus_true_side, macro_f1_plus_true_side_plus_mae, "
+        "or macro_f1_plus_focus_label."
     )
 
 
@@ -249,6 +269,8 @@ def _evaluate_label_token(
     letter_order: list[str],
     eval_logger,
     log_predictions_limit: int,
+    global_step: int = 0,
+    max_train_steps: int = 1,
 ) -> dict[str, Any]:
     model.eval()
 
@@ -277,6 +299,8 @@ def _evaluate_label_token(
                 gold_ids=gold_ids,
                 class_weights=class_weights,
                 train_cfg=train_cfg,
+                global_step=global_step,
+                max_train_steps=max_train_steps,
             )
             pred_ids = label_logits.argmax(dim=-1).to(torch.long)
 
@@ -464,6 +488,7 @@ def main() -> None:
             "ordinal_loss": _ordinal_loss_meta(train_cfg),
             "early_stopping_metric": str(label_cfg.get("early_stopping_metric", "macro_f1_plus_true_side")),
             "true_side_metric_weight": float(label_cfg.get("true_side_metric_weight", 0.5)),
+            "mae_metric_weight": float(label_cfg.get("mae_metric_weight", 0.3)),
             "focus_label": str(label_cfg.get("focus_label", "") or ""),
             "focus_metric_weight": float(label_cfg.get("focus_metric_weight", 0.3)),
         }
@@ -572,6 +597,14 @@ def main() -> None:
         ds_grad_accum_steps = ds_cfg.get("gradient_accumulation_steps")
         if ds_grad_accum_steps is not None:
             effective_grad_accum_steps = int(ds_grad_accum_steps)
+    cfg_grad_accum_steps = int(train_cfg.get("gradient_accumulation_steps", effective_grad_accum_steps))
+    if accelerator.is_main_process and effective_grad_accum_steps != cfg_grad_accum_steps:
+        active_logger.warning(
+            "[WARN] gradient_accumulation_steps mismatch detected: sft_train=%d, effective=%d. "
+            "Using effective value for max_train_steps/progress bar.",
+            cfg_grad_accum_steps,
+            effective_grad_accum_steps,
+        )
     pre_prepare_train_dl_len = len(train_dl)
     model, optimizer, train_dl, val_dl = accelerator.prepare(model, optimizer, train_dl, val_dl)
     post_prepare_train_dl_len = len(train_dl)
@@ -581,17 +614,40 @@ def main() -> None:
             pre_prepare_train_dl_len,
             post_prepare_train_dl_len,
         )
+    if accelerator.is_main_process and post_prepare_train_dl_len != pre_prepare_train_dl_len:
+        active_logger.warning(
+            "[WARN] len(train_dl) changed after accelerator.prepare: before=%d, after=%d. "
+            "This may indicate duplicated sharding/re-partitioning across distributed samplers.",
+            pre_prepare_train_dl_len,
+            post_prepare_train_dl_len,
+        )
 
     update_steps_per_epoch = max(1, math.ceil(post_prepare_train_dl_len / effective_grad_accum_steps))
     max_train_steps = num_epochs * update_steps_per_epoch
     warmup_steps = int(max_train_steps * float(train_cfg.get("warmup_ratio", 0.03)))
+    lr_scheduler_kwargs = train_cfg.get("lr_scheduler_kwargs", {}) or {}
     scheduler = get_scheduler(
         name=str(train_cfg.get("lr_scheduler_type", "cosine")),
         optimizer=optimizer,
         num_warmup_steps=warmup_steps,
         num_training_steps=max_train_steps,
+        scheduler_specific_kwargs=dict(lr_scheduler_kwargs),
     )
     scheduler = accelerator.prepare(scheduler)
+    if accelerator.is_main_process:
+        active_logger.info(
+            "[INFO] train progress setup (post-prepare): num_epochs=%d, len(train_dl)=%d, "
+            "effective_grad_accum_steps=%d, update_steps_per_epoch=%d, max_train_steps=%d, "
+            "warmup_steps=%d, lr_scheduler_type=%s, lr_scheduler_kwargs=%s",
+            num_epochs,
+            post_prepare_train_dl_len,
+            effective_grad_accum_steps,
+            update_steps_per_epoch,
+            max_train_steps,
+            warmup_steps,
+            str(train_cfg.get("lr_scheduler_type", "cosine")),
+            dict(lr_scheduler_kwargs),
+        )
 
     logging_steps = int(train_cfg.get("logging_steps", 20))
     eval_steps = int(train_cfg.get("eval_steps", 500))
@@ -622,6 +678,8 @@ def main() -> None:
             letter_order=letter_order,
             eval_logger=active_logger,
             log_predictions_limit=int(train_cfg.get("eval_log_predictions", 0)),
+            global_step=step,
+            max_train_steps=max_train_steps,
         )
         score = _selection_score(eval_metrics, train_cfg)
         macro_f1 = float(eval_metrics["macro_f1"])
@@ -631,7 +689,8 @@ def main() -> None:
         if accelerator.is_main_process:
             active_logger.info(
                 "[eval] step=%d loss=%.4f ce_loss=%.4f ordinal_loss=%.4f "
-                "accuracy=%.4f macro_f1=%.4f true_side_macro_f1=%.4f selection_score=%.4f",
+                "accuracy=%.4f macro_f1=%.4f true_side_macro_f1=%.4f selection_score=%.4f "
+                "mae=%.4f mae_norm=%.4f extreme_err=%.4f",
                 step,
                 float(eval_metrics.get("eval_loss", float("nan"))),
                 float(eval_metrics.get("eval_ce_loss", float("nan"))),
@@ -640,6 +699,9 @@ def main() -> None:
                 macro_f1,
                 true_side,
                 score,
+                float(eval_metrics.get("ordinal_mae", float("nan"))),
+                float(eval_metrics.get("ordinal_mae_norm", float("nan"))),
+                float(eval_metrics.get("extreme_error_rate", float("nan"))),
             )
             if isinstance(per_class, dict) and per_class:
                 active_logger.info("[eval] per_class:")
@@ -667,6 +729,9 @@ def main() -> None:
                 "eval/true_side_macro_f1": true_side,
                 "eval/selection_score": score,
                 "eval/parse_error_rate": float(eval_metrics["parse_error_rate"]),
+                "eval/ordinal_mae": float(eval_metrics.get("ordinal_mae", float("nan"))),
+                "eval/ordinal_mae_norm": float(eval_metrics.get("ordinal_mae_norm", float("nan"))),
+                "eval/extreme_error_rate": float(eval_metrics.get("extreme_error_rate", float("nan"))),
             },
             step=step,
             backend=tracking_setup.backend,
@@ -702,6 +767,9 @@ def main() -> None:
                     "true_side_macro_f1": true_side,
                     "selection_score": score,
                     "parse_error_rate": float(eval_metrics["parse_error_rate"]),
+                    "ordinal_mae": float(eval_metrics.get("ordinal_mae", float("nan"))),
+                    "ordinal_mae_norm": float(eval_metrics.get("ordinal_mae_norm", float("nan"))),
+                    "extreme_error_rate": float(eval_metrics.get("extreme_error_rate", float("nan"))),
                     "per_class": per_class,
                 },
                 confusion_matrix=eval_metrics["confusion_matrix"],
@@ -744,13 +812,16 @@ def main() -> None:
                     gold_ids=batch["gold_ids"],
                     class_weights=class_weights,
                     train_cfg=train_cfg,
+                    global_step=global_step,
+                    max_train_steps=max_train_steps,
                 )
                 loss = losses["loss"]
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), max_grad_norm)
                 optimizer.step()
-                scheduler.step()
+                if accelerator.sync_gradients:
+                    scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
 
             if accelerator.sync_gradients:

@@ -7,7 +7,12 @@ from typing import Callable
 
 import numpy as np
 
-from fact_checking.data.constants import LABEL2ID, LETTER2LABEL, LETTER_ORDER
+from fact_checking.data.constants import (
+    label2id_for_schema,
+    letter2label_for_schema,
+    letter_order_for_schema,
+    normalize_label_schema,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +47,24 @@ class SearchResult:
     candidate_pool_metadata: dict = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class _LabelContext:
+    schema: str
+    label2id: dict[str, int]
+    letter2label: dict[str, str]
+    letter_order: list[str]
+
+
+def _label_context(label_schema: str | None = None) -> _LabelContext:
+    schema = normalize_label_schema(label_schema)
+    return _LabelContext(
+        schema=schema,
+        label2id=label2id_for_schema(schema),
+        letter2label=letter2label_for_schema(schema),
+        letter_order=letter_order_for_schema(schema),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Greedy forward selection
 # ---------------------------------------------------------------------------
@@ -57,12 +80,14 @@ def greedy_search(
     score_batch_size: int = 512,
     record_step_scores: bool = False,
     objective: str = "gold_logprob",
+    label_schema: str | None = None,
 ) -> SearchResult:
     """Greedy forward selection: at each step, pick the candidate that
     maximizes verifier log-prob of the correct label.
 
     Complexity: O(N * K) verifier calls.
     """
+    label_ctx = _label_context(label_schema)
     n = len(candidates)
     if n == 0 or top_k <= 0:
         return SearchResult(
@@ -99,6 +124,7 @@ def greedy_search(
             gold_label_letters=batch_gold,
             objective=objective,
             score_batch_size=score_batch_size,
+            label_schema=label_ctx.schema,
         )
 
         objective_scores = np.asarray([r["objective_score"] for r in score_records], dtype=np.float32)
@@ -132,14 +158,15 @@ def greedy_search(
             ]
         search_steps.append(step_record)
 
-    gold_label = LETTER2LABEL.get(gold_label_letter, "")
-    gold_id = LABEL2ID.get(gold_label, -1)
+    gold_label = label_ctx.letter2label.get(gold_label_letter, "")
+    gold_id = label_ctx.label2id.get(gold_label, -1)
     final_record = _score_final_set(
         scorer=scorer,
         claim=claim,
         selected_texts=selected_texts,
         gold_label_letter=gold_label_letter,
         objective=objective,
+        label_schema=label_ctx.schema,
     )
     pred_id = int(final_record["pred_id"])
 
@@ -182,11 +209,13 @@ def exhaustive_search(
     score_batch_size: int = 512,
     record_step_scores: bool = False,
     objective: str = "gold_logprob",
+    label_schema: str | None = None,
 ) -> SearchResult:
     """Enumerate all C(N, K) subsets and pick the best.
 
     Only use for small N (≤ 15) — C(15,5) = 3003 combinations.
     """
+    label_ctx = _label_context(label_schema)
     n = len(candidates)
     if n == 0 or top_k <= 0:
         return SearchResult(
@@ -219,6 +248,7 @@ def exhaustive_search(
         gold_label_letters=all_gold,
         objective=objective,
         score_batch_size=score_batch_size,
+        label_schema=label_ctx.schema,
     )
 
     objective_scores = np.asarray([r["objective_score"] for r in score_records], dtype=np.float32)
@@ -240,14 +270,15 @@ def exhaustive_search(
     selected_indices = [p[0] for p in sorted_pairs]
     selected_texts = [p[1] for p in sorted_pairs]
 
-    gold_label = LETTER2LABEL.get(gold_label_letter, "")
-    gold_id = LABEL2ID.get(gold_label, -1)
+    gold_label = label_ctx.letter2label.get(gold_label_letter, "")
+    gold_id = label_ctx.label2id.get(gold_label, -1)
     final_record = _score_final_set(
         scorer=scorer,
         claim=claim,
         selected_texts=selected_texts,
         gold_label_letter=gold_label_letter,
         objective=objective,
+        label_schema=label_ctx.schema,
     )
     pred_id = int(final_record["pred_id"])
 
@@ -315,11 +346,13 @@ def beam_search(
     score_batch_size: int = 512,
     record_step_scores: bool = False,
     objective: str = "gold_logprob",
+    label_schema: str | None = None,
 ) -> SearchResult:
     """Beam search: keep top-B partial sets at each step.
 
     Complexity: O(B * N * K) verifier calls.
     """
+    label_ctx = _label_context(label_schema)
     n = len(candidates)
     if n == 0 or top_k <= 0:
         return SearchResult(
@@ -352,6 +385,7 @@ def beam_search(
         gold_label_letters=batch_gold,
         objective=objective,
         score_batch_size=score_batch_size,
+        label_schema=label_ctx.schema,
     )
     objective_scores = np.asarray([r["objective_score"] for r in score_records], dtype=np.float32)
 
@@ -403,6 +437,7 @@ def beam_search(
                 gold_label_letters=batch_gold,
                 objective=objective,
                 score_batch_size=score_batch_size,
+                label_schema=label_ctx.schema,
             )
 
             for j, record in enumerate(rem_records):
@@ -437,14 +472,15 @@ def beam_search(
     best = beam[0]
     selected_indices = list(best[0])
     selected_texts = best[1]
-    gold_label = LETTER2LABEL.get(gold_label_letter, "")
-    gold_id = LABEL2ID.get(gold_label, -1)
+    gold_label = label_ctx.letter2label.get(gold_label_letter, "")
+    gold_id = label_ctx.label2id.get(gold_label, -1)
     final_record = _score_final_set(
         scorer=scorer,
         claim=claim,
         selected_texts=selected_texts,
         gold_label_letter=gold_label_letter,
         objective=objective,
+        label_schema=label_ctx.schema,
     )
     pred_id = int(final_record["pred_id"])
 
@@ -489,11 +525,21 @@ def _records_from_label_logprobs(
     gold_label_letters: list[str],
     *,
     objective: str,
+    label_schema: str | None = None,
 ) -> list[dict]:
     objective = _validate_objective(objective)
+    label_ctx = _label_context(label_schema)
     records: list[dict] = []
     for row, gold_letter in zip(label_logprobs, gold_label_letters):
-        label_scores = {letter: float(row[i]) for i, letter in enumerate(LETTER_ORDER)}
+        if len(row) != len(label_ctx.letter_order):
+            raise ValueError(
+                f"label_logprobs row has {len(row)} column(s), "
+                f"but label_schema={label_ctx.schema!r} expects {len(label_ctx.letter_order)}"
+            )
+        label_scores = {
+            letter: float(row[i])
+            for i, letter in enumerate(label_ctx.letter_order)
+        }
         gold_logprob = float(label_scores[gold_letter])
         wrong_scores = [
             float(score)
@@ -503,8 +549,8 @@ def _records_from_label_logprobs(
         best_wrong_logprob = max(wrong_scores) if wrong_scores else float("-inf")
         margin = gold_logprob - best_wrong_logprob
         pred_letter = max(label_scores, key=label_scores.get)
-        pred_label = LETTER2LABEL.get(pred_letter, "")
-        pred_id = LABEL2ID.get(pred_label, -1)
+        pred_label = label_ctx.letter2label.get(pred_letter, "")
+        pred_id = label_ctx.label2id.get(pred_label, -1)
         objective_score = margin if objective == "margin" else gold_logprob
         records.append(
             {
@@ -549,6 +595,7 @@ def _score_incremental_candidates(
     gold_label_letters: list[str],
     objective: str,
     score_batch_size: int,
+    label_schema: str | None = None,
 ) -> list[dict]:
     objective = _validate_objective(objective)
     total = len(claims)
@@ -566,6 +613,7 @@ def _score_incremental_candidates(
             label_logprobs,
             gold_label_letters,
             objective=objective,
+            label_schema=label_schema,
         )
 
     gold_logprobs = _batched_call(
@@ -589,6 +637,7 @@ def _score_complete_sets(
     gold_label_letters: list[str],
     objective: str,
     score_batch_size: int,
+    label_schema: str | None = None,
 ) -> list[dict]:
     objective = _validate_objective(objective)
     total = len(claims)
@@ -605,6 +654,7 @@ def _score_complete_sets(
             label_logprobs,
             gold_label_letters,
             objective=objective,
+            label_schema=label_schema,
         )
 
     gold_logprobs = _batched_call(
@@ -626,6 +676,7 @@ def _score_final_set(
     selected_texts: list[str],
     gold_label_letter: str,
     objective: str,
+    label_schema: str | None = None,
 ) -> dict:
     objective = _validate_objective(objective)
     label_logprobs = scorer.score_complete_sets_all_labels(
@@ -636,6 +687,7 @@ def _score_final_set(
         label_logprobs,
         [gold_label_letter],
         objective=objective,
+        label_schema=label_schema,
     )[0]
 
 

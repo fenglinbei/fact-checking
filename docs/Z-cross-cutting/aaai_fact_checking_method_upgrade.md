@@ -55,9 +55,15 @@ F -> true
 
 ### 1.2 当前 pipeline
 
-当前方法可以简写为：
+从完整端到端主流程看，当前方法可以简写为：
 
-$$C = \mathrm{Retrieve}(c, R)$$
+$$C_{\mathrm{claim}} = \mathrm{ClaimMMR}(\mathrm{HybridRetrieve}(c, R))$$
+
+$$Q = \mathrm{QuestionDecompose}(c)$$
+
+$$C_{\mathrm{qd}} = \mathrm{QDRetrieve}(Q, R)$$
+
+$$C = \mathrm{UnionRank}(C_{\mathrm{claim}}, C_{\mathrm{qd}})$$
 
 $$M = \mathrm{EvidenceMap}(c, C)$$
 
@@ -69,7 +75,7 @@ $$\hat{y} = \mathrm{Verifier}(c, E^*)$$
 
 整体方法公式为：
 
-$$\hat{y} = \mathrm{Verifier}\left(c, \mathrm{RuleStepSelect}\left(\mathrm{BuildGraph}\left(c, \mathrm{EvidenceMap}\left(c, \mathrm{Retrieve}(c, R)\right)\right)\right)\right)$$
+$$\hat{y} = \mathrm{Verifier}\left(c, \mathrm{RuleStepSelect}\left(\mathrm{BuildGraph}\left(c, \mathrm{EvidenceMap}\left(c, \mathrm{UnionRank}\left(\mathrm{ClaimMMR}\left(\mathrm{HybridRetrieve}(c,R)\right), \mathrm{QDRetrieve}\left(\mathrm{QuestionDecompose}(c),R\right)\right)\right)\right)\right)\right)$$
 
 ### 1.3 Candidate Evidence Retrieval
 
@@ -85,11 +91,63 @@ BM25-like score
 
 $$s(e, c) = 0.70 \cdot s_{\mathrm{dense}}(e, c) + 0.20 \cdot s_{\mathrm{lexical}}(e, c) + 0.10 \cdot s_{\mathrm{BM25}}(e, c)$$
 
-随后使用 MMR 控制相关性与多样性，得到初始 candidate evidence pool。当前 v0.6c 默认消费 v0.6b evidence-map features，候选池大小为 top-20。
+随后使用 MMR 控制相关性与多样性，得到 claim-level baseline candidate pool。需要注意：在完整 v0.6c 端到端流程中，这个 baseline pool 不会直接进入 evidence-map stage，而是会先与 question decomposition retrieval 产生的候选池做 union，再把 union 后的候选送入 evidence-map。
 
-### 1.4 Evidence Map Construction
+### 1.4 Question Decomposition Retrieval and Union
 
-v0.6b evidence-map stage 将 claim 分解为 atomic facts：
+在 claim-level hybrid retrieval 之后，系统还会运行 question decomposition (QD) 扩展检索。该步骤将原始 claim 分解为若干面向核查的子问题：
+
+$$Q = \{q_1, q_2, \ldots, q_m\}$$
+
+每个子问题会在同一批 report evidence units 上单独执行检索，并沿用与 claim-level retrieval 相同的三路 hybrid relevance recipe：
+
+$$s(e, q_i) = 0.70 \cdot s_{\mathrm{dense}}(e, q_i) + 0.20 \cdot s_{\mathrm{lexical}}(e, q_i) + 0.10 \cdot s_{\mathrm{BM25}}(e, q_i)$$
+
+每个 question route 默认保留若干高分候选，再通过 RRF-style route merging 合并为 QD candidate pool。合并时会考虑：
+
+```text
+question route rank
+max question hybrid score
+question hit count
+question focus
+```
+
+随后系统将两类候选做 union：
+
+```text
+baseline claim-MMR candidates
+QD merged candidate pool
+```
+
+union 阶段会对重复 evidence 做 canonical text 去重，并为每条候选记录来源特征，例如：
+
+```text
+from_baseline
+baseline_rank
+baseline_hybrid_score
+from_qd
+qd_pool_rank
+qd_rrf_score
+qd_question_hit_count
+qd_max_question_hybrid
+union_pool_rank
+```
+
+最终 evidence-map stage 消费的是 `union_candidate_pool_<split>.jsonl`，并按 `union_pool_rank` 取 `candidate_top_n=20` 作为 map annotation 的候选证据池。因此，完整流程应理解为：
+
+```text
+HybridRetrieve + ClaimMMR
+    +
+QuestionDecompose + QDRetrieve + route merge
+    ->
+Union candidate pool
+    ->
+Evidence Map Construction
+```
+
+### 1.5 Evidence Map Construction
+
+v0.6b evidence-map stage 消费 QD-union 后的 top-20 candidate evidence pool，并将 claim 分解为 atomic facts：
 
 $$A = \{A_1, A_2, \ldots, A_m\}$$
 
@@ -113,9 +171,9 @@ duplicate_group
 confidence
 ```
 
-这些字段不直接作为最终 label，而是作为 v0.6c selector 的结构化输入。
+这些字段不直接作为最终 label，而是作为 v0.6c selector 的结构化输入。这里的 atom decomposition 与上一节的 question decomposition 不是同一个步骤：QD 是 map 之前的检索扩展；atom decomposition 是 evidence-map stage 内部用于建立 claim-evidence alignment 的结构化标注。
 
-### 1.5 Map Feature Scoring
+### 1.6 Map Feature Scoring
 
 系统将 evidence-map annotation 后处理为候选 evidence 特征。每条 evidence 得到：
 
@@ -131,7 +189,7 @@ evidence_map_quality_score
 
 其中 `evidence_map_quality_score` 综合 atom coverage、directness、stance polarity、confidence、key span，并惩罚 background / irrelevant evidence。
 
-### 1.6 Evidence-Chain Graph Construction
+### 1.7 Evidence-Chain Graph Construction
 
 v0.6c 将 claim、claim atoms 和 evidence candidates 构造成异构图：
 
@@ -156,7 +214,7 @@ bridge_context
 
 该设计的核心思想是：不只看单条 evidence 的 retrieval score，而是建模 evidence 之间是否互补、相互印证、存在张力，或者是否只是背景上下文。
 
-### 1.7 Rule-Step Adaptive Evidence Selection
+### 1.8 Rule-Step Adaptive Evidence Selection
 
 当前 selector 名称为：
 
@@ -193,7 +251,7 @@ fallback_core_first:
 
 当已选 evidence 数量达到 `min_top_k` 后，如果没有新的 rule candidate，则停止；否则最多选到 `max_top_k=10`。
 
-### 1.8 Trace-to-Verifier Data
+### 1.9 Trace-to-Verifier Data
 
 selector 输出 `selection_trace`，其中保存：
 
@@ -225,7 +283,7 @@ Evidence:
 
 也就是说，verifier 默认不会看到 P1/P2/P3 rule、selector score、oracle 信息或 graph 结构标签。`trace_lite` 是后续 v0.6e 消融，不是 v0.6c 默认主方法。
 
-### 1.9 Label-Token Verifier
+### 1.10 Label-Token Verifier
 
 Verifier 使用 Qwen2.5-7B-Instruct，训练目标不是生成长解释，而是输出一个 label token：
 
@@ -750,7 +808,15 @@ no key_span map
 建议将方法改写为：
 
 ```text
-C = HybridRetrieve(c, R)
+C_claim = ClaimMMR(HybridRetrieve(c, R))
+
+Q = QuestionDecompose(c)
+
+C_qd = QDRetrieve(Q, R)
+    per-question hybrid retrieval, route rank, RRF-style merge
+
+C = UnionRank(C_claim, C_qd)
+    baseline claim evidence + decomposed-question evidence
 
 M = InduceEvidenceMap(c, C)
     atoms, evidence-atom coverage, relation, directness, spans, confidence

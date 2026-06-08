@@ -1,3 +1,0 @@
-[2026-05-12 07:11:20,459][fact_checking.infer.api][INFO] - LoRA adapter load check: checkpoint_lora_tensors=392 model_lora_tensors=392 missing_lora=0 unexpected_lora=0 non_lora_missing=339
-[2026-05-12 07:11:40,828][fact_checking.infer.api][INFO] - Merged LoRA adapter /data/liaozijie/fact-checking/outputs/runs/mmr_lambda_sweep/build.retrieval.mmr_lambda-0.7__5385ea65/train/best into temporary HF model /tmp/merged_lora_xx1ciid_
-[2026-05-12 07:13:43,429][fact_checking.infer.api][INFO] - API inference decoding: label_decoding=True guided_choice=True max_tokens=1 logit_bias_tokens=6

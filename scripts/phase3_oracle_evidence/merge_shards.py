@@ -25,6 +25,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--input-dir", required=True, help="Directory containing shard JSONL files")
     p.add_argument("--split", default="train", help="Data split name")
     p.add_argument("--num-shards", type=int, default=0, help="Expected shard count; 0 = infer")
+    p.add_argument(
+        "--label-schema",
+        default=None,
+        help="Label schema for metrics, e.g. liar6 or rawfc3. Default: infer from shard metrics/records, then liar6.",
+    )
     p.add_argument("--output-results", default=None, help="Merged JSONL path")
     p.add_argument("--output-metrics", default=None, help="Merged metrics JSON path")
     return p.parse_args()
@@ -77,15 +82,44 @@ def _effective_candidate_stats(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
+def _infer_label_schema(
+    *,
+    records: list[dict[str, Any]],
+    shard_metrics: list[dict[str, Any]],
+    cli_label_schema: str | None,
+) -> str:
+    if cli_label_schema:
+        return str(cli_label_schema)
+    for metrics in shard_metrics:
+        label_schema = metrics.get("label_schema")
+        if label_schema:
+            return str(label_schema)
+    for record in records:
+        metadata = record.get("candidate_pool_metadata")
+        if isinstance(metadata, dict):
+            label_schema = metadata.get("label_schema")
+            if label_schema:
+                return str(label_schema)
+    return "liar6"
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _metrics(records: list[dict[str, Any]], *, label_schema: str) -> dict[str, Any]:
+    from fact_checking.data.constants import labels_for_schema, normalize_label_schema
     from sft.metrics import _compute_classification_metrics
 
+    label_schema = normalize_label_schema(label_schema)
+    labels = labels_for_schema(label_schema)
     if not records:
-        return {"accuracy": 0.0, "n_samples": 0}
+        return {"accuracy": 0.0, "n_samples": 0, "label_schema": label_schema, "labels": labels}
 
     pred = np.asarray([int(r.get("final_prediction", -1)) for r in records], dtype=np.int32)
     gold = np.asarray([int(r.get("gold_id", -1)) for r in records], dtype=np.int32)
-    metrics = _compute_classification_metrics(pred, gold)
+    metrics = _compute_classification_metrics(pred, gold, labels=labels)
     correct = int((pred == gold).sum())
     serializable: dict[str, Any] = {}
     for key, value in metrics.items():
@@ -99,6 +133,8 @@ def _metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
             serializable[key] = value
     serializable["accuracy"] = correct / len(records)
     serializable["n_samples"] = len(records)
+    serializable["label_schema"] = label_schema
+    serializable["labels"] = labels
     return serializable
 
 
@@ -125,6 +161,20 @@ def main() -> None:
     for path in shard_paths:
         records.extend(_read_jsonl(path))
     merged = _dedup_records(records)
+    shard_metrics_paths = [
+        path.with_name(path.name.replace("oracle_results_", "oracle_metrics_").replace(".jsonl", ".json"))
+        for path in shard_paths
+    ]
+    shard_metrics = [
+        _read_json(path)
+        for path in shard_metrics_paths
+        if path.exists()
+    ]
+    label_schema = _infer_label_schema(
+        records=merged,
+        shard_metrics=shard_metrics,
+        cli_label_schema=args.label_schema,
+    )
 
     output_results = Path(args.output_results) if args.output_results else input_dir / f"oracle_results_{args.split}.jsonl"
     output_metrics = Path(args.output_metrics) if args.output_metrics else input_dir / f"oracle_metrics_{args.split}.json"
@@ -134,9 +184,10 @@ def main() -> None:
         for record in merged:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    metrics = _metrics(merged)
+    metrics = _metrics(merged, label_schema=label_schema)
     metrics["split"] = args.split
     metrics["merged_from_shards"] = [str(p) for p in shard_paths]
+    metrics["merged_from_shard_metrics"] = [str(p) for p in shard_metrics_paths if p.exists()]
     metrics["n_input_rows"] = len(records)
     metrics["n_unique_event_ids"] = len(merged)
     metrics["effective_candidate_pool_stats"] = _effective_candidate_stats(merged)

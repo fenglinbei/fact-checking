@@ -26,12 +26,27 @@ def _compute_classification_metrics(
     macro_f1 = float(np.mean(f1_list))
     parse_error_rate = float(np.mean(pred_ids < 0))
     accuracy = float(np.mean(pred_ids == gold_ids))
+
+    valid_mask = (pred_ids >= 0) & (gold_ids >= 0)
+    if valid_mask.any():
+        abs_diff = np.abs(pred_ids[valid_mask].astype(np.float64) - gold_ids[valid_mask].astype(np.float64))
+        ordinal_mae = float(np.mean(abs_diff))
+        ordinal_mae_norm = ordinal_mae / max(len(_labels) - 1, 1)
+        extreme_error_rate = float(np.mean(abs_diff >= 3))
+    else:
+        ordinal_mae = float("nan")
+        ordinal_mae_norm = float("nan")
+        extreme_error_rate = float("nan")
+
     return {
         "accuracy": accuracy,
         "macro_precision": macro_p,
         "macro_recall": macro_r,
         "macro_f1": macro_f1,
         "parse_error_rate": parse_error_rate,
+        "ordinal_mae": ordinal_mae,
+        "ordinal_mae_norm": ordinal_mae_norm,
+        "extreme_error_rate": extreme_error_rate,
         "per_class": per_class,
     }
 

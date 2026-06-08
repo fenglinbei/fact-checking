@@ -460,7 +460,8 @@ def main() -> None:
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), max_grad_norm)
                 optimizer.step()
-                scheduler.step()
+                if accelerator.sync_gradients:
+                    scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
 
             if accelerator.sync_gradients:

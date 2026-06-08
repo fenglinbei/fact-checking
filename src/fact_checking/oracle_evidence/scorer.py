@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from fact_checking.build.prompts import build_chat_prompt, build_system_message, build_user_content
-from fact_checking.data.constants import LABEL_LETTERS, LETTER_ORDER
+from fact_checking.data.constants import (
+    label2id_for_schema,
+    letter2label_for_schema,
+    letter_order_for_schema,
+    normalize_label_schema,
+)
 
 if TYPE_CHECKING:
     from transformers import AutoTokenizer
@@ -16,15 +21,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def build_label_token_ids(tokenizer: AutoTokenizer, label_prefix: str = "Label:") -> dict[str, int]:
-    """Map each label letter (A-F) to its token ID when following ``label_prefix``.
+def build_label_token_ids(
+    tokenizer: AutoTokenizer,
+    label_prefix: str = "Label:",
+    label_schema: str | None = None,
+) -> dict[str, int]:
+    """Map each schema label letter to its token ID when following ``label_prefix``.
 
     Constructs ``{label_prefix} {letter}``, tokenizes, and returns the *last*
     token ID.  This is the token the model must predict immediately after
     the prompt ending with ``label_prefix``.
     """
     letter_token_ids: dict[str, int] = {}
-    for letter in LETTER_ORDER:
+    for letter in letter_order_for_schema(label_schema):
         continuation = f"{label_prefix} {letter}"
         ids = tokenizer(continuation, add_special_tokens=False)["input_ids"]
         if not ids:
@@ -58,20 +67,21 @@ def _extract_prompt_token_logprob(output, token_id: int) -> float:
     return float(entry)
 
 
-def _parse_label_from_text(text: str) -> str | None:
-    """Extract a single label letter (A-F) from generated text."""
+def _parse_label_from_text(text: str, letter_order: list[str]) -> str | None:
+    """Extract a single label letter from generated text."""
+    valid_letters = set(letter_order)
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.upper().startswith("LABEL:"):
             parts = stripped.split(":", 1)
             if len(parts) > 1:
                 token = parts[1].strip().upper()
-                if len(token) >= 1 and token[0] in LETTER_ORDER:
+                if len(token) >= 1 and token[0] in valid_letters:
                     return token[0]
-    # Fallback: standalone single letter A-F on its own line
+    # Fallback: standalone single schema label letter on its own line
     for line in text.splitlines():
         token = line.strip().upper()
-        if len(token) == 1 and token in LETTER_ORDER:
+        if len(token) == 1 and token in valid_letters:
             return token
     return None
 
@@ -91,15 +101,28 @@ class VerifierScorer:
     system_prompt: str | None = None
     output_mode: str = "label_only"
     label_format: str = "letter"
+    label_schema: str | None = None
+    chat_template: dict[str, Any] | None = None
     max_prompt_length: int = 1024
     lora_request: Any | None = None
 
     score_sampling_params: SamplingParams | None = None
     gen_sampling_params: SamplingParams | None = None
+    letter_order: list[str] = field(init=False)
+    letter2label: dict[str, str] = field(init=False)
+    label2id: dict[str, int] = field(init=False)
 
     def __post_init__(self) -> None:
+        self.label_schema = normalize_label_schema(self.label_schema)
+        self.letter_order = letter_order_for_schema(self.label_schema)
+        self.letter2label = letter2label_for_schema(self.label_schema)
+        self.label2id = label2id_for_schema(self.label_schema)
         if not self.label_token_ids:
-            self.label_token_ids = build_label_token_ids(self.tokenizer, self.label_prefix)
+            self.label_token_ids = build_label_token_ids(
+                self.tokenizer,
+                self.label_prefix,
+                self.label_schema,
+            )
         if self.score_sampling_params is None:
             from vllm import SamplingParams
 
@@ -142,14 +165,20 @@ class VerifierScorer:
 
     def _render_prompt(self, claim: str, evidence_texts: list[str]) -> tuple[str, int]:
         """Return (chat_prompt, token_count)."""
-        system_msg = build_system_message(self.system_prompt)
+        system_msg = build_system_message(self.system_prompt, self.label_schema)
         user_content = build_user_content(
             claim=claim,
             evidence_texts=evidence_texts,
             output_mode=self.output_mode,
             label_format=self.label_format,
+            label_schema=self.label_schema,
         )
-        prompt = build_chat_prompt(self.tokenizer, system_msg, user_content)
+        prompt = build_chat_prompt(
+            self.tokenizer,
+            system_msg,
+            user_content,
+            chat_template=self.chat_template,
+        )
         token_count = len(
             self.tokenizer(prompt, truncation=False, add_special_tokens=False)["input_ids"]
         )
@@ -297,8 +326,8 @@ class VerifierScorer:
     ) -> np.ndarray:
         """Score all label letters for many ``current_set + candidate`` pairs.
 
-        Returns an array of shape ``[N, len(LETTER_ORDER)]``. Column order is
-        exactly ``LETTER_ORDER``.
+        Returns an array of shape ``[N, len(self.letter_order)]``. Column order
+        follows the active label schema.
         """
         n = len(claims)
         assert len(current_sets) == n
@@ -353,9 +382,9 @@ class VerifierScorer:
         claims: list[str],
         evidence_sets: list[list[str]],
     ) -> np.ndarray:
-        """Score all A-F label-token logprobs for arbitrary evidence sets.
+        """Score all schema label-token logprobs for arbitrary evidence sets.
 
-        This expands each evidence set into six scoring prompts, one per label
+        This expands each evidence set into one scoring prompt per schema label
         letter, and extracts the actual prompt-token logprob for that letter.
         It is more expensive than ``score_complete_sets`` but gives exact
         label-token margins for calibration-aware oracle search.
@@ -369,22 +398,22 @@ class VerifierScorer:
         ]
         batch_token_ids: list[list[int]] = []
         for prompt in prompts:
-            for letter in LETTER_ORDER:
+            for letter in self.letter_order:
                 batch_token_ids.append(self._build_scoring_token_ids(prompt, letter))
 
         outputs = self._run_generate(
             prompt_token_ids=batch_token_ids,
             sampling_params=self.score_sampling_params,
         )
-        expected = n * len(LETTER_ORDER)
+        expected = n * len(self.letter_order)
         if len(outputs) != expected:
             raise RuntimeError(f"vLLM returned {len(outputs)} outputs, expected {expected}")
 
-        label_logprobs = np.empty((n, len(LETTER_ORDER)), dtype=np.float32)
+        label_logprobs = np.empty((n, len(self.letter_order)), dtype=np.float32)
         for flat_idx, output in enumerate(outputs):
-            row = flat_idx // len(LETTER_ORDER)
-            col = flat_idx % len(LETTER_ORDER)
-            letter = LETTER_ORDER[col]
+            row = flat_idx // len(self.letter_order)
+            col = flat_idx % len(self.letter_order)
+            letter = self.letter_order[col]
             token_id = self.label_token_ids[letter]
             label_logprobs[row, col] = _extract_prompt_token_logprob(output, token_id)
         return label_logprobs
@@ -394,10 +423,8 @@ class VerifierScorer:
     # ------------------------------------------------------------------
 
     def predict_labels(self, prompts: list[str]) -> list[int]:
-        """Generate a label prediction for each prompt. Returns label id (0-5)
+        """Generate a label prediction for each prompt. Returns schema label id
         or -1 on parse failure."""
-        from fact_checking.data.constants import LETTER2LABEL, LABEL2ID
-
         outputs = self._run_generate(
             prompts=prompts,
             sampling_params=self.gen_sampling_params,
@@ -405,10 +432,10 @@ class VerifierScorer:
         label_ids: list[int] = []
         for output in outputs:
             text = output.outputs[0].text if output.outputs else ""
-            letter = _parse_label_from_text(text)
+            letter = _parse_label_from_text(text, self.letter_order)
             if letter is None:
                 label_ids.append(-1)
                 continue
-            label_name = LETTER2LABEL.get(letter, "")
-            label_ids.append(LABEL2ID.get(label_name, -1))
+            label_name = self.letter2label.get(letter, "")
+            label_ids.append(self.label2id.get(label_name, -1))
         return label_ids

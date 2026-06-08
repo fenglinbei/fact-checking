@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -135,6 +136,31 @@ def load_build_config(config_path: str, config_overrides: str | None, model_base
             )
 
     return build_cfg
+
+
+def _label_schema_from_build_config(build_cfg: dict) -> str:
+    from fact_checking.data.constants import normalize_label_schema
+
+    data_cfg = build_cfg.get("data", {}) or {}
+    prompt_cfg = build_cfg.get("prompt", {}) or {}
+    return normalize_label_schema(
+        data_cfg.get("label_schema")
+        or prompt_cfg.get("label_schema")
+        or build_cfg.get("label_schema")
+        or "liar6"
+    )
+
+
+def _filter_constructor_kwargs(cls, kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    try:
+        sig = inspect.signature(cls)
+    except (TypeError, ValueError):
+        return dict(kwargs), {}
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values()):
+        return dict(kwargs), {}
+    accepted = {k: v for k, v in kwargs.items() if k in sig.parameters}
+    skipped = {k: v for k, v in kwargs.items() if k not in sig.parameters}
+    return accepted, skipped
 
 
 def _load_hydra_build_config(project_root: Path, exp_path: Path) -> dict | None:
@@ -299,10 +325,18 @@ def _candidate_pool_metadata(
     chunk_cache_path: Path,
     two_stage: bool,
     two_stage_limit: int,
+    hard_candidate_pool_cap: int,
+    hard_candidate_pool_cap_applied: bool,
     top_k: int,
     multiplier: int,
 ) -> dict:
     retrieval_cfg = build_cfg.get("retrieval", {})
+    if two_stage:
+        candidate_order = "hybrid_score_desc_two_stage"
+    elif hard_candidate_pool_cap_applied:
+        candidate_order = "hybrid_score_desc_hard_cap"
+    else:
+        candidate_order = "full_dedup_source_order"
     return {
         "candidate_pool_version": "oracle-search-candidate-pool-v1",
         "chunk_mmr_fingerprint": chunk_fp,
@@ -315,13 +349,15 @@ def _candidate_pool_metadata(
         "two_stage": bool(two_stage),
         "two_stage_limit": int(two_stage_limit),
         "two_stage_multiplier": int(multiplier),
+        "hard_candidate_pool_cap": int(hard_candidate_pool_cap),
+        "hard_candidate_pool_cap_applied": bool(hard_candidate_pool_cap_applied),
         "top_k": int(top_k),
         "score_config": {
             "alpha_dense": float(retrieval_cfg.get("alpha_dense", 0.70)),
             "alpha_lexical": float(retrieval_cfg.get("alpha_lexical", 0.20)),
             "alpha_bm25": float(retrieval_cfg.get("alpha_bm25", 0.10)),
         },
-        "candidate_order": "hybrid_score_desc" if two_stage else "dedup_source_order",
+        "candidate_order": candidate_order,
     }
 
 
@@ -524,6 +560,23 @@ def parse_args() -> argparse.Namespace:
         help="Max prompts per llm.generate call",
     )
     p.add_argument(
+        "--max-num-batched-tokens",
+        type=int,
+        default=0,
+        help="Optional vLLM scheduler max_num_batched_tokens (0=use vLLM default)",
+    )
+    p.add_argument(
+        "--max-num-seqs",
+        type=int,
+        default=0,
+        help="Optional vLLM scheduler max_num_seqs (0=use vLLM default)",
+    )
+    p.add_argument(
+        "--disable-prefix-caching",
+        action="store_true",
+        help="Disable vLLM prefix caching; by default this script enables it when supported.",
+    )
+    p.add_argument(
         "--max-samples", type=int, default=0, help="Max samples to process (0=all)"
     )
     p.add_argument(
@@ -575,6 +628,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=3,
         help="Retain top (top_k * M) candidates in two-stage mode",
+    )
+    p.add_argument(
+        "--max-candidate-pool-size",
+        type=int,
+        default=0,
+        help=(
+            "Hard cap after deduplication and optional two-stage pruning. "
+            "0 means search the full effective evidence pool. If set, oversized "
+            "pools keep the top-M candidates by hybrid_score and record the cap in metadata."
+        ),
     )
     p.add_argument(
         "--save-candidate-pool",
@@ -646,13 +709,18 @@ def _collect_effective_candidate_stats(results: list) -> dict:
     }
 
 
-def _compute_metrics(results: list) -> dict:
+def _compute_metrics(results: list, *, label_schema: str) -> dict:
     """Compute classification metrics from search results."""
+    from fact_checking.data.constants import labels_for_schema
     from sft.metrics import _compute_classification_metrics
 
     pred_ids = np.array([r.final_prediction for r in results], dtype=np.int32)
     gold_ids = np.array([r.gold_id for r in results], dtype=np.int32)
-    return _compute_classification_metrics(pred_ids, gold_ids)
+    return _compute_classification_metrics(
+        pred_ids,
+        gold_ids,
+        labels=labels_for_schema(label_schema),
+    )
 
 
 def _validate_shard_args(args: argparse.Namespace) -> None:
@@ -746,7 +814,8 @@ def _dedup_records_by_event_id(records: list[dict]) -> list[dict]:
     return [by_event[event_id] for event_id in order]
 
 
-def _compute_metrics_from_records(records: list[dict]) -> dict:
+def _compute_metrics_from_records(records: list[dict], *, label_schema: str) -> dict:
+    from fact_checking.data.constants import labels_for_schema
     from sft.metrics import _compute_classification_metrics
 
     pred_ids = np.array(
@@ -757,7 +826,11 @@ def _compute_metrics_from_records(records: list[dict]) -> dict:
         [int(r.get("gold_id", -1)) for r in records],
         dtype=np.int32,
     )
-    return _compute_classification_metrics(pred_ids, gold_ids)
+    return _compute_classification_metrics(
+        pred_ids,
+        gold_ids,
+        labels=labels_for_schema(label_schema),
+    )
 
 
 def _collect_effective_candidate_stats_from_records(records: list[dict]) -> dict:
@@ -824,9 +897,10 @@ def _write_metrics_file(
     shard_tasks: int,
     completed_existing: int,
     generated: int,
+    label_schema: str,
 ) -> tuple[dict, float, int]:
     if records:
-        metrics = _compute_metrics_from_records(records)
+        metrics = _compute_metrics_from_records(records, label_schema=label_schema)
         correct = sum(
             1
             for r in records
@@ -852,6 +926,10 @@ def _write_metrics_file(
     serializable_metrics["n_samples"] = len(records)
     serializable_metrics["search_method"] = args.search_method
     serializable_metrics["search_objective"] = args.objective
+    serializable_metrics["label_schema"] = label_schema
+    from fact_checking.data.constants import labels_for_schema
+
+    serializable_metrics["labels"] = labels_for_schema(label_schema)
     serializable_metrics["top_k"] = top_k
     serializable_metrics["split"] = args.split
     serializable_metrics["search_elapsed_s"] = search_elapsed
@@ -885,6 +963,7 @@ def _write_metrics_file(
         "final_objective": "gold_logprob for objective=gold_logprob; margin for objective=margin",
         "candidate_pool_fingerprint": "per-row fingerprint over effective candidate pool metadata, order, text, and retrieval scores",
         "selected_indices_coordinate": "indices into per-row effective candidate_pool after deduplication and optional two-stage pruning",
+        "hard_candidate_pool_cap": "0 means full effective evidence pool; positive values keep hybrid_score top-M only for oversized pools",
     }
 
     with open(metrics_path, "w", encoding="utf-8") as fh:
@@ -902,6 +981,18 @@ def run_search(args: argparse.Namespace) -> None:
     build_cfg = load_build_config(args.config, args.config_overrides, args.model_base_path)
     retrieval_cfg = build_cfg.get("retrieval", {})
     prompt_cfg = build_cfg.get("prompt", {})
+    label_schema = _label_schema_from_build_config(build_cfg)
+    from fact_checking.data.constants import (
+        id2label_for_schema,
+        label2id_for_schema,
+        label_letters_for_schema,
+        labels_for_schema,
+    )
+
+    id2label = id2label_for_schema(label_schema)
+    label2id = label2id_for_schema(label_schema)
+    label_letters = label_letters_for_schema(label_schema)
+    schema_labels = labels_for_schema(label_schema)
 
     prompt_model_path = prompt_cfg.get("model_name_or_path", "")
     if args.model_base_path:
@@ -910,10 +1001,14 @@ def run_search(args: argparse.Namespace) -> None:
     output_mode = str(prompt_cfg.get("output_mode", "label_only")).strip().lower()
     label_format = str(prompt_cfg.get("label_format", "letter")).strip().lower()
     system_prompt = prompt_cfg.get("system_prompt") or None
+    chat_template = prompt_cfg.get("chat_template") or None
 
     logger.info("Prompt model (tokenizer): %s", prompt_model_path)
+    logger.info("Label schema: %s (%s)", label_schema, ", ".join(schema_labels))
     logger.info("Max prompt length: %d", max_prompt_length)
     logger.info("Output mode: %s, label format: %s", output_mode, label_format)
+    if chat_template:
+        logger.info("Chat template config: %s", json.dumps(chat_template, sort_keys=True, default=str))
 
     # ---- Compute fingerprints -----------------------------------------------
     chunk_fp = chunk_mmr_config_fingerprint(build_cfg)
@@ -938,6 +1033,8 @@ def run_search(args: argparse.Namespace) -> None:
         logger.info("  embedder: %s", retrieval_cfg.get("embedder_model", "?"))
         logger.info("  num_gpus: %s", retrieval_cfg.get("num_gpus", "?"))
         logger.info("  top_k (default): %s", retrieval_cfg.get("top_k", "?"))
+        logger.info("  label_schema: %s", label_schema)
+        logger.info("  max_candidate_pool_size: %s", args.max_candidate_pool_size)
         if chunk_cache_path.exists():
             chunk_samples = load_pickle(chunk_cache_path)
             stats = _collect_candidate_stats(chunk_samples)
@@ -1004,9 +1101,9 @@ def run_search(args: argparse.Namespace) -> None:
     two_stage = args.two_stage and not args.no_two_stage
     multiplier = args.two_stage_multiplier
     max_exhaustive_n = args.max_exhaustive_n
+    hard_candidate_pool_cap = max(0, int(args.max_candidate_pool_size))
 
     # ---- Search ------------------------------------------------------------
-    from fact_checking.data.constants import ID2LABEL, LABEL2ID, LABEL_LETTERS
     from fact_checking.oracle_evidence.search import (
         beam_search,
         exhaustive_search,
@@ -1035,7 +1132,7 @@ def run_search(args: argparse.Namespace) -> None:
             continue
 
         gold_label = str(sample.label or "").strip().lower()
-        gold_letter = LABEL_LETTERS.get(gold_label, "")
+        gold_letter = label_letters.get(gold_label, "")
         if not gold_letter:
             continue
 
@@ -1069,6 +1166,17 @@ def run_search(args: argparse.Namespace) -> None:
         logger.info("Applied max_samples after shard filtering: %d", len(tasks))
 
     logger.info("Search tasks: %d", len(tasks))
+    if hard_candidate_pool_cap > 0:
+        oversize = sum(1 for task in tasks if len(task["candidates"]) > hard_candidate_pool_cap)
+        logger.info(
+            "Hard candidate pool cap: %d (%d/%d task(s) exceed it before search)",
+            hard_candidate_pool_cap,
+            oversize,
+            len(tasks),
+        )
+    else:
+        max_pool = max((len(task["candidates"]) for task in tasks), default=0)
+        logger.info("Hard candidate pool cap: disabled; searching full dedup evidence pools (max=%d)", max_pool)
 
     existing_records: list[dict] = []
     completed_ids: set[str] = set()
@@ -1119,6 +1227,7 @@ def run_search(args: argparse.Namespace) -> None:
             shard_tasks=len(tasks),
             completed_existing=completed_existing,
             generated=0,
+            label_schema=label_schema,
         )
         logger.info("No pending tasks; skipped vLLM initialization.")
         logger.info("Oracle Accuracy: %.4f (%d/%d)", accuracy, correct, len(final_records))
@@ -1151,6 +1260,23 @@ def run_search(args: argparse.Namespace) -> None:
         llm_kwargs["max_lora_rank"] = 64
         lora_request = LoRARequest("oracle-lora", 1, args.lora_adapter)
 
+    scheduler_kwargs: dict[str, Any] = {}
+    if args.max_num_batched_tokens > 0:
+        scheduler_kwargs["max_num_batched_tokens"] = int(args.max_num_batched_tokens)
+    if args.max_num_seqs > 0:
+        scheduler_kwargs["max_num_seqs"] = int(args.max_num_seqs)
+    if not args.disable_prefix_caching:
+        scheduler_kwargs["enable_prefix_caching"] = True
+    accepted_scheduler_kwargs, skipped_scheduler_kwargs = _filter_constructor_kwargs(
+        LLM,
+        scheduler_kwargs,
+    )
+    llm_kwargs.update(accepted_scheduler_kwargs)
+    if accepted_scheduler_kwargs:
+        logger.info("vLLM scheduler kwargs: %s", accepted_scheduler_kwargs)
+    if skipped_scheduler_kwargs:
+        logger.warning("Skipping unsupported vLLM kwargs: %s", sorted(skipped_scheduler_kwargs))
+
     llm = LLM(
         model=args.verifier_model,
         tensor_parallel_size=args.tensor_parallel_size,
@@ -1175,6 +1301,8 @@ def run_search(args: argparse.Namespace) -> None:
         system_prompt=system_prompt,
         output_mode=output_mode,
         label_format=label_format,
+        label_schema=label_schema,
+        chat_template=chat_template,
         max_prompt_length=min(max_prompt_length, prompt_budget),
         lora_request=lora_request,
     )
@@ -1229,6 +1357,15 @@ def run_search(args: argparse.Namespace) -> None:
                     reverse=True,
                 )[:limit]
 
+            hard_cap_applied = False
+            if hard_candidate_pool_cap > 0 and len(candidates) > hard_candidate_pool_cap:
+                hard_cap_applied = True
+                candidates = sorted(
+                    candidates,
+                    key=lambda c: float(c.get("hybrid_score", 0.0)),
+                    reverse=True,
+                )[:hard_candidate_pool_cap]
+
             n = len(candidates)
             pool_metadata = _candidate_pool_metadata(
                 task=task,
@@ -1239,6 +1376,8 @@ def run_search(args: argparse.Namespace) -> None:
                 chunk_cache_path=chunk_cache_path,
                 two_stage=two_stage,
                 two_stage_limit=two_stage_limit,
+                hard_candidate_pool_cap=hard_candidate_pool_cap,
+                hard_candidate_pool_cap_applied=hard_cap_applied,
                 top_k=top_k,
                 multiplier=multiplier,
             )
@@ -1262,6 +1401,7 @@ def run_search(args: argparse.Namespace) -> None:
                 score_batch_size=args.score_batch_size,
                 record_step_scores=args.save_search_step_scores,
                 objective=args.objective,
+                label_schema=label_schema,
             )
 
             if method == "exhaustive":
@@ -1273,7 +1413,7 @@ def run_search(args: argparse.Namespace) -> None:
 
             result.event_id = task["event_id"]
             result.gold_label = task["gold_label"]
-            result.gold_id = LABEL2ID.get(task["gold_label"], -1)
+            result.gold_id = label2id.get(task["gold_label"], -1)
             result.is_correct = (result.final_prediction == result.gold_id)
             result.candidate_pool_fingerprint = candidate_pool_fingerprint
             result.candidate_pool_metadata = pool_metadata
@@ -1284,7 +1424,7 @@ def run_search(args: argparse.Namespace) -> None:
             entry = _result_to_entry(
                 result,
                 save_candidate_pool=args.save_candidate_pool,
-                id2label=ID2LABEL,
+                id2label=id2label,
             )
             results_fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
             results_fh.flush()
@@ -1338,6 +1478,7 @@ def run_search(args: argparse.Namespace) -> None:
         shard_tasks=len(tasks),
         completed_existing=completed_existing,
         generated=generated,
+        label_schema=label_schema,
     )
 
     logger.info("Results written to: %s", results_path)
