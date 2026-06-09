@@ -136,8 +136,9 @@ def build_inference_context(
         raise ValueError(f"Unsupported split={split}. Use one of {sorted(split_map)}.")
 
     tokenizer_dir = checkpoint_dir
-    if is_peft_adapter and not (checkpoint_dir / "tokenizer_config.json").exists():
-        tokenizer_dir = Path(str(baseline_cfg.get("model_name_or_path") or model_name_or_path))
+    base_tokenizer_source = str(baseline_cfg.get("model_name_or_path") or model_name_or_path).strip()
+    if is_peft_adapter and base_tokenizer_source:
+        tokenizer_dir = Path(base_tokenizer_source)
     tokenizer = load_compatible_tokenizer(str(tokenizer_dir), trust_remote_code=True)
 
     max_length = int(train_cfg.get("max_length", 2048))

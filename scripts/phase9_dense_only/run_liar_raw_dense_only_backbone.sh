@@ -99,11 +99,26 @@ EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME:-v0_6c_rule_step_${GRAPH_BUDGET
 TRACE_PROMPT_STYLE="${TRACE_PROMPT_STYLE:-plain}"
 TOP_K="${TOP_K:-${MAX_TOP_K}}"
 
-FULLFT_DEEPSPEED_CONFIG="${FULLFT_DEEPSPEED_CONFIG:-configs/deepspeed_zero3_bsz1_ga8_lowpeak.json}"
+fullft_deepspeed_config_for_backbone() {
+  local backbone="$1"
+  if [[ -n "${FULLFT_DEEPSPEED_CONFIG:-}" ]]; then
+    printf "%s" "${FULLFT_DEEPSPEED_CONFIG}"
+    return 0
+  fi
+  if backbone_is_large_fullft "${backbone}"; then
+    printf "%s" "configs/deepspeed_zero3_bsz1_ga8_lowpeak.json"
+  else
+    printf "%s" "configs/deepspeed_zero3_bsz2_ga4.json"
+  fi
+}
+
+FULLFT_DEEPSPEED_CONFIG="$(fullft_deepspeed_config_for_backbone "${BACKBONE}")"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 NUM_MACHINES="${NUM_MACHINES:-1}"
 MIXED_PRECISION="${MIXED_PRECISION:-bf16}"
+SAVE_LATEST_TRAIN_STATE="${SAVE_LATEST_TRAIN_STATE:-true}"
+RESUME_LATEST_TRAIN_STATE="${RESUME_LATEST_TRAIN_STATE:-true}"
 
 RUN_TRAIN="${RUN_TRAIN:-true}"
 RUN_INFER="${RUN_INFER:-true}"
@@ -159,10 +174,12 @@ CONFIG_PATH="$(python scripts/phase7_backbone_migration/prepare_backbone_config.
 echo "[liar-dense-backbone] backbone      : ${BACKBONE}"
 echo "[liar-dense-backbone] case          : ${CASE_NAME}"
 echo "[liar-dense-backbone] model         : ${MODEL_PATH}"
+echo "[liar-dense-backbone] deepspeed     : ${FULLFT_DEEPSPEED_CONFIG}"
 echo "[liar-dense-backbone] config        : ${CONFIG_PATH}"
 echo "[liar-dense-backbone] traces        : ${TRAIN_TRACE} / ${VAL_TRACE} / ${TEST_TRACE}"
 echo "[liar-dense-backbone] output root   : ${OUTPUT_ROOT}"
 echo "[liar-dense-backbone] split         : ${SPLIT}"
+echo "[liar-dense-backbone] latest state  : save=${SAVE_LATEST_TRAIN_STATE} resume=${RESUME_LATEST_TRAIN_STATE}"
 
 CONFIG="${CONFIG_PATH}" \
 INFER_EXPERIMENT="${BASE_EXPERIMENT}" \
@@ -199,6 +216,8 @@ NPROC_PER_NODE="${NPROC_PER_NODE}" \
 NUM_MACHINES="${NUM_MACHINES}" \
 MIXED_PRECISION="${MIXED_PRECISION}" \
 DEEPSPEED_CONFIG="${FULLFT_DEEPSPEED_CONFIG}" \
+SAVE_LATEST_TRAIN_STATE="${SAVE_LATEST_TRAIN_STATE}" \
+RESUME_LATEST_TRAIN_STATE="${RESUME_LATEST_TRAIN_STATE}" \
 MERGE_LORA_CACHE=false \
 FINETUNE_MODE=full-parameter \
 PROMPT_MODEL_NAME_OR_PATH="${MODEL_PATH}" \

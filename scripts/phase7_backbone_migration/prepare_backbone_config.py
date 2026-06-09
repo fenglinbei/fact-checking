@@ -299,6 +299,10 @@ def _prepare_config(args: argparse.Namespace, project_root: Path) -> dict[str, A
     if args.finetune == "fullft":
         _set_path(payload, "sft_train.lora.enabled", False)
         _set_path(payload, "infer.merge_lora_cache.enabled", False)
+        _set_path(payload, "sft_train.save_latest_state", True)
+        _set_path(payload, "sft_train.resume_latest_state", True)
+        _set_path(payload, "sft_train.cleanup_latest_state_on_complete", True)
+        _set_path(payload, "backbone_migration.latest_state_policy", "accelerate_latest_state_for_interrupted_resume")
         if float(args.size_b) >= 7.0:
             _set_path(payload, "sft_train.per_device_train_batch_size", 1)
             _set_path(payload, "sft_train.per_device_eval_batch_size", 1)

@@ -357,6 +357,17 @@ OPTIONAL_BUILD_ROW_KEYS = (
     "raw_candidate_count",
     "raw_positive_count",
     "raw_selected_positive_count",
+    "prompt_budget_reference_path",
+    "prompt_budget_target_tokens",
+    "prompt_budget_selected_tokens",
+    "prompt_budget_delta_tokens",
+    "prompt_budget_min_k",
+    "prompt_budget_max_k",
+    "prompt_budget_candidate_pool_k",
+    "prompt_budget_raw_candidate_count",
+    "prompt_budget_ranked_count",
+    "prompt_budget_overshoot_tolerance_tokens",
+    "prompt_budget_missing_policy",
 )
 
 

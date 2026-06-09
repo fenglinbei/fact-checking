@@ -14,11 +14,14 @@ TRACE_ROOT="${TRACE_ROOT:-outputs/selectors/evidence_chain_graph/rawfc_dense_v0_
 OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/selector_trace_verifier/rawfc_dense_v0_6c_eval25_backbone}"
 RUN_ROOT="${RUN_ROOT:-outputs/runs/rawfc_dense_v0_6c_eval25_backbone}"
 CONFIG_CACHE_ROOT="${CONFIG_CACHE_ROOT:-outputs/cache/dense_only/rawfc_backbone_configs}"
+SAVE_LATEST_TRAIN_STATE="${SAVE_LATEST_TRAIN_STATE:-true}"
+RESUME_LATEST_TRAIN_STATE="${RESUME_LATEST_TRAIN_STATE:-true}"
 
 echo "[rawfc-dense-backbones] backbones : ${BACKBONES}"
 echo "[rawfc-dense-backbones] mode/ft   : ${MODE}/${FINETUNE}"
 echo "[rawfc-dense-backbones] trace root: ${TRACE_ROOT}"
 echo "[rawfc-dense-backbones] output    : ${OUTPUT_ROOT}"
+echo "[rawfc-dense-backbones] latest state: save=${SAVE_LATEST_TRAIN_STATE} resume=${RESUME_LATEST_TRAIN_STATE}"
 
 IFS=',' read -r -a backbone_array <<< "${BACKBONES}"
 for raw_backbone in "${backbone_array[@]}"; do
@@ -34,6 +37,8 @@ for raw_backbone in "${backbone_array[@]}"; do
   OUTPUT_ROOT="${OUTPUT_ROOT}" \
   RUN_ROOT="${RUN_ROOT}" \
   CONFIG_CACHE_ROOT="${CONFIG_CACHE_ROOT}" \
+  SAVE_LATEST_TRAIN_STATE="${SAVE_LATEST_TRAIN_STATE}" \
+  RESUME_LATEST_TRAIN_STATE="${RESUME_LATEST_TRAIN_STATE}" \
   bash scripts/phase7_backbone_migration/run_one_backbone.sh
 done
 

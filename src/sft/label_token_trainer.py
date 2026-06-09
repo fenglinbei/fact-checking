@@ -3,6 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
+import shutil
+import signal
 from pathlib import Path
 from typing import Any
 
@@ -254,6 +257,182 @@ def _end_training_after_final_checkpoint(
             )
             return
         raise
+
+
+def _bool_cfg(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _env_bool(name: str, *, default: bool) -> bool:
+    if name not in os.environ:
+        return default
+    return _bool_cfg(os.environ.get(name), default=default)
+
+
+def _latest_state_dir(output_dir: Path, train_cfg: dict[str, Any]) -> Path:
+    configured = str(train_cfg.get("latest_state_dir", "latest_state"))
+    path = Path(configured)
+    return path if path.is_absolute() else output_dir / path
+
+
+def _latest_state_meta_path(state_dir: Path) -> Path:
+    return state_dir / "trainer_state.json"
+
+
+def _read_latest_state_meta(state_dir: Path) -> dict[str, Any] | None:
+    meta_path = _latest_state_meta_path(state_dir)
+    if not meta_path.exists():
+        return None
+    with meta_path.open("r", encoding="utf-8") as handle:
+        meta = json.load(handle)
+    if not isinstance(meta, dict):
+        raise TypeError(f"Expected mapping metadata in {meta_path}")
+    return meta
+
+
+def _install_stop_signal_handlers(active_logger) -> dict[str, Any]:
+    stop_request: dict[str, Any] = {"requested": False, "signal": None}
+
+    def _handle_signal(signum, _frame) -> None:
+        stop_request["requested"] = True
+        stop_request["signal"] = int(signum)
+        try:
+            active_logger.warning("[signal] received %s; will save latest training state and stop.", signum)
+        except Exception:
+            pass
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+    return stop_request
+
+
+def _json_score(score: float) -> float | None:
+    return float(score) if math.isfinite(float(score)) else None
+
+
+def _save_latest_training_state(
+    *,
+    accelerator: Accelerator,
+    output_dir: Path,
+    train_cfg: dict[str, Any],
+    epoch: int,
+    next_batch_index: int,
+    global_step: int,
+    best_score: float,
+    no_improve_count: int,
+    max_train_steps: int,
+    active_logger,
+    enabled: bool,
+    completed: bool = False,
+) -> None:
+    if not enabled:
+        return
+
+    state_dir = _latest_state_dir(output_dir, train_cfg)
+    tmp_state_dir = state_dir.with_name(f".{state_dir.name}.tmp")
+
+    accelerator.wait_for_everyone()
+    if accelerator.is_main_process:
+        if tmp_state_dir.exists():
+            shutil.rmtree(tmp_state_dir)
+        tmp_state_dir.mkdir(parents=True, exist_ok=True)
+    accelerator.wait_for_everyone()
+
+    accelerator.save_state(str(tmp_state_dir))
+    accelerator.wait_for_everyone()
+
+    if accelerator.is_main_process:
+        meta = {
+            "completed": bool(completed),
+            "epoch": int(epoch),
+            "next_batch_index": int(next_batch_index),
+            "global_step": int(global_step),
+            "best_score": _json_score(best_score),
+            "no_improve_count": int(no_improve_count),
+            "max_train_steps": int(max_train_steps),
+        }
+        meta_path = _latest_state_meta_path(tmp_state_dir)
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        if state_dir.exists():
+            shutil.rmtree(state_dir)
+        tmp_state_dir.rename(state_dir)
+        active_logger.info("[checkpoint] latest training state saved to %s", state_dir)
+    accelerator.wait_for_everyone()
+
+
+def _load_latest_training_state(
+    *,
+    accelerator: Accelerator,
+    output_dir: Path,
+    train_cfg: dict[str, Any],
+    active_logger,
+    enabled: bool,
+) -> dict[str, Any]:
+    if not enabled:
+        return {}
+
+    state_dir = _latest_state_dir(output_dir, train_cfg)
+    meta = _read_latest_state_meta(state_dir)
+    if meta is None:
+        return {}
+    if bool(meta.get("completed", False)):
+        return {}
+
+    accelerator.load_state(str(state_dir))
+    if accelerator.is_main_process:
+        active_logger.info(
+            "[checkpoint] resumed latest training state from %s at global_step=%s epoch=%s next_batch_index=%s",
+            state_dir,
+            meta.get("global_step"),
+            meta.get("epoch"),
+            meta.get("next_batch_index"),
+        )
+    accelerator.wait_for_everyone()
+    return meta
+
+
+def _write_training_complete(
+    *,
+    accelerator: Accelerator,
+    output_dir: Path,
+    train_cfg: dict[str, Any],
+    global_step: int,
+    best_score: float,
+    active_logger,
+) -> None:
+    accelerator.wait_for_everyone()
+    if accelerator.is_main_process:
+        payload = {
+            "completed": True,
+            "global_step": int(global_step),
+            "best_score": _json_score(best_score),
+        }
+        (output_dir / "training_complete.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        if _bool_cfg(train_cfg.get("cleanup_latest_state_on_complete", True), default=True):
+            for path in (
+                _latest_state_dir(output_dir, train_cfg),
+                _latest_state_dir(output_dir, train_cfg).with_name(
+                    f".{_latest_state_dir(output_dir, train_cfg).name}.tmp"
+                ),
+            ):
+                if path.exists():
+                    shutil.rmtree(path)
+                    active_logger.info("[checkpoint] removed completed-run latest state: %s", path)
+    accelerator.wait_for_everyone()
 
 
 def _evaluate_label_token(
@@ -652,17 +831,57 @@ def main() -> None:
     logging_steps = int(train_cfg.get("logging_steps", 20))
     eval_steps = int(train_cfg.get("eval_steps", 500))
     save_steps = int(train_cfg.get("save_steps", 500))
+    save_latest_state = _env_bool(
+        "SAVE_LATEST_TRAIN_STATE",
+        default=_bool_cfg(train_cfg.get("save_latest_state", False), default=False),
+    )
+    resume_latest_state = _env_bool(
+        "RESUME_LATEST_TRAIN_STATE",
+        default=_bool_cfg(train_cfg.get("resume_latest_state", save_latest_state), default=save_latest_state),
+    )
+    latest_state_save_steps = int(train_cfg.get("latest_state_save_steps", save_steps))
     max_grad_norm = float(train_cfg.get("max_grad_norm", 1.0))
     empty_cache_steps = int(train_cfg.get("empty_cache_steps", 0))
     empty_cache_on_eval = bool(train_cfg.get("empty_cache_on_eval", False))
     empty_cache_on_save = bool(train_cfg.get("empty_cache_on_save", False))
     patience = int(train_cfg.get("early_stopping_patience", 0))
 
-    progress_bar = tqdm(total=max_train_steps, disable=not accelerator.is_local_main_process)
     global_step = 0
     best_score = float("-inf")
     no_improve_count = 0
     should_stop = False
+    interrupted = False
+    resume_epoch = 0
+    resume_next_batch_index = 0
+
+    resume_meta = _load_latest_training_state(
+        accelerator=accelerator,
+        output_dir=output_dir,
+        train_cfg=train_cfg,
+        active_logger=active_logger,
+        enabled=resume_latest_state,
+    )
+    if resume_meta:
+        global_step = int(resume_meta.get("global_step", 0))
+        resume_epoch = int(resume_meta.get("epoch", 0))
+        resume_next_batch_index = int(resume_meta.get("next_batch_index", 0))
+        if resume_meta.get("best_score") is not None:
+            best_score = float(resume_meta.get("best_score"))
+        no_improve_count = int(resume_meta.get("no_improve_count", 0))
+        saved_max_steps = int(resume_meta.get("max_train_steps", max_train_steps))
+        if accelerator.is_main_process and saved_max_steps != max_train_steps:
+            active_logger.warning(
+                "[checkpoint] resumed state was created with max_train_steps=%d, current max_train_steps=%d",
+                saved_max_steps,
+                max_train_steps,
+            )
+
+    progress_bar = tqdm(
+        total=max_train_steps,
+        initial=min(global_step, max_train_steps),
+        disable=not accelerator.is_local_main_process,
+    )
+    stop_request = _install_stop_signal_handlers(active_logger)
 
     def run_eval_and_maybe_save_best(step: int) -> None:
         nonlocal best_score, no_improve_count, should_stop
@@ -802,9 +1021,26 @@ def main() -> None:
         if empty_cache_on_eval:
             maybe_empty_cache(accelerator)
 
-    for epoch in range(num_epochs):
+    for epoch in range(resume_epoch, num_epochs):
         model.train()
-        for batch in train_dl:
+        epoch_train_dl = train_dl
+        start_batch_index = 0
+        if epoch == resume_epoch and resume_next_batch_index > 0:
+            start_batch_index = min(resume_next_batch_index, len(train_dl))
+            epoch_train_dl = accelerator.skip_first_batches(train_dl, start_batch_index)
+            if accelerator.is_main_process:
+                active_logger.info(
+                    "[checkpoint] skipping %d already-processed batches in resumed epoch=%d",
+                    start_batch_index,
+                    epoch,
+                )
+
+        for batch_index, batch in enumerate(epoch_train_dl, start=start_batch_index):
+            if stop_request["requested"]:
+                interrupted = True
+                should_stop = True
+                break
+
             with accelerator.accumulate(model):
                 label_logits = _forward_label_logits(model, batch, label_token_ids)
                 losses = _compute_label_token_losses(
@@ -858,8 +1094,27 @@ def main() -> None:
                     if empty_cache_on_save:
                         maybe_empty_cache(accelerator)
 
+                if save_latest_state and latest_state_save_steps > 0 and global_step % latest_state_save_steps == 0:
+                    _save_latest_training_state(
+                        accelerator=accelerator,
+                        output_dir=output_dir,
+                        train_cfg=train_cfg,
+                        epoch=epoch,
+                        next_batch_index=batch_index + 1,
+                        global_step=global_step,
+                        best_score=best_score,
+                        no_improve_count=no_improve_count,
+                        max_train_steps=max_train_steps,
+                        active_logger=active_logger,
+                        enabled=True,
+                    )
+
                 if empty_cache_steps > 0 and global_step % empty_cache_steps == 0:
                     maybe_empty_cache(accelerator)
+
+                if stop_request["requested"]:
+                    interrupted = True
+                    should_stop = True
 
                 if global_step >= max_train_steps or should_stop:
                     break
@@ -867,10 +1122,41 @@ def main() -> None:
         if should_stop or global_step >= max_train_steps:
             break
 
+    if interrupted:
+        _save_latest_training_state(
+            accelerator=accelerator,
+            output_dir=output_dir,
+            train_cfg=train_cfg,
+            epoch=epoch,
+            next_batch_index=batch_index + 1 if "batch_index" in locals() else 0,
+            global_step=global_step,
+            best_score=best_score,
+            no_improve_count=no_improve_count,
+            max_train_steps=max_train_steps,
+            active_logger=active_logger,
+            enabled=save_latest_state,
+        )
+        if accelerator.is_main_process:
+            active_logger.warning("[signal] exiting after saving latest training state at global_step=%d", global_step)
+        try:
+            accelerator.end_training()
+        except Exception as exc:
+            if accelerator.is_main_process:
+                active_logger.warning("[signal] accelerator.end_training failed during interrupted exit: %s", exc)
+        raise SystemExit(128 + int(stop_request.get("signal") or signal.SIGTERM))
+
     if best_score == float("-inf"):
         run_eval_and_maybe_save_best(global_step)
 
     save_model(accelerator, model, tokenizer, output_dir / "final")
+    _write_training_complete(
+        accelerator=accelerator,
+        output_dir=output_dir,
+        train_cfg=train_cfg,
+        global_step=global_step,
+        best_score=best_score,
+        active_logger=active_logger,
+    )
     _end_training_after_final_checkpoint(accelerator, output_dir, active_logger)
 
 

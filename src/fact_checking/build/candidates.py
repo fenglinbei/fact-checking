@@ -412,6 +412,255 @@ def _select_candidates_from_chunk_sample(
     }
 
 
+def _rank_mmr_candidates_from_chunk_sample(
+    sample: ChunkMMRSample,
+    candidate_pool_k: int,
+    alpha_dense: float,
+    alpha_lexical: float,
+    alpha_bm25: float,
+    mmr_lambda: float,
+) -> tuple[list[dict[str, Any]], int]:
+    """Return unique candidates in MMR selection order, enriched with score fields."""
+    scored = compute_hybrid_scores(sample, alpha_dense, alpha_lexical, alpha_bm25)
+    n = int(scored["n"])
+    if n == 0:
+        return [], 0
+
+    chunk_emb = scored["chunk_emb"]
+    dense_scores = scored["dense_scores"]
+    lexical_scores = scored["lexical_scores"]
+    bm25_scores = scored["bm25_scores"]
+    hybrid_scores = scored["hybrid_scores"]
+
+    keep_indices = maximal_marginal_relevance(
+        query_scores=hybrid_scores,
+        sentence_vectors=chunk_emb,
+        top_k=min(max(1, int(candidate_pool_k)), n),
+        lambda_weight=mmr_lambda,
+    )
+
+    ranked: list[dict[str, Any]] = []
+    seen_texts: set[str] = set()
+    for mmr_rank, idx_raw in enumerate(keep_indices, start=1):
+        idx = int(idx_raw)
+        candidate = dict(sample.candidates[idx])
+        dedup_key = canonicalize_sentence(str(candidate.get("text", "")))
+        if dedup_key and dedup_key in seen_texts:
+            continue
+        if dedup_key:
+            seen_texts.add(dedup_key)
+        candidate.update({
+            "dense_score": float(dense_scores[idx]),
+            "lexical_score": float(lexical_scores[idx]),
+            "bm25_score": float(bm25_scores[idx]),
+            "hybrid_score": float(hybrid_scores[idx]),
+            "source_candidate_index": idx,
+            "mmr_rank": mmr_rank,
+        })
+        ranked.append(candidate)
+    return ranked, n
+
+
+def _resolve_prompt_budget_reference_path(reference: str | Path, split_name: str) -> Path:
+    raw = str(reference or "").strip()
+    if not raw:
+        raise ValueError(
+            "build.retrieval.prompt_budget.reference_build_dir is required for "
+            "selection_method=mmr_prompt_budget."
+        )
+    if "{split}" in raw:
+        return Path(raw.format(split=split_name))
+
+    path = Path(raw)
+    if path.is_file():
+        return path
+    if path.is_dir():
+        direct = path / f"build_{split_name}.jsonl"
+        if direct.exists():
+            return direct
+        nested = path / "build" / f"build_{split_name}.jsonl"
+        if nested.exists():
+            return nested
+    if path.suffix == ".jsonl":
+        return path
+    return path / f"build_{split_name}.jsonl"
+
+
+def _load_prompt_budget_targets(
+    prompt_budget_cfg: dict[str, Any],
+    split_name: str,
+) -> tuple[dict[str, int], Path]:
+    reference = (
+        prompt_budget_cfg.get("reference_build_dir")
+        or prompt_budget_cfg.get("reference_path")
+        or prompt_budget_cfg.get("reference")
+        or ""
+    )
+    reference_path = _resolve_prompt_budget_reference_path(reference, split_name)
+    if not reference_path.exists():
+        raise FileNotFoundError(f"Prompt-budget reference build file not found: {reference_path}")
+
+    id_field = str(prompt_budget_cfg.get("id_field", "event_id"))
+    target_field = str(prompt_budget_cfg.get("target_field", "prompt_token_count"))
+    targets: dict[str, int] = {}
+    for row in load_jsonl(reference_path):
+        event_id = str(row.get(id_field) or "").strip()
+        if not event_id:
+            continue
+        raw_target = row.get(target_field)
+        if raw_target is None:
+            raise ValueError(f"Reference row for event_id={event_id!r} is missing {target_field!r}.")
+        targets[event_id] = int(raw_target)
+    if not targets:
+        raise ValueError(f"No prompt-budget targets loaded from {reference_path}.")
+    return targets, reference_path
+
+
+def _trial_prompt_budget_row(
+    sample: ChunkMMRSample,
+    candidates: list[dict[str, Any]],
+    tokenizer,
+    prompt_cfg: dict[str, Any],
+) -> dict[str, Any]:
+    return build_training_row(
+        {
+            "event_id": sample.event_id,
+            "claim": sample.claim,
+            "label": sample.label,
+            "explain": sample.explain,
+            "candidates": candidates,
+            "selection_method": "mmr_prompt_budget",
+        },
+        tokenizer,
+        prompt_cfg,
+    )
+
+
+def _select_candidates_prompt_budget_mmr(
+    sample: ChunkMMRSample,
+    prompt_budget_targets: dict[str, int],
+    prompt_budget_cfg: dict[str, Any],
+    tokenizer,
+    prompt_cfg: dict[str, Any],
+    reference_path: Path,
+    top_k: int,
+    alpha_dense: float,
+    alpha_lexical: float,
+    alpha_bm25: float,
+    mmr_lambda: float,
+) -> dict[str, Any]:
+    candidate_pool_k = int(prompt_budget_cfg.get("candidate_pool_k", prompt_budget_cfg.get("pool_k", max(top_k, 32))))
+    min_k = max(0, int(prompt_budget_cfg.get("min_k", top_k)))
+    max_k = max(min_k, int(prompt_budget_cfg.get("max_k", candidate_pool_k)))
+    overshoot_tolerance = max(0, int(prompt_budget_cfg.get("overshoot_tolerance_tokens", 32)))
+    missing_policy = str(prompt_budget_cfg.get("missing_reference", "error")).strip().lower()
+
+    ranked, raw_candidate_count = _rank_mmr_candidates_from_chunk_sample(
+        sample,
+        candidate_pool_k=candidate_pool_k,
+        alpha_dense=alpha_dense,
+        alpha_lexical=alpha_lexical,
+        alpha_bm25=alpha_bm25,
+        mmr_lambda=mmr_lambda,
+    )
+
+    event_id = str(sample.event_id)
+    target_tokens = prompt_budget_targets.get(event_id)
+    if target_tokens is None:
+        if missing_policy == "prompt_max_length":
+            target_tokens = int(prompt_cfg.get("max_length", 2048))
+        elif missing_policy == "top_k":
+            selected = ranked[: min(max(1, top_k), len(ranked))]
+            selected_tokens = int(
+                _trial_prompt_budget_row(sample, selected, tokenizer, prompt_cfg).get("prompt_token_count", 0)
+            ) if selected else 0
+            return {
+                "event_id": sample.event_id,
+                "claim": sample.claim,
+                "label": sample.label,
+                "explain": sample.explain,
+                "candidates": selected,
+                "selection_method": "mmr_prompt_budget",
+                "prompt_budget_reference_path": str(reference_path),
+                "prompt_budget_target_tokens": 0,
+                "prompt_budget_selected_tokens": selected_tokens,
+                "prompt_budget_delta_tokens": selected_tokens,
+                "prompt_budget_min_k": min_k,
+                "prompt_budget_max_k": max_k,
+                "prompt_budget_candidate_pool_k": candidate_pool_k,
+                "prompt_budget_ranked_count": len(ranked),
+                "prompt_budget_overshoot_tolerance_tokens": overshoot_tolerance,
+                "prompt_budget_missing_policy": missing_policy,
+                "prompt_budget_raw_candidate_count": raw_candidate_count,
+            }
+        else:
+            raise KeyError(
+                f"Prompt-budget reference {reference_path} has no target for event_id={event_id!r}. "
+                "Set build.retrieval.prompt_budget.missing_reference=top_k or prompt_max_length "
+                "to allow fallback."
+            )
+
+    target_tokens = int(target_tokens)
+    max_eval_k = min(max_k, len(ranked))
+    effective_min_k = min(min_k, max_eval_k) if max_eval_k > 0 else 0
+
+    trials: list[dict[str, Any]] = []
+    if max_eval_k == 0:
+        selected: list[dict[str, Any]] = []
+        selected_tokens = 0
+    else:
+        start_k = 0 if effective_min_k == 0 else 1
+        for k in range(start_k, max_eval_k + 1):
+            trial_candidates = ranked[:k]
+            trial_row = _trial_prompt_budget_row(sample, trial_candidates, tokenizer, prompt_cfg)
+            trials.append({
+                "k": k,
+                "prompt_token_count": int(trial_row.get("prompt_token_count", 0)),
+                "was_truncated": bool(trial_row.get("was_truncated", False)),
+            })
+
+        eligible = [
+            trial
+            for trial in trials
+            if int(trial["k"]) >= effective_min_k
+            and int(trial["prompt_token_count"]) <= target_tokens + overshoot_tolerance
+        ]
+        if not eligible:
+            eligible = [trial for trial in trials if int(trial["k"]) >= effective_min_k] or trials
+
+        best = min(
+            eligible,
+            key=lambda trial: (
+                abs(int(trial["prompt_token_count"]) - target_tokens),
+                int(trial["prompt_token_count"]) > target_tokens,
+                -int(trial["k"]),
+            ),
+        )
+        best_k = int(best["k"])
+        selected = ranked[:best_k]
+        selected_tokens = int(best["prompt_token_count"])
+
+    return {
+        "event_id": sample.event_id,
+        "claim": sample.claim,
+        "label": sample.label,
+        "explain": sample.explain,
+        "candidates": selected,
+        "selection_method": "mmr_prompt_budget",
+        "prompt_budget_reference_path": str(reference_path),
+        "prompt_budget_target_tokens": target_tokens,
+        "prompt_budget_selected_tokens": selected_tokens,
+        "prompt_budget_delta_tokens": selected_tokens - target_tokens,
+        "prompt_budget_min_k": min_k,
+        "prompt_budget_max_k": max_k,
+        "prompt_budget_candidate_pool_k": candidate_pool_k,
+        "prompt_budget_ranked_count": len(ranked),
+        "prompt_budget_overshoot_tolerance_tokens": overshoot_tolerance,
+        "prompt_budget_missing_policy": missing_policy,
+        "prompt_budget_raw_candidate_count": raw_candidate_count,
+    }
+
+
 def _select_candidates_reranker(
     sample: ChunkMMRSample,
     reranker: CrossEncoderReranker,
@@ -817,6 +1066,47 @@ def _mmr_phase_from_chunk_cache(
                 writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
 
 
+def _prompt_budget_mmr_phase_from_chunk_cache(
+    chunk_samples: list[ChunkMMRSample],
+    prompt_budget_targets: dict[str, int],
+    prompt_budget_cfg: dict[str, Any],
+    reference_path: Path,
+    mmr_lambda: float,
+    top_k: int,
+    alpha_dense: float,
+    alpha_lexical: float,
+    alpha_bm25: float,
+    tokenizer,
+    prompt_cfg: dict[str, Any],
+    output_path: Path,
+    show_progress: bool = False,
+    progress_desc: str | None = None,
+) -> None:
+    with output_path.open("w", encoding="utf-8") as writer:
+        for sample in tqdm(
+            chunk_samples,
+            desc=progress_desc or "MMR prompt-budget",
+            unit="sample",
+            dynamic_ncols=True,
+            disable=not show_progress,
+        ):
+            row = _select_candidates_prompt_budget_mmr(
+                sample=sample,
+                prompt_budget_targets=prompt_budget_targets,
+                prompt_budget_cfg=prompt_budget_cfg,
+                tokenizer=tokenizer,
+                prompt_cfg=prompt_cfg,
+                reference_path=reference_path,
+                top_k=top_k,
+                alpha_dense=alpha_dense,
+                alpha_lexical=alpha_lexical,
+                alpha_bm25=alpha_bm25,
+                mmr_lambda=mmr_lambda,
+            )
+            training_row = build_training_row(row, tokenizer, prompt_cfg)
+            writer.write(json.dumps(training_row, ensure_ascii=False) + "\n")
+
+
 def _reranker_phase_from_chunk_cache(
     chunk_samples: list[ChunkMMRSample],
     reranker: CrossEncoderReranker,
@@ -898,7 +1188,8 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
 
     # ---- Phase 1: pre-MMR cache (GPU embedding, shared across mmr_lambda values) ----
     premmr_fp = premmr_config_fingerprint(cfg)
-    premmr_cache_dir = Path("outputs/cache/pre_mmr") / premmr_fp
+    cache_root = Path(str(cfg.get("cache_root") or "outputs/cache"))
+    premmr_cache_dir = cache_root / "pre_mmr" / premmr_fp
     logger.info("Pre-MMR cache dir: %s (fp=%s)", premmr_cache_dir, premmr_fp)
 
     premmr_summary = {
@@ -928,7 +1219,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
     # ---- Phase 2: chunk cache (GPU embedding, shared across top_k/mmr_lambda values) ----
     logger.info("Build run summary: %s", run_summary)
     chunk_mmr_fp = chunk_mmr_config_fingerprint(cfg)
-    chunk_mmr_cache_dir = Path("outputs/cache/chunk_mmr") / chunk_mmr_fp
+    chunk_mmr_cache_dir = cache_root / "chunk_mmr" / chunk_mmr_fp
     logger.info("Chunk-MMR cache dir: %s (fp=%s)", chunk_mmr_cache_dir, chunk_mmr_fp)
     chunk_mmr_summary = {
         "embedder_model": run_summary["embedder_model"],
@@ -1118,6 +1409,7 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
     use_learned_lambda = bool(learned_lambda_cfg.get("enabled", False))
     learned_lambda_mode = str(learned_lambda_cfg.get("mode", "predictor")).strip().lower()
     raw_top_cfg = dict(retrieval_cfg.get("raw_top_evidence", {}) or {})
+    prompt_budget_cfg = dict(retrieval_cfg.get("prompt_budget", {}) or {})
 
     for split_name in split_names:
         chunk_samples = load_pickle(chunk_mmr_split_paths[split_name])
@@ -1152,6 +1444,33 @@ def run_build(cfg: dict[str, Any], *, output_dir: str | Path | None = None, spli
                 output_path=output_path,
                 show_progress=True,
                 progress_desc=f"Raw top evidence [{split_name}]",
+            )
+        elif selection_method in {"mmr_prompt_budget", "prompt_budget_mmr", "adaptive_budget_mmr"}:
+            prompt_budget_targets, reference_path = _load_prompt_budget_targets(prompt_budget_cfg, split_name)
+            logger.info(
+                "Prompt-budget MMR [%s]: targets=%d reference=%s candidate_pool_k=%s min_k=%s max_k=%s",
+                split_name,
+                len(prompt_budget_targets),
+                reference_path,
+                prompt_budget_cfg.get("candidate_pool_k", prompt_budget_cfg.get("pool_k", max(run_summary["top_k"], 32))),
+                prompt_budget_cfg.get("min_k", run_summary["top_k"]),
+                prompt_budget_cfg.get("max_k", prompt_budget_cfg.get("candidate_pool_k", 32)),
+            )
+            _prompt_budget_mmr_phase_from_chunk_cache(
+                chunk_samples=chunk_samples,
+                prompt_budget_targets=prompt_budget_targets,
+                prompt_budget_cfg=prompt_budget_cfg,
+                reference_path=reference_path,
+                mmr_lambda=run_summary["mmr_lambda"],
+                top_k=run_summary["top_k"],
+                alpha_dense=run_summary["alpha_dense"],
+                alpha_lexical=run_summary["alpha_lexical"],
+                alpha_bm25=run_summary["alpha_bm25"],
+                tokenizer=tokenizer,
+                prompt_cfg=prompt_cfg_local,
+                output_path=output_path,
+                show_progress=True,
+                progress_desc=f"MMR prompt-budget [{split_name}]",
             )
         elif selection_method in {"pointwise_oracle", "oracle_pointwise", "pointwise"}:
             from fact_checking.oracle_pointwise import select_candidates_pointwise_oracle

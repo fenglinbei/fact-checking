@@ -50,7 +50,7 @@ def main() -> None:
 
     model_path = str(context.checkpoint_dir)
     tokenizer_path = str(context.checkpoint_dir)
-    if context.is_peft_adapter and not (context.checkpoint_dir / "tokenizer_config.json").exists():
+    if context.is_peft_adapter:
         tokenizer_path = context.model_name_or_path
     llm_kwargs = {}
     lora_request = None

@@ -146,6 +146,17 @@ require_path() {
   fi
 }
 
+checkpoint_dir_complete() {
+  local path="$1"
+  [[ -f "${path}/config.json" || -f "${path}/adapter_config.json" ]]
+}
+
+train_case_complete() {
+  local train_dir="$1"
+  [[ -f "${train_dir}/training_complete.json" ]] && return 0
+  checkpoint_dir_complete "${train_dir}/final"
+}
+
 resolve_train_run_dir() {
   local train_root="$1"
   local checkpoint="$2"
@@ -400,9 +411,16 @@ train_case() {
     echo "[selector-trace-full] skip train case=${label} RUN_TRAIN=${RUN_TRAIN}"
     return 0
   fi
-  if [[ "${FORCE_TRAIN}" != "true" && -d "${train_dir}/best" ]]; then
-    echo "[selector-trace-full] reuse train case=${label} checkpoint=${train_dir}/best"
-    return 0
+  if [[ "${FORCE_TRAIN}" != "true" ]]; then
+    if train_case_complete "${train_dir}" && checkpoint_dir_complete "${train_dir}/best"; then
+      echo "[selector-trace-full] reuse completed train case=${label} checkpoint=${train_dir}/best"
+      return 0
+    fi
+    if [[ -f "${train_dir}/latest_state/trainer_state.json" ]]; then
+      echo "[selector-trace-full] resume train case=${label} state=${train_dir}/latest_state"
+    elif [[ -d "${train_dir}/best" ]]; then
+      echo "[selector-trace-full] found best without final/latest_state; retrain case=${label} dir=${train_dir}"
+    fi
   fi
 
   local cmd=()

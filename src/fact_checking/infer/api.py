@@ -937,7 +937,7 @@ def _ensure_vllm_server(
         merged_dir, cleanup_merged_dir = _merge_lora_for_inference(
             base_model=context.model_name_or_path,
             adapter_dir=context.checkpoint_dir,
-            tokenizer_dir=context.checkpoint_dir,
+            tokenizer_dir=context.model_name_or_path,
             infer_cfg=infer_cfg,
         )
 

@@ -12,7 +12,7 @@ lexical overlap
 BM25-like score
 ```
 
-这三类信号并不是最终都进入主方法。我们基于 full-pool oracle evidence 做 candidate-pool recall 消融后发现，dense-only 在固定候选池预算下最稳定；lexical overlap 与 BM25-like 线性混入后没有带来一致的 oracle recall 提升，部分设置下反而引入噪声。因此最终主方法采用 dense-only relevance score：
+这三类信号并不是都必须进入主方法。我们基于 full-pool oracle evidence 做 candidate-pool recall 消融后发现，dense-only 在固定候选池预算下最稳定；lexical overlap 与 BM25-like 线性混入后没有带来一致的 oracle recall 提升，部分设置下反而引入噪声。因此，如果按候选池覆盖质量选择前期检索策略，当前 dense-only 方案使用如下 relevance score：
 
 $$s(e, c) = s_{\mathrm{dense}}(e, c)$$
 
@@ -27,21 +27,53 @@ $$s(e, c) = s_{\mathrm{dense}}(e, c)$$
 解答：
 1. Candidate Evidence Retrieval是作为证据选择器的前置筛选器使用，尽管数据集已经为每条claim提供了其相关的原始report，但是其为粗粒度证据，若直接喂给evidence selector，会直接导致两个后果：(1) 检索得到的语义较粗，对于判别器来说噪声大于有用信息; (2) 大段文本占用大量的prompt空间，不仅导致训练推理成本上升，同时噪声淹没了有用证据导致性能下降，为此本文还做了补充实验，我们定义一个证据单元，该单元用于检索以及充当后续的构图节点，我们测试三种粒度的证据单元，分别为：(1) 粗粒度：原始report文档作为证据单元；(2)中粒度：语义段，即根据report中两两句子的相似度决定是否断句，证据单元为多句子级；(3) 细粒度(当前使用): 把report按句子切分，证据单元为句子级。
 2. dense similarity：使用BAAI/bge-base-en-v1.5作为基础embedding模型，dense similarity分数由claim与证据单元的embedding余弦相似度得到，负责捕捉语义近似、改写、同义表达；lexical overlap：根据英文规则将文本分词，然后统计 claim 与 evidence 的内容词重叠。分数是 overlap F1：既看 evidence 中有多少词命中 claim，也看 claim 中有多少核心词被 evidence 覆盖；BM25-like score：基于同一套内容词 token counter，但对 query term 在 evidence 中的出现频次做 BM25 风格的 TF 饱和和长度归一化。三类信号的评估动机是检验 sparse exact-match 线索是否能补足 dense retrieval 对实体、数字、政策名、地点、人名等硬约束的不足。
-3. 最终采用 dense-only 的原因是实验结果不支持三路线性加权作为主方法。我们在 full deduplicated evidence pool 上先搜索 oracle evidence，再用 dense-only、lexical-only、BM25-like-only、dense+sparse、equal 3-way 和 0.70/0.20/0.10 hybrid 等候选检索方式构建同等大小的 candidate pool，并比较这些候选池对 full-pool oracle evidence 的 recall。结果显示 dense-only 在 val/test 上整体最稳；lexical overlap 与 BM25-like 单独使用明显弱于 dense-only，线性混入后也没有稳定提升 candidate-pool recall。因此论文中不再将 sparse 信号表述为主方法的有效组成，而是将其作为被检验但未采用的检索信号消融。主方法采用 dense-only，是由 full-pool oracle recall 实验选择出的保守方案，而不是拍脑袋指定的权重。
+3. 从 candidate-pool recall 角度选择 dense-only 的原因是实验结果不支持三路线性加权作为主方法。我们在 full deduplicated evidence pool 上先搜索 oracle evidence，再用 dense-only、lexical-only、BM25-like-only、dense+sparse、equal 3-way 和 0.70/0.20/0.10 hybrid 等候选检索方式构建同等大小的 candidate pool，并比较这些候选池对 full-pool oracle evidence 的 recall。结果显示 dense-only 在 val/test 上整体最稳；lexical overlap 与 BM25-like 单独使用明显弱于 dense-only，线性混入后也没有稳定提升 candidate-pool recall。因此论文中不再将 sparse 信号表述为主方法的有效组成，而是将其作为被检验但未采用的检索信号消融。若主文采用 dense-only，它的依据是 full-pool oracle recall 实验，而不是拍脑袋指定的权重；但下游 verifier test 指标仍需单独报告，不能由 candidate-pool recall 直接推出。
 4. BM25-like 不是标准 BM25。标准 BM25 需要 corpus-level document frequency / IDF 和真实语料平均文档长度；当前实现只在本地 content-token counter 上使用 BM25 风格的 TF 饱和与长度归一化，并使用固定的 `avgdl=18.0` 与启发式 IDF。因此它应被称为 BM25-like score，而不是完整 BM25 ranker。
 
-### 要补充的实验证明
+### dense-only 与 hybrid 的方法对照
 
-在固定候选池预算下，前期检索是否更稳定地把有用证据放进后续 selector 可见范围。
+我们在 RAW-FC 上对 Llama3.1-8B-Instruct 和 Qwen3-4B-Instruct-2507 的 FullFT verifier 做 dense-only 与原 hybrid retrieval 的配对比较。下游指标只报告 test Accuracy、Macro-Precision、Macro-Recall 和 Macro-F1：
 
-当前已完成的 Qwen3-4B full-pool oracle candidate-pool recall 结果显示，dense-only 是更稳的候选池构建方式。MMR λ=0.70、top-32 时：
+| model | variant | test acc | macro P | macro R | macro F1 |
+|---|---|---:|---:|---:|---:|
+| Llama3.1-8B FullFT | dense-only | 0.6550 | 0.6681 | 0.6549 | 0.6582 |
+| Llama3.1-8B FullFT | hybrid | 0.6700 | 0.6771 | 0.6702 | 0.6723 |
+| Qwen3-4B-2507 FullFT | dense-only | 0.6450 | 0.6504 | 0.6452 | 0.6474 |
+| Qwen3-4B-2507 FullFT | hybrid | 0.6700 | 0.6738 | 0.6704 | 0.6711 |
 
-| split | dense-only recall@32 | full hybrid recall@32 | dense-only hit@32 | full hybrid hit@32 |
-|---|---:|---:|---:|---:|
-| val | 0.9220 | 0.9240 | 0.9900 | 0.9850 |
-| test | 0.9060 | 0.9010 | 0.9900 | 0.9850 |
+paired bootstrap 按 `sample_idx` 对齐 test predictions，重采样 10,000 次。下表中 `delta = dense-only - hybrid`；负值表示 hybrid 点估计更高，正值表示 dense-only 点估计更高。`P(delta > 0)` 是 bootstrap 样本中 dense-only 优于 hybrid 的比例，`two-sided p` 由两侧符号概率估计。
 
-解释方式：val 上 full hybrid 的 recall 与 dense-only 非常接近，但 hit rate 略低；test 上 dense-only 在 recall 和 hit rate 上均更好。因此不能声称 sparse 线性加权稳定提升前期检索。更合适的论文表述是：我们系统评估了 dense、lexical、BM25-like 及其组合，发现 dense-only 在 full-pool oracle recall 上最稳定，因此主方法采用 dense-only；sparse 信号仅作为诊断性消融保留。
+| model | metric | delta | 95% paired bootstrap CI | P(delta > 0) | two-sided p | interpretation |
+|---|---|---:|---:|---:|---:|---|
+| Llama3.1-8B FullFT | accuracy | -0.0150 | [-0.0800, +0.0500] | 0.301 | 0.602 | not significant |
+| Llama3.1-8B FullFT | macro_precision | -0.0090 | [-0.0757, +0.0578] | 0.390 | 0.779 | not significant |
+| Llama3.1-8B FullFT | macro_recall | -0.0153 | [-0.0812, +0.0503] | 0.325 | 0.650 | not significant |
+| Llama3.1-8B FullFT | macro_f1 | -0.0141 | [-0.0803, +0.0516] | 0.336 | 0.671 | not significant |
+| Qwen3-4B-2507 FullFT | accuracy | -0.0250 | [-0.0750, +0.0250] | 0.144 | 0.289 | not significant |
+| Qwen3-4B-2507 FullFT | macro_precision | -0.0234 | [-0.0772, +0.0298] | 0.198 | 0.395 | not significant |
+| Qwen3-4B-2507 FullFT | macro_recall | -0.0252 | [-0.0752, +0.0240] | 0.163 | 0.326 | not significant |
+| Qwen3-4B-2507 FullFT | macro_f1 | -0.0237 | [-0.0747, +0.0262] | 0.184 | 0.367 | not significant |
+
+证据集合确实被 retrieval variant 改变，而不是同一证据上的随机训练波动：
+
+| model | evidence changed | avg evidence Jaccard | prediction changed | both correct | dense-only correct only | hybrid correct only | both wrong |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Llama3.1-8B FullFT | 183/200 (91.5%) | 0.6873 | 51/200 (25.5%) | 110 | 21 | 24 | 45 |
+| Qwen3-4B-2507 FullFT | 183/200 (91.5%) | 0.6873 | 31/200 (15.5%) | 118 | 11 | 16 | 55 |
+
+结论表述应保持谨慎：
+1. dense-only 与 hybrid 会显著改变 evidence set；RAW-FC test 上 91.5% 的样本证据集合或顺序发生变化，平均 Jaccard 约 0.687。
+2. 证据变化进一步造成部分 prediction flip，但收益和损失是混合的。Llama 上 dense-only 独有判对 21 条、hybrid 独有判对 24 条；Qwen 上 dense-only 独有判对 11 条、hybrid 独有判对 16 条。
+3. test 点估计在两个模型的 Accuracy、Macro-Precision、Macro-Recall 和 Macro-F1 上都偏向 hybrid；其中 Llama 的 dense-only macro-F1 低 1.41 个点，Qwen 的 dense-only macro-F1 低 2.37 个点。
+4. paired bootstrap CI 均覆盖 0，two-sided p 均未达到常用显著性阈值，因此不能写成 hybrid 显著优于 dense-only；更稳妥的说法是：RAW-FC 下游结果不支持 dense-only 带来稳定 verifier 性能提升，点估计更偏向原 hybrid retrieval。
+5. 如果正文篇幅有限，该分析适合放入附录，用来限定主文中的 retrieval 结论：dense-only 的依据是 full-pool oracle recall 与候选池稳定性，而不是 end-to-end verifier 指标显著更高。若最终主实验以 verifier test metric 为最高优先级，则 RAW-FC 上原 hybrid retrieval 目前更稳。
+
+
+### 不同chunking方式的比较
+
+为了说明不同chunking方式对方法判断结果的真实影响
+我们在 RAW-FC 上对 Qwen3-4B-Instruct-2507 的 LoRA verifier 做不同chunking 的指标比较，由于chunking策略不一致，后续的map selector不使用，
+因此我们采用w/o map selector策略，仅依赖hybrid score选top5作为证据集，其他设置与文中主方法设置一致
 
 # 关于Question Decomposition Retrieval and Union
 
@@ -98,3 +130,60 @@ Union candidate pool
     ->
 Evidence Map Construction
 ```
+
+### API / open-weight LLM 表述与验证口径
+
+需要解答：
+1. QD 由 DeepSeek-V4-Flash API 生成，是否会被审稿人理解为依赖闭源黑箱
+2. 如何证明这些 generated verification questions 对候选证据召回和最终 verifier 有用
+3. 如何证明 API 生成的问题与人类核查思路对齐
+
+处理方式：
+1. 不再写成 `closed-source API`。更准确的表述应为：`an open-weight / open-source LLM accessed through a hosted API`。也就是说，DeepSeek-V4-Flash 本身应作为开源或 open-weight teacher model 表述；真正需要控制的是 hosted API 带来的 endpoint drift、服务端推理实现差异和 generation reproducibility，而不是模型权重不可见。
+2. 在方法部分将 QD 定位为 `synthetic retrieval-query generation` 或 `verification-question guided retrieval expansion`，而不是 human rationale 或 gold decomposition。QD 的输出只用于扩展检索 route，不直接作为最终 label、rationale gold 或 verifier prompt 中的事实依据。
+3. 在 reproducibility 部分记录并释放以下信息：model id、API provider、调用日期、prompt version、JSON schema、temperature / top_p / max_tokens、retry / parse policy、question cache fingerprint、生成后的 `questions_<split>.jsonl` 和 `union_candidate_pool_<split>.jsonl`。论文中应说明 API 只是调用方式，核心实验以缓存后的中间产物和固定代码路径复现。
+4. 在 limitation 中保留一句谨慎表述：虽然 teacher model 是 open-weight / open-source，但 hosted API 仍可能随时间发生行为漂移；因此所有 QD 相关结论都通过候选池召回、下游消融和人工抽样验证支撑，而不是把 API 输出当作不可质疑的标注。
+
+### QD 有用性的实验设计
+
+主张边界：
+QD 不是最终 evidence selector，也不应声称它直接选出的 top-k 一定优于 claim-level MMR。它要证明的是：在固定候选池预算下，verification-question routes 能把更多潜在有效证据带入 evidence-map / graph selector 的可见范围。
+
+建议报告的对比：
+
+| setting | 目的 |
+|---|---|
+| claim-MMR only | 无 QD 的前期检索 baseline |
+| QD only | 检查 question routes 本身的召回能力 |
+| claim-MMR + QD union | 当前完整候选池 |
+| random / paraphrase questions | 排除收益只是来自“多检索几轮” |
+| human-written questions | 人类 QD 上界或对齐参照 |
+
+建议指标：
+1. candidate-pool 层面：`oracle_pool_recall@20`、`any_oracle_hit@20`、`all_oracle_hit@20`、`QD-only rescued oracle evidence rate`。
+2. selector 层面：最终 evidence chain 中 `qd-only`、`baseline+qd`、`baseline-only` 证据占比，以及各来源证据的 oracle overlap / atom coverage。
+3. verifier 层面：在相同 evidence-map / graph / verifier 设置下比较 Accuracy、Macro-F1、class-wise F1，并对关键差距做 paired bootstrap。
+4. 消融解释：如果 QD only top-k 不强，但 union pool recall 明显提升，则应写成“QD improves candidate coverage for downstream structured selection”，而不是“QD itself is a better selector”。
+
+最终论文主表应优先使用与最终 dense-only retrieval 设置一致的 QD rerun artifact。历史 QD artifact 可作为 sanity check，但如果其 `hybrid_score` 实际来自早期 dense+lexical+BM25-like 配置，不应直接混入主结论表。
+
+### 与人类核查问题的对齐评估
+
+QD 与人类结果对齐不能用 exact string match 评估，因为同一核查意图可以有多种自然语言问法。建议用 facet-level / utility-level 对齐：
+
+1. 抽取 100-200 个 claim，按 label、claim 长度、实体/数字/时间/比较/归因复杂度分层。
+2. 由两名以上人工标注者写出每个 claim 需要核查的 verification facets 或 retrieval questions，并标注 focus 类型：`overall`、`entity`、`quantity`、`time`、`comparison`、`causal`、`attribution`、`policy`、`other`。
+3. 将 API QD 与 human QD 映射到同一 facet schema，计算 facet precision / recall / F1、question count agreement、focus distribution agreement、redundancy rate、vague-question rate、unsupported-facet / hallucinated-facet rate。
+4. 用 human-written questions 跑同一套 `QDRetrieve`，与 API QD、claim-MMR only、random questions 比较候选池 oracle recall 和下游 verifier 指标。若 API QD 接近 human QD，则说明 API 生成与人类核查思路足够对齐；若 human QD 显著更强，则应把 API QD 写为可替换的自动近似模块，并在 limitation 中承认仍有改进空间。
+5. 对人工评分报告 inter-annotator agreement，例如 Cohen's kappa 或 Krippendorff's alpha；对主观评分可报告平均分和置信区间，维度包括 necessity、specificity、coverage、non-redundancy、no outside facts。
+
+### 同类 API-generated intermediate data 的论文处理方式
+
+在相关使用 LLM API 生成中间数据或 synthetic supervision 的论文中，通常不会把生成结果包装成人类标注，而是采用如下处理：
+1. 明确披露 teacher model、API provider、prompt、decoding 参数和生成时间。
+2. 释放生成后的数据缓存、过滤脚本和 schema validator，使实验不依赖未来重新调用同一个 API endpoint。
+3. 将生成数据称为 synthetic / weak supervision / teacher-generated intermediate representation。
+4. 加入人工抽样验证、规则过滤、去重、invalid JSON / schema violation 统计。
+5. 做 no-LLM、random、human upper-bound 或不同 teacher model 的对照实验。
+
+因此本文的稳妥写法是：DeepSeek-V4-Flash 不是闭源黑箱 teacher；它是 open-weight / open-source teacher model，但 QD 仍属于 LLM-generated intermediate retrieval queries。论文需要证明的是这些 queries 在候选召回、下游选择和人工 facet 对齐上有效，而不是仅凭模型开源身份假定其生成结果可靠。

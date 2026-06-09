@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 
 import numpy as np
 
@@ -12,8 +13,11 @@ from fact_checking.build.candidates import (
     _chunk_mmr_config_fingerprint,
     _compute_chunk_mmr_batch,
     _premmr_config_fingerprint,
+    _rank_mmr_candidates_from_chunk_sample,
     _select_candidates_from_chunk_sample,
+    _select_candidates_prompt_budget_mmr,
     _select_candidates_raw_top_evidence,
+    _trial_prompt_budget_row,
 )
 from fact_checking.data.io import iter_sentences
 from fact_checking.data.types import SampleRecord
@@ -391,3 +395,74 @@ def test_auto_truncate_evidence_trims_single_long_evidence_item() -> None:
     assert result["overflow_after"] is False
     assert result["prompt_token_count"] <= 120 - result["target_token_count"]
     assert "evidence_token_199" not in result["prompt"]
+
+
+def test_prompt_budget_mmr_matches_reference_prompt_tokens() -> None:
+    tokenizer = _FakeTokenizer()
+    sample = ChunkMMRSample(
+        event_id="evt-budget",
+        claim="budget claim",
+        label="true",
+        explain="",
+        candidates=[
+            {"text": "alpha evidence"},
+            {"text": "beta evidence extra"},
+            {"text": "gamma evidence extra extra"},
+            {"text": "delta evidence extra extra extra"},
+        ],
+        chunk_emb=np.array(
+            [
+                [1.0, 0.0],
+                [0.9, 0.0],
+                [0.8, 0.0],
+                [0.7, 0.0],
+            ],
+            dtype=np.float32,
+        ),
+        claim_emb=np.array([1.0, 0.0], dtype=np.float32),
+    )
+    prompt_cfg = {
+        "auto_length": True,
+        "max_length": 256,
+        "output_mode": "label_only",
+        "label_format": "letter",
+        "label_schema": "rawfc3",
+        "system_prompt": "system prompt",
+    }
+    ranked, _ = _rank_mmr_candidates_from_chunk_sample(
+        sample,
+        candidate_pool_k=4,
+        alpha_dense=1.0,
+        alpha_lexical=0.0,
+        alpha_bm25=0.0,
+        mmr_lambda=1.0,
+    )
+    target_tokens = int(_trial_prompt_budget_row(sample, ranked[:3], tokenizer, prompt_cfg)["prompt_token_count"])
+
+    row = _select_candidates_prompt_budget_mmr(
+        sample=sample,
+        prompt_budget_targets={"evt-budget": target_tokens},
+        prompt_budget_cfg={
+            "candidate_pool_k": 4,
+            "min_k": 1,
+            "max_k": 4,
+            "overshoot_tolerance_tokens": 0,
+        },
+        tokenizer=tokenizer,
+        prompt_cfg=prompt_cfg,
+        reference_path=Path("reference/build_test.jsonl"),
+        top_k=1,
+        alpha_dense=1.0,
+        alpha_lexical=0.0,
+        alpha_bm25=0.0,
+        mmr_lambda=1.0,
+    )
+
+    assert [candidate["text"] for candidate in row["candidates"]] == [
+        "alpha evidence",
+        "beta evidence extra",
+        "gamma evidence extra extra",
+    ]
+    assert row["prompt_budget_target_tokens"] == target_tokens
+    assert row["prompt_budget_selected_tokens"] == target_tokens
+    assert row["prompt_budget_delta_tokens"] == 0
