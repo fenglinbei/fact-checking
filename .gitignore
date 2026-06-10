@@ -221,6 +221,7 @@ __marimo__/
 # Dataset
 data/raw/LIAR-RAW/
 data/raw/RAWFC/
+data/processed/coverage/
 
 # models
 *.pt

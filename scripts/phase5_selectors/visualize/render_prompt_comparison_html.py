@@ -14,7 +14,23 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from fact_checking.utils.io import read_json, read_jsonl
+try:
+    from fact_checking.utils.io import read_json, read_jsonl
+except ModuleNotFoundError as exc:
+    if exc.name != "yaml":
+        raise
+
+    def read_json(path: str | Path) -> dict[str, Any]:
+        with Path(path).open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        with Path(path).open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    rows.append(json.loads(line))
+        return rows
 
 
 DEFAULT_DIAGNOSTIC_DIR = "outputs/selectors/evidence_map_selector/v0_5c_val_prompt_evidence_diagnostic"

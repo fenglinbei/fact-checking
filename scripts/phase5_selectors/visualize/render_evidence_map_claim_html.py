@@ -23,7 +23,29 @@ if str(SRC_ROOT) not in sys.path:
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from fact_checking.utils.io import read_json, read_jsonl, save_json
+try:
+    from fact_checking.utils.io import read_json, read_jsonl, save_json
+except ModuleNotFoundError as exc:
+    if exc.name != "yaml":
+        raise
+
+    def read_json(path: str | Path) -> dict[str, Any]:
+        with Path(path).open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        with Path(path).open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    rows.append(json.loads(line))
+        return rows
+
+    def save_json(payload: dict[str, Any], path: str | Path) -> None:
+        out = Path(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
 import render_prompt_comparison_html as prompt_compare
 
 
