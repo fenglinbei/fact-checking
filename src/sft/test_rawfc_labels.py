@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from sft.eval import build_eval_metrics
 from sft.eval import deduplicate_by_sample_idx
-from sft.label_token_trainer import _compute_label_token_losses, _selection_score
+from sft.label_token_trainer import _apply_label_logit_adjust, _compute_label_token_losses, _selection_score
 from sft.metrics import _build_confusion_matrix
 from sft.parser import _parse_label_id
 
@@ -93,6 +93,27 @@ def test_ordinal_loss_disabled_matches_weighted_cross_entropy() -> None:
     assert torch.allclose(losses["loss"], expected)
     assert torch.allclose(losses["ce_loss"], expected)
     assert float(losses["ordinal_loss"]) == 0.0
+
+
+def test_label_logit_adjust_changes_prediction_logits_only() -> None:
+    logits = torch.tensor([[1.0, 2.0]], dtype=torch.float32)
+    logit_adjust_cfg = {
+        "enabled": True,
+        "tau": 1.0,
+        "log_priors": [float(np.log(0.05)), float(np.log(0.95))],
+    }
+
+    adjusted = _apply_label_logit_adjust(logits, logit_adjust_cfg)
+
+    assert int(adjusted.argmax(dim=-1).item()) == 0
+    losses = _compute_label_token_losses(
+        label_logits=logits,
+        gold_ids=torch.tensor([1], dtype=torch.long),
+        class_weights=torch.ones(2, dtype=torch.float32),
+        train_cfg={"label_token_ce": {"ordinal_loss": {"enabled": False}}},
+    )
+    expected = F.cross_entropy(logits, torch.tensor([1], dtype=torch.long))
+    assert torch.allclose(losses["loss"], expected)
 
 
 def test_ordinal_loss_penalizes_farther_label_probability_more() -> None:

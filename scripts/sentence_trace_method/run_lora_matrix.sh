@@ -36,6 +36,9 @@ SFT_GRADIENT_ACCUMULATION_STEPS="${SFT_GRADIENT_ACCUMULATION_STEPS:-}"
 SFT_NUM_TRAIN_EPOCHS="${SFT_NUM_TRAIN_EPOCHS:-}"
 SFT_EVAL_STEPS="${SFT_EVAL_STEPS:-}"
 SFT_SAVE_STEPS="${SFT_SAVE_STEPS:-}"
+SFT_EARLY_STOPPING_PATIENCE="${SFT_EARLY_STOPPING_PATIENCE:-}"
+SFT_LOGIT_ADJUST_ENABLED="${SFT_LOGIT_ADJUST_ENABLED:-}"
+SFT_LOGIT_ADJUST_TAU="${SFT_LOGIT_ADJUST_TAU:-}"
 LIAR_CLASS_WEIGHTS="${LIAR_CLASS_WEIGHTS:-}"
 SWANLAB_PROJECT="${SWANLAB_PROJECT:-fact-checking-sentence-trace-method-lora}"
 SAVE_LATEST_TRAIN_STATE="${SAVE_LATEST_TRAIN_STATE:-true}"
@@ -210,6 +213,15 @@ prepare_lora_config() {
   fi
   if [[ -n "$SFT_SAVE_STEPS" ]]; then
     cmd+=(--save-steps "$SFT_SAVE_STEPS")
+  fi
+  if [[ -n "$SFT_EARLY_STOPPING_PATIENCE" ]]; then
+    cmd+=(--early-stopping-patience "$SFT_EARLY_STOPPING_PATIENCE")
+  fi
+  if [[ -n "$SFT_LOGIT_ADJUST_ENABLED" ]]; then
+    cmd+=(--logit-adjust-enabled "$SFT_LOGIT_ADJUST_ENABLED")
+  fi
+  if [[ -n "$SFT_LOGIT_ADJUST_TAU" ]]; then
+    cmd+=(--logit-adjust-tau "$SFT_LOGIT_ADJUST_TAU")
   fi
   if [[ "$case_name" == liar_raw__* && -n "$LIAR_CLASS_WEIGHTS" ]]; then
     local raw_weight class_weight

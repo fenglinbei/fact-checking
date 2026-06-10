@@ -7,15 +7,19 @@ from argparse import Namespace
 from pathlib import Path
 
 from fact_checking.selectors.evidence_chain_graph import (
+    BUDGETED_MARGINAL_SELECTOR,
     CHAIN_SELECTOR,
     RULE_STEP_CHAIN_SELECTOR,
     SUFFICIENCY_CONTRADICTION_SELECTOR,
+    BudgetedMarginalChainParams,
     EvidenceChainParams,
     RuleStepEvidenceChainParams,
     SufficiencyContradictionEvidenceChainParams,
+    build_budgeted_marginal_chain_graph_row,
     build_evidence_chain_graph_row,
     build_rule_step_evidence_chain_graph_row,
     build_sufficiency_contradiction_evidence_chain_graph_row,
+    budgeted_marginal_chain_selector_name,
     rule_step_chain_selector_name,
 )
 from scripts.phase5_selectors.visualize.render_evidence_chain_graph_html import (
@@ -461,6 +465,141 @@ class EvidenceChainGraphTest(unittest.TestCase):
         self.assertEqual([step["evidence_id"] for step in graph["selection_steps"]], graph["selected_evidence_ids"])
         self.assertTrue(all(0 <= idx < len(pool) for idx in trace["selector_ordered_indices"]))
 
+    def test_budgeted_marginal_new_atom_coverage_beats_high_prior_duplicate(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99, duplicate="G1"),
+                _candidate("E02", atoms=["A1"], relation="support", directness="direct", source="report:2", base=0.98, duplicate="G1"),
+                _candidate("E03", atoms=["A2"], relation="support", directness="direct", source="report:3", base=0.30),
+                _candidate("E04", atoms=["A3"], relation="support", directness="direct", source="report:4", base=0.29),
+            ]
+        )
+
+        graph = build_budgeted_marginal_chain_graph_row(row, params=BudgetedMarginalChainParams(min_top_k=3, max_top_k=3))
+
+        self.assertEqual(graph["selected_evidence_ids"], ["E01", "E03", "E04"])
+        self.assertNotIn("E02", graph["selected_evidence_ids"])
+        self.assertGreater(graph["selection_steps"][1]["component_deltas"]["coverage"], 0.0)
+
+    def test_budgeted_marginal_stops_after_min_when_sufficient_and_low_gain(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99),
+                _candidate("E02", atoms=["A2"], relation="support", directness="direct", source="report:2", base=0.98),
+                _candidate("E03", atoms=["A3"], relation="support", directness="direct", source="report:3", base=0.97),
+                _candidate("E04", atoms=["A1"], relation="support", directness="direct", source="report:4", base=0.96, duplicate="G1"),
+            ]
+        )
+
+        graph = build_budgeted_marginal_chain_graph_row(row, params=BudgetedMarginalChainParams(min_top_k=3, max_top_k=10))
+
+        self.assertEqual(len(graph["selected_evidence_ids"]), 3)
+        self.assertEqual(graph["adaptive_stop_reason"], "sufficient_low_marginal_gain")
+        self.assertGreaterEqual(graph["objective_final_components"]["coverage"], 0.80)
+
+    def test_budgeted_marginal_continues_after_min_when_coverage_is_insufficient(self) -> None:
+        row = _row_with_atoms(
+            [{"atom_id": f"A{i}", "text": f"Atom {i}", "type": "other", "importance": 1.0} for i in range(1, 6)],
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99),
+                _candidate("E02", atoms=["A2"], relation="support", directness="direct", source="report:2", base=0.98),
+                _candidate("E03", atoms=["A3"], relation="support", directness="direct", source="report:3", base=0.97),
+                _candidate("E04", atoms=["A4"], relation="support", directness="direct", source="report:4", base=0.15),
+                _candidate("E05", atoms=["A5"], relation="support", directness="direct", source="report:5", base=0.14),
+            ],
+        )
+
+        graph = build_budgeted_marginal_chain_graph_row(row, params=BudgetedMarginalChainParams(min_top_k=3, max_top_k=10))
+
+        self.assertIn("E04", graph["selected_evidence_ids"][3:])
+        self.assertGreater(graph["selection_steps"][3]["component_deltas"]["coverage"], 0.0)
+        self.assertGreaterEqual(graph["objective_final_components"]["coverage"], 0.80)
+
+    def test_budgeted_marginal_duplicate_penalty_is_soft_but_avoids_duplicate_when_possible(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99, duplicate="G1"),
+                _candidate("E02", atoms=["A1"], relation="support", directness="direct", source="report:2", base=0.98, duplicate="G1"),
+                _candidate("E03", atoms=["A2"], relation="support", directness="direct", source="report:3", base=0.97),
+                _candidate("E04", atoms=["A3"], relation="support", directness="direct", source="report:4", base=0.96),
+            ]
+        )
+        duplicate_only = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99, duplicate="G1"),
+                _candidate("E02", atoms=["A1"], relation="support", directness="direct", source="report:2", base=0.98, duplicate="G1"),
+                _candidate("E03", atoms=["A1"], relation="support", directness="direct", source="report:3", base=0.97, duplicate="G1"),
+            ]
+        )
+
+        graph = build_budgeted_marginal_chain_graph_row(row, params=BudgetedMarginalChainParams(min_top_k=3, max_top_k=3))
+        duplicate_graph = build_budgeted_marginal_chain_graph_row(duplicate_only, params=BudgetedMarginalChainParams(min_top_k=3, max_top_k=3))
+
+        self.assertEqual(graph["selected_evidence_ids"], ["E01", "E03", "E04"])
+        self.assertEqual(duplicate_graph["selected_evidence_ids"], ["E01", "E02", "E03"])
+        self.assertLess(duplicate_graph["objective_final_components"]["redundancy_penalty"], 0.0)
+
+    def test_budgeted_marginal_conditional_tension_requires_core_shared_atom_pair(self) -> None:
+        core_tension = _row_with_atoms(
+            [{"atom_id": "A1", "text": "Atom 1", "type": "other", "importance": 1.0}],
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99),
+                _candidate("E02", atoms=["A1"], relation="refute", directness="direct", source="report:2", base=0.98),
+            ],
+        )
+        context_tension = _row_with_atoms(
+            [{"atom_id": "A1", "text": "Atom 1", "type": "other", "importance": 1.0}],
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99),
+                _candidate("E02", atoms=["A1"], relation="refute", directness="context", source="report:2", base=0.98),
+            ],
+        )
+
+        core_graph = build_budgeted_marginal_chain_graph_row(core_tension, params=BudgetedMarginalChainParams(min_top_k=2, max_top_k=2))
+        context_graph = build_budgeted_marginal_chain_graph_row(context_tension, params=BudgetedMarginalChainParams(min_top_k=2, max_top_k=2))
+
+        self.assertGreater(core_graph["objective_final_components"]["conditional_tension_gain"], 0.0)
+        self.assertEqual(context_graph["objective_final_components"]["conditional_tension_gain"], 0.0)
+
+    def test_budgeted_marginal_bridge_context_can_beat_unanchored_background(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", sent_idx=1, base=0.99),
+                _candidate("E02", atoms=["A2"], relation="support", directness="direct", source="report:2", sent_idx=1, base=0.98),
+                _candidate("E03", atoms=["A1"], relation="background", directness="context", source="report:1", sent_idx=2, base=0.20),
+                _candidate("E04", atoms=[], relation="background", directness="context", source="report:9", sent_idx=9, base=0.90),
+            ]
+        )
+
+        graph = build_budgeted_marginal_chain_graph_row(row, params=BudgetedMarginalChainParams(min_top_k=3, max_top_k=3))
+
+        self.assertEqual(graph["selected_evidence_ids"][2], "E03")
+        self.assertGreater(graph["selection_steps"][2]["component_deltas"]["bridge_context_gain"], 0.0)
+
+    def test_budgeted_marginal_trace_coordinates_and_objective_fields(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99, oracle=True),
+                _candidate("E02", atoms=["A2"], relation="support", directness="direct", source="report:2", base=0.98),
+                _candidate("E03", atoms=["A3"], relation="support", directness="direct", source="report:3", base=0.97, oracle=True),
+                _candidate("E04", atoms=[], relation="irrelevant", directness="none", source="report:4", base=0.96),
+            ]
+        )
+
+        graph = build_budgeted_marginal_chain_graph_row(row, params=BudgetedMarginalChainParams())
+        trace = graph["selection_trace"]
+        pool = trace["candidate_pool"]
+
+        self.assertEqual(budgeted_marginal_chain_selector_name(3, 10), BUDGETED_MARGINAL_SELECTOR)
+        self.assertEqual(trace["selector_name"], BUDGETED_MARGINAL_SELECTOR)
+        self.assertEqual(trace["adaptive_policy"], "budgeted_marginal_v0_7")
+        self.assertIn("objective_weights", trace)
+        self.assertIn("objective_final_components", trace)
+        self.assertEqual([pool[idx]["evidence_id"] for idx in trace["selector_ordered_indices"]], graph["selected_evidence_ids"])
+        self.assertEqual([step["evidence_id"] for step in graph["selection_steps"]], graph["selected_evidence_ids"])
+        self.assertTrue(all("marginal_gain" in step and "component_deltas" in step for step in graph["selection_steps"]))
+        self.assertTrue(all(0 <= idx < len(pool) for idx in trace["selector_ordered_indices"]))
+
     def test_oracle_zero_step_is_preserved_and_rendered_as_one_based_badge(self) -> None:
         graph = build_evidence_chain_graph_row(_row([_candidate("E01", atoms=["A1"], base=0.9, oracle=True)]), params=EvidenceChainParams(top_k=1))
         args = Namespace(chain_graph="chain_graph.jsonl", max_candidates=20, max_chains=8)
@@ -576,6 +715,7 @@ def _candidate(
     base: float = 0.8,
     duplicate: str = "",
     oracle: bool = False,
+    confidence: float = 1.0,
 ) -> dict:
     return {
         "evidence_id": evidence_id,
@@ -594,6 +734,7 @@ def _candidate(
         "evidence_map_base_score": base,
         "fusion_refit_score": base,
         "evidence_map_quality_score": 1.0 if relation != "background" else 0.3,
+        "map_confidence": confidence,
         "union_pool_rank": int(evidence_id[-2:]),
         "oracle_selected": oracle,
         "oracle_step": 0 if oracle else -1,

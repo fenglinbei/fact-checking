@@ -24,6 +24,31 @@ def build_logit_bias(logit_adjust_cfg: dict) -> dict[str, float]:
     return {str(int(tid)): float(-tau * lp) for tid, lp in zip(letter_token_ids, log_priors)}
 
 
+def _choice_text(label_prefix: str, letter: str) -> str:
+    return letter if label_prefix.endswith((" ", "\n", "\t")) else " " + letter
+
+
+def _label_token_ids_for_prefix(
+    tokenizer,
+    *,
+    label_prefix: str,
+    letter_order: list[str],
+    strict: bool,
+) -> list[int] | None:
+    letter_token_ids: list[int] = []
+    for letter in letter_order:
+        ids = tokenizer(_choice_text(label_prefix, letter), add_special_tokens=False)["input_ids"]
+        if len(ids) != 1:
+            if strict:
+                raise RuntimeError(
+                    f"logit_adjust: {_choice_text(label_prefix, letter)!r} is not one tokenizer token "
+                    f"for letter={letter!r}; got {ids}."
+                )
+            return None
+        letter_token_ids.append(int(ids[0]))
+    return letter_token_ids
+
+
 def compute_priors_from_samples(samples: list[PreparedSample], *, label_schema: str | None = None) -> list[float]:
     """Estimate class priors from a list of PreparedSample."""
     labels = labels_for_schema(label_schema)
@@ -62,6 +87,42 @@ def compute_priors_from_jsonl(jsonl_path: str | Path, *, label_schema: str | Non
     return [(c / total) if c > 0 else floor for c in counts]
 
 
+def build_logit_adjust_cfg_from_samples(
+    *,
+    train_cfg: dict[str, Any],
+    tokenizer,
+    train_samples: list[PreparedSample],
+    label_schema: str | None = None,
+    label_prefix: str = "Label:",
+) -> dict | None:
+    """Build label-prior logit adjustment from in-memory training samples."""
+    cfg_block = train_cfg.get("logit_adjust", {}) or {}
+    if not bool(cfg_block.get("enabled", False)):
+        return None
+
+    resolved_schema = str(label_schema or train_cfg.get("label_schema") or "liar6")
+    letter_order = letter_order_for_schema(resolved_schema)
+    letter_token_ids = _label_token_ids_for_prefix(
+        tokenizer,
+        label_prefix=label_prefix,
+        letter_order=letter_order,
+        strict=True,
+    )
+    assert letter_token_ids is not None
+    prefix_token_ids = list(tokenizer(label_prefix, add_special_tokens=False)["input_ids"])
+    priors = compute_priors_from_samples(train_samples, label_schema=resolved_schema)
+    log_priors = [math.log(p) for p in priors]
+    return {
+        "enabled": True,
+        "tau": float(cfg_block.get("tau", 1.0)),
+        "label_schema": resolved_schema,
+        "label_prefix": label_prefix,
+        "letter_token_ids": letter_token_ids,
+        "log_priors": log_priors,
+        "prefix_token_ids": prefix_token_ids,
+    }
+
+
 def load_logit_adjust_cfg(train_output_dir: str | Path) -> dict | None:
     """Load saved logit_adjust config from training output directory."""
     path = Path(train_output_dir) / "logit_adjust.json"
@@ -86,6 +147,8 @@ def build_logit_adjust_cfg_from_train_config(
         return None
 
     tau = float(cfg_block.get("tau", 1.0))
+    label_cfg = sft_cfg.get("label_token_ce", {}) or {}
+    label_prefix = str(label_cfg.get("label_prefix", "Label:"))
     label_schema = str(
         sft_cfg.get("label_schema")
         or train_config.get("label_schema")
@@ -94,14 +157,16 @@ def build_logit_adjust_cfg_from_train_config(
     )
     letter_order = letter_order_for_schema(label_schema)
 
-    letter_token_ids: list[int] = []
-    for letter in letter_order:
-        ids = tokenizer(" " + letter, add_special_tokens=False)["input_ids"]
-        if len(ids) != 1:
-            return None  # Letter is not a single token; logit_adjust cannot work
-        letter_token_ids.append(int(ids[0]))
+    letter_token_ids = _label_token_ids_for_prefix(
+        tokenizer,
+        label_prefix=label_prefix,
+        letter_order=letter_order,
+        strict=False,
+    )
+    if letter_token_ids is None:
+        return None  # Letter is not a single token; logit_adjust cannot work
 
-    prefix_token_ids = list(tokenizer("Label:", add_special_tokens=False)["input_ids"])
+    prefix_token_ids = list(tokenizer(label_prefix, add_special_tokens=False)["input_ids"])
 
     data_cfg = train_config.get("data", {})
     train_path = data_cfg.get("train_candidates", "")
@@ -115,6 +180,7 @@ def build_logit_adjust_cfg_from_train_config(
         "enabled": True,
         "tau": tau,
         "label_schema": label_schema,
+        "label_prefix": label_prefix,
         "letter_token_ids": letter_token_ids,
         "log_priors": log_priors,
         "prefix_token_ids": prefix_token_ids,

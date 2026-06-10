@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 import math
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable, Sequence
 
 import numpy as np
@@ -21,9 +21,14 @@ RULE_STEP_GRAPH_VERSION = "evidence_chain_graph_v0_6c"
 RULE_STEP_CHAIN_SELECTOR = "v0_6c_rule_step_adaptive5_10"
 SUFFICIENCY_CONTRADICTION_GRAPH_VERSION = "evidence_chain_graph_v0_6d"
 SUFFICIENCY_CONTRADICTION_SELECTOR = "v0_6d_sufficiency_contradiction_adaptive5_10"
+BUDGETED_MARGINAL_GRAPH_VERSION = "evidence_chain_graph_v0_7"
+BUDGETED_MARGINAL_SELECTOR = "v0_7_budgeted_marginal_chain_adaptive3_10"
 DEFAULT_CHUNK_MMR_FINGERPRINT = "432dfc970e75"
 DEFAULT_IMPORTANT_ATOM_THRESHOLD = 0.50
 DEFAULT_SUFFICIENCY_WEIGHTED_COVERAGE_THRESHOLD = 0.80
+DEFAULT_BUDGETED_TARGET_COVERAGE = 0.80
+DEFAULT_BUDGETED_STOP_GAIN_THRESHOLD = 0.10
+DEFAULT_BUDGETED_INSUFFICIENT_GAIN_THRESHOLD = 0.05
 
 POSITIVE_CHAIN_EDGE_TYPES = {"complements", "corroborates", "tension", "bridge_context"}
 RULE_STEP_STRONG_EDGE_TYPES = {"complements", "corroborates", "tension"}
@@ -41,6 +46,10 @@ POLAR_RELATIONS = {"support", "refute", "qualify", "mixed"}
 
 def rule_step_chain_selector_name(min_top_k: int, max_top_k: int) -> str:
     return f"v0_6c_rule_step_adaptive{int(min_top_k)}_{int(max_top_k)}"
+
+
+def budgeted_marginal_chain_selector_name(min_top_k: int, max_top_k: int) -> str:
+    return f"v0_7_budgeted_marginal_chain_adaptive{int(min_top_k)}_{int(max_top_k)}"
 
 
 @dataclass(frozen=True)
@@ -67,6 +76,34 @@ class SufficiencyContradictionEvidenceChainParams:
     chunk_mmr_fingerprint: str = DEFAULT_CHUNK_MMR_FINGERPRINT
     important_atom_threshold: float = DEFAULT_IMPORTANT_ATOM_THRESHOLD
     sufficiency_weighted_coverage_threshold: float = DEFAULT_SUFFICIENCY_WEIGHTED_COVERAGE_THRESHOLD
+
+
+@dataclass(frozen=True)
+class BudgetedMarginalObjectiveWeights:
+    coverage: float = 1.00
+    map_quality: float = 0.06
+    base_score: float = 0.03
+    key_span: float = 0.02
+    complements: float = 0.18
+    corroborates: float = 0.14
+    conditional_tension: float = 0.14
+    bridge_context: float = 0.07
+    duplicate_repeat: float = 0.30
+    background_or_irrelevant: float = 0.16
+    same_source_excess_after_two: float = 0.10
+    length: float = 0.06
+
+
+@dataclass(frozen=True)
+class BudgetedMarginalChainParams:
+    candidate_top_n: int = 20
+    min_top_k: int = 3
+    max_top_k: int = 10
+    chunk_mmr_fingerprint: str = DEFAULT_CHUNK_MMR_FINGERPRINT
+    target_coverage: float = DEFAULT_BUDGETED_TARGET_COVERAGE
+    stop_gain_threshold: float = DEFAULT_BUDGETED_STOP_GAIN_THRESHOLD
+    insufficient_gain_threshold: float = DEFAULT_BUDGETED_INSUFFICIENT_GAIN_THRESHOLD
+    objective_weights: BudgetedMarginalObjectiveWeights = field(default_factory=BudgetedMarginalObjectiveWeights)
 
 
 def build_evidence_chain_graph_row(row: dict[str, Any], *, params: EvidenceChainParams | None = None) -> dict[str, Any]:
@@ -274,6 +311,99 @@ def build_sufficiency_contradiction_evidence_chain_graph_row(
     return graph_row
 
 
+def build_budgeted_marginal_chain_graph_row(
+    row: dict[str, Any],
+    *,
+    params: BudgetedMarginalChainParams | None = None,
+) -> dict[str, Any]:
+    params = params or BudgetedMarginalChainParams()
+    min_top_k = max(1, int(params.min_top_k))
+    max_top_k = max(min_top_k, int(params.max_top_k))
+    target_coverage = float(params.target_coverage)
+    stop_gain_threshold = float(params.stop_gain_threshold)
+    insufficient_gain_threshold = float(params.insufficient_gain_threshold)
+    objective_weights = params.objective_weights
+    candidates = _sorted_candidates(row.get("candidates") or [], candidate_top_n=params.candidate_top_n)
+    atom_nodes = _atom_nodes(row)
+    evidence_nodes = [_evidence_node(candidate, idx=idx) for idx, candidate in enumerate(candidates, start=1)]
+    atom_by_id = {str(atom.get("node_id") or ""): atom for atom in atom_nodes}
+    evidence_by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    edges = _build_edges(atom_nodes, evidence_nodes)
+    edge_index = _edge_index(edges)
+    rule_result = _select_budgeted_marginal_evidence_ids(
+        evidence_nodes,
+        atom_by_id=atom_by_id,
+        edge_index=edge_index,
+        min_top_k=min_top_k,
+        max_top_k=max_top_k,
+        target_coverage=target_coverage,
+        stop_gain_threshold=stop_gain_threshold,
+        insufficient_gain_threshold=insufficient_gain_threshold,
+        objective_weights=objective_weights,
+    )
+    selector_name = budgeted_marginal_chain_selector_name(min_top_k, max_top_k)
+    selected_ids = list(rule_result.get("evidence_ids") or [])
+    selected_candidates = [_candidate_for_evidence_id(evidence_by_id[eid]) for eid in selected_ids if eid in evidence_by_id]
+    selected_chain = _budgeted_marginal_chain_summary(
+        selected_ids,
+        evidence_nodes=evidence_nodes,
+        atom_by_id=atom_by_id,
+        edge_index=edge_index,
+        rule_result=rule_result,
+        objective_weights=objective_weights,
+    )
+    graph_row = {
+        "event_id": str(row.get("event_id") or ""),
+        "claim": str(row.get("claim") or ""),
+        "gold_label": str(row.get("gold_label") or ""),
+        "graph_version": BUDGETED_MARGINAL_GRAPH_VERSION,
+        "selector_name": selector_name,
+        "params": {
+            "candidate_top_n": int(params.candidate_top_n),
+            "min_top_k": min_top_k,
+            "max_top_k": max_top_k,
+            "chunk_mmr_fingerprint": str(params.chunk_mmr_fingerprint or ""),
+            "target_coverage": target_coverage,
+            "stop_gain_threshold": stop_gain_threshold,
+            "insufficient_gain_threshold": insufficient_gain_threshold,
+            "objective_weights": asdict(objective_weights),
+        },
+        "fingerprint": str(params.chunk_mmr_fingerprint or ""),
+        "candidate_pool_metadata": {
+            "chunk_mmr_fingerprint": str(params.chunk_mmr_fingerprint or ""),
+        },
+        "claim_node": {"node_id": "C0", "type": "claim", "text": str(row.get("claim") or "")},
+        "atom_nodes": atom_nodes,
+        "evidence_nodes": evidence_nodes,
+        "edges": edges,
+        "chains": [selected_chain] if selected_chain.get("evidence_ids") else [],
+        "selected_chain_id": str(selected_chain.get("chain_id") or ""),
+        "selected_evidence_ids": selected_ids,
+        "selected_candidates": selected_candidates,
+        "oracle_ordered_keys": list(row.get("oracle_ordered_keys") or []),
+        "adaptive_policy": "budgeted_marginal_v0_7",
+        "min_top_k": min_top_k,
+        "max_top_k": max_top_k,
+        "target_coverage": target_coverage,
+        "stop_gain_threshold": stop_gain_threshold,
+        "insufficient_gain_threshold": insufficient_gain_threshold,
+        "objective_weights": asdict(objective_weights),
+        "adaptive_evidence_count": len(selected_ids),
+        "adaptive_stop_reason": str(rule_result.get("stop_reason") or ""),
+        "selection_steps": list(rule_result.get("selection_steps") or []),
+        "adaptive_additions": [
+            dict(step)
+            for step in rule_result.get("selection_steps") or []
+            if int(step.get("step", 0)) > min_top_k
+        ],
+        "objective_final_score": _safe_float((rule_result.get("final_objective") or {}).get("score"), 0.0),
+        "objective_final_components": dict((rule_result.get("final_objective") or {}).get("components") or {}),
+        "diagnostics": _graph_diagnostics(atom_nodes, evidence_nodes, edges, selected_chain),
+    }
+    graph_row["selection_trace"] = build_evidence_chain_trace(row, graph_row, top_k=max_top_k)
+    return graph_row
+
+
 def build_evidence_chain_trace(row: dict[str, Any], graph_row: dict[str, Any], *, top_k: int) -> dict[str, Any]:
     selected = list(graph_row.get("selected_candidates") or [])
     candidate_pool = _pipeline_candidate_pool(graph_row)
@@ -323,6 +453,12 @@ def build_evidence_chain_trace(row: dict[str, Any], graph_row: dict[str, Any], *
         "sufficiency_important_atom_threshold",
         "sufficiency_weighted_coverage_threshold",
         "contradiction_aware_additions",
+        "target_coverage",
+        "stop_gain_threshold",
+        "insufficient_gain_threshold",
+        "objective_weights",
+        "objective_final_score",
+        "objective_final_components",
     ):
         if key in graph_row:
             trace[key] = graph_row[key]
@@ -469,6 +605,50 @@ def summarize_sufficiency_contradiction_chain_graph_rows(rows: Sequence[dict[str
     }
 
 
+def summarize_budgeted_marginal_chain_graph_rows(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    traces = [row.get("selection_trace") or {} for row in rows]
+    diagnostics = [row.get("diagnostics") or {} for row in rows]
+    edge_counts: Counter[str] = Counter()
+    selected_lengths: Counter[str] = Counter()
+    stop_reasons: Counter[str] = Counter()
+    objective_scores: list[float] = []
+    coverages: list[float] = []
+    marginal_gains: list[float] = []
+    background_additions = 0
+    post_min_additions = 0
+    for row in rows:
+        edge_counts.update(str(edge.get("edge_type") or "") for edge in row.get("edges") or [])
+        selected_lengths[str(len(row.get("selected_evidence_ids") or []))] += 1
+        stop_reasons[str(row.get("adaptive_stop_reason") or "")] += 1
+        objective_scores.append(_safe_float(row.get("objective_final_score"), 0.0))
+        components = row.get("objective_final_components") or {}
+        coverages.append(_safe_float(components.get("coverage"), 0.0))
+        for step in row.get("selection_steps") or []:
+            marginal_gains.append(_safe_float(step.get("marginal_gain"), 0.0))
+            if int(step.get("step", 0)) > int(row.get("min_top_k") or 3):
+                post_min_additions += 1
+                if str(step.get("relation") or "") in BACKGROUND_RELATIONS or str(step.get("directness") or "") in {"context", "none"}:
+                    background_additions += 1
+    return {
+        "graph_version": BUDGETED_MARGINAL_GRAPH_VERSION,
+        "selector_name": BUDGETED_MARGINAL_SELECTOR,
+        "n_events": len(rows),
+        "n_edges_by_type": dict(sorted(edge_counts.items())),
+        "selected_lengths": dict(sorted(selected_lengths.items())),
+        "adaptive_stop_reasons": dict(sorted(stop_reasons.items())),
+        "mean_objective_final_score": _mean(objective_scores),
+        "mean_objective_final_coverage": _mean(coverages),
+        "mean_marginal_gain": _mean(marginal_gains),
+        "post_min_background_addition_rate": float(background_additions / max(post_min_additions, 1)),
+        "mean_atom_isolate_rate": _mean(_safe_float(item.get("atom_isolate_rate"), 0.0) for item in diagnostics),
+        "mean_evidence_isolate_rate": _mean(_safe_float(item.get("evidence_isolate_rate"), 0.0) for item in diagnostics),
+        "mean_oracle_evidence_connected_rate": _mean(_safe_float(item.get("oracle_evidence_connected_rate"), 0.0) for item in diagnostics),
+        "mean_oracle_pair_edge_rate": _mean(_safe_float(item.get("oracle_pair_edge_rate"), 0.0) for item in diagnostics),
+        "mean_max_chain_atom_coverage": _mean(_safe_float(item.get("max_chain_atom_coverage"), 0.0) for item in diagnostics),
+        "selection_metrics": _summarize_traces(traces),
+    }
+
+
 def render_case_studies(rows: Sequence[dict[str, Any]], *, top_n: int = 5) -> str:
     ranked = sorted(rows, key=lambda row: _safe_float((row.get("chains") or [{}])[0].get("chain_score"), 0.0), reverse=True)
     oracle_ranked = sorted(rows, key=lambda row: _safe_float((row.get("selection_trace") or {}).get("jaccard@5"), 0.0), reverse=True)
@@ -561,6 +741,36 @@ def render_sufficiency_contradiction_case_studies(rows: Sequence[dict[str, Any]]
     return "\n".join(lines)
 
 
+def render_budgeted_marginal_case_studies(rows: Sequence[dict[str, Any]], *, top_n: int = 5) -> str:
+    gain_ranked = sorted(rows, key=lambda row: _safe_float(row.get("objective_final_score"), 0.0), reverse=True)
+    stop_ranked = sorted(rows, key=lambda row: str(row.get("adaptive_stop_reason") or "") == "insufficient_no_positive_coverage_gain", reverse=True)
+    lines = ["# Evidence Chain Graph v0.7 Budgeted Marginal Case Studies", ""]
+    for title, items in (("Highest Objective Scores", gain_ranked[:top_n]), ("Insufficient Coverage Stops", stop_ranked[:top_n])):
+        lines.extend([f"## {title}", ""])
+        if not items:
+            lines.extend(["(none)", ""])
+            continue
+        for row in items:
+            trace = row.get("selection_trace") or {}
+            components = row.get("objective_final_components") or {}
+            lines.extend(
+                [
+                    f"### {row.get('event_id')} len={len(row.get('selected_evidence_ids') or [])} stop={row.get('adaptive_stop_reason')}",
+                    "",
+                    f"Claim: {row.get('claim', '')}",
+                    "",
+                    f"- jaccard@5: {_safe_float(trace.get('jaccard@5'), 0.0):.4f}",
+                    f"- jaccard@10: {_safe_float(trace.get('jaccard@10'), 0.0):.4f}",
+                    f"- objective: {_safe_float(row.get('objective_final_score'), 0.0):.4f}",
+                    f"- coverage: {_safe_float(components.get('coverage'), 0.0):.4f}",
+                    f"- evidence ids: {row.get('selected_evidence_ids', [])}",
+                    f"- gains: {[round(_safe_float(step.get('marginal_gain'), 0.0), 4) for step in row.get('selection_steps') or []]}",
+                    "",
+                ]
+            )
+    return "\n".join(lines)
+
+
 def _atom_nodes(row: dict[str, Any]) -> list[dict[str, Any]]:
     atoms = list((row.get("evidence_map") or {}).get("claim_atoms") or row.get("claim_atoms") or [])
     out: list[dict[str, Any]] = []
@@ -606,6 +816,7 @@ def _evidence_node(candidate: dict[str, Any], *, idx: int) -> dict[str, Any]:
         "sent_idx": candidate.get("sent_idx"),
         "base_score": _base_score(candidate),
         "evidence_map_quality_score": _safe_float(candidate.get("evidence_map_quality_score"), 0.0),
+        "map_confidence": _safe_float(candidate.get("map_confidence"), 0.0),
         "union_pool_rank": candidate.get("union_pool_rank"),
         "oracle_selected": bool(candidate.get("oracle_selected")),
         "oracle_step": oracle_step if oracle_step is not None else -1,
@@ -1247,6 +1458,456 @@ def _sufficiency_state(
     }
 
 
+def _select_budgeted_marginal_evidence_ids(
+    evidence_nodes: Sequence[dict[str, Any]],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    min_top_k: int,
+    max_top_k: int,
+    target_coverage: float,
+    stop_gain_threshold: float,
+    insufficient_gain_threshold: float,
+    objective_weights: BudgetedMarginalObjectiveWeights,
+) -> dict[str, Any]:
+    by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    selected: list[str] = []
+    steps: list[dict[str, Any]] = []
+    stop_reason = ""
+    current_objective = _chain_objective_score(
+        selected,
+        evidence_nodes=evidence_nodes,
+        atom_by_id=atom_by_id,
+        edge_index=edge_index,
+        objective_weights=objective_weights,
+    )
+
+    while len(selected) < min(int(max_top_k), len(evidence_nodes)):
+        ranked = _rank_budgeted_marginal_candidates(
+            selected,
+            evidence_nodes,
+            atom_by_id=atom_by_id,
+            edge_index=edge_index,
+            objective_weights=objective_weights,
+            before_objective=current_objective,
+        )
+        if not ranked:
+            stop_reason = "pool_exhausted_before_min_top_k" if len(selected) < int(min_top_k) else "pool_exhausted"
+            break
+        pick = ranked[0]
+        current_coverage = _safe_float((current_objective.get("components") or {}).get("coverage"), 0.0)
+        best_gain = _safe_float(pick.get("marginal_gain"), 0.0)
+        max_coverage_gain = max(_safe_float(row.get("component_deltas", {}).get("coverage"), 0.0) for row in ranked)
+
+        if len(selected) >= int(min_top_k):
+            if current_coverage >= float(target_coverage) and best_gain < float(stop_gain_threshold):
+                stop_reason = "sufficient_low_marginal_gain"
+                break
+            if current_coverage < float(target_coverage) and max_coverage_gain <= 1e-12 and best_gain < float(insufficient_gain_threshold):
+                stop_reason = "insufficient_no_positive_coverage_gain"
+                break
+
+        evidence_id = str(pick.get("evidence_id") or "")
+        if evidence_id in selected or evidence_id not in by_id:
+            stop_reason = "duplicate_pick_guard"
+            break
+        selected.append(evidence_id)
+        current_objective = dict(pick.get("after_objective") or {})
+        after_components = current_objective.get("components") or {}
+        steps.append(
+            {
+                "step": len(selected),
+                "evidence_id": evidence_id,
+                "rule": "budgeted_marginal_gain",
+                "marginal_gain": best_gain,
+                "component_deltas": dict(pick.get("component_deltas") or {}),
+                "coverage_after_step": _safe_float(after_components.get("coverage"), 0.0),
+                "objective_after_step": _safe_float(current_objective.get("score"), 0.0),
+                "covered_new_atom_ids": list(pick.get("covered_new_atom_ids") or []),
+                "anchor_evidence_ids": list(pick.get("anchor_evidence_ids") or []),
+                "directness": str(by_id[evidence_id].get("directness") or ""),
+                "relation": str(by_id[evidence_id].get("relation") or ""),
+                "fallback_used": False,
+            }
+        )
+
+    if not stop_reason:
+        stop_reason = "reached_max_top_k" if len(selected) >= int(max_top_k) else "pool_exhausted"
+    final_objective = _chain_objective_score(
+        selected,
+        evidence_nodes=evidence_nodes,
+        atom_by_id=atom_by_id,
+        edge_index=edge_index,
+        objective_weights=objective_weights,
+    )
+    return {
+        "evidence_ids": selected,
+        "selection_steps": steps,
+        "stop_reason": stop_reason,
+        "final_objective": final_objective,
+    }
+
+
+def _rank_budgeted_marginal_candidates(
+    selected: Sequence[str],
+    evidence_nodes: Sequence[dict[str, Any]],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    objective_weights: BudgetedMarginalObjectiveWeights,
+    before_objective: dict[str, Any],
+) -> list[dict[str, Any]]:
+    selected_set = {str(eid) for eid in selected}
+    rows: list[dict[str, Any]] = []
+    for node in evidence_nodes:
+        evidence_id = str(node.get("node_id") or "")
+        if not evidence_id or evidence_id in selected_set:
+            continue
+        if not str(node.get("text") or "").strip():
+            continue
+        row = _marginal_gain_components(
+            selected,
+            evidence_id,
+            evidence_nodes=evidence_nodes,
+            atom_by_id=atom_by_id,
+            edge_index=edge_index,
+            objective_weights=objective_weights,
+            before_objective=before_objective,
+        )
+        rows.append(row)
+    rows.sort(key=_budgeted_marginal_candidate_sort_key)
+    return rows
+
+
+def _budgeted_marginal_candidate_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    node = row.get("node") or {}
+    deltas = row.get("component_deltas") or {}
+    return (
+        -_safe_float(row.get("marginal_gain"), 0.0),
+        -_safe_float(deltas.get("coverage"), 0.0),
+        -_safe_float(deltas.get("pair_utility"), 0.0),
+        -_safe_float(row.get("coverage_after_step"), 0.0),
+        -_budgeted_directness_score(node),
+        -_safe_float(node.get("base_score"), 0.0),
+        _evidence_id_sort_value(str(row.get("evidence_id") or "")),
+    )
+
+
+def _marginal_gain_components(
+    selected: Sequence[str],
+    evidence_id: str,
+    *,
+    evidence_nodes: Sequence[dict[str, Any]],
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    objective_weights: BudgetedMarginalObjectiveWeights,
+    before_objective: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    before = before_objective or _chain_objective_score(
+        selected,
+        evidence_nodes=evidence_nodes,
+        atom_by_id=atom_by_id,
+        edge_index=edge_index,
+        objective_weights=objective_weights,
+    )
+    after_ids = [str(eid) for eid in selected]
+    after_ids.append(str(evidence_id))
+    after = _chain_objective_score(
+        after_ids,
+        evidence_nodes=evidence_nodes,
+        atom_by_id=atom_by_id,
+        edge_index=edge_index,
+        objective_weights=objective_weights,
+    )
+    deltas = _objective_component_delta(before.get("components") or {}, after.get("components") or {})
+    by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    node = by_id.get(str(evidence_id), {})
+    return {
+        "evidence_id": str(evidence_id),
+        "node": node,
+        "marginal_gain": _safe_float(after.get("score"), 0.0) - _safe_float(before.get("score"), 0.0),
+        "component_deltas": deltas,
+        "before_objective": before,
+        "after_objective": after,
+        "coverage_after_step": _safe_float((after.get("components") or {}).get("coverage"), 0.0),
+        "covered_new_atom_ids": _budgeted_new_atom_ids(selected, node, evidence_nodes=evidence_nodes, atom_by_id=atom_by_id),
+        "anchor_evidence_ids": _budgeted_anchor_evidence_ids(str(evidence_id), selected, by_id=by_id, edge_index=edge_index, atom_by_id=atom_by_id),
+    }
+
+
+def _objective_component_delta(before: dict[str, Any], after: dict[str, Any]) -> dict[str, float]:
+    keys = sorted(set(before) | set(after))
+    out: dict[str, float] = {}
+    for key in keys:
+        if isinstance(before.get(key, 0.0), (int, float)) or isinstance(after.get(key, 0.0), (int, float)):
+            out[key] = _safe_float(after.get(key), 0.0) - _safe_float(before.get(key), 0.0)
+    return out
+
+
+def _chain_objective_score(
+    evidence_ids: Sequence[str],
+    *,
+    evidence_nodes: Sequence[dict[str, Any]],
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    objective_weights: BudgetedMarginalObjectiveWeights,
+) -> dict[str, Any]:
+    by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    ids = [str(eid) for eid in evidence_ids if str(eid) in by_id and str(by_id[str(eid)].get("text") or "").strip()]
+    nodes = [by_id[eid] for eid in ids]
+    coverage = _budgeted_soft_atom_coverage(nodes, atom_by_id=atom_by_id)
+    coverage_utility = float(objective_weights.coverage) * coverage
+    map_quality_utility = float(objective_weights.map_quality) * sum(_safe_float(node.get("evidence_map_quality_score"), 0.0) for node in nodes)
+    base_score_utility = float(objective_weights.base_score) * sum(_safe_float(node.get("base_score"), 0.0) for node in nodes)
+    key_span_utility = float(objective_weights.key_span) * sum(1.0 if node.get("key_spans") else 0.0 for node in nodes)
+    node_quality = map_quality_utility + base_score_utility + key_span_utility
+    pair_raw = _budgeted_pair_gain_components(ids, by_id=by_id, edge_index=edge_index, atom_by_id=atom_by_id)
+    complements_utility = float(objective_weights.complements) * _safe_float(pair_raw.get("complements_gain"), 0.0)
+    corroborates_utility = float(objective_weights.corroborates) * _safe_float(pair_raw.get("corroborates_gain"), 0.0)
+    tension_utility = float(objective_weights.conditional_tension) * _safe_float(pair_raw.get("conditional_tension_gain"), 0.0)
+    bridge_utility = float(objective_weights.bridge_context) * _safe_float(pair_raw.get("bridge_context_gain"), 0.0)
+    pair_utility = complements_utility + corroborates_utility + tension_utility + bridge_utility
+    duplicate_repeat_count = _budgeted_duplicate_repeat_count(nodes)
+    background_count = sum(1 for node in nodes if _budgeted_background_or_irrelevant(node))
+    same_source_excess = _budgeted_same_source_excess_after_two(nodes)
+    redundancy_penalty = -float(objective_weights.duplicate_repeat) * float(duplicate_repeat_count)
+    background_penalty = -float(objective_weights.background_or_irrelevant) * float(background_count)
+    source_penalty = -float(objective_weights.same_source_excess_after_two) * float(same_source_excess)
+    length_penalty = -float(objective_weights.length) * float(len(ids))
+    score = (
+        coverage_utility
+        + node_quality
+        + pair_utility
+        + redundancy_penalty
+        + background_penalty
+        + source_penalty
+        + length_penalty
+    )
+    components = {
+        "coverage": float(coverage),
+        "coverage_utility": float(coverage_utility),
+        "node_quality": float(node_quality),
+        "map_quality_utility": float(map_quality_utility),
+        "base_score_utility": float(base_score_utility),
+        "key_span_utility": float(key_span_utility),
+        "pair_utility": float(pair_utility),
+        "complements_gain": _safe_float(pair_raw.get("complements_gain"), 0.0),
+        "corroborates_gain": _safe_float(pair_raw.get("corroborates_gain"), 0.0),
+        "conditional_tension_gain": _safe_float(pair_raw.get("conditional_tension_gain"), 0.0),
+        "bridge_context_gain": _safe_float(pair_raw.get("bridge_context_gain"), 0.0),
+        "redundancy_penalty": float(redundancy_penalty),
+        "duplicate_repeat_count": float(duplicate_repeat_count),
+        "background_penalty": float(background_penalty),
+        "background_or_irrelevant_count": float(background_count),
+        "source_concentration_penalty": float(source_penalty),
+        "same_source_excess_count_after_two": float(same_source_excess),
+        "length_penalty": float(length_penalty),
+        "evidence_count": float(len(ids)),
+    }
+    return {
+        "score": float(score),
+        "components": components,
+    }
+
+
+def _budgeted_soft_atom_coverage(nodes: Sequence[dict[str, Any]], *, atom_by_id: dict[str, dict[str, Any]]) -> float:
+    if not atom_by_id:
+        return 0.0
+    total_weight = sum(_safe_float(atom.get("importance"), 1.0) for atom in atom_by_id.values()) or 1.0
+    weighted = 0.0
+    for atom_id, atom in atom_by_id.items():
+        atom_weight = _safe_float(atom.get("importance"), 1.0) / total_weight
+        best = 0.0
+        for node in nodes:
+            best = max(best, _budgeted_atom_quality(node, str(atom_id)))
+        weighted += atom_weight * best
+    return float(weighted)
+
+
+def _budgeted_atom_quality(node: dict[str, Any], atom_id: str) -> float:
+    if str(atom_id) not in {str(value) for value in node.get("covered_atom_ids") or []}:
+        return 0.0
+    confidence = _unit_interval(_safe_float(node.get("map_confidence"), 0.0))
+    confidence_factor = 0.5 + 0.5 * confidence
+    return float(_budgeted_directness_score(node) * _budgeted_relation_score(node) * confidence_factor)
+
+
+def _budgeted_directness_score(node: dict[str, Any]) -> float:
+    return {
+        "direct": 1.00,
+        "partial": 0.65,
+        "context": 0.25,
+        "none": 0.00,
+    }.get(str(node.get("directness") or ""), 0.0)
+
+
+def _budgeted_relation_score(node: dict[str, Any]) -> float:
+    return {
+        "support": 1.00,
+        "refute": 1.00,
+        "qualify": 0.75,
+        "mixed": 0.75,
+        "background": 0.20,
+        "irrelevant": 0.00,
+    }.get(str(node.get("relation") or ""), 0.0)
+
+
+def _budgeted_pair_gain_components(
+    evidence_ids: Sequence[str],
+    *,
+    by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    atom_by_id: dict[str, dict[str, Any]],
+) -> dict[str, float]:
+    ids = [str(eid) for eid in evidence_ids if str(eid) in by_id]
+    if len(ids) < 2:
+        return {
+            "complements_gain": 0.0,
+            "corroborates_gain": 0.0,
+            "conditional_tension_gain": 0.0,
+            "bridge_context_gain": 0.0,
+        }
+    counts: Counter[str] = Counter()
+    for i, left_id in enumerate(ids):
+        for right_id in ids[i + 1 :]:
+            edges = edge_index.get(_pair_key(left_id, right_id), [])
+            edge_types = {str(edge.get("edge_type") or "") for edge in edges}
+            if "complements" in edge_types:
+                counts["complements_gain"] += 1
+            if "corroborates" in edge_types:
+                counts["corroborates_gain"] += 1
+            if "bridge_context" in edge_types:
+                counts["bridge_context_gain"] += 1
+            if "tension" in edge_types and _budgeted_conditional_tension_pair(by_id[left_id], by_id[right_id], edges, atom_by_id=atom_by_id):
+                counts["conditional_tension_gain"] += 1
+    cap = max(len(ids) - 1, 1)
+    return {key: float(min(counts.get(key, 0), cap) / cap) for key in ("complements_gain", "corroborates_gain", "conditional_tension_gain", "bridge_context_gain")}
+
+
+def _budgeted_conditional_tension_pair(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    edges: Sequence[dict[str, Any]],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+) -> bool:
+    if _is_duplicate_pair(left, right):
+        return False
+    if _budgeted_background_or_irrelevant(left) or _budgeted_background_or_irrelevant(right):
+        return False
+    if not (_is_rule_core_node(left) and _is_rule_core_node(right)):
+        return False
+    shared_atoms = {
+        str(atom_id)
+        for edge in edges
+        if str(edge.get("edge_type") or "") == "tension"
+        for atom_id in edge.get("atom_ids") or []
+        if str(atom_id) in atom_by_id
+    }
+    if not shared_atoms:
+        shared_atoms = set(str(atom_id) for atom_id in left.get("covered_atom_ids") or []) & set(str(atom_id) for atom_id in right.get("covered_atom_ids") or [])
+    return bool(shared_atoms)
+
+
+def _budgeted_duplicate_repeat_count(nodes: Sequence[dict[str, Any]]) -> int:
+    duplicate_groups = [str(node.get("duplicate_group") or "") for node in nodes if str(node.get("duplicate_group") or "")]
+    duplicate_group_repeat = sum(max(count - 1, 0) for count in Counter(duplicate_groups).values())
+    texts = [_norm_text(node.get("text")) for node in nodes if _norm_text(node.get("text"))]
+    text_repeat = sum(max(count - 1, 0) for count in Counter(texts).values())
+    return int(max(duplicate_group_repeat, text_repeat))
+
+
+def _budgeted_background_or_irrelevant(node: dict[str, Any]) -> bool:
+    return bool(node.get("is_background")) or str(node.get("relation") or "") in BACKGROUND_RELATIONS or str(node.get("directness") or "") in {"context", "none"}
+
+
+def _budgeted_same_source_excess_after_two(nodes: Sequence[dict[str, Any]]) -> int:
+    source_counts = Counter(str(node.get("source_group") or "") for node in nodes if str(node.get("source_group") or ""))
+    return int(sum(max(count - 2, 0) for count in source_counts.values()))
+
+
+def _budgeted_new_atom_ids(
+    selected: Sequence[str],
+    node: dict[str, Any],
+    *,
+    evidence_nodes: Sequence[dict[str, Any]],
+    atom_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    selected_atoms = _covered_atoms_for_ids(selected, evidence_nodes)
+    return [atom_id for atom_id in _covered_atoms(node, atom_by_id=atom_by_id) if atom_id not in selected_atoms]
+
+
+def _budgeted_anchor_evidence_ids(
+    evidence_id: str,
+    selected: Sequence[str],
+    *,
+    by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    atom_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    rows: list[tuple[int, int, str]] = []
+    priority = {"complements": 0, "corroborates": 1, "tension": 2, "bridge_context": 3}
+    node = by_id.get(str(evidence_id), {})
+    for pos, selected_id in enumerate(selected):
+        other = by_id.get(str(selected_id), {})
+        edges = edge_index.get(_pair_key(str(evidence_id), str(selected_id)), [])
+        edge_types: set[str] = set()
+        for edge in edges:
+            edge_type = str(edge.get("edge_type") or "")
+            if edge_type == "tension" and not _budgeted_conditional_tension_pair(node, other, edges, atom_by_id=atom_by_id):
+                continue
+            if edge_type in priority:
+                edge_types.add(edge_type)
+        if edge_types:
+            rows.append((min(priority[edge_type] for edge_type in edge_types), pos, str(selected_id)))
+    rows.sort()
+    return [evidence_id for _rank, _pos, evidence_id in rows]
+
+
+def _budgeted_marginal_chain_summary(
+    evidence_ids: Sequence[str],
+    *,
+    evidence_nodes: Sequence[dict[str, Any]],
+    atom_by_id: dict[str, dict[str, Any]],
+    edge_index: dict[tuple[str, str], list[dict[str, Any]]],
+    rule_result: dict[str, Any],
+    objective_weights: BudgetedMarginalObjectiveWeights,
+) -> dict[str, Any]:
+    by_id = {str(node.get("node_id") or ""): node for node in evidence_nodes}
+    ids = [str(eid) for eid in evidence_ids if str(eid) in by_id]
+    nodes = [by_id[eid] for eid in ids]
+    objective = rule_result.get("final_objective") or _chain_objective_score(
+        ids,
+        evidence_nodes=evidence_nodes,
+        atom_by_id=atom_by_id,
+        edge_index=edge_index,
+        objective_weights=objective_weights,
+    )
+    pair_counts = _pair_edge_counts(ids, edge_index=edge_index)
+    return {
+        "chain_id": "CH01" if ids else "",
+        "rank": 1 if ids else 0,
+        "evidence_ids": ids,
+        "search_order_evidence_ids": ids,
+        "selection_steps": list(rule_result.get("selection_steps") or []),
+        "adaptive_stop_reason": str(rule_result.get("stop_reason") or ""),
+        "chain_score": _safe_float(objective.get("score"), 0.0),
+        "objective_components": dict(objective.get("components") or {}),
+        "objective_weights": asdict(objective_weights),
+        "weighted_atom_coverage": _safe_float((objective.get("components") or {}).get("coverage"), 0.0),
+        "covered_atom_ids": sorted({str(atom_id) for node in nodes for atom_id in node.get("covered_atom_ids") or [] if str(atom_id) in atom_by_id}),
+        "direct_or_partial_rate": _mean(1.0 if node.get("directness") in DIRECTNESS_VALUES else 0.0 for node in nodes),
+        "background_rate": _mean(1.0 if _budgeted_background_or_irrelevant(node) else 0.0 for node in nodes),
+        "edge_counts": dict(sorted(pair_counts.items())),
+        "positive_pair_edge_density": float(
+            sum(pair_counts.get(edge_type, 0) for edge_type in POSITIVE_CHAIN_EDGE_TYPES)
+            / max(len(ids) * (len(ids) - 1) / 2.0, 1.0)
+        ),
+        "duplicate_repeat_count": int(_budgeted_duplicate_repeat_count(nodes)),
+        "same_source_excess_count": int(_budgeted_same_source_excess_after_two(nodes)),
+    }
+
+
 def _has_duplicate_with_selected(node: dict[str, Any], selected_ids: Sequence[str], *, by_id: dict[str, dict[str, Any]]) -> bool:
     return any(_is_duplicate_pair(node, by_id.get(str(evidence_id), {})) for evidence_id in selected_ids)
 
@@ -1792,6 +2453,7 @@ def _candidate_for_evidence_id(node: dict[str, Any]) -> dict[str, Any]:
     candidate = dict(node.get("candidate") or {})
     candidate["evidence_id"] = str(node.get("evidence_id") or node.get("node_id") or "")
     candidate["chain_base_score"] = _safe_float(node.get("base_score"), 0.0)
+    candidate["map_confidence"] = _safe_float(candidate.get("map_confidence", node.get("map_confidence")), 0.0)
     return candidate
 
 
@@ -1926,6 +2588,7 @@ def _candidate_trace_output(candidate: dict[str, Any]) -> dict[str, Any]:
         "evidence_map_base_score",
         "chain_base_score",
         "evidence_map_quality_score",
+        "map_confidence",
         "covered_atom_ids",
         "map_relation",
         "map_directness",
@@ -2095,6 +2758,10 @@ def _importance_to_unit(value: Any) -> float:
     if raw > 1.0:
         raw = raw / 5.0
     return float(np.clip(raw, 0.05, 1.0))
+
+
+def _unit_interval(value: Any) -> float:
+    return float(np.clip(_safe_float(value, 0.0), 0.0, 1.0))
 
 
 def _safe_int(value: Any) -> int | None:

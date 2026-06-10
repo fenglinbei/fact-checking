@@ -33,7 +33,21 @@
       "WebSearch",
       "WebFetch(domain:arxiv.org)",
       "WebFetch(domain:github.com)",
-      "Bash(awk '{print $7, $8, $9, $10, $11}')"
+      "Bash(awk '{print $7, $8, $9, $10, $11}')",
+      "Bash(/root/.local/bin/cc-switch --help)",
+      "Bash(/root/.local/bin/cc-switch -h)",
+      "Read(//root/.nvm/versions/node/v20.20.2/lib/node_modules/@anthropic-ai/claude-code/bin/**)",
+      "Bash(/root/.local/bin/cc-switch env *)",
+      "Bash(/root/.local/bin/cc-switch provider *)",
+      "Bash(/root/.local/bin/cc-switch daemon *)",
+      "Bash(/root/.local/bin/cc-switch start *)",
+      "Bash(claude --settings)",
+      "Read(//tmp/**)",
+      "Bash(claude config *)",
+      "WebFetch(domain:api-docs.deepseek.com)",
+      "Bash(curl -sL \"https://api-docs.deepseek.com/api/create-chat-completion\")",
+      "Bash(curl -sL \"https://api-docs.deepseek.com/guides/thinking_mode\")",
+      "Bash(curl *)"
     ]
   }
 }

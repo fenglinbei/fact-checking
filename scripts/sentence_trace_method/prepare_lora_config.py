@@ -26,6 +26,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-train-epochs", type=float, default=None)
     parser.add_argument("--eval-steps", type=int, default=None)
     parser.add_argument("--save-steps", type=int, default=None)
+    parser.add_argument("--early-stopping-patience", type=int, default=None)
+    parser.add_argument("--logit-adjust-enabled", choices=["true", "false"], default=None)
+    parser.add_argument("--logit-adjust-tau", type=float, default=None)
     parser.add_argument(
         "--class-weight",
         action="append",
@@ -44,6 +47,7 @@ def main() -> int:
     output_root = Path(args.output_root)
     output_config = output_root / "train.resolved.yaml"
     class_weights = _parse_class_weight_overrides(args.class_weight)
+    logit_adjust_enabled = _parse_optional_bool(args.logit_adjust_enabled)
     if output_config.exists() and not args.force:
         _sync_existing_config(
             output_config,
@@ -52,6 +56,9 @@ def main() -> int:
             num_train_epochs=args.num_train_epochs,
             eval_steps=args.eval_steps,
             save_steps=args.save_steps,
+            early_stopping_patience=args.early_stopping_patience,
+            logit_adjust_enabled=logit_adjust_enabled,
+            logit_adjust_tau=args.logit_adjust_tau,
             class_weights=class_weights,
         )
         print(output_config)
@@ -93,6 +100,9 @@ def main() -> int:
         num_train_epochs=args.num_train_epochs,
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,
+        early_stopping_patience=args.early_stopping_patience,
+        logit_adjust_enabled=logit_adjust_enabled,
+        logit_adjust_tau=args.logit_adjust_tau,
         class_weights=class_weights,
     )
 
@@ -141,6 +151,12 @@ def _parse_class_weight_overrides(raw_items: list[str]) -> dict[str, float]:
     return overrides
 
 
+def _parse_optional_bool(raw: str | None) -> bool | None:
+    if raw is None:
+        return None
+    return raw.strip().lower() == "true"
+
+
 def _apply_sft_overrides(
     cfg: dict[str, Any],
     *,
@@ -148,6 +164,9 @@ def _apply_sft_overrides(
     num_train_epochs: float | None,
     eval_steps: int | None,
     save_steps: int | None,
+    early_stopping_patience: int | None,
+    logit_adjust_enabled: bool | None,
+    logit_adjust_tau: float | None,
     class_weights: dict[str, float],
 ) -> bool:
     sft_train = dict(cfg.get("sft_train") or {})
@@ -158,11 +177,22 @@ def _apply_sft_overrides(
         "num_train_epochs": num_train_epochs,
         "eval_steps": eval_steps,
         "save_steps": save_steps,
+        "early_stopping_patience": early_stopping_patience,
     }
     for key, value in scalar_overrides.items():
         if value is not None and sft_train.get(key) != value:
             sft_train[key] = value
             changed = True
+
+    if logit_adjust_enabled is not None or logit_adjust_tau is not None:
+        logit_adjust = dict(sft_train.get("logit_adjust") or {})
+        if logit_adjust_enabled is not None and bool(logit_adjust.get("enabled", False)) != logit_adjust_enabled:
+            logit_adjust["enabled"] = logit_adjust_enabled
+            changed = True
+        if logit_adjust_tau is not None and float(logit_adjust.get("tau", 1.0)) != float(logit_adjust_tau):
+            logit_adjust["tau"] = float(logit_adjust_tau)
+            changed = True
+        sft_train["logit_adjust"] = logit_adjust
 
     if class_weights:
         label_token_ce = dict(sft_train.get("label_token_ce") or {})
@@ -187,6 +217,9 @@ def _sync_existing_config(
     num_train_epochs: float | None,
     eval_steps: int | None,
     save_steps: int | None,
+    early_stopping_patience: int | None,
+    logit_adjust_enabled: bool | None,
+    logit_adjust_tau: float | None,
     class_weights: dict[str, float],
 ) -> None:
     cfg = load_yaml(output_config)
@@ -212,6 +245,9 @@ def _sync_existing_config(
             num_train_epochs=num_train_epochs,
             eval_steps=eval_steps,
             save_steps=save_steps,
+            early_stopping_patience=early_stopping_patience,
+            logit_adjust_enabled=logit_adjust_enabled,
+            logit_adjust_tau=logit_adjust_tau,
             class_weights=class_weights,
         )
         or changed

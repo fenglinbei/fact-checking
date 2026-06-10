@@ -1,5 +1,13 @@
 # 本文档记录该项目在正式成文前需要解答的事情
 
+## exp list
+
+1. 不同分块方法[x]
+2. 不同score[x]
+3. 不使用QD[ ]
+4. 为什么证据选择重要？full evidence v.s. selected evidence v.s 与selected evidence相同证据预算 [ ]
+
+
 ## 关于Candidate Evidence Retrieval
 
 ### 整体流程

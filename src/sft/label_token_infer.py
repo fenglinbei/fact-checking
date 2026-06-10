@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import torch
@@ -20,6 +21,7 @@ from sft.label_token_trainer import (
     _selection_score,
     _true_side_macro_f1,
 )
+from sft.logit_adjust import build_logit_adjust_cfg_from_train_config, load_logit_adjust_cfg
 from sft.runtime.adapters import checkpoint_has_peft_adapter
 from sft.runtime.deps import flash_attn2_available
 from sft.runtime.model_loading import load_causal_lm_compatible_model
@@ -37,7 +39,60 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--per-device-eval-batch-size", type=int, default=None)
     parser.add_argument("--dataloader-num-workers", type=int, default=None)
     parser.add_argument("--log-predictions", type=int, default=0)
+    parser.add_argument(
+        "--logit-adjust",
+        choices=["config", "on", "off"],
+        default="config",
+        help="Use config/default logit adjustment, force it on, or force it off for eval-only runs.",
+    )
+    parser.add_argument("--logit-adjust-tau", type=float, default=None, help="Override sft_train.logit_adjust.tau.")
     return parser.parse_args()
+
+
+def _config_with_logit_adjust_override(
+    cfg: dict,
+    *,
+    mode: str,
+    tau: float | None,
+) -> dict:
+    if mode == "config" and tau is None:
+        return cfg
+
+    updated = dict(cfg)
+    sft_train = dict(updated.get("sft_train") or {})
+    logit_adjust = dict(sft_train.get("logit_adjust") or {})
+    if mode == "on":
+        logit_adjust["enabled"] = True
+    elif mode == "off":
+        logit_adjust["enabled"] = False
+    if tau is not None:
+        logit_adjust["tau"] = float(tau)
+    sft_train["logit_adjust"] = logit_adjust
+    updated["sft_train"] = sft_train
+    return updated
+
+
+def _resolve_logit_adjust_cfg(
+    *,
+    context,
+    effective_cfg: dict,
+    mode: str,
+    tau: float | None,
+) -> dict | None:
+    if mode == "off":
+        return None
+
+    logit_adjust_cfg = load_logit_adjust_cfg(context.run_dir)
+    if logit_adjust_cfg is None or mode == "on":
+        logit_adjust_cfg = build_logit_adjust_cfg_from_train_config(effective_cfg, context.tokenizer)
+    if logit_adjust_cfg is None:
+        if mode == "on":
+            raise RuntimeError("logit_adjust was forced on, but no valid label-token logit_adjust config could be built.")
+        return None
+    if tau is not None:
+        logit_adjust_cfg = dict(logit_adjust_cfg)
+        logit_adjust_cfg["tau"] = float(tau)
+    return logit_adjust_cfg
 
 
 def main() -> None:
@@ -48,7 +103,12 @@ def main() -> None:
         split=args.split,
         config_path=args.config,
     )
-    train_cfg = context.train_cfg
+    effective_cfg = _config_with_logit_adjust_override(
+        context.cfg,
+        mode=str(args.logit_adjust),
+        tau=args.logit_adjust_tau,
+    )
+    train_cfg = effective_cfg["sft_train"]
     label_cfg = train_cfg.get("label_token_ce", {}) or {}
     label_prefix = str(label_cfg.get("label_prefix", "Label:"))
     labels = labels_for_schema(context.label_schema)
@@ -86,6 +146,12 @@ def main() -> None:
     )
     label_token_ids = torch.tensor(label_token_id_list, dtype=torch.long)
     class_weights = _class_weight_tensor(train_cfg, labels=labels)
+    logit_adjust_cfg = _resolve_logit_adjust_cfg(
+        context=context,
+        effective_cfg=effective_cfg,
+        mode=str(args.logit_adjust),
+        tau=args.logit_adjust_tau,
+    )
 
     dataset = LabelTokenDataset(
         context.samples,
@@ -125,6 +191,7 @@ def main() -> None:
         letter_order=letter_order,
         eval_logger=eval_logger,
         log_predictions_limit=int(args.log_predictions),
+        logit_adjust_cfg=logit_adjust_cfg,
     )
 
     accelerator.wait_for_everyone()
@@ -153,9 +220,16 @@ def main() -> None:
                 "eval_ordinal_loss": float(eval_metrics.get("eval_ordinal_loss", float("nan"))),
                 "true_side_macro_f1": true_side,
                 "selection_score": selection_score,
+                "logit_adjust": logit_adjust_cfg or {"enabled": False},
             }
         )
         eval_dir = Path(args.output_dir) if args.output_dir else context.eval_output_dir / "label_token"
+        if logit_adjust_cfg:
+            eval_dir.mkdir(parents=True, exist_ok=True)
+            (eval_dir / "logit_adjust.json").write_text(
+                json.dumps(logit_adjust_cfg, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         artifacts = save_eval_artifacts(
             eval_dir=eval_dir,
             metrics=metrics,

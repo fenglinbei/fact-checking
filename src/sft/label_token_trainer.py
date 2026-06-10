@@ -25,6 +25,7 @@ from sft.data.io import _save_eval_artifacts, load_prebuilt_samples, save_model
 from sft.data.sampling import select_mini_val_rows
 from sft.dataset.loaders import build_dataloader
 from sft.eval import build_eval_metrics, deduplicate_by_sample_idx
+from sft.logit_adjust import build_logit_adjust_cfg_from_samples
 from sft.label_token_dataset import LabelTokenCollator, LabelTokenDataset
 from sft.prompting.stats import (
     build_prompt_snapshots,
@@ -176,6 +177,26 @@ def _forward_label_logits(
     batch_indices = torch.arange(batch["input_ids"].shape[0], device=batch["input_ids"].device)
     next_token_logits = outputs.logits[batch_indices, last_positions]
     return next_token_logits.index_select(1, label_token_ids.to(next_token_logits.device))
+
+
+def _apply_label_logit_adjust(
+    label_logits: torch.Tensor,
+    logit_adjust_cfg: dict[str, Any] | None,
+) -> torch.Tensor:
+    if not (logit_adjust_cfg and logit_adjust_cfg.get("enabled")):
+        return label_logits
+    log_priors = torch.as_tensor(
+        logit_adjust_cfg.get("log_priors", []),
+        dtype=label_logits.dtype,
+        device=label_logits.device,
+    )
+    if log_priors.numel() != label_logits.shape[-1]:
+        raise ValueError(
+            "logit_adjust log_priors length does not match label logits: "
+            f"{log_priors.numel()} vs {label_logits.shape[-1]}"
+        )
+    tau = float(logit_adjust_cfg.get("tau", 1.0))
+    return label_logits - tau * log_priors.unsqueeze(0)
 
 
 def _label_name(label_id: int, *, labels: list[str]) -> str:
@@ -448,6 +469,7 @@ def _evaluate_label_token(
     letter_order: list[str],
     eval_logger,
     log_predictions_limit: int,
+    logit_adjust_cfg: dict[str, Any] | None = None,
     global_step: int = 0,
     max_train_steps: int = 1,
 ) -> dict[str, Any]:
@@ -481,7 +503,8 @@ def _evaluate_label_token(
                 global_step=global_step,
                 max_train_steps=max_train_steps,
             )
-            pred_ids = label_logits.argmax(dim=-1).to(torch.long)
+            prediction_logits = _apply_label_logit_adjust(label_logits, logit_adjust_cfg)
+            pred_ids = prediction_logits.argmax(dim=-1).to(torch.long)
 
             pred_ids = accelerator.pad_across_processes(pred_ids, dim=0, pad_index=pad_id)
             gold_ids = accelerator.pad_across_processes(gold_ids, dim=0, pad_index=pad_id)
@@ -643,6 +666,23 @@ def main() -> None:
     )
     label_token_ids = torch.tensor(label_token_id_list, dtype=torch.long)
     class_weights = _class_weight_tensor(train_cfg, labels=labels)
+    logit_adjust_cfg = build_logit_adjust_cfg_from_samples(
+        train_cfg=train_cfg,
+        tokenizer=tokenizer,
+        train_samples=train_samples,
+        label_schema=label_schema,
+        label_prefix=label_prefix,
+    )
+    if logit_adjust_cfg and accelerator.is_main_process:
+        logit_adjust_path = output_dir / "logit_adjust.json"
+        logit_adjust_path.write_text(json.dumps(logit_adjust_cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        active_logger.info(
+            "[INFO] logit_adjust enabled: tau=%.3f log_priors=%s letters=%s prefix=%s",
+            float(logit_adjust_cfg.get("tau", 1.0)),
+            ["%.4f" % float(x) for x in logit_adjust_cfg.get("log_priors", [])],
+            logit_adjust_cfg.get("letter_token_ids", []),
+            logit_adjust_cfg.get("prefix_token_ids", []),
+        )
 
     train_prompt_summary = summarize_prebuilt_prompts(train_samples, max_length=max_length, split="train")
     val_prompt_summary = summarize_prebuilt_prompts(val_samples, max_length=max_length, split="val")
@@ -670,6 +710,7 @@ def main() -> None:
             "mae_metric_weight": float(label_cfg.get("mae_metric_weight", 0.3)),
             "focus_label": str(label_cfg.get("focus_label", "") or ""),
             "focus_metric_weight": float(label_cfg.get("focus_metric_weight", 0.3)),
+            "logit_adjust": logit_adjust_cfg or {"enabled": False},
         }
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         active_logger.info("[INFO] label-token CE metadata saved to %s", meta_path)
@@ -897,6 +938,7 @@ def main() -> None:
             letter_order=letter_order,
             eval_logger=active_logger,
             log_predictions_limit=int(train_cfg.get("eval_log_predictions", 0)),
+            logit_adjust_cfg=logit_adjust_cfg,
             global_step=step,
             max_train_steps=max_train_steps,
         )
