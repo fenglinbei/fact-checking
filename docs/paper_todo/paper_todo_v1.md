@@ -61,7 +61,7 @@ paired bootstrap 按 `sample_idx` 对齐 test predictions，重采样 10,000 次
 | Llama3.1-8B FullFT | 183/200 (91.5%) | 0.6873 | 51/200 (25.5%) | 110 | 21 | 24 | 45 |
 | Qwen3-4B-2507 FullFT | 183/200 (91.5%) | 0.6873 | 31/200 (15.5%) | 118 | 11 | 16 | 55 |
 
-结论表述应保持谨慎：
+结论：
 1. dense-only 与 hybrid 会显著改变 evidence set；RAW-FC test 上 91.5% 的样本证据集合或顺序发生变化，平均 Jaccard 约 0.687。
 2. 证据变化进一步造成部分 prediction flip，但收益和损失是混合的。Llama 上 dense-only 独有判对 21 条、hybrid 独有判对 24 条；Qwen 上 dense-only 独有判对 11 条、hybrid 独有判对 16 条。
 3. test 点估计在两个模型的 Accuracy、Macro-Precision、Macro-Recall 和 Macro-F1 上都偏向 hybrid；其中 Llama 的 dense-only macro-F1 低 1.41 个点，Qwen 的 dense-only macro-F1 低 2.37 个点。
@@ -71,9 +71,34 @@ paired bootstrap 按 `sample_idx` 对齐 test predictions，重采样 10,000 次
 
 ### 不同chunking方式的比较
 
-为了说明不同chunking方式对方法判断结果的真实影响
-我们在 RAW-FC 上对 Qwen3-4B-Instruct-2507 的 LoRA verifier 做不同chunking 的指标比较，由于chunking策略不一致，后续的map selector不使用，
-因此我们采用w/o map selector策略，仅依赖hybrid score选top5作为证据集，其他设置与文中主方法设置一致
+为了说明不同 chunking 方式对 verifier 判断结果的真实影响，我们在 RAW-FC 上对 Qwen3-4B-Instruct-2507 LoRA verifier 做 chunking 粒度对照。由于 raw report、semantic chunk 和 sentence 的 evidence unit 长度不同，固定 top-5 会让细粒度 chunking 看到更少信息，因此这里使用 `adaptive5_10` prompt-budget matched 设置：先按同一套 hybrid MMR 排序，取 `candidate_pool_k=32`，再以 `adaptive5_10` reference build 中同一 `event_id` 的 `prompt_token_count` 作为目标，约束 `min_k=5, max_k=20`，选择接近同等 prompt 信息量的 evidence。后续不使用 map selector，仅比较 chunking 粒度本身。
+
+| chunking | acc | macro P | macro R | macro F1 |
+|---|---:|---:|---:|---:|
+| raw report | 0.6450 | 0.6487 | 0.6451 | **0.6464** |
+| semantic chunk | 0.6300 | 0.6319 | 0.6300 | 0.6308 |
+| sentence | 0.6400 | 0.6436 | 0.6400 | 0.6409 |
+
+prompt 统计显示 budget matching 基本消除了固定 top-5 下的信息量偏差。`adaptive ref` 是文中主方法的prompt预算信息
+
+| setting | prompt mean | prompt median | prompt p25 | prompt p75 | prompt min | prompt max | evidence mean | evidence median | trunc rate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| adaptive ref | 775.5 | 824.0 | 633 | 936 | 323 | 1019 | 7.9 | 9.0 | 36.0% |
+| raw report | 746.4 | 773.5 | 617 | 901 | 322 | 1020 | 8.1 | 8.0 | 34.0% |
+| semantic chunk | 748.4 | 772.5 | 632 | 895 | 322 | 1020 | 8.3 | 8.0 | 33.5% |
+| sentence | 761.5 | 798.0 | 635 | 905 | 326 | 1016 | 14.1 | 14.5 | 7.5% |
+
+paired bootstrap 按同一 200 条 RAW-FC test 样本的 `sample_idx` 对齐预测，重采样 10,000 次。下表中差值均为前者减后者的 Macro-F1：
+
+| comparison | macro-F1 delta | 95% paired bootstrap CI | P(delta > 0) | two-sided p | interpretation |
+|---|---:|---:|---:|---:|---|
+| raw report - semantic chunk | +0.0157 | [-0.0237, +0.0566] | 0.7805 | 0.4389 | not significant |
+| raw report - sentence | +0.0055 | [-0.0482, +0.0602] | 0.5847 | 0.8305 | not significant |
+| sentence - semantic chunk | +0.0102 | [-0.0353, +0.0558] | 0.6620 | 0.6761 | not significant |
+
+结论：
+1. budget-matched 后，raw report、semantic chunk 和 sentence 三种粒度的 verifier 指标接近，点估计上 raw report 最高，sentence 次之，semantic chunk 最低。
+2. paired bootstrap 的 95% CI 均覆盖 0，且对比均不显著，即在 w/o map selector、同等 prompt budget 下，RAW-FC verifier 对 chunking 粒度不高度敏感；但粒度的差别主要体现在后续map select的选择口径上
 
 # 关于Question Decomposition Retrieval and Union
 

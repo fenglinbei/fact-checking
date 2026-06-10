@@ -655,6 +655,8 @@ def _build_train_config(
     )
     sft_train["label_schema"] = resolved_label_schema
     sft_train["resolved_output_dir"] = True
+    sft_train.setdefault("save_latest_state", True)
+    sft_train.setdefault("resume_latest_state", True)
     train_cfg = {
         "label_schema": resolved_label_schema,
         "output_dir": str(run_dir / "train"),
