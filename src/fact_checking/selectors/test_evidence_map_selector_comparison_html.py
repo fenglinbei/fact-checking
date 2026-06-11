@@ -1,21 +1,77 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.phase5_selectors.visualize.render_evidence_map_selector_comparison_html import (
+    DEFAULT_OUTPUT_DIR,
     DEFAULT_RIGHT_TRACE,
+    default_candidate_features_path,
+    default_coverage_diff_path,
+    default_left_trace_path,
+    default_raw_data_path,
+    default_right_trace_path,
     find_trace_row,
+    load_coverage_diff_row,
     load_raw_row,
     missing_trace_message,
+    parse_args,
     render_html,
+    resolve_inputs,
 )
 
 
 class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
+    def test_parse_args_defaults_to_split_scan_analysis_output_and_translation(self) -> None:
+        with patch("sys.argv", ["render", "--event-id", "case.json"]):
+            args = parse_args()
+
+        self.assertEqual(args.candidate_features, "")
+        self.assertEqual(args.left_trace, "")
+        self.assertEqual(args.right_trace, "")
+        self.assertEqual(args.raw_data, "")
+        self.assertEqual(args.coverage_diff, "")
+        self.assertEqual(args.output_dir, DEFAULT_OUTPUT_DIR)
+        self.assertTrue(args.translate_zh)
+
+    def test_resolve_inputs_scans_train_val_test_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                _write_jsonl(default_candidate_features_path("val"), [_row()])
+                _write_jsonl(default_left_trace_path("val"), [_left_trace()])
+                _write_jsonl(default_right_trace_path("val"), [_right_trace()])
+                _write_json(default_raw_data_path("val"), [{"event_id": "case.json", "explain": "Raw explanation"}])
+                _write_jsonl(default_coverage_diff_path("val"), [_coverage_diff()])
+
+                args = _args()
+                args.candidate_features = ""
+                args.left_trace = ""
+                args.right_trace = ""
+                args.raw_data = ""
+                args.coverage_diff = ""
+                args.splits = "train,val,test"
+                args.output_dir = DEFAULT_OUTPUT_DIR
+
+                resolved = resolve_inputs(args)
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(resolved.split, "val")
+        self.assertEqual(args.candidate_features, default_candidate_features_path("val"))
+        self.assertEqual(args.left_trace, default_left_trace_path("val"))
+        self.assertEqual(args.right_trace, default_right_trace_path("val"))
+        self.assertEqual(args.raw_data, default_raw_data_path("val"))
+        self.assertEqual(args.coverage_diff, default_coverage_diff_path("val"))
+        self.assertEqual(resolved.raw_row["explain"], "Raw explanation")
+        self.assertEqual(resolved.coverage_diff["coverage_label"], "uncovered")
+
     def test_renderer_marks_common_left_only_and_right_only_candidates(self) -> None:
         html = render_html(_row(), left_trace=_left_trace(), right_trace=_right_trace(), args=_args(), translations={})
 
@@ -66,6 +122,24 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
 
         self.assertIn("Feature row explanation.", html)
 
+    def test_renderer_outputs_coverage_diff_case_audit(self) -> None:
+        html = render_html(
+            _row(),
+            coverage_diff=_coverage_diff(),
+            left_trace=_left_trace(),
+            right_trace=_right_trace(),
+            args=_args(),
+            translations={},
+        )
+
+        self.assertIn("Coverage Diff", html)
+        self.assertIn("coverage_label", html)
+        self.assertIn("uncovered", html)
+        self.assertIn("critical_missing", html)
+        self.assertIn("year:1979", html)
+        self.assertIn("in_covered_weak", html)
+        self.assertIn("Top source evidence mentions 1979.", html)
+
     def test_renderer_tolerates_v06c_trace_without_objective_fields(self) -> None:
         html = render_html(_row(), left_trace=_left_trace(), right_trace=_left_trace(), args=_args(), translations={})
 
@@ -107,6 +181,20 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         self.assertIsNotNone(raw_row)
         self.assertEqual(raw_row["explain"], "Matched explanation")
 
+    def test_load_coverage_diff_row_matches_event_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "case_coverage_diff_val.jsonl"
+            path.write_text(
+                json.dumps({"event_id": "other.json", "coverage_label": "covered"}) + "\n"
+                + json.dumps({"event_id": "case.json", "coverage_label": "weak_covered"}) + "\n",
+                encoding="utf-8",
+            )
+
+            coverage_diff = load_coverage_diff_row(str(path), event_id="case")
+
+        self.assertIsNotNone(coverage_diff)
+        self.assertEqual(coverage_diff["coverage_label"], "weak_covered")
+
     def test_missing_v07_trace_message_includes_generation_command(self) -> None:
         message = missing_trace_message(DEFAULT_RIGHT_TRACE, role="right")
 
@@ -121,10 +209,25 @@ def _args() -> Namespace:
         left_trace="left.jsonl",
         right_trace="right.jsonl",
         raw_data="raw.json",
+        coverage_diff="coverage_diff.jsonl",
+        splits="train,val,test",
+        output_dir=DEFAULT_OUTPUT_DIR,
         left_label="v0.6c RuleStep",
         right_label="v0.7 BudgetedMarginal",
         max_candidates=20,
     )
+
+
+def _write_json(path: str | Path, payload: object) -> None:
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
+def _write_jsonl(path: str | Path, rows: list[dict]) -> None:
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
 
 
 def _row() -> dict:
@@ -170,6 +273,35 @@ def _candidate(
         "evidence_map_quality_score": 0.9,
         "evidence_map_base_score": 0.7,
         "retrieval_score": 0.5,
+    }
+
+
+def _coverage_diff() -> dict:
+    return {
+        "event_id": "case.json",
+        "label": "mostly-true",
+        "coverage_label": "uncovered",
+        "coverage_score": 0.604218,
+        "weak_score": 0.624952,
+        "decision_source": "rule",
+        "critical_missing": ["year:1979"],
+        "in_all": True,
+        "in_covered": False,
+        "in_covered_weak": False,
+        "source_sidecar": "source_coverage_val.jsonl",
+        "top_evidence_preview": [
+            {
+                "rank": 1,
+                "report_id": "report-1",
+                "sent_idx": 3,
+                "text": "Top source evidence mentions 1979.",
+                "bm25": 8.5,
+                "lexical_coverage": 0.66,
+                "embedding_score": 0.78,
+                "hybrid_score": 0.72,
+                "anchor_hits": {"years": ["1979"], "numbers": []},
+            }
+        ],
     }
 
 

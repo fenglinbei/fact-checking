@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -56,6 +57,12 @@ DEFAULT_RIGHT_TRACE = (
     "selection_trace_val.jsonl"
 )
 DEFAULT_RAW_DATA = "data/raw/LIAR-RAW/val.json"
+DEFAULT_COVERAGE_DIFF = (
+    "outputs/data_quality/source_coverage_flash/liar_raw/original_diff/"
+    "case_coverage_diff_val.jsonl"
+)
+DEFAULT_SPLITS = ("train", "val", "test")
+DEFAULT_OUTPUT_DIR = "outputs/analysis/map/v0.7"
 DEFAULT_LEFT_LABEL = "v0.6c RuleStep"
 DEFAULT_RIGHT_LABEL = "v0.7 BudgetedMarginal"
 DEFAULT_TRANSLATION_BASE_URL = "https://api.deepseek.com"
@@ -67,21 +74,51 @@ OUTPUT_DIR=outputs/selectors/evidence_chain_graph/liar_raw_dense_v0_7_budgeted_m
 bash scripts/phase5_selectors/run/run_evidence_chain_graph_v0_7.sh"""
 
 
+@dataclass
+class ResolvedInputs:
+    split: str
+    row: dict[str, Any]
+    left_trace: dict[str, Any]
+    right_trace: dict[str, Any]
+    raw_row: dict[str, Any] | None
+    coverage_diff: dict[str, Any] | None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Render a side-by-side evidence-map selector comparison for one claim."
     )
-    parser.add_argument("--candidate-features", default=DEFAULT_CANDIDATE_FEATURES)
-    parser.add_argument("--left-trace", default=DEFAULT_LEFT_TRACE)
-    parser.add_argument("--right-trace", default=DEFAULT_RIGHT_TRACE)
-    parser.add_argument("--raw-data", default=DEFAULT_RAW_DATA, help="Optional original split JSON with gold explain/explanation.")
+    parser.add_argument(
+        "--candidate-features",
+        default="",
+        help="Optional candidate_evidence_map_features_*.jsonl override. Defaults to scanning train/val/test.",
+    )
+    parser.add_argument("--left-trace", default="", help="Optional v0.6c selection_trace_*.jsonl override.")
+    parser.add_argument("--right-trace", default="", help="Optional v0.7 selection_trace_*.jsonl override.")
+    parser.add_argument(
+        "--raw-data",
+        default="",
+        help="Optional original split JSON with gold explain/explanation. Defaults to the matched split.",
+    )
+    parser.add_argument(
+        "--coverage-diff",
+        default="",
+        help="Optional case_coverage_diff_*.jsonl from compare_coverage_to_original.py.",
+    )
+    parser.add_argument("--splits", default=",".join(DEFAULT_SPLITS), help="Comma-separated default splits to scan.")
     parser.add_argument("--event-id", default="", help="Event id to render. Accepts both 10004 and 10004.json.")
     parser.add_argument("--claim-contains", default="")
     parser.add_argument("--left-label", default=DEFAULT_LEFT_LABEL)
     parser.add_argument("--right-label", default=DEFAULT_RIGHT_LABEL)
     parser.add_argument("--max-candidates", type=int, default=20)
     parser.add_argument("--output", default="")
-    parser.add_argument("--translate-zh", action="store_true", help="Call DeepSeek-compatible API and embed Chinese translations.")
+    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument(
+        "--translate-zh",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Call DeepSeek-compatible API and embed Chinese translations. Default: enabled.",
+    )
     parser.add_argument("--translation-cache", default="", help="Optional translation cache JSON path. Defaults beside the HTML.")
     parser.add_argument("--force-translate", action="store_true", help="Ignore existing cached translations and call the API again.")
     parser.add_argument(
@@ -111,27 +148,130 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    feature_rows = read_jsonl(args.candidate_features)
-    row = map_html.find_feature_row(feature_rows, event_id=args.event_id, claim_contains=args.claim_contains)
-    event_id = str(row.get("event_id") or "")
-    left_trace = find_trace_row(args.left_trace, event_id=event_id, role="left")
-    right_trace = find_trace_row(args.right_trace, event_id=event_id, role="right")
-    raw_row = load_raw_row(args.raw_data, event_id=event_id)
-    output_path = Path(args.output) if args.output else default_output_path(args, row)
+    resolved = resolve_inputs(args)
+    row = resolved.row
+    output_path = Path(args.output) if args.output else default_output_path(args, row, split=resolved.split)
     translations = load_or_build_translations(
         row,
-        raw_row=raw_row,
-        left_trace=left_trace,
-        right_trace=right_trace,
+        raw_row=resolved.raw_row,
+        coverage_diff=resolved.coverage_diff,
+        left_trace=resolved.left_trace,
+        right_trace=resolved.right_trace,
         args=args,
         output_path=output_path,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
-        render_html(row, raw_row=raw_row, left_trace=left_trace, right_trace=right_trace, args=args, translations=translations),
+        render_html(
+            row,
+            raw_row=resolved.raw_row,
+            coverage_diff=resolved.coverage_diff,
+            left_trace=resolved.left_trace,
+            right_trace=resolved.right_trace,
+            args=args,
+            translations=translations,
+        ),
         encoding="utf-8",
     )
     print(f"Wrote evidence-map selector comparison HTML: {output_path}")
+
+
+def resolve_inputs(args: argparse.Namespace) -> ResolvedInputs:
+    search_errors: list[str] = []
+    explicit_features = str(getattr(args, "candidate_features", "") or "").strip()
+    split_candidates = [(infer_split_from_path(explicit_features) or first_split(args), explicit_features)] if explicit_features else [
+        (split, default_candidate_features_path(split)) for split in split_list(args)
+    ]
+    for split, candidate_features in split_candidates:
+        features_path = Path(candidate_features)
+        if not features_path.exists():
+            search_errors.append(f"{split}: missing features {candidate_features}")
+            continue
+        feature_rows = read_jsonl(features_path)
+        row = find_feature_row_or_none(feature_rows, event_id=str(getattr(args, "event_id", "") or ""), claim_contains=str(getattr(args, "claim_contains", "") or ""))
+        if not row:
+            search_errors.append(f"{split}: no matching feature row in {candidate_features}")
+            continue
+        event_id = str(row.get("event_id") or getattr(args, "event_id", "") or "")
+        left_trace_path = str(getattr(args, "left_trace", "") or default_left_trace_path(split))
+        right_trace_path = str(getattr(args, "right_trace", "") or default_right_trace_path(split))
+        raw_data_path = str(getattr(args, "raw_data", "") or default_raw_data_path(split))
+        coverage_diff_path = str(getattr(args, "coverage_diff", "") or default_coverage_diff_path(split))
+        left_trace = find_trace_row(left_trace_path, event_id=event_id, role="left")
+        right_trace = find_trace_row(right_trace_path, event_id=event_id, role="right")
+        raw_row = load_raw_row(raw_data_path, event_id=event_id)
+        coverage_diff = load_coverage_diff_row(coverage_diff_path, event_id=event_id)
+        args.candidate_features = candidate_features
+        args.left_trace = left_trace_path
+        args.right_trace = right_trace_path
+        args.raw_data = raw_data_path
+        args.coverage_diff = coverage_diff_path
+        args.resolved_split = split
+        return ResolvedInputs(
+            split=split,
+            row=row,
+            left_trace=left_trace,
+            right_trace=right_trace,
+            raw_row=raw_row,
+            coverage_diff=coverage_diff,
+        )
+    target = getattr(args, "event_id", "") or getattr(args, "claim_contains", "") or "<first row>"
+    details = "\n".join(f"- {item}" for item in search_errors) if search_errors else "- no candidate feature paths were searched"
+    raise ValueError(f"No default split inputs matched {target!r}.\nSearched:\n{details}")
+
+
+def find_feature_row_or_none(rows: list[dict[str, Any]], *, event_id: str, claim_contains: str) -> dict[str, Any] | None:
+    try:
+        return map_html.find_feature_row(rows, event_id=event_id, claim_contains=claim_contains)
+    except ValueError:
+        return None
+
+
+def split_list(args: argparse.Namespace) -> list[str]:
+    raw = str(getattr(args, "splits", "") or "")
+    splits = [item.strip() for item in raw.split(",") if item.strip()]
+    return splits or list(DEFAULT_SPLITS)
+
+
+def first_split(args: argparse.Namespace) -> str:
+    return split_list(args)[0]
+
+
+def infer_split_from_path(path: str) -> str:
+    text = str(path or "")
+    for split in DEFAULT_SPLITS:
+        if f"_{split}/" in text or f"_{split}." in text or f"_{split}_" in text or f"/{split}." in text:
+            return split
+    return ""
+
+
+def default_candidate_features_path(split: str) -> str:
+    return (
+        f"outputs/selectors/evidence_map_selector/liar_raw_dense_v0_6b_{split}/"
+        f"candidate_evidence_map_features_{split}.jsonl"
+    )
+
+
+def default_left_trace_path(split: str) -> str:
+    return (
+        f"outputs/selectors/evidence_chain_graph/liar_raw_dense_v0_6c_adaptive5_10_{split}/"
+        f"selection_trace_{split}.jsonl"
+    )
+
+
+def default_right_trace_path(split: str) -> str:
+    return (
+        f"outputs/selectors/evidence_chain_graph/liar_raw_dense_v0_7_budgeted_marginal_adaptive3_10_{split}/"
+        f"selection_trace_{split}.jsonl"
+    )
+
+
+def default_raw_data_path(split: str) -> str:
+    return f"data/raw/LIAR-RAW/{split}.json"
+
+
+def default_coverage_diff_path(split: str) -> str:
+    return f"outputs/data_quality/source_coverage_flash/liar_raw/original_diff/case_coverage_diff_{split}.jsonl"
 
 
 def find_trace_row(path: str, *, event_id: str, role: str, expected_selector_name: str = "") -> dict[str, Any]:
@@ -159,8 +299,15 @@ def find_trace_row(path: str, *, event_id: str, role: str, expected_selector_nam
 def missing_trace_message(path: str, *, role: str) -> str:
     message = f"Missing {role} trace file: {path}"
     if str(path) == DEFAULT_RIGHT_TRACE or "v0_7" in str(path):
-        message += "\nGenerate the LIAR-RAW v0.7 trace with:\n\n" + LIAR_RAW_V07_BUILD_COMMAND
+        message += "\nGenerate the LIAR-RAW v0.7 trace with:\n\n" + liar_raw_v07_build_command(infer_split_from_path(path) or "val")
     return message
+
+
+def liar_raw_v07_build_command(split: str) -> str:
+    return f"""SPLIT={split} \\
+INPUT={default_candidate_features_path(split)} \\
+OUTPUT_DIR=outputs/selectors/evidence_chain_graph/liar_raw_dense_v0_7_budgeted_marginal_adaptive3_10_{split} \\
+bash scripts/phase5_selectors/run/run_evidence_chain_graph_v0_7.sh"""
 
 
 def load_raw_row(path: str, *, event_id: str) -> dict[str, Any] | None:
@@ -186,21 +333,39 @@ def load_raw_row(path: str, *, event_id: str) -> dict[str, Any] | None:
     return None
 
 
+def load_coverage_diff_row(path: str, *, event_id: str) -> dict[str, Any] | None:
+    if not path:
+        return None
+    diff_path = Path(path)
+    if not diff_path.exists():
+        return None
+    wanted = map_html.canonical_event_id(event_id)
+    for row in read_jsonl(diff_path):
+        if not isinstance(row, dict):
+            continue
+        for key in ("event_id", "id", "uid", "filename", "json_id"):
+            if map_html.canonical_event_id(str(row.get(key) or "")) == wanted:
+                return row
+    return None
+
+
 def looks_like_sample(payload: dict[str, Any]) -> bool:
     return any(key in payload for key in ("claim", "explain", "explanation", "event_id", "id"))
 
 
-def default_output_path(args: argparse.Namespace, row: dict[str, Any]) -> Path:
+def default_output_path(args: argparse.Namespace, row: dict[str, Any], *, split: str = "") -> Path:
     event = map_html.slug(map_html.canonical_event_id(str(row.get("event_id") or "claim")))
     left = map_html.slug(str(args.left_label or "left"))
     right = map_html.slug(str(args.right_label or "right"))
-    return Path(args.candidate_features).parent / "visualizations" / f"evidence_map_compare_{event}_{left}_vs_{right}.html"
+    split_prefix = f"{map_html.slug(split)}_" if split else ""
+    return Path(getattr(args, "output_dir", "") or DEFAULT_OUTPUT_DIR) / f"{split_prefix}evidence_map_compare_{event}_{left}_vs_{right}.html"
 
 
 def load_or_build_translations(
     row: dict[str, Any],
     *,
     raw_row: dict[str, Any] | None,
+    coverage_diff: dict[str, Any] | None,
     left_trace: dict[str, Any],
     right_trace: dict[str, Any],
     args: argparse.Namespace,
@@ -217,6 +382,7 @@ def load_or_build_translations(
     items = collect_translation_items(
         row,
         raw_row=raw_row,
+        coverage_diff=coverage_diff,
         left_trace=left_trace,
         right_trace=right_trace,
         max_candidates=int(args.max_candidates),
@@ -255,6 +421,7 @@ def collect_translation_items(
     row: dict[str, Any],
     *,
     raw_row: dict[str, Any] | None = None,
+    coverage_diff: dict[str, Any] | None = None,
     left_trace: dict[str, Any],
     right_trace: dict[str, Any],
     max_candidates: int,
@@ -262,6 +429,11 @@ def collect_translation_items(
     items = map_html.collect_translation_items(row, trace=left_trace, max_candidates=max_candidates)
     items.update(map_html.collect_translation_items(row, trace=right_trace, max_candidates=max_candidates))
     map_html.add_translation_item(items, "gold_explain", gold_explain_text(row, raw_row=raw_row))
+    if coverage_diff:
+        for idx, preview in enumerate(coverage_diff.get("top_evidence_preview") or [], start=1):
+            if not isinstance(preview, dict):
+                continue
+            map_html.add_translation_item(items, f"coverage_preview:{idx}:text", str(preview.get("text") or ""))
     return items
 
 
@@ -269,6 +441,7 @@ def render_html(
     row: dict[str, Any],
     *,
     raw_row: dict[str, Any] | None = None,
+    coverage_diff: dict[str, Any] | None = None,
     left_trace: dict[str, Any],
     right_trace: dict[str, Any],
     args: argparse.Namespace,
@@ -286,6 +459,8 @@ def render_html(
         "left_trace": args.left_trace,
         "right_trace": args.right_trace,
         "raw_data": args.raw_data,
+        "coverage_diff": getattr(args, "coverage_diff", ""),
+        "resolved_split": getattr(args, "resolved_split", ""),
         "event_id": event_id,
         "created_at": created,
     }
@@ -307,9 +482,11 @@ def render_html(
     </div>
     <p class="claim">{trans_html("claim", row.get("claim"), translations)}</p>
     <div class="path-grid">
+      <div><b>split</b><span>{esc(getattr(args, "resolved_split", ""))}</span></div>
       <div><b>features</b><span>{esc(args.candidate_features)}</span></div>
       <div><b>{esc(left_label)}</b><span>{esc(args.left_trace)}</span></div>
       <div><b>{esc(right_label)}</b><span>{esc(args.right_trace)}</span></div>
+      <div><b>coverage diff</b><span>{esc(getattr(args, "coverage_diff", ""))}</span></div>
     </div>
     {map_html.render_translation_toolbar(translations)}
   </header>
@@ -321,6 +498,10 @@ def render_html(
     <section class="section">
       <h2>Gold Explanation</h2>
       {render_gold_explanation(row, raw_row=raw_row, args=args, translations=translations)}
+    </section>
+    <section class="section">
+      <h2>Coverage Diff</h2>
+      {render_coverage_diff(coverage_diff, args=args, translations=translations)}
     </section>
     <section class="section">
       <h2>Atom Coverage Comparison</h2>
@@ -427,6 +608,119 @@ def render_gold_explanation(
         f'<p>{trans_html("gold_explain", explain, translations)}</p>'
         "</article>"
     )
+
+
+def render_coverage_diff(
+    coverage_diff: dict[str, Any] | None,
+    *,
+    args: argparse.Namespace,
+    translations: dict[str, str],
+) -> str:
+    diff_path = str(getattr(args, "coverage_diff", "") or "")
+    if not coverage_diff:
+        note = f" Checked coverage diff source: {diff_path}." if diff_path else ""
+        return f'<div class="small">No coverage diff row found for this event.{esc(note)}</div>'
+    label = str(coverage_diff.get("coverage_label") or "")
+    metrics = [
+        ("raw label", coverage_diff.get("label")),
+        ("coverage_label", label),
+        ("coverage_score", coverage_diff.get("coverage_score")),
+        ("weak_score", coverage_diff.get("weak_score")),
+        ("decision_source", coverage_diff.get("decision_source")),
+        ("in_all", bool_text(coverage_diff.get("in_all"))),
+        ("in_covered", bool_text(coverage_diff.get("in_covered"))),
+        ("in_covered_weak", bool_text(coverage_diff.get("in_covered_weak"))),
+    ]
+    metric_html = "".join(metric_cell(name, value) for name, value in metrics if value is not None and value != "")
+    missing = [str(item) for item in coverage_diff.get("critical_missing") or [] if str(item).strip()]
+    missing_html = (
+        "".join(map_html.badge(item, class_name="critical-missing") for item in missing)
+        if missing
+        else '<span class="small">No critical missing anchors recorded.</span>'
+    )
+    sidecar = str(coverage_diff.get("source_sidecar") or "")
+    sidecar_html = f'<div class="small">source_sidecar={esc(sidecar)}</div>' if sidecar else ""
+    return (
+        f'<article class="coverage-diff {esc(label_class(label))}">'
+        '<div class="coverage-head">'
+        f'<span class="coverage-label {esc(label_class(label))}">{esc(label or "unknown")}</span>'
+        f"{sidecar_html}"
+        "</div>"
+        f'<div class="metric-grid">{metric_html}</div>'
+        '<div class="coverage-missing">'
+        "<h3>critical_missing</h3>"
+        f'<div class="badges">{missing_html}</div>'
+        "</div>"
+        '<div class="coverage-preview">'
+        "<h3>Top Evidence Preview</h3>"
+        f"{render_coverage_preview_table(coverage_diff, translations=translations)}"
+        "</div>"
+        "</article>"
+    )
+
+
+def render_coverage_preview_table(coverage_diff: dict[str, Any], *, translations: dict[str, str]) -> str:
+    rows: list[str] = []
+    for idx, preview in enumerate(coverage_diff.get("top_evidence_preview") or [], start=1):
+        if not isinstance(preview, dict):
+            continue
+        text = str(preview.get("text") or "")
+        source_bits = [
+            str(preview.get(key) or "")
+            for key in ("report_id", "source_id", "doc_id", "url")
+            if str(preview.get(key) or "").strip()
+        ]
+        sent_idx = preview.get("sent_idx")
+        if sent_idx is not None and sent_idx != "":
+            source_bits.append(f"sent={sent_idx}")
+        score_bits = [
+            f"{key}={fmt(preview.get(key))}"
+            for key in (
+                "bm25",
+                "lexical",
+                "lexical_coverage",
+                "embedding",
+                "embedding_score",
+                "hybrid",
+                "hybrid_score",
+                "source_coverage",
+                "all_report_coverage",
+                "top_evidence_coverage",
+            )
+            if preview.get(key) is not None
+        ]
+        rows.append(
+            "<tr>"
+            f"<td>{esc(preview.get('rank') or idx)}</td>"
+            f"<td>{esc(' | '.join(source_bits))}</td>"
+            f"<td>{esc(' | '.join(score_bits))}</td>"
+            f"<td>{render_anchor_hits(preview.get('anchor_hits'))}</td>"
+            f'<td class="text-cell">{trans_html(f"coverage_preview:{idx}:text", text, translations)}</td>'
+            "</tr>"
+        )
+    return table(["rank", "source", "scores", "anchor hits", "text"], rows)
+
+
+def render_anchor_hits(anchor_hits: Any) -> str:
+    if not anchor_hits:
+        return '<span class="small">-</span>'
+    badges: list[str] = []
+    if isinstance(anchor_hits, dict):
+        for key, value in anchor_hits.items():
+            if isinstance(value, (list, tuple, set)):
+                values = [str(item) for item in value if str(item).strip()]
+            elif isinstance(value, dict):
+                values = [json.dumps(value, ensure_ascii=False, sort_keys=True)]
+            else:
+                values = [str(value)] if str(value).strip() else []
+            badges.extend(f"{key}:{value}" for value in values)
+    elif isinstance(anchor_hits, (list, tuple, set)):
+        badges.extend(str(item) for item in anchor_hits if str(item).strip())
+    else:
+        badges.append(str(anchor_hits))
+    if not badges:
+        return '<span class="small">-</span>'
+    return '<div class="badges">' + "".join(map_html.badge(item, class_name="anchor-hit") for item in badges) + "</div>"
 
 
 def gold_explain_text(row: dict[str, Any], *, raw_row: dict[str, Any] | None = None) -> str:
@@ -757,6 +1051,19 @@ def metric_cell(name: str, value: Any) -> str:
     return f'<div class="metric"><b>{esc(name)}</b><span>{fmt(value)}</span></div>'
 
 
+def bool_text(value: Any) -> Any:
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return value
+
+
+def label_class(label: str) -> str:
+    normalized = str(label or "unknown").strip().lower().replace("_", "-").replace(" ", "-")
+    return normalized or "unknown"
+
+
 def render_spans(candidate: dict[str, Any], translations: dict[str, str]) -> str:
     spans = [str(span) for span in candidate.get("key_spans") or [] if str(span).strip()]
     if not spans:
@@ -912,6 +1219,36 @@ body.zh-mode .i18n-zh { display: inline; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.coverage-diff {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 13px;
+}
+.coverage-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.coverage-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 780;
+  background: #edf1f5;
+  color: #536171;
+}
+.coverage-label.covered { background: #e6f6ee; color: #247a52; }
+.coverage-label.weak-covered { background: #fff2d9; color: #a5681f; }
+.coverage-label.uncovered { background: #fdebea; color: #b8443e; }
+.coverage-missing, .coverage-preview { margin-top: 12px; }
+.badge.critical-missing { background: #fdebea; color: #b8443e; }
+.badge.anchor-hit { background: #e7efff; color: var(--common); }
 .overview-card.left, .flow-panel.left { box-shadow: inset 4px 0 0 var(--left); }
 .overview-card.right, .flow-panel.right { box-shadow: inset 4px 0 0 var(--right); }
 .selector { color: var(--muted); overflow-wrap: anywhere; margin-bottom: 10px; }
