@@ -23,6 +23,7 @@ def load_script(name: str, path: str):
 
 materialize = load_script("materialize_coverage_datasets", "scripts/phase11_data_quality/materialize_coverage_datasets.py")
 tagger = load_script("tag_source_coverage", "scripts/phase11_data_quality/tag_source_coverage.py")
+compare = load_script("compare_coverage_to_original", "scripts/phase11_data_quality/compare_coverage_to_original.py")
 
 
 def write_json(path: Path, payload):
@@ -42,12 +43,24 @@ def coverage_row(event_id: str, label: str, *, split: str = "val") -> dict:
         "coverage_label": label,
         "rule_coverage_label": label,
         "coverage_score": 0.8 if label == "covered" else 0.4,
+        "weak_score": 0.7 if label in {"covered", "weak_covered"} else 0.2,
+        "decision_source": "rule",
         "critical_missing": [],
         "retrieval": {
             "best_embedding": 0.71,
             "best_bm25": 2.5,
             "best_lexical": 0.33,
         },
+        "top_evidence": [
+            {
+                "rank": 1,
+                "report_id": "r1",
+                "sent_idx": 0,
+                "text": f"Top evidence for {event_id}",
+                "scores": {"bm25": 2.5, "lexical": 0.33, "embedding": 0.71, "hybrid": 0.9},
+                "anchor_hits": {"numbers": ["1"]},
+            }
+        ],
         "llm_judgment": {"status": "not_requested"},
     }
 
@@ -133,6 +146,146 @@ def test_materialize_rawfc_preserves_schema(tmp_path: Path):
     assert all_rows[0]["explanation"] == "ea"
     assert all_rows[0]["evidence"] == ["x"]
     assert [row["id"] for row in covered_weak_rows] == [1]
+
+
+def test_compare_original_diff_summary_and_case_rows(tmp_path: Path):
+    raw_path = tmp_path / "raw" / "val.json"
+    coverage_path = tmp_path / "coverage" / "source_coverage_val.jsonl"
+    processed_root = tmp_path / "processed"
+    output_dir = tmp_path / "diff"
+    write_json(
+        raw_path,
+        [
+            {"event_id": "a.json", "claim": "a", "label": "true", "explain": "ea", "reports": []},
+            {"event_id": "b.json", "claim": "b", "label": "false", "explain": "eb", "reports": []},
+            {"event_id": "c.json", "claim": "c", "label": "false", "explain": "ec", "reports": []},
+        ],
+    )
+    uncovered = coverage_row("c.json", "uncovered")
+    uncovered["critical_missing"] = ["year:1979"]
+    write_jsonl(
+        coverage_path,
+        [
+            coverage_row("a.json", "covered"),
+            coverage_row("b.json", "weak_covered"),
+            uncovered,
+        ],
+    )
+    materialize.materialize_split(
+        spec=materialize.DATASET_SPECS["liar_raw"],
+        split="val",
+        raw_path=raw_path,
+        coverage_path=coverage_path,
+        output_root=processed_root,
+        coverage_version="source_coverage_v2_flash",
+        policies=["all", "covered", "covered_weak"],
+        strict=True,
+        sample_limit=None,
+        event_ids=None,
+        indent=2,
+    )
+
+    summary, diff_rows = compare.compare_split(
+        spec=compare.DATASET_SPECS["liar_raw"],
+        split="val",
+        raw_path=raw_path,
+        coverage_path=coverage_path,
+        processed_dataset_dir=processed_root / "liar_raw",
+        output_dir=output_dir,
+        strict=True,
+    )
+
+    assert summary["raw_rows"] == 3
+    assert summary["sidecar_rows"] == 3
+    assert summary["processed_all_rows"] == 3
+    assert summary["coverage_counts"] == {"covered": 1, "uncovered": 1, "weak_covered": 1}
+    assert summary["gold_by_coverage"]["false"] == {"uncovered": 1, "weak_covered": 1}
+    assert summary["retention"]["covered"]["retained"] == 1
+    assert summary["retention"]["covered_weak"]["retained"] == 2
+    assert summary["gold_label_retention"]["false"]["covered_weak"]["retained"] == 1
+    assert summary["critical_missing_top"] == [{"anchor": "year:1979", "count": 1}]
+    assert [row["event_id"] for row in diff_rows] == ["a.json", "b.json", "c.json"]
+    assert diff_rows[0]["coverage_label"] == "covered"
+    assert diff_rows[0]["in_all"] is True
+    assert diff_rows[0]["in_covered"] is True
+    assert diff_rows[0]["in_covered_weak"] is True
+    assert diff_rows[1]["in_covered"] is False
+    assert diff_rows[1]["in_covered_weak"] is True
+    assert diff_rows[2]["in_covered_weak"] is False
+    assert diff_rows[0]["top_evidence_preview"][0]["text"] == "Top evidence for a.json"
+    written = [json.loads(line) for line in (output_dir / "case_coverage_diff_val.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert written == diff_rows
+
+
+def test_compare_original_diff_strict_alignment_failures(tmp_path: Path):
+    raw_path = tmp_path / "raw" / "val.json"
+    coverage_path = tmp_path / "coverage" / "source_coverage_val.jsonl"
+    processed_dir = tmp_path / "processed" / "liar_raw"
+    output_dir = tmp_path / "diff"
+    raw_rows = [{"event_id": "a.json", "claim": "a", "label": "true", "explain": "ea", "reports": []}]
+    write_json(raw_path, raw_rows)
+    write_json(processed_dir / "all" / "val.json", [{**raw_rows[0], "coverage_label": "covered"}])
+    write_json(processed_dir / "covered" / "val.json", [{**raw_rows[0], "coverage_label": "covered"}])
+    write_json(processed_dir / "covered_weak" / "val.json", [{**raw_rows[0], "coverage_label": "covered"}])
+
+    write_jsonl(coverage_path, [])
+    with pytest.raises(ValueError, match="missing_coverage"):
+        compare.compare_split(
+            spec=compare.DATASET_SPECS["liar_raw"],
+            split="val",
+            raw_path=raw_path,
+            coverage_path=coverage_path,
+            processed_dataset_dir=processed_dir,
+            output_dir=output_dir,
+            strict=True,
+        )
+
+    write_jsonl(coverage_path, [coverage_row("a.json", "covered"), coverage_row("b.json", "covered")])
+    with pytest.raises(ValueError, match="extra_coverage"):
+        compare.compare_split(
+            spec=compare.DATASET_SPECS["liar_raw"],
+            split="val",
+            raw_path=raw_path,
+            coverage_path=coverage_path,
+            processed_dataset_dir=processed_dir,
+            output_dir=output_dir,
+            strict=True,
+        )
+
+
+def test_compare_rawfc_diff_includes_id_field(tmp_path: Path):
+    raw_path = tmp_path / "rawfc" / "val.json"
+    coverage_path = tmp_path / "coverage" / "source_coverage_val.jsonl"
+    processed_root = tmp_path / "processed"
+    output_dir = tmp_path / "diff"
+    write_json(raw_path, [{"id": 7, "claim": "a", "label": 1, "explanation": "ea", "evidence": ["x"]}])
+    write_jsonl(coverage_path, [coverage_row("7", "covered")])
+    materialize.materialize_split(
+        spec=materialize.DATASET_SPECS["rawfc"],
+        split="val",
+        raw_path=raw_path,
+        coverage_path=coverage_path,
+        output_root=processed_root,
+        coverage_version="source_coverage_v2_flash",
+        policies=["all", "covered", "covered_weak"],
+        strict=True,
+        sample_limit=None,
+        event_ids=None,
+        indent=2,
+    )
+
+    _summary, diff_rows = compare.compare_split(
+        spec=compare.DATASET_SPECS["rawfc"],
+        split="val",
+        raw_path=raw_path,
+        coverage_path=coverage_path,
+        processed_dataset_dir=processed_root / "rawfc",
+        output_dir=output_dir,
+        strict=True,
+    )
+
+    assert diff_rows[0]["event_id"] == "7"
+    assert diff_rows[0]["id"] == 7
 
 
 def test_materialize_strict_missing_and_duplicate_fail(tmp_path: Path):
