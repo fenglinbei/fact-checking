@@ -31,6 +31,7 @@ LLM_THINKING="${LLM_THINKING:-disabled}"
 TOP_K="${TOP_K:-12}"
 SENTENCE_SOURCE="${SENTENCE_SOURCE:-content}"
 MATERIALIZE="${MATERIALIZE:-1}"
+COMPARE_ORIGINAL="${COMPARE_ORIGINAL:-1}"
 ALLOW_LLM_ERRORS="${ALLOW_LLM_ERRORS:-0}"
 NO_PROGRESS="${NO_PROGRESS:-0}"
 RESUME="${RESUME:-1}"
@@ -172,8 +173,24 @@ if [[ "$MATERIALIZE" == "1" ]]; then
   done
 fi
 
+if [[ "$COMPARE_ORIGINAL" == "1" ]]; then
+  for dataset in $DATASETS; do
+    echo "==> comparing original vs coverage dataset=$dataset coverage_dir=$OUTPUT_BASE/$dataset"
+    "$PYTHON_BIN" scripts/phase11_data_quality/compare_coverage_to_original.py \
+      --dataset "$dataset" \
+      --coverage-version "$COVERAGE_VERSION" \
+      --coverage-dir "$OUTPUT_BASE/$dataset" \
+      --processed-root "$PROCESSED_ROOT" \
+      --output-dir "$OUTPUT_BASE/$dataset/original_diff" \
+      --splits $SPLITS
+  done
+fi
+
 echo "Done."
 echo "Coverage sidecars: $OUTPUT_BASE/{liar_raw,rawfc}/"
 if [[ "$MATERIALIZE" == "1" ]]; then
   echo "Materialized datasets: $PROCESSED_ROOT/{liar_raw,rawfc}/{all,covered,covered_weak}/"
+fi
+if [[ "$COMPARE_ORIGINAL" == "1" ]]; then
+  echo "Original diff reports: $OUTPUT_BASE/{liar_raw,rawfc}/original_diff/"
 fi
