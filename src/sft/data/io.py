@@ -57,6 +57,7 @@ def load_prebuilt_samples(rows: list[dict]) -> list[PreparedSample]:
             long_claim=len(str(row.get("claim", "")).split()) > 64,
             label_schema=label_schema,
             prompt_input_ids=_coerce_prompt_input_ids(row.get("prompt_input_ids")),
+            coverage_label=str(row.get("coverage_label", "")),
         ))
     return samples
 

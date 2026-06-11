@@ -18,7 +18,12 @@ from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler, set_seed
 
 from fact_checking.config import load_yaml, save_yaml
-from fact_checking.data.constants import labels_for_schema, letter_order_for_schema
+from fact_checking.data.constants import (
+    COVERAGE_LABELS,
+    COVERAGE_LETTER_ORDER,
+    labels_for_schema,
+    letter_order_for_schema,
+)
 from fact_checking.data.io import load_jsonl
 from fact_checking.utils.logging import init_logger
 from sft.data.io import _save_eval_artifacts, load_prebuilt_samples, save_model
@@ -91,6 +96,24 @@ def _class_weight_tensor(train_cfg: dict[str, Any], *, labels: list[str]) -> tor
     return torch.tensor(weights, dtype=torch.float32)
 
 
+def _coverage_label_token_cfg(train_cfg: dict[str, Any]) -> dict[str, Any]:
+    cfg = train_cfg.get("coverage_label_token", {}) or {}
+    if not isinstance(cfg, dict):
+        raise TypeError("sft_train.coverage_label_token must be a mapping when configured.")
+    return cfg
+
+
+def _coverage_label_token_enabled(train_cfg: dict[str, Any]) -> bool:
+    return bool(_coverage_label_token_cfg(train_cfg).get("enabled", False))
+
+
+def _coverage_class_weight_tensor(train_cfg: dict[str, Any]) -> torch.Tensor:
+    cfg = _coverage_label_token_cfg(train_cfg)
+    configured = cfg.get("class_weights", {}) or {}
+    weights = [float(configured.get(label, 1.0)) for label in COVERAGE_LABELS]
+    return torch.tensor(weights, dtype=torch.float32)
+
+
 def _ordinal_loss_cfg(train_cfg: dict[str, Any]) -> dict[str, Any]:
     label_cfg = train_cfg.get("label_token_ce", {}) or {}
     cfg = label_cfg.get("ordinal_loss", {}) or {}
@@ -121,6 +144,9 @@ def _compute_label_token_losses(
     gold_ids: torch.Tensor,
     class_weights: torch.Tensor,
     train_cfg: dict[str, Any],
+    coverage_label_logits: torch.Tensor | None = None,
+    coverage_gold_ids: torch.Tensor | None = None,
+    coverage_class_weights: torch.Tensor | None = None,
     global_step: int = 0,
     max_train_steps: int = 1,
 ) -> dict[str, torch.Tensor]:
@@ -155,10 +181,25 @@ def _compute_label_token_losses(
             effective_alpha = ordinal_alpha * warmup_factor
 
     loss = ce_loss + effective_alpha * ordinal_loss if ordinal_enabled else ce_loss
+    coverage_ce_loss = logits.new_zeros(())
+    if _coverage_label_token_enabled(train_cfg):
+        if coverage_label_logits is None or coverage_gold_ids is None:
+            raise ValueError("coverage_label_token.enabled=true requires coverage_label_logits and coverage_gold_ids.")
+        coverage_logits = coverage_label_logits.float()
+        coverage_gold_ids = coverage_gold_ids.to(device=coverage_logits.device, dtype=torch.long)
+        if coverage_class_weights is None:
+            coverage_weights = torch.ones(coverage_logits.shape[-1], device=coverage_logits.device)
+        else:
+            coverage_weights = coverage_class_weights.to(device=coverage_logits.device, dtype=torch.float32)
+        coverage_sample_weights = coverage_weights[coverage_gold_ids]
+        coverage_ce_per_sample = F.cross_entropy(coverage_logits, coverage_gold_ids, reduction="none")
+        coverage_ce_loss = _weighted_mean(coverage_ce_per_sample, coverage_sample_weights)
+        loss = loss + float(_coverage_label_token_cfg(train_cfg).get("loss_weight", 1.0)) * coverage_ce_loss
     return {
         "loss": loss,
         "ce_loss": ce_loss,
         "ordinal_loss": ordinal_loss,
+        "coverage_ce_loss": coverage_ce_loss,
     }
 
 
@@ -167,14 +208,28 @@ def _forward_label_logits(
     batch: dict[str, Any],
     label_token_ids: torch.Tensor,
 ) -> torch.Tensor:
-    outputs = model(
+    return _forward_label_logits_for_inputs(
+        model,
         input_ids=batch["input_ids"],
         attention_mask=batch["attention_mask"],
+        label_token_ids=label_token_ids,
+    )
+
+
+def _forward_label_logits_for_inputs(
+    model: AutoModelForCausalLM,
+    *,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    label_token_ids: torch.Tensor,
+) -> torch.Tensor:
+    outputs = model(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
         use_cache=False,
     )
-    attention_mask = batch["attention_mask"]
     last_positions = attention_mask.long().sum(dim=1) - 1
-    batch_indices = torch.arange(batch["input_ids"].shape[0], device=batch["input_ids"].device)
+    batch_indices = torch.arange(input_ids.shape[0], device=input_ids.device)
     next_token_logits = outputs.logits[batch_indices, last_positions]
     return next_token_logits.index_select(1, label_token_ids.to(next_token_logits.device))
 
@@ -202,6 +257,12 @@ def _apply_label_logit_adjust(
 def _label_name(label_id: int, *, labels: list[str]) -> str:
     if 0 <= int(label_id) < len(labels):
         return labels[int(label_id)]
+    return "parse_error"
+
+
+def _coverage_label_name(label_id: int) -> str:
+    if 0 <= int(label_id) < len(COVERAGE_LABELS):
+        return COVERAGE_LABELS[int(label_id)]
     return "parse_error"
 
 
@@ -463,6 +524,8 @@ def _evaluate_label_token(
     accelerator: Accelerator,
     label_token_ids: torch.Tensor,
     class_weights: torch.Tensor,
+    coverage_label_token_ids: torch.Tensor | None = None,
+    coverage_class_weights: torch.Tensor | None = None,
     train_cfg: dict[str, Any],
     label_prefix: str,
     labels: list[str],
@@ -478,9 +541,13 @@ def _evaluate_label_token(
     all_pred_ids: list[torch.Tensor] = []
     all_gold_ids: list[torch.Tensor] = []
     all_sample_indices: list[torch.Tensor] = []
+    all_coverage_pred_ids: list[torch.Tensor] = []
+    all_coverage_gold_ids: list[torch.Tensor] = []
+    all_coverage_sample_indices: list[torch.Tensor] = []
     all_losses: list[torch.Tensor] = []
     all_ce_losses: list[torch.Tensor] = []
     all_ordinal_losses: list[torch.Tensor] = []
+    all_coverage_ce_losses: list[torch.Tensor] = []
     pad_id = -100
     sample_pad_id = -1
     dataset_samples = getattr(getattr(dataloader, "dataset", None), "samples", None)
@@ -495,16 +562,32 @@ def _evaluate_label_token(
         for batch in dataloader:
             gold_ids = batch["gold_ids"]
             label_logits = _forward_label_logits(model, batch, label_token_ids)
+            coverage_label_logits = None
+            coverage_gold_ids = None
+            if coverage_label_token_ids is not None and "coverage_input_ids" in batch:
+                coverage_gold_ids = batch["coverage_gold_ids"]
+                coverage_label_logits = _forward_label_logits_for_inputs(
+                    model,
+                    input_ids=batch["coverage_input_ids"],
+                    attention_mask=batch["coverage_attention_mask"],
+                    label_token_ids=coverage_label_token_ids,
+                )
             losses = _compute_label_token_losses(
                 label_logits=label_logits,
                 gold_ids=gold_ids,
                 class_weights=class_weights,
                 train_cfg=train_cfg,
+                coverage_label_logits=coverage_label_logits,
+                coverage_gold_ids=coverage_gold_ids,
+                coverage_class_weights=coverage_class_weights,
                 global_step=global_step,
                 max_train_steps=max_train_steps,
             )
             prediction_logits = _apply_label_logit_adjust(label_logits, logit_adjust_cfg)
             pred_ids = prediction_logits.argmax(dim=-1).to(torch.long)
+            coverage_pred_ids = None
+            if coverage_label_logits is not None and coverage_gold_ids is not None:
+                coverage_pred_ids = coverage_label_logits.argmax(dim=-1).to(torch.long)
 
             pred_ids = accelerator.pad_across_processes(pred_ids, dim=0, pad_index=pad_id)
             gold_ids = accelerator.pad_across_processes(gold_ids, dim=0, pad_index=pad_id)
@@ -522,11 +605,28 @@ def _evaluate_label_token(
                 all_gold_ids.append(gathered_gold[valid_mask].cpu())
                 all_sample_indices.append(gathered_sample_indices[valid_mask].cpu())
 
+            if coverage_pred_ids is not None and coverage_gold_ids is not None:
+                coverage_pred_ids = accelerator.pad_across_processes(coverage_pred_ids, dim=0, pad_index=pad_id)
+                coverage_gold_ids = accelerator.pad_across_processes(coverage_gold_ids, dim=0, pad_index=pad_id)
+                gathered_coverage_pred = accelerator.gather(coverage_pred_ids)
+                gathered_coverage_gold = accelerator.gather(coverage_gold_ids)
+                coverage_valid_mask = (gathered_coverage_gold != pad_id) & (
+                    gathered_sample_indices != sample_pad_id
+                )
+                if coverage_valid_mask.any():
+                    all_coverage_pred_ids.append(gathered_coverage_pred[coverage_valid_mask].cpu())
+                    all_coverage_gold_ids.append(gathered_coverage_gold[coverage_valid_mask].cpu())
+                    all_coverage_sample_indices.append(gathered_sample_indices[coverage_valid_mask].cpu())
+
             all_losses.append(accelerator.gather_for_metrics(losses["loss"].detach().float().unsqueeze(0)).cpu())
             all_ce_losses.append(accelerator.gather_for_metrics(losses["ce_loss"].detach().float().unsqueeze(0)).cpu())
             all_ordinal_losses.append(
                 accelerator.gather_for_metrics(losses["ordinal_loss"].detach().float().unsqueeze(0)).cpu()
             )
+            if _coverage_label_token_enabled(train_cfg):
+                all_coverage_ce_losses.append(
+                    accelerator.gather_for_metrics(losses["coverage_ce_loss"].detach().float().unsqueeze(0)).cpu()
+                )
             progress.update(1)
 
     progress.close()
@@ -551,25 +651,75 @@ def _evaluate_label_token(
     gold_np = torch.cat(all_gold_ids).numpy()
     sample_indices_np = torch.cat(all_sample_indices).numpy()
     pred_np, gold_np, sample_indices_np = deduplicate_by_sample_idx(pred_np, gold_np, sample_indices_np)
+    coverage_by_sample_idx: dict[int, tuple[int, int]] = {}
+    coverage_eval_payload: dict[str, Any] = {}
+    if all_coverage_gold_ids:
+        coverage_pred_np = torch.cat(all_coverage_pred_ids).numpy()
+        coverage_gold_np = torch.cat(all_coverage_gold_ids).numpy()
+        coverage_sample_indices_np = torch.cat(all_coverage_sample_indices).numpy()
+        coverage_pred_np, coverage_gold_np, coverage_sample_indices_np = deduplicate_by_sample_idx(
+            coverage_pred_np,
+            coverage_gold_np,
+            coverage_sample_indices_np,
+        )
+        coverage_by_sample_idx = {
+            int(sample_idx): (int(pred_id), int(gold_id))
+            for sample_idx, pred_id, gold_id in zip(
+                coverage_sample_indices_np.tolist(),
+                coverage_pred_np.tolist(),
+                coverage_gold_np.tolist(),
+            )
+        }
+        coverage_metrics = build_eval_metrics(
+            coverage_pred_np,
+            coverage_gold_np,
+            labels=COVERAGE_LABELS,
+            prediction_records=[],
+            eval_logger=eval_logger,
+            log_predictions_limit=0,
+            log_prediction_examples=False,
+        )
+        coverage_eval_payload = {
+            "coverage_accuracy": float(coverage_metrics["accuracy"]),
+            "coverage_macro_precision": float(coverage_metrics["macro_precision"]),
+            "coverage_macro_recall": float(coverage_metrics["macro_recall"]),
+            "coverage_macro_f1": float(coverage_metrics["macro_f1"]),
+            "coverage_parse_error_rate": float(coverage_metrics["parse_error_rate"]),
+            "coverage_per_class": coverage_metrics.get("per_class", {}),
+        }
 
     prediction_records: list[dict[str, object]] = []
     if accelerator.is_main_process and dataset_samples is not None:
         for sample_idx, pred_id, gold_id in zip(sample_indices_np.tolist(), pred_np.tolist(), gold_np.tolist()):
             sample = dataset_samples[int(sample_idx)]
             letter = letter_order[int(pred_id)]
-            prediction_records.append(
-                {
-                    "sample_idx": int(sample_idx),
-                    "prompt": str(sample.prompt),
-                    "target": str(sample.target),
-                    "raw_output": f"{label_prefix}{_choice_text(label_prefix, letter)}",
-                    "pred_id": int(pred_id),
-                    "pred_label": _label_name(int(pred_id), labels=labels),
-                    "gold_id": int(gold_id),
-                    "gold_label": str(sample.gold_label),
-                    "gold_explain": str(sample.gold_explain),
-                }
-            )
+            record: dict[str, object] = {
+                "sample_idx": int(sample_idx),
+                "prompt": str(sample.prompt),
+                "target": str(sample.target),
+                "raw_output": f"{label_prefix}{_choice_text(label_prefix, letter)}",
+                "pred_id": int(pred_id),
+                "pred_label": _label_name(int(pred_id), labels=labels),
+                "gold_id": int(gold_id),
+                "gold_label": str(sample.gold_label),
+                "gold_explain": str(sample.gold_explain),
+            }
+            if int(sample_idx) in coverage_by_sample_idx:
+                coverage_pred_id, coverage_gold_id = coverage_by_sample_idx[int(sample_idx)]
+                coverage_letter = COVERAGE_LETTER_ORDER[coverage_pred_id]
+                record.update(
+                    {
+                        "raw_output": (
+                            f"{label_prefix}{_choice_text(label_prefix, letter)}\n"
+                            f"Coverage:{_choice_text('Coverage:', coverage_letter)}"
+                        ),
+                        "coverage_pred_id": coverage_pred_id,
+                        "coverage_pred_label": _coverage_label_name(coverage_pred_id),
+                        "coverage_gold_id": coverage_gold_id,
+                        "coverage_gold_label": _coverage_label_name(coverage_gold_id),
+                    }
+                )
+            prediction_records.append(record)
 
     metrics = build_eval_metrics(
         pred_np,
@@ -584,10 +734,15 @@ def _evaluate_label_token(
         metrics["eval_loss"] = float(torch.cat(all_losses).mean().item())
         metrics["eval_ce_loss"] = float(torch.cat(all_ce_losses).mean().item())
         metrics["eval_ordinal_loss"] = float(torch.cat(all_ordinal_losses).mean().item())
+        if all_coverage_ce_losses:
+            metrics["eval_coverage_ce_loss"] = float(torch.cat(all_coverage_ce_losses).mean().item())
     else:
         metrics["eval_loss"] = float("nan")
         metrics["eval_ce_loss"] = float("nan")
         metrics["eval_ordinal_loss"] = float("nan")
+        if all_coverage_ce_losses:
+            metrics["eval_coverage_ce_loss"] = float("nan")
+    metrics.update(coverage_eval_payload)
     model.train()
     return metrics
 
@@ -666,6 +821,21 @@ def main() -> None:
     )
     label_token_ids = torch.tensor(label_token_id_list, dtype=torch.long)
     class_weights = _class_weight_tensor(train_cfg, labels=labels)
+    coverage_enabled = _coverage_label_token_enabled(train_cfg)
+    coverage_cfg = _coverage_label_token_cfg(train_cfg)
+    coverage_label_prefix = str(coverage_cfg.get("label_prefix", "Coverage:"))
+    coverage_label_token_ids = None
+    coverage_token_meta: dict[str, Any] = {"enabled": False}
+    coverage_class_weights = None
+    if coverage_enabled:
+        coverage_label_token_id_list, coverage_token_meta = _build_label_token_ids(
+            tokenizer,
+            label_prefix=coverage_label_prefix,
+            letter_order=COVERAGE_LETTER_ORDER,
+        )
+        coverage_token_meta["enabled"] = True
+        coverage_label_token_ids = torch.tensor(coverage_label_token_id_list, dtype=torch.long)
+        coverage_class_weights = _coverage_class_weight_tensor(train_cfg)
     logit_adjust_cfg = build_logit_adjust_cfg_from_samples(
         train_cfg=train_cfg,
         tokenizer=tokenizer,
@@ -711,6 +881,16 @@ def main() -> None:
             "focus_label": str(label_cfg.get("focus_label", "") or ""),
             "focus_metric_weight": float(label_cfg.get("focus_metric_weight", 0.3)),
             "logit_adjust": logit_adjust_cfg or {"enabled": False},
+            "coverage_label_token": {
+                **coverage_token_meta,
+                "labels": COVERAGE_LABELS,
+                "class_weights": (
+                    {label: float(weight) for label, weight in zip(COVERAGE_LABELS, coverage_class_weights.tolist())}
+                    if coverage_class_weights is not None
+                    else {}
+                ),
+                "loss_weight": float(coverage_cfg.get("loss_weight", 1.0)),
+            },
         }
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         active_logger.info("[INFO] label-token CE metadata saved to %s", meta_path)
@@ -769,6 +949,8 @@ def main() -> None:
         max_length=max_length,
         label_prefix=label_prefix,
         label_schema=label_schema,
+        coverage_enabled=coverage_enabled,
+        coverage_label_prefix=coverage_label_prefix,
     )
     val_ds = LabelTokenDataset(
         val_samples,
@@ -776,6 +958,8 @@ def main() -> None:
         max_length=max_length,
         label_prefix=label_prefix,
         label_schema=label_schema,
+        coverage_enabled=coverage_enabled,
+        coverage_label_prefix=coverage_label_prefix,
     )
     collator = LabelTokenCollator(tokenizer=tokenizer, pad_to_multiple_of=8)
     num_workers = int(train_cfg.get("dataloader_num_workers", 0))
@@ -932,6 +1116,8 @@ def main() -> None:
             accelerator=accelerator,
             label_token_ids=label_token_ids,
             class_weights=class_weights,
+            coverage_label_token_ids=coverage_label_token_ids,
+            coverage_class_weights=coverage_class_weights,
             train_cfg=train_cfg,
             label_prefix=label_prefix,
             labels=labels,
@@ -1013,26 +1199,30 @@ def main() -> None:
 
         accelerator.wait_for_everyone()
         if accelerator.is_main_process:
+            step_metrics = {
+                "step": step,
+                "eval_loss": float(eval_metrics.get("eval_loss", float("nan"))),
+                "eval_ce_loss": float(eval_metrics.get("eval_ce_loss", float("nan"))),
+                "eval_ordinal_loss": float(eval_metrics.get("eval_ordinal_loss", float("nan"))),
+                "accuracy": float(eval_metrics["accuracy"]),
+                "macro_precision": float(eval_metrics["macro_precision"]),
+                "macro_recall": float(eval_metrics["macro_recall"]),
+                "macro_f1": macro_f1,
+                "true_side_macro_f1": true_side,
+                "selection_score": score,
+                "parse_error_rate": float(eval_metrics["parse_error_rate"]),
+                "ordinal_mae": float(eval_metrics.get("ordinal_mae", float("nan"))),
+                "ordinal_mae_norm": float(eval_metrics.get("ordinal_mae_norm", float("nan"))),
+                "extreme_error_rate": float(eval_metrics.get("extreme_error_rate", float("nan"))),
+                "per_class": per_class,
+            }
+            for key in ("eval_coverage_ce_loss", "coverage_accuracy", "coverage_macro_f1"):
+                if key in eval_metrics:
+                    step_metrics[key] = float(eval_metrics[key])
             artifacts = _save_eval_artifacts(
                 output_dir=output_dir,
                 global_step=step,
-                metrics={
-                    "step": step,
-                    "eval_loss": float(eval_metrics.get("eval_loss", float("nan"))),
-                    "eval_ce_loss": float(eval_metrics.get("eval_ce_loss", float("nan"))),
-                    "eval_ordinal_loss": float(eval_metrics.get("eval_ordinal_loss", float("nan"))),
-                    "accuracy": float(eval_metrics["accuracy"]),
-                    "macro_precision": float(eval_metrics["macro_precision"]),
-                    "macro_recall": float(eval_metrics["macro_recall"]),
-                    "macro_f1": macro_f1,
-                    "true_side_macro_f1": true_side,
-                    "selection_score": score,
-                    "parse_error_rate": float(eval_metrics["parse_error_rate"]),
-                    "ordinal_mae": float(eval_metrics.get("ordinal_mae", float("nan"))),
-                    "ordinal_mae_norm": float(eval_metrics.get("ordinal_mae_norm", float("nan"))),
-                    "extreme_error_rate": float(eval_metrics.get("extreme_error_rate", float("nan"))),
-                    "per_class": per_class,
-                },
+                metrics=step_metrics,
                 confusion_matrix=eval_metrics["confusion_matrix"],
                 confusion_labels=eval_metrics["confusion_labels"],
                 prediction_records=eval_metrics.get("prediction_records", []),
@@ -1085,11 +1275,24 @@ def main() -> None:
 
             with accelerator.accumulate(model):
                 label_logits = _forward_label_logits(model, batch, label_token_ids)
+                coverage_label_logits = None
+                coverage_gold_ids = None
+                if coverage_label_token_ids is not None and "coverage_input_ids" in batch:
+                    coverage_gold_ids = batch["coverage_gold_ids"]
+                    coverage_label_logits = _forward_label_logits_for_inputs(
+                        model,
+                        input_ids=batch["coverage_input_ids"],
+                        attention_mask=batch["coverage_attention_mask"],
+                        label_token_ids=coverage_label_token_ids,
+                    )
                 losses = _compute_label_token_losses(
                     label_logits=label_logits,
                     gold_ids=batch["gold_ids"],
                     class_weights=class_weights,
                     train_cfg=train_cfg,
+                    coverage_label_logits=coverage_label_logits,
+                    coverage_gold_ids=coverage_gold_ids,
+                    coverage_class_weights=coverage_class_weights,
                     global_step=global_step,
                     max_train_steps=max_train_steps,
                 )
@@ -1114,16 +1317,24 @@ def main() -> None:
                     train_ordinal_loss = accelerator.gather_for_metrics(
                         losses["ordinal_loss"].detach().float().unsqueeze(0)
                     ).mean().item()
+                    train_coverage_ce_loss = None
+                    if coverage_enabled:
+                        train_coverage_ce_loss = accelerator.gather_for_metrics(
+                            losses["coverage_ce_loss"].detach().float().unsqueeze(0)
+                        ).mean().item()
                     lr = scheduler.get_last_lr()[0]
+                    train_log_payload = {
+                        "train/loss": train_loss,
+                        "train/ce_loss": train_ce_loss,
+                        "train/ordinal_loss": train_ordinal_loss,
+                        "train/lr": lr,
+                        "train/epoch": epoch,
+                    }
+                    if train_coverage_ce_loss is not None:
+                        train_log_payload["train/coverage_ce_loss"] = train_coverage_ce_loss
                     log_metrics(
                         accelerator,
-                        {
-                            "train/loss": train_loss,
-                            "train/ce_loss": train_ce_loss,
-                            "train/ordinal_loss": train_ordinal_loss,
-                            "train/lr": lr,
-                            "train/epoch": epoch,
-                        },
+                        train_log_payload,
                         step=global_step,
                         backend=tracking_setup.backend,
                     )

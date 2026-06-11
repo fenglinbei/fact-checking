@@ -22,6 +22,7 @@ class SampleRecord:
     label: str
     explain: str
     reports: list[dict[str, Any]]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

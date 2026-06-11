@@ -17,12 +17,21 @@ MODE="${MODE:-full}"
 EVAL_SPLITS="${EVAL_SPLITS:-val,test}"
 CHECKPOINTS="${CHECKPOINTS:-best}"
 SAMPLE_LIMIT="${SAMPLE_LIMIT:-0}"
+CASE_SUFFIX="${CASE_SUFFIX:-}"
 DRY_RUN="${DRY_RUN:-false}"
 FORCE_STAGE="${FORCE_STAGE:-false}"
 FORCE_BUILD="${FORCE_BUILD:-false}"
 FORCE_TRAIN="${FORCE_TRAIN:-false}"
 FORCE_EVAL="${FORCE_EVAL:-false}"
 SOURCE_ROOT="${SOURCE_ROOT:-}"
+SELECTOR_NAME="${SELECTOR_NAME:-sentence_rule_step_adaptive5_10}"
+SELECTOR_GRAPH_VERSION="${SELECTOR_GRAPH_VERSION:-sentence_evidence_chain_graph}"
+SELECTOR_ADAPTIVE_POLICY="${SELECTOR_ADAPTIVE_POLICY:-sentence_rule_step}"
+EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME:-$SELECTOR_NAME}"
+PROMPT_OUTPUT_MODE="${PROMPT_OUTPUT_MODE:-}"
+RAW_ROOT="${RAW_ROOT:-}"
+COVERAGE_DATA_ROOT="${COVERAGE_DATA_ROOT:-}"
+COVERAGE_POLICY="${COVERAGE_POLICY:-all}"
 REBUILD_RAWFC_SOURCES="${REBUILD_RAWFC_SOURCES:-false}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 NUM_MACHINES="${NUM_MACHINES:-1}"
@@ -74,8 +83,9 @@ training_complete() {
 
 DATASET="$(normalize_dataset "$DATASET")"
 MODEL="$(normalize_model "$MODEL")"
-CASE_NAME="${DATASET}__${MODEL}"
-CONFIG_PATH="scripts/sentence_trace_method/configs/${CASE_NAME}.yaml"
+CONFIG_CASE_NAME="${DATASET}__${MODEL}"
+CASE_NAME="${CONFIG_CASE_NAME}${CASE_SUFFIX}"
+CONFIG_PATH="scripts/sentence_trace_method/configs/${CONFIG_CASE_NAME}.yaml"
 RUN_DIR="${OUTPUT_ROOT}/${CASE_NAME}"
 SOURCE_ENV="${RUN_DIR}/source.env"
 STAGE_SAMPLE_LIMIT="$SAMPLE_LIMIT"
@@ -85,17 +95,23 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
   exit 2
 fi
 
+if [[ -z "$RAW_ROOT" && -n "$COVERAGE_DATA_ROOT" ]]; then
+  RAW_ROOT="${COVERAGE_DATA_ROOT%/}/${DATASET}/${COVERAGE_POLICY}"
+fi
+
 case "$DATASET" in
   liar_raw)
-    TRAIN_RAW="data/raw/LIAR-RAW/train.json"
-    VAL_RAW="data/raw/LIAR-RAW/val.json"
-    TEST_RAW="data/raw/LIAR-RAW/test.json"
+    DEFAULT_RAW_ROOT="${RAW_ROOT:-data/raw/LIAR-RAW}"
+    TRAIN_RAW="${TRAIN_RAW:-${DEFAULT_RAW_ROOT}/train.json}"
+    VAL_RAW="${VAL_RAW:-${DEFAULT_RAW_ROOT}/val.json}"
+    TEST_RAW="${TEST_RAW:-${DEFAULT_RAW_ROOT}/test.json}"
     LABEL_SCHEMA="liar6"
     ;;
   rawfc)
-    TRAIN_RAW="data/raw/RAWFC/train.json"
-    VAL_RAW="data/raw/RAWFC/val.json"
-    TEST_RAW="data/raw/RAWFC/test.json"
+    DEFAULT_RAW_ROOT="${RAW_ROOT:-data/raw/RAWFC}"
+    TRAIN_RAW="${TRAIN_RAW:-${DEFAULT_RAW_ROOT}/train.json}"
+    VAL_RAW="${VAL_RAW:-${DEFAULT_RAW_ROOT}/val.json}"
+    TEST_RAW="${TEST_RAW:-${DEFAULT_RAW_ROOT}/test.json}"
     LABEL_SCHEMA="rawfc3"
     ;;
 esac
@@ -107,7 +123,7 @@ esac
 
 mkdir -p "$RUN_DIR"
 
-FULL_STAGED_ROOT="${OUTPUT_ROOT}/_sources/${DATASET}/sentence_rule_step_adaptive5_10"
+FULL_STAGED_ROOT="${OUTPUT_ROOT}/_sources/${DATASET}/${SELECTOR_NAME}"
 if [[ -z "$SOURCE_ROOT" && "$FORCE_STAGE" != "true" \
   && -f "${FULL_STAGED_ROOT}/train/selection_trace_train.jsonl" \
   && -f "${FULL_STAGED_ROOT}/val/selection_trace_val.jsonl" \
@@ -127,6 +143,9 @@ stage_sources() {
     --output-root "$OUTPUT_ROOT"
     --sample-limit "$STAGE_SAMPLE_LIMIT"
     --splits train,val,test
+    --selector-name "$SELECTOR_NAME"
+    --graph-version "$SELECTOR_GRAPH_VERSION"
+    --adaptive-policy "$SELECTOR_ADAPTIVE_POLICY"
     --env-file "$SOURCE_ENV")
   if [[ "$FORCE_STAGE" == "true" ]]; then
     cmd+=(--force)
@@ -148,9 +167,9 @@ do_build() {
       source_suffix="_sample${STAGE_SAMPLE_LIMIT}"
     fi
     EXPECTED_CHUNK_MMR_FINGERPRINT="<staged-fingerprint>"
-    TRAIN_TRACE="${OUTPUT_ROOT}/_sources/${DATASET}/sentence_rule_step_adaptive5_10${source_suffix}/train/selection_trace_train.jsonl"
-    VAL_TRACE="${OUTPUT_ROOT}/_sources/${DATASET}/sentence_rule_step_adaptive5_10${source_suffix}/val/selection_trace_val.jsonl"
-    TEST_TRACE="${OUTPUT_ROOT}/_sources/${DATASET}/sentence_rule_step_adaptive5_10${source_suffix}/test/selection_trace_test.jsonl"
+    TRAIN_TRACE="${OUTPUT_ROOT}/_sources/${DATASET}/${SELECTOR_NAME}${source_suffix}/train/selection_trace_train.jsonl"
+    VAL_TRACE="${OUTPUT_ROOT}/_sources/${DATASET}/${SELECTOR_NAME}${source_suffix}/val/selection_trace_val.jsonl"
+    TEST_TRACE="${OUTPUT_ROOT}/_sources/${DATASET}/${SELECTOR_NAME}${source_suffix}/test/selection_trace_test.jsonl"
   else
     # shellcheck disable=SC1090
     source "$SOURCE_ENV"
@@ -165,7 +184,7 @@ do_build() {
     --output-dir "$RUN_DIR"
     --selection-mode trace
     --trace-prompt-style plain
-    --expected-selector-name sentence_rule_step_adaptive5_10
+    --expected-selector-name "$EXPECTED_SELECTOR_NAME"
     --expected-chunk-mmr-fingerprint "$EXPECTED_CHUNK_MMR_FINGERPRINT"
     --top-k 10
     --prompt-model-name-or-path "$MODEL_PATH"
@@ -173,6 +192,9 @@ do_build() {
     --train-trace "$TRAIN_TRACE"
     --val-trace "$VAL_TRACE"
     --test-trace "$TEST_TRACE")
+  if [[ -n "$PROMPT_OUTPUT_MODE" ]]; then
+    cmd+=(--prompt-output-mode "$PROMPT_OUTPUT_MODE")
+  fi
   if [[ "$SAMPLE_LIMIT" != "0" ]]; then
     cmd+=(--sample-limit "$SAMPLE_LIMIT")
   fi

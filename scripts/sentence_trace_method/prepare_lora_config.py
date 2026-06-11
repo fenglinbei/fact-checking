@@ -29,6 +29,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--early-stopping-patience", type=int, default=None)
     parser.add_argument("--logit-adjust-enabled", choices=["true", "false"], default=None)
     parser.add_argument("--logit-adjust-tau", type=float, default=None)
+    parser.add_argument("--coverage-label-token-enabled", choices=["true", "false"], default=None)
+    parser.add_argument("--coverage-label-token-loss-weight", type=float, default=None)
+    parser.add_argument("--coverage-label-token-prefix", default=None)
     parser.add_argument(
         "--class-weight",
         action="append",
@@ -48,6 +51,7 @@ def main() -> int:
     output_config = output_root / "train.resolved.yaml"
     class_weights = _parse_class_weight_overrides(args.class_weight)
     logit_adjust_enabled = _parse_optional_bool(args.logit_adjust_enabled)
+    coverage_label_token_enabled = _parse_optional_bool(args.coverage_label_token_enabled)
     if output_config.exists() and not args.force:
         _sync_existing_config(
             output_config,
@@ -59,6 +63,9 @@ def main() -> int:
             early_stopping_patience=args.early_stopping_patience,
             logit_adjust_enabled=logit_adjust_enabled,
             logit_adjust_tau=args.logit_adjust_tau,
+            coverage_label_token_enabled=coverage_label_token_enabled,
+            coverage_label_token_loss_weight=args.coverage_label_token_loss_weight,
+            coverage_label_token_prefix=args.coverage_label_token_prefix,
             class_weights=class_weights,
         )
         print(output_config)
@@ -103,6 +110,9 @@ def main() -> int:
         early_stopping_patience=args.early_stopping_patience,
         logit_adjust_enabled=logit_adjust_enabled,
         logit_adjust_tau=args.logit_adjust_tau,
+        coverage_label_token_enabled=coverage_label_token_enabled,
+        coverage_label_token_loss_weight=args.coverage_label_token_loss_weight,
+        coverage_label_token_prefix=args.coverage_label_token_prefix,
         class_weights=class_weights,
     )
 
@@ -167,6 +177,9 @@ def _apply_sft_overrides(
     early_stopping_patience: int | None,
     logit_adjust_enabled: bool | None,
     logit_adjust_tau: float | None,
+    coverage_label_token_enabled: bool | None,
+    coverage_label_token_loss_weight: float | None,
+    coverage_label_token_prefix: str | None,
     class_weights: dict[str, float],
 ) -> bool:
     sft_train = dict(cfg.get("sft_train") or {})
@@ -204,6 +217,29 @@ def _apply_sft_overrides(
         label_token_ce["class_weights"] = existing_weights
         sft_train["label_token_ce"] = label_token_ce
 
+    if (
+        coverage_label_token_enabled is not None
+        or coverage_label_token_loss_weight is not None
+        or coverage_label_token_prefix is not None
+    ):
+        coverage_label_token = dict(sft_train.get("coverage_label_token") or {})
+        if (
+            coverage_label_token_enabled is not None
+            and bool(coverage_label_token.get("enabled", False)) != coverage_label_token_enabled
+        ):
+            coverage_label_token["enabled"] = coverage_label_token_enabled
+            changed = True
+        if (
+            coverage_label_token_loss_weight is not None
+            and float(coverage_label_token.get("loss_weight", 1.0)) != float(coverage_label_token_loss_weight)
+        ):
+            coverage_label_token["loss_weight"] = float(coverage_label_token_loss_weight)
+            changed = True
+        if coverage_label_token_prefix is not None and coverage_label_token.get("label_prefix") != coverage_label_token_prefix:
+            coverage_label_token["label_prefix"] = str(coverage_label_token_prefix)
+            changed = True
+        sft_train["coverage_label_token"] = coverage_label_token
+
     if changed:
         cfg["sft_train"] = sft_train
     return changed
@@ -220,6 +256,9 @@ def _sync_existing_config(
     early_stopping_patience: int | None,
     logit_adjust_enabled: bool | None,
     logit_adjust_tau: float | None,
+    coverage_label_token_enabled: bool | None,
+    coverage_label_token_loss_weight: float | None,
+    coverage_label_token_prefix: str | None,
     class_weights: dict[str, float],
 ) -> None:
     cfg = load_yaml(output_config)
@@ -248,6 +287,9 @@ def _sync_existing_config(
             early_stopping_patience=early_stopping_patience,
             logit_adjust_enabled=logit_adjust_enabled,
             logit_adjust_tau=logit_adjust_tau,
+            coverage_label_token_enabled=coverage_label_token_enabled,
+            coverage_label_token_loss_weight=coverage_label_token_loss_weight,
+            coverage_label_token_prefix=coverage_label_token_prefix,
             class_weights=class_weights,
         )
         or changed

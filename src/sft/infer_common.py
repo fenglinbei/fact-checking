@@ -231,4 +231,16 @@ def build_serializable_metrics(eval_metrics: dict[str, object]) -> dict[str, obj
     for key in ("eval_loss", "eval_ce_loss", "eval_ordinal_loss"):
         if key in eval_metrics:
             payload[key] = float(eval_metrics[key])
+    for key in (
+        "eval_coverage_ce_loss",
+        "coverage_accuracy",
+        "coverage_macro_precision",
+        "coverage_macro_recall",
+        "coverage_macro_f1",
+        "coverage_parse_error_rate",
+    ):
+        if key in eval_metrics:
+            payload[key] = float(eval_metrics[key])
+    if "coverage_per_class" in eval_metrics:
+        payload["coverage_per_class"] = eval_metrics["coverage_per_class"]
     return payload

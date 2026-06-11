@@ -17,12 +17,21 @@ MODE="${MODE:-full}" # build|train|eval|full
 SAMPLE_LIMIT="${SAMPLE_LIMIT:-0}"
 EVAL_SPLITS="${EVAL_SPLITS:-val,test}"
 CHECKPOINTS="${CHECKPOINTS:-best}"
+CASE_SUFFIX="${CASE_SUFFIX:-}"
 DRY_RUN="${DRY_RUN:-false}"
 FORCE_STAGE="${FORCE_STAGE:-false}"
 FORCE_BUILD="${FORCE_BUILD:-auto}"
 FORCE_LORA_CONFIG="${FORCE_LORA_CONFIG:-false}"
 FORCE_TRAIN="${FORCE_TRAIN:-false}"
 FORCE_EVAL="${FORCE_EVAL:-false}"
+SELECTOR_NAME="${SELECTOR_NAME:-sentence_rule_step_adaptive5_10}"
+SELECTOR_GRAPH_VERSION="${SELECTOR_GRAPH_VERSION:-sentence_evidence_chain_graph}"
+SELECTOR_ADAPTIVE_POLICY="${SELECTOR_ADAPTIVE_POLICY:-sentence_rule_step}"
+EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME:-$SELECTOR_NAME}"
+PROMPT_OUTPUT_MODE="${PROMPT_OUTPUT_MODE:-}"
+RAW_ROOT="${RAW_ROOT:-}"
+COVERAGE_DATA_ROOT="${COVERAGE_DATA_ROOT:-}"
+COVERAGE_POLICY="${COVERAGE_POLICY:-all}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 NUM_MACHINES="${NUM_MACHINES:-1}"
 MIXED_PRECISION="${MIXED_PRECISION:-bf16}"
@@ -39,6 +48,9 @@ SFT_SAVE_STEPS="${SFT_SAVE_STEPS:-}"
 SFT_EARLY_STOPPING_PATIENCE="${SFT_EARLY_STOPPING_PATIENCE:-}"
 SFT_LOGIT_ADJUST_ENABLED="${SFT_LOGIT_ADJUST_ENABLED:-}"
 SFT_LOGIT_ADJUST_TAU="${SFT_LOGIT_ADJUST_TAU:-}"
+SFT_COVERAGE_LABEL_TOKEN_ENABLED="${SFT_COVERAGE_LABEL_TOKEN_ENABLED:-}"
+SFT_COVERAGE_LABEL_TOKEN_LOSS_WEIGHT="${SFT_COVERAGE_LABEL_TOKEN_LOSS_WEIGHT:-}"
+SFT_COVERAGE_LABEL_TOKEN_PREFIX="${SFT_COVERAGE_LABEL_TOKEN_PREFIX:-}"
 LIAR_CLASS_WEIGHTS="${LIAR_CLASS_WEIGHTS:-}"
 SWANLAB_PROJECT="${SWANLAB_PROJECT:-fact-checking-sentence-trace-method-lora}"
 SAVE_LATEST_TRAIN_STATE="${SAVE_LATEST_TRAIN_STATE:-true}"
@@ -125,7 +137,7 @@ training_complete() {
 expected_rows_for_split() {
   local dataset="$1"
   local split="$2"
-  local source_path="${OUTPUT_ROOT}/_sources/${dataset}/sentence_rule_step_adaptive5_10/${split}/selection_trace_${split}.jsonl"
+  local source_path="${OUTPUT_ROOT}/_sources/${dataset}/${SELECTOR_NAME}/${split}/selection_trace_${split}.jsonl"
   local source_rows
   source_rows="$(line_count "$source_path")"
   if [[ "$source_rows" == "-1" ]]; then
@@ -156,13 +168,22 @@ build_ready() {
 ensure_build() {
   local dataset="$1"
   local model="$2"
-  local case_name="${dataset}__${model}"
+  local case_name="${dataset}__${model}${CASE_SUFFIX}"
   printf '\n== prepare build: %s ==\n' "$case_name"
   run_cmd env \
     PYTHON_BIN="$PYTHON_BIN" \
     DATASET="$dataset" \
     MODEL="$model" \
+    CASE_SUFFIX="$CASE_SUFFIX" \
     OUTPUT_ROOT="$OUTPUT_ROOT" \
+    SELECTOR_NAME="$SELECTOR_NAME" \
+    SELECTOR_GRAPH_VERSION="$SELECTOR_GRAPH_VERSION" \
+    SELECTOR_ADAPTIVE_POLICY="$SELECTOR_ADAPTIVE_POLICY" \
+    EXPECTED_SELECTOR_NAME="$EXPECTED_SELECTOR_NAME" \
+    PROMPT_OUTPUT_MODE="$PROMPT_OUTPUT_MODE" \
+    RAW_ROOT="$RAW_ROOT" \
+    COVERAGE_DATA_ROOT="$COVERAGE_DATA_ROOT" \
+    COVERAGE_POLICY="$COVERAGE_POLICY" \
     MODE=stage \
     SAMPLE_LIMIT=0 \
     FORCE_STAGE="$FORCE_STAGE" \
@@ -181,7 +202,16 @@ ensure_build() {
     PYTHON_BIN="$PYTHON_BIN" \
     DATASET="$dataset" \
     MODEL="$model" \
+    CASE_SUFFIX="$CASE_SUFFIX" \
     OUTPUT_ROOT="$OUTPUT_ROOT" \
+    SELECTOR_NAME="$SELECTOR_NAME" \
+    SELECTOR_GRAPH_VERSION="$SELECTOR_GRAPH_VERSION" \
+    SELECTOR_ADAPTIVE_POLICY="$SELECTOR_ADAPTIVE_POLICY" \
+    EXPECTED_SELECTOR_NAME="$EXPECTED_SELECTOR_NAME" \
+    PROMPT_OUTPUT_MODE="$PROMPT_OUTPUT_MODE" \
+    RAW_ROOT="$RAW_ROOT" \
+    COVERAGE_DATA_ROOT="$COVERAGE_DATA_ROOT" \
+    COVERAGE_POLICY="$COVERAGE_POLICY" \
     MODE=build \
     SAMPLE_LIMIT="$SAMPLE_LIMIT" \
     FORCE_BUILD="$force_build_flag" \
@@ -222,6 +252,15 @@ prepare_lora_config() {
   fi
   if [[ -n "$SFT_LOGIT_ADJUST_TAU" ]]; then
     cmd+=(--logit-adjust-tau "$SFT_LOGIT_ADJUST_TAU")
+  fi
+  if [[ -n "$SFT_COVERAGE_LABEL_TOKEN_ENABLED" ]]; then
+    cmd+=(--coverage-label-token-enabled "$SFT_COVERAGE_LABEL_TOKEN_ENABLED")
+  fi
+  if [[ -n "$SFT_COVERAGE_LABEL_TOKEN_LOSS_WEIGHT" ]]; then
+    cmd+=(--coverage-label-token-loss-weight "$SFT_COVERAGE_LABEL_TOKEN_LOSS_WEIGHT")
+  fi
+  if [[ -n "$SFT_COVERAGE_LABEL_TOKEN_PREFIX" ]]; then
+    cmd+=(--coverage-label-token-prefix "$SFT_COVERAGE_LABEL_TOKEN_PREFIX")
   fi
   if [[ "$case_name" == liar_raw__* && -n "$LIAR_CLASS_WEIGHTS" ]]; then
     local raw_weight class_weight
@@ -310,7 +349,7 @@ for raw_dataset in "${dataset_array[@]}"; do
     raw_model="${raw_model// /}"
     [[ -z "$raw_model" ]] && continue
     model="$(normalize_model "$raw_model")"
-    case_name="${dataset}__${model}"
+    case_name="${dataset}__${model}${CASE_SUFFIX}"
     printf '\n== sentence_trace_lora case=%s mode=%s ==\n' "$case_name" "$MODE"
 
     if [[ "$MODE" == "build" || "$MODE" == "full" ]]; then

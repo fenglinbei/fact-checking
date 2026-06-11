@@ -11,6 +11,14 @@ from fact_checking.data.types import SampleRecord, SentenceRecord
 from fact_checking.utils.text import clean_text, robust_sentence_split
 
 
+COVERAGE_METADATA_KEYS = (
+    "coverage_label",
+    "coverage_score",
+    "coverage_version",
+    "coverage",
+)
+
+
 def load_split(
     path: str | Path,
     *,
@@ -53,6 +61,7 @@ def _load_liar_raw_split(path: Path, *, label_schema: str) -> list[SampleRecord]
                 label=label,
                 explain=clean_text(str(item.get("explain", ""))),
                 reports=item.get("reports", []),
+                metadata=_metadata_from_raw_row(item),
             )
         )
     return records
@@ -91,9 +100,14 @@ def _load_rawfc_split(path: Path, *, label_schema: str) -> list[SampleRecord]:
                 label=label,
                 explain=clean_text(str(item.get("explanation", ""))),
                 reports=reports,
+                metadata=_metadata_from_raw_row(item),
             )
         )
     return records
+
+
+def _metadata_from_raw_row(item: dict[str, Any]) -> dict[str, Any]:
+    return {key: item[key] for key in COVERAGE_METADATA_KEYS if key in item}
 
 
 def _rawfc_label_name(value: Any, *, path: Path) -> str:

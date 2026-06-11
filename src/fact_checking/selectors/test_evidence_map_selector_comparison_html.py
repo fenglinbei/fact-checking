@@ -13,8 +13,10 @@ from scripts.phase5_selectors.visualize.render_evidence_map_selector_comparison_
     DEFAULT_RIGHT_TRACE,
     default_candidate_features_path,
     default_coverage_diff_path,
+    default_left_chain_graph_path,
     default_left_trace_path,
     default_raw_data_path,
+    default_right_chain_graph_path,
     default_right_trace_path,
     find_trace_row,
     load_coverage_diff_row,
@@ -38,6 +40,33 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         self.assertEqual(args.coverage_diff, "")
         self.assertEqual(args.output_dir, DEFAULT_OUTPUT_DIR)
         self.assertTrue(args.translate_zh)
+
+    def test_default_paths_use_sentence_qd_union_mainline(self) -> None:
+        self.assertEqual(
+            default_candidate_features_path("val"),
+            "outputs/selectors/evidence_map_selector/v0_6b_val/candidate_evidence_map_features_val.jsonl",
+        )
+        self.assertEqual(
+            default_left_trace_path("val"),
+            "outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_val/selection_trace_val.jsonl",
+        )
+        self.assertEqual(
+            default_right_trace_path("val"),
+            "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_val/selection_trace_val.jsonl",
+        )
+        self.assertEqual(
+            default_left_chain_graph_path("val"),
+            "outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_val/chain_graph_val.jsonl",
+        )
+        self.assertEqual(
+            default_right_chain_graph_path("val"),
+            "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_val/chain_graph_val.jsonl",
+        )
+        self.assertNotIn("liar_raw_dense", default_candidate_features_path("val"))
+        self.assertNotIn("liar_raw_dense", default_left_trace_path("val"))
+        self.assertNotIn("liar_raw_dense", default_right_trace_path("val"))
+        self.assertNotIn("liar_raw_dense", default_left_chain_graph_path("val"))
+        self.assertNotIn("liar_raw_dense", default_right_chain_graph_path("val"))
 
     def test_resolve_inputs_scans_train_val_test_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -90,6 +119,117 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         self.assertIn("evidence candidates", html)
         self.assertIn("TOP 1", html)
 
+    def test_renderer_uses_chain_graph_edges_when_available(self) -> None:
+        html = render_html(
+            _row(),
+            left_trace=_left_trace(),
+            right_trace=_right_trace(),
+            left_graph_row=_chain_graph_row(),
+            right_graph_row=_chain_graph_row(),
+            args=_args(),
+            translations={},
+        )
+
+        self.assertIn("selected evidence chain", html)
+        self.assertIn("other candidates", html)
+        self.assertIn('id="chainGraphSvg-left"', html)
+        self.assertIn("draggable", html)
+        self.assertIn('data-edge-type="tension"', html)
+        self.assertIn("Evidence-Evidence Edges", html)
+        self.assertIn('data-from-evidence-id="E01"', html)
+        self.assertIn('data-to-evidence-id="E03"', html)
+        self.assertIn("shared atom with conflicting relation", html)
+
+    def test_renderer_shows_one_switchable_evidence_map_graph(self) -> None:
+        html = render_html(_row(), left_trace=_left_trace(), right_trace=_right_trace(), args=_args(), translations={})
+
+        self.assertIn("Evidence Map Graphs", html)
+        self.assertIn("data-graph-switcher", html)
+        self.assertIn('data-graph-option="left"', html)
+        self.assertIn('data-graph-option="right"', html)
+        self.assertIn('data-graph-panel="left"', html)
+        self.assertIn('data-graph-panel="right"', html)
+        self.assertIn("graph-panel-hidden", html)
+        self.assertNotIn("map-graph-grid", html)
+
+    def test_renderer_includes_graph_controls_and_overflow_safe_text_classes(self) -> None:
+        row = _row()
+        row["claim"] = "A very long claim " + ("with repeated text " * 30)
+        row["candidates"][0]["text"] = "A very long evidence passage " + ("with repeated supporting context " * 30)
+
+        html = render_html(row, left_trace=_left_trace(), right_trace=_right_trace(), args=_args(), translations={})
+
+        self.assertIn("data-graph-relation-filter", html)
+        self.assertIn("data-graph-selected-only", html)
+        self.assertIn("data-graph-fit-toggle", html)
+        self.assertIn("text-wrap-safe", html)
+        self.assertIn("metric-value", html)
+        self.assertIn("path-value", html)
+
+    def test_renderer_uses_inner_translation_button_for_live_translation_progress(self) -> None:
+        args = _args()
+        args.web_translation_enabled = True
+        args.web_base_path = "/evidence-map"
+        args.web_token = "secret"
+
+        html = render_html(_row(), left_trace=_left_trace(), right_trace=_right_trace(), args=args, translations={})
+
+        self.assertIn("data-translation-toggle", html)
+        self.assertIn("window.EVIDENCE_TRANSLATION_REQUEST", html)
+        self.assertIn("/evidence-map/api/translate", html)
+        self.assertIn("尚未翻译，点击后调用 API。", html)
+        self.assertIn("DEEPSEEK_API_KEY", html)
+        self.assertIn("正在翻译，请稍候", html)
+        self.assertNotIn("data-translation-toggle disabled", html)
+
+    def test_renderer_marks_partial_translation_cache_as_needing_refresh(self) -> None:
+        args = _args()
+        args.web_translation_enabled = True
+        args.web_base_path = "/evidence-map"
+        args.web_token = "secret"
+
+        html = render_html(
+            _row(),
+            left_trace=_left_trace(),
+            right_trace=_right_trace(),
+            left_graph_row=_chain_graph_row(),
+            right_graph_row=_chain_graph_row(),
+            args=args,
+            translations={"claim": "城市预算增加。"},
+        )
+
+        self.assertIn("window.EVIDENCE_TRANSLATION_MISSING_COUNT", html)
+        self.assertIn("missing, click to update", html)
+        self.assertIn("missingTranslationCount > 0", html)
+        self.assertIn("/evidence-map/api/translate", html)
+
+    def test_graph_nodes_are_clickable_with_relationship_detail_panel(self) -> None:
+        html = render_html(_row(), left_trace=_left_trace(), right_trace=_right_trace(), args=_args(), translations={})
+
+        self.assertIn("data-graph-detail", html)
+        self.assertIn("data-graph-detail-title", html)
+        self.assertIn("data-graph-detail-body", html)
+        self.assertIn('tabindex="0"', html)
+        self.assertIn('role="button"', html)
+        self.assertIn('data-graph-evidence-id="E03"', html)
+        self.assertIn('data-covered-atoms="A3"', html)
+        self.assertIn("Evidence Relationships", html)
+        self.assertIn('data-graph-relationship="1"', html)
+        self.assertIn('data-from-evidence-id="E03"', html)
+        self.assertIn('data-to-evidence-id="E01"', html)
+        self.assertIn("pair utility", html)
+
+    def test_graph_evidence_candidate_nodes_use_adaptive_wrapped_cards(self) -> None:
+        row = _row()
+        row["candidates"][0]["text"] = "A long evidence candidate sentence " + ("with enough content to require wrapping " * 8)
+
+        html = render_html(row, left_trace=_left_trace(), right_trace=_right_trace(), args=_args(), translations={})
+
+        self.assertIn("<foreignObject", html)
+        self.assertIn("graph-evidence-text", html)
+        self.assertIn('data-graph-node="evidence"', html)
+        self.assertIn('height="80"', html)
+
     def test_renderer_outputs_v07_marginal_gain_and_objective_fields(self) -> None:
         html = render_html(_row(), left_trace=_left_trace(), right_trace=_right_trace(), args=_args(), translations={})
 
@@ -113,6 +253,21 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         self.assertIn("Gold Explanation", html)
         self.assertIn("This is the original gold explanation.", html)
         self.assertIn("raw_label=mostly-true", html)
+
+    def test_renderer_uses_raw_label_when_feature_gold_label_is_empty(self) -> None:
+        row = _row()
+        row["gold_label"] = ""
+
+        html = render_html(
+            row,
+            raw_row={"event_id": "case.json", "label": "mostly-true", "explain": "This is the original gold explanation."},
+            left_trace=_left_trace(),
+            right_trace=_right_trace(),
+            args=_args(),
+            translations={},
+        )
+
+        self.assertIn("gold_label=mostly-true", html)
 
     def test_renderer_outputs_gold_explanation_from_feature_row_when_raw_missing(self) -> None:
         row = _row()
@@ -200,7 +355,8 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
 
         self.assertIn("Missing right trace file", message)
         self.assertIn("run_evidence_chain_graph_v0_7.sh", message)
-        self.assertIn("liar_raw_dense_v0_6b_val", message)
+        self.assertIn("v0_6b_val", message)
+        self.assertNotIn("liar_raw_dense", message)
 
 
 def _args() -> Namespace:
@@ -385,6 +541,70 @@ def _right_trace() -> dict:
                 "directness": "direct",
                 "relation": "qualify",
             },
+        ],
+    }
+
+
+def _chain_graph_row() -> dict:
+    return {
+        "event_id": "case.json",
+        "claim": "The city budget increased.",
+        "gold_label": "mostly-true",
+        "selector_name": "chain",
+        "graph_version": "evidence_chain_graph_test",
+        "claim_node": {"node_id": "C0", "type": "claim", "text": "The city budget increased."},
+        "atom_nodes": [
+            {"node_id": "A1", "atom_id": "A1", "text": "The city has a budget.", "importance": 1.0, "atom_type": "entity"},
+            {"node_id": "A3", "atom_id": "A3", "text": "The increase was recent.", "importance": 0.7, "atom_type": "temporal"},
+        ],
+        "evidence_nodes": [
+            {
+                "node_id": "E01",
+                "evidence_id": "E01",
+                "text": "The city budget exists.",
+                "relation": "support",
+                "directness": "direct",
+                "covered_atom_ids": ["A1"],
+                "source_group": "report:1",
+                "oracle_selected": False,
+            },
+            {
+                "node_id": "E03",
+                "evidence_id": "E03",
+                "text": "The latest increase was smaller than planned.",
+                "relation": "qualify",
+                "directness": "direct",
+                "covered_atom_ids": ["A3"],
+                "source_group": "report:2",
+                "oracle_selected": False,
+            },
+        ],
+        "edges": [
+            {"edge_type": "claim_has_atom", "source": "C0", "target": "A1", "weight": 1.0},
+            {"edge_type": "claim_has_atom", "source": "C0", "target": "A3", "weight": 1.0},
+            {"edge_type": "evidence_covers_atom", "source": "E01", "target": "A1", "weight": 0.8, "atom_ids": ["A1"], "relation": "support"},
+            {"edge_type": "evidence_covers_atom", "source": "E03", "target": "A3", "weight": 0.7, "atom_ids": ["A3"], "relation": "qualify"},
+            {
+                "edge_type": "tension",
+                "source": "E01",
+                "target": "E03",
+                "weight": 0.85,
+                "atom_ids": ["A3"],
+                "reason": "shared atom with conflicting relation",
+            },
+        ],
+        "selected_evidence_ids": ["E01", "E03"],
+        "selected_chain_id": "CH01",
+        "chains": [
+            {
+                "chain_id": "CH01",
+                "chain_score": 0.8,
+                "weighted_atom_coverage": 1.0,
+                "direct_or_partial_rate": 1.0,
+                "positive_pair_edge_density": 1.0,
+                "evidence_ids": ["E01", "E03"],
+                "covered_atom_ids": ["A1", "A3"],
+            }
         ],
     }
 

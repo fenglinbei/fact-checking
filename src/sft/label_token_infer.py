@@ -15,6 +15,9 @@ from sft.eval import log_eval_summary
 from sft.infer_common import build_inference_context, build_serializable_metrics
 from sft.label_token_dataset import LabelTokenCollator, LabelTokenDataset
 from sft.label_token_trainer import (
+    _coverage_class_weight_tensor,
+    _coverage_label_token_cfg,
+    _coverage_label_token_enabled,
     _build_label_token_ids,
     _class_weight_tensor,
     _evaluate_label_token,
@@ -146,6 +149,20 @@ def main() -> None:
     )
     label_token_ids = torch.tensor(label_token_id_list, dtype=torch.long)
     class_weights = _class_weight_tensor(train_cfg, labels=labels)
+    coverage_enabled = _coverage_label_token_enabled(train_cfg)
+    coverage_cfg = _coverage_label_token_cfg(train_cfg)
+    coverage_label_token_ids = None
+    coverage_class_weights = None
+    if coverage_enabled:
+        from fact_checking.data.constants import COVERAGE_LETTER_ORDER
+
+        coverage_label_token_id_list, _ = _build_label_token_ids(
+            context.tokenizer,
+            label_prefix=str(coverage_cfg.get("label_prefix", "Coverage:")),
+            letter_order=COVERAGE_LETTER_ORDER,
+        )
+        coverage_label_token_ids = torch.tensor(coverage_label_token_id_list, dtype=torch.long)
+        coverage_class_weights = _coverage_class_weight_tensor(train_cfg)
     logit_adjust_cfg = _resolve_logit_adjust_cfg(
         context=context,
         effective_cfg=effective_cfg,
@@ -159,6 +176,8 @@ def main() -> None:
         max_length=context.max_length,
         label_prefix=label_prefix,
         label_schema=context.label_schema,
+        coverage_enabled=coverage_enabled,
+        coverage_label_prefix=str(coverage_cfg.get("label_prefix", "Coverage:")),
     )
     collator = LabelTokenCollator(tokenizer=context.tokenizer, pad_to_multiple_of=8)
     dataloader = build_dataloader(
@@ -185,6 +204,8 @@ def main() -> None:
         accelerator=accelerator,
         label_token_ids=label_token_ids,
         class_weights=class_weights,
+        coverage_label_token_ids=coverage_label_token_ids,
+        coverage_class_weights=coverage_class_weights,
         train_cfg=train_cfg,
         label_prefix=label_prefix,
         labels=labels,

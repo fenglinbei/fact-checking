@@ -7,6 +7,8 @@ from typing import Any
 from transformers import AutoTokenizer
 
 from fact_checking.data.constants import (
+    COVERAGE_LABEL_DEFINITIONS,
+    COVERAGE_LABEL_LETTERS,
     label2id_for_schema,
     label_definitions_for_schema,
     label_letters_for_schema,
@@ -60,6 +62,15 @@ def label_definitions_text(label_format: str = "name", label_schema: str | None 
     return "\n".join(f"- {label}: {label_definitions[label]}" for label in label_definitions)
 
 
+def coverage_label_definitions_text(label_format: str = "name") -> str:
+    if label_format == "letter":
+        return "\n".join(
+            f"- {COVERAGE_LABEL_LETTERS[label]} ({label}): {COVERAGE_LABEL_DEFINITIONS[label]}"
+            for label in COVERAGE_LABEL_DEFINITIONS
+        )
+    return "\n".join(f"- {label}: {COVERAGE_LABEL_DEFINITIONS[label]}" for label in COVERAGE_LABEL_DEFINITIONS)
+
+
 def build_user_content(
     claim: str,
     evidence_texts: list[str],
@@ -87,6 +98,28 @@ def build_user_content(
             "- Respond with exactly two lines in this format:\n"
             "Explanation: <brief explanation>\n"
             f"Label: {label_placeholder}\n\n"
+            f"Claim:\n{claim.strip()}\n\n"
+            f"Evidence:\n{evidence_display}"
+        )
+    if output_mode == "label_with_coverage":
+        coverage_letters = list(COVERAGE_LABEL_LETTERS.values())
+        coverage_range = f"{coverage_letters[0]}-{coverage_letters[-1]}"
+        coverage_placeholder = (
+            f"<a single letter from {coverage_range}>" if label_format == "letter" else "<coverage label>"
+        )
+        return (
+            f"Classify the claim into exactly one {task_name} label and one evidence coverage label.\n\n"
+            "Labels:\n"
+            f"{label_definitions_text(label_format, label_schema)}\n\n"
+            "Evidence coverage labels:\n"
+            f"{coverage_label_definitions_text(label_format)}\n\n"
+            "Rules:\n"
+            "- Use the retrieved evidence as the primary source.\n"
+            "- Do not invent facts not supported by the evidence.\n"
+            "- Coverage means whether the retrieved evidence is sufficient to judge the claim, not whether the claim is true.\n"
+            "- Respond with exactly two lines in this format:\n"
+            f"Label: {label_placeholder}\n"
+            f"Coverage: {coverage_placeholder}\n\n"
             f"Claim:\n{claim.strip()}\n\n"
             f"Evidence:\n{evidence_display}"
         )
@@ -348,10 +381,23 @@ def build_target(row: dict, gold_label: str, output_mode: str, label_format: str
     if output_mode == "explanation_label":
         explanation = str(row.get("explain", "")).strip() or "The available evidence supports this label."
         return f"Explanation: {explanation}\nLabel: {target_label}"
+    if output_mode == "label_with_coverage":
+        coverage_label = str(row.get("coverage_label") or "").strip()
+        if coverage_label not in COVERAGE_LABEL_LETTERS:
+            raise ValueError(
+                "output_mode=label_with_coverage requires coverage_label to be one of "
+                f"{sorted(COVERAGE_LABEL_LETTERS)}; got {coverage_label!r}."
+            )
+        target_coverage = COVERAGE_LABEL_LETTERS[coverage_label] if label_format == "letter" else coverage_label
+        return f"Label: {target_label}\nCoverage: {target_coverage}"
     return f"Label: {target_label}"
 
 
 OPTIONAL_BUILD_ROW_KEYS = (
+    "coverage_label",
+    "coverage_score",
+    "coverage_version",
+    "coverage",
     "selection_method",
     "raw_top_method",
     "raw_candidate_count",

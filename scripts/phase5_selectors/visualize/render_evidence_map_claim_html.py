@@ -801,6 +801,13 @@ def render_html(row: dict[str, Any], *, trace: dict[str, Any] | None, args: argp
       font-size: 10px;
       fill: #5f6d7f;
     }}
+    .graph-evidence-text {{
+      color: #5f6d7f;
+      font-size: 10px;
+      line-height: 1.22;
+      overflow-wrap: anywhere;
+      word-break: normal;
+    }}
     .graph-rank {{
       fill: var(--blue);
       font-size: 11px;
@@ -1336,6 +1343,36 @@ def candidate_filter_script() -> str:
 </script>"""
 
 
+def evidence_graph_layout(
+    candidates: list[dict[str, Any]],
+    *,
+    translations: dict[str, str],
+    top: int,
+    gap: int,
+) -> dict[str, dict[str, float]]:
+    layout: dict[str, dict[str, float]] = {}
+    cursor = float(top)
+    for candidate in candidates:
+        key = key_for_candidate(candidate)
+        if not key:
+            continue
+        text_key = f"{candidate_translation_base(candidate)}:text"
+        text = str(translations.get(text_key) or candidate.get("text") or "")
+        line_count = graph_evidence_line_count(text)
+        height = float(32 + 12 * line_count)
+        layout[key] = {"y": cursor + height / 2.0, "height": height}
+        cursor += height + float(gap)
+    return layout
+
+
+def graph_evidence_line_count(text: str) -> int:
+    compact = " ".join(str(text or "").split())
+    if not compact:
+        return 1
+    weighted_chars = sum(2 if ord(ch) > 127 else 1 for ch in compact)
+    return max(1, min(4, (weighted_chars + 51) // 52))
+
+
 def render_evidence_graph(
     candidates: list[dict[str, Any]],
     *,
@@ -1348,17 +1385,21 @@ def render_evidence_graph(
 
     atom_ids = [str(atom.get("atom_id") or "") for atom in atoms]
     atom_by_id = {str(atom.get("atom_id") or ""): atom for atom in atoms}
-    candidate_gap = 48
+    candidate_gap = 14
     atom_gap = 74
     width = 1120
     top = 58
     bottom = 46
-    height = max(320, top + bottom + max(len(candidates) * candidate_gap, len(atoms) * atom_gap))
     atom_x = 34
     atom_w = 290
     evidence_x = 700
     evidence_w = 376
     node_h = 36
+    evidence_layout = evidence_graph_layout(candidates, translations=translations, top=top, gap=candidate_gap)
+    evidence_total = 0.0
+    if evidence_layout:
+        evidence_total = max(row["y"] + row["height"] / 2.0 for row in evidence_layout.values()) - top
+    height = max(320, top + bottom + max(evidence_total, len(atoms) * atom_gap))
     y_min = top
     y_max = height - bottom
 
@@ -1370,10 +1411,7 @@ def render_evidence_graph(
             atom_id: y_min + span * idx / float(max(len(atom_ids) - 1, 1))
             for idx, atom_id in enumerate(atom_ids)
         }
-    evidence_y = {
-        key_for_candidate(candidate): top + idx * candidate_gap
-        for idx, candidate in enumerate(candidates)
-    }
+    evidence_y = {candidate_key: item["y"] for candidate_key, item in evidence_layout.items()}
 
     defs = """
 <defs>
@@ -1404,6 +1442,7 @@ def render_evidence_graph(
         color = relation_color(relation)
         opacity = "0.86" if selected else "0.34"
         stroke_width = "3.0" if selected else "1.5"
+        selected_flag = "1" if selected else "0"
         marker = f"arrow-{relation_marker(relation)}"
         covered = [str(atom_id) for atom_id in candidate.get("covered_atom_ids") or [] if str(atom_id) in atom_y]
         for atom_id in covered:
@@ -1417,7 +1456,10 @@ def render_evidence_graph(
                 f"covers {atom_id}"
             )
             edges.append(
-                f'<path class="graph-edge" d="{d}" stroke="{color}" stroke-width="{stroke_width}" '
+                f'<path class="graph-edge" data-graph-edge="1" data-relation="{esc(relation)}" '
+                f'data-evidence-id="{esc(candidate.get("evidence_id") or "")}" data-atom-id="{esc(atom_id)}" '
+                f'data-directness="{esc(candidate.get("map_directness") or "")}" data-selected="{selected_flag}" '
+                f'd="{d}" stroke="{color}" stroke-width="{stroke_width}" '
                 f'opacity="{opacity}" marker-end="url(#{marker})"><title>{esc(title)}</title></path>'
             )
 
@@ -1432,7 +1474,7 @@ def render_evidence_graph(
         label_attrs = trans_svg_attrs(label_key, label, translations, max_chars=44, zh_text=zh_label)
         atom_nodes.append(
             f"""
-<g class="graph-node atom" transform="translate({atom_x},{y - node_h / 2:.1f})">
+<g class="graph-node atom" data-graph-node="atom" transform="translate({atom_x},{y - node_h / 2:.1f})">
   <rect width="{atom_w}" height="{node_h}" rx="7" />
   <title>{esc(text)}</title>
   <text x="12" y="15" class="graph-title" {label_attrs}>{esc(label)}</text>
@@ -1443,27 +1485,38 @@ def render_evidence_graph(
     evidence_nodes: list[str] = []
     for idx, candidate in enumerate(candidates, start=1):
         candidate_key = key_for_candidate(candidate)
-        y = evidence_y.get(candidate_key, top)
+        layout = evidence_layout.get(candidate_key) or {"y": float(top), "height": 44.0}
+        y = float(layout["y"])
+        evidence_h = int(layout["height"])
         selected = selected_index.get(candidate_key)
         selected_rank = selected.get("selection_rank") if selected else ""
         relation = str(candidate.get("map_relation") or "")
         directness = str(candidate.get("map_directness") or "")
+        role = str(candidate.get("map_evidence_role") or "")
+        source_group = str(candidate.get("source_group") or "")
+        covered_atoms = "|".join(str(atom_id) for atom_id in candidate.get("covered_atom_ids") or [] if str(atom_id).strip())
         oracle_selected = bool(candidate.get("oracle_selected"))
         label = f"{candidate.get('evidence_id') or idx}"
         if selected_rank:
             label = f"{label} · top {selected_rank}"
-        css = "graph-node selected" if selected else "graph-node"
+        css = "graph-node evidence selected" if selected else "graph-node evidence"
+        selected_flag = "1" if selected else "0"
         text = str(candidate.get("text") or "")
         text_key = f"{candidate_translation_base(candidate)}:text"
-        graph_text = truncate(text, 58)
-        graph_text_attrs = trans_svg_attrs(text_key, text, translations, max_chars=58)
+        graph_text = str(translations.get(text_key) or text)
+        graph_text_attrs = trans_svg_attrs(text_key, text, translations, max_chars=240)
         evidence_nodes.append(
             f"""
-<g class="{css}" transform="translate({evidence_x},{y - node_h / 2:.1f})">
-  <rect width="{evidence_w}" height="{node_h}" rx="7" />
+<g class="{css}" data-graph-node="evidence" data-graph-evidence-id="{esc(candidate.get('evidence_id') or '')}" role="button" tabindex="0"
+   data-relation="{esc(relation)}" data-directness="{esc(directness)}" data-role="{esc(role)}"
+   data-selected="{selected_flag}" data-covered-atoms="{esc(covered_atoms)}" data-source-group="{esc(source_group)}"
+   data-graph-title="{esc(label)}" data-graph-text="{esc(text)}" transform="translate({evidence_x},{y - evidence_h / 2:.1f})">
+  <rect width="{evidence_w}" height="{evidence_h}" rx="7" />
   <title>{esc(text)}</title>
   <text x="12" y="15" class="graph-title">{esc(label)} · {esc(relation)}/{esc(directness)}</text>
-  <text x="12" y="29" class="graph-subtitle" {graph_text_attrs}>{esc(graph_text)}</text>
+  <foreignObject x="12" y="24" width="{evidence_w - 24}" height="{max(evidence_h - 30, 14)}">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="graph-evidence-text" {graph_text_attrs}>{esc(graph_text)}</div>
+  </foreignObject>
   {render_svg_oracle(oracle_selected, evidence_w)}
   {render_svg_rank(selected_rank, evidence_w)}
 </g>"""

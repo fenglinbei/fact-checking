@@ -68,6 +68,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir", required=True)
     p.add_argument("--selection-mode", default="trace", choices=SELECTION_MODES)
     p.add_argument("--trace-prompt-style", default="plain", choices=TRACE_PROMPT_STYLES)
+    p.add_argument("--prompt-output-mode", default=None)
     p.add_argument("--expected-selector-name", default="")
     p.add_argument("--top-k", type=int, default=DEFAULT_SELECTOR_TOP_K)
     p.add_argument("--random-seed", type=int, default=0)
@@ -99,6 +100,8 @@ def main() -> None:
     prompt_cfg["label_schema"] = label_schema
     if args.prompt_model_name_or_path:
         prompt_cfg["model_name_or_path"] = args.prompt_model_name_or_path
+    if args.prompt_output_mode:
+        prompt_cfg["output_mode"] = str(args.prompt_output_mode)
     if args.model_base_path and prompt_cfg.get("model_name_or_path"):
         prompt_cfg["model_name_or_path"] = _resolve_model_path(
             str(prompt_cfg["model_name_or_path"]),
@@ -236,6 +239,7 @@ def _build_split(
     fp_counter: Counter[str] = Counter()
     selected_len_counter: Counter[str] = Counter()
     label_counter: Counter[str] = Counter()
+    coverage_label_counter: Counter[str] = Counter()
     prompt_tokens: list[int] = []
     evidence_counts: list[int] = []
     evidence_counts_before: list[int] = []
@@ -306,6 +310,15 @@ def _build_split(
             "explain": sample.explain,
             "candidates": candidates,
         }
+        sample_metadata = getattr(sample, "metadata", {}) or {}
+        if "coverage_label" in sample_metadata:
+            retrieval_row["coverage_label"] = sample_metadata["coverage_label"]
+        if "coverage_score" in sample_metadata:
+            retrieval_row["coverage_score"] = sample_metadata["coverage_score"]
+        if "coverage_version" in sample_metadata:
+            retrieval_row["coverage_version"] = sample_metadata["coverage_version"]
+        if "coverage" in sample_metadata:
+            retrieval_row["coverage"] = sample_metadata["coverage"]
         training_row = build_training_row(retrieval_row, tokenizer, prompt_cfg_for_style)
         training_row["trace_prompt_style"] = trace_prompt_style
         training_row["selector_trace"] = {
@@ -336,6 +349,9 @@ def _build_split(
 
         selected_len_counter[str(len(selected_indices))] += 1
         label_counter[str(training_row.get("gold_label", ""))] += 1
+        coverage_label = str(training_row.get("coverage_label") or "")
+        if coverage_label:
+            coverage_label_counter[coverage_label] += 1
         prompt_tokens.append(int(training_row.get("prompt_token_count", 0)))
         evidence_counts.append(int(training_row.get("evidence_count", 0)))
         evidence_counts_before.append(
@@ -357,6 +373,7 @@ def _build_split(
         "skipped_total": int(sum(skipped.values())),
         "selector_names": dict(selector_names),
         "labels": dict(label_counter),
+        "coverage_labels": dict(coverage_label_counter),
         "chunk_mmr_fingerprints": dict(fp_counter),
         "selected_index_lengths": dict(selected_len_counter),
         "selection_metrics": summarize_ordered_selection(metric_traces),

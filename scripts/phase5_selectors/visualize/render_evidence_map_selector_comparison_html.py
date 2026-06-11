@@ -8,7 +8,8 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
+from urllib.parse import quote
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SRC_ROOT = PROJECT_ROOT / "src"
@@ -42,18 +43,19 @@ except ModuleNotFoundError as exc:
         out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 import render_evidence_map_claim_html as map_html
+import render_evidence_chain_graph_html as chain_html
 
 
 DEFAULT_CANDIDATE_FEATURES = (
-    "outputs/selectors/evidence_map_selector/liar_raw_dense_v0_6b_val/"
+    "outputs/selectors/evidence_map_selector/v0_6b_val/"
     "candidate_evidence_map_features_val.jsonl"
 )
 DEFAULT_LEFT_TRACE = (
-    "outputs/selectors/evidence_chain_graph/liar_raw_dense_v0_6c_adaptive5_10_val/"
+    "outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_val/"
     "selection_trace_val.jsonl"
 )
 DEFAULT_RIGHT_TRACE = (
-    "outputs/selectors/evidence_chain_graph/liar_raw_dense_v0_7_budgeted_marginal_adaptive3_10_val/"
+    "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_val/"
     "selection_trace_val.jsonl"
 )
 DEFAULT_RAW_DATA = "data/raw/LIAR-RAW/val.json"
@@ -69,8 +71,8 @@ DEFAULT_TRANSLATION_BASE_URL = "https://api.deepseek.com"
 DEFAULT_TRANSLATION_MODEL = "deepseek-v4-flash"
 
 LIAR_RAW_V07_BUILD_COMMAND = """SPLIT=val \\
-INPUT=outputs/selectors/evidence_map_selector/liar_raw_dense_v0_6b_val/candidate_evidence_map_features_val.jsonl \\
-OUTPUT_DIR=outputs/selectors/evidence_chain_graph/liar_raw_dense_v0_7_budgeted_marginal_adaptive3_10_val \\
+INPUT=outputs/selectors/evidence_map_selector/v0_6b_val/candidate_evidence_map_features_val.jsonl \\
+OUTPUT_DIR=outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_val \\
 bash scripts/phase5_selectors/run/run_evidence_chain_graph_v0_7.sh"""
 
 
@@ -80,6 +82,8 @@ class ResolvedInputs:
     row: dict[str, Any]
     left_trace: dict[str, Any]
     right_trace: dict[str, Any]
+    left_graph_row: dict[str, Any] | None
+    right_graph_row: dict[str, Any] | None
     raw_row: dict[str, Any] | None
     coverage_diff: dict[str, Any] | None
 
@@ -95,6 +99,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--left-trace", default="", help="Optional v0.6c selection_trace_*.jsonl override.")
     parser.add_argument("--right-trace", default="", help="Optional v0.7 selection_trace_*.jsonl override.")
+    parser.add_argument("--left-chain-graph", default="", help="Optional v0.6c chain_graph_*.jsonl override for rich graph edges.")
+    parser.add_argument("--right-chain-graph", default="", help="Optional v0.7 chain_graph_*.jsonl override for rich graph edges.")
     parser.add_argument(
         "--raw-data",
         default="",
@@ -157,6 +163,8 @@ def main() -> None:
         coverage_diff=resolved.coverage_diff,
         left_trace=resolved.left_trace,
         right_trace=resolved.right_trace,
+        left_graph_row=resolved.left_graph_row,
+        right_graph_row=resolved.right_graph_row,
         args=args,
         output_path=output_path,
     )
@@ -168,6 +176,8 @@ def main() -> None:
             coverage_diff=resolved.coverage_diff,
             left_trace=resolved.left_trace,
             right_trace=resolved.right_trace,
+            left_graph_row=resolved.left_graph_row,
+            right_graph_row=resolved.right_graph_row,
             args=args,
             translations=translations,
         ),
@@ -195,15 +205,21 @@ def resolve_inputs(args: argparse.Namespace) -> ResolvedInputs:
         event_id = str(row.get("event_id") or getattr(args, "event_id", "") or "")
         left_trace_path = str(getattr(args, "left_trace", "") or default_left_trace_path(split))
         right_trace_path = str(getattr(args, "right_trace", "") or default_right_trace_path(split))
+        left_chain_graph_path = str(getattr(args, "left_chain_graph", "") or default_left_chain_graph_path(split))
+        right_chain_graph_path = str(getattr(args, "right_chain_graph", "") or default_right_chain_graph_path(split))
         raw_data_path = str(getattr(args, "raw_data", "") or default_raw_data_path(split))
         coverage_diff_path = str(getattr(args, "coverage_diff", "") or default_coverage_diff_path(split))
         left_trace = find_trace_row(left_trace_path, event_id=event_id, role="left")
         right_trace = find_trace_row(right_trace_path, event_id=event_id, role="right")
+        left_graph_row = load_chain_graph_row(left_chain_graph_path, event_id=event_id)
+        right_graph_row = load_chain_graph_row(right_chain_graph_path, event_id=event_id)
         raw_row = load_raw_row(raw_data_path, event_id=event_id)
         coverage_diff = load_coverage_diff_row(coverage_diff_path, event_id=event_id)
         args.candidate_features = candidate_features
         args.left_trace = left_trace_path
         args.right_trace = right_trace_path
+        args.left_chain_graph = left_chain_graph_path
+        args.right_chain_graph = right_chain_graph_path
         args.raw_data = raw_data_path
         args.coverage_diff = coverage_diff_path
         args.resolved_split = split
@@ -212,6 +228,8 @@ def resolve_inputs(args: argparse.Namespace) -> ResolvedInputs:
             row=row,
             left_trace=left_trace,
             right_trace=right_trace,
+            left_graph_row=left_graph_row,
+            right_graph_row=right_graph_row,
             raw_row=raw_row,
             coverage_diff=coverage_diff,
         )
@@ -247,22 +265,36 @@ def infer_split_from_path(path: str) -> str:
 
 def default_candidate_features_path(split: str) -> str:
     return (
-        f"outputs/selectors/evidence_map_selector/liar_raw_dense_v0_6b_{split}/"
+        f"outputs/selectors/evidence_map_selector/v0_6b_{split}/"
         f"candidate_evidence_map_features_{split}.jsonl"
     )
 
 
 def default_left_trace_path(split: str) -> str:
     return (
-        f"outputs/selectors/evidence_chain_graph/liar_raw_dense_v0_6c_adaptive5_10_{split}/"
+        f"outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_{split}/"
         f"selection_trace_{split}.jsonl"
     )
 
 
 def default_right_trace_path(split: str) -> str:
     return (
-        f"outputs/selectors/evidence_chain_graph/liar_raw_dense_v0_7_budgeted_marginal_adaptive3_10_{split}/"
+        f"outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_{split}/"
         f"selection_trace_{split}.jsonl"
+    )
+
+
+def default_left_chain_graph_path(split: str) -> str:
+    return (
+        f"outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_{split}/"
+        f"chain_graph_{split}.jsonl"
+    )
+
+
+def default_right_chain_graph_path(split: str) -> str:
+    return (
+        f"outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_{split}/"
+        f"chain_graph_{split}.jsonl"
     )
 
 
@@ -296,6 +328,19 @@ def find_trace_row(path: str, *, event_id: str, role: str, expected_selector_nam
     raise ValueError(f"No {role} trace row matched event_id={event_id!r} in {path}.")
 
 
+def load_chain_graph_row(path: str, *, event_id: str) -> dict[str, Any] | None:
+    if not path:
+        return None
+    graph_path = Path(path)
+    if not graph_path.exists():
+        return None
+    wanted_event = map_html.canonical_event_id(event_id)
+    for row in read_jsonl(graph_path):
+        if map_html.canonical_event_id(str(row.get("event_id") or "")) == wanted_event:
+            return row
+    return None
+
+
 def missing_trace_message(path: str, *, role: str) -> str:
     message = f"Missing {role} trace file: {path}"
     if str(path) == DEFAULT_RIGHT_TRACE or "v0_7" in str(path):
@@ -306,7 +351,7 @@ def missing_trace_message(path: str, *, role: str) -> str:
 def liar_raw_v07_build_command(split: str) -> str:
     return f"""SPLIT={split} \\
 INPUT={default_candidate_features_path(split)} \\
-OUTPUT_DIR=outputs/selectors/evidence_chain_graph/liar_raw_dense_v0_7_budgeted_marginal_adaptive3_10_{split} \\
+OUTPUT_DIR=outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_{split} \\
 bash scripts/phase5_selectors/run/run_evidence_chain_graph_v0_7.sh"""
 
 
@@ -368,6 +413,8 @@ def load_or_build_translations(
     coverage_diff: dict[str, Any] | None,
     left_trace: dict[str, Any],
     right_trace: dict[str, Any],
+    left_graph_row: dict[str, Any] | None = None,
+    right_graph_row: dict[str, Any] | None = None,
     args: argparse.Namespace,
     output_path: Path,
 ) -> dict[str, str]:
@@ -385,6 +432,8 @@ def load_or_build_translations(
         coverage_diff=coverage_diff,
         left_trace=left_trace,
         right_trace=right_trace,
+        left_graph_row=left_graph_row,
+        right_graph_row=right_graph_row,
         max_candidates=int(args.max_candidates),
     )
     missing = {key: text for key, text in items.items() if key not in translations}
@@ -424,10 +473,21 @@ def collect_translation_items(
     coverage_diff: dict[str, Any] | None = None,
     left_trace: dict[str, Any],
     right_trace: dict[str, Any],
+    left_graph_row: dict[str, Any] | None = None,
+    right_graph_row: dict[str, Any] | None = None,
     max_candidates: int,
 ) -> dict[str, str]:
     items = map_html.collect_translation_items(row, trace=left_trace, max_candidates=max_candidates)
     items.update(map_html.collect_translation_items(row, trace=right_trace, max_candidates=max_candidates))
+    for graph_row in (left_graph_row, right_graph_row):
+        if graph_row:
+            items.update(
+                chain_html.collect_translation_items(
+                    graph_row,
+                    max_candidates=max_candidates,
+                    max_chains=max_candidates,
+                )
+            )
     map_html.add_translation_item(items, "gold_explain", gold_explain_text(row, raw_row=raw_row))
     if coverage_diff:
         for idx, preview in enumerate(coverage_diff.get("top_evidence_preview") or [], start=1):
@@ -444,6 +504,8 @@ def render_html(
     coverage_diff: dict[str, Any] | None = None,
     left_trace: dict[str, Any],
     right_trace: dict[str, Any],
+    left_graph_row: dict[str, Any] | None = None,
+    right_graph_row: dict[str, Any] | None = None,
     args: argparse.Namespace,
     translations: dict[str, str],
 ) -> str:
@@ -453,17 +515,33 @@ def render_html(
     atoms = list((row.get("evidence_map") or {}).get("claim_atoms") or row.get("claim_atoms") or [])
     left_label = str(args.left_label or DEFAULT_LEFT_LABEL)
     right_label = str(args.right_label or DEFAULT_RIGHT_LABEL)
+    gold_label = str(row.get("gold_label") or gold_label_text(raw_row) or "")
     created = datetime.now(timezone.utc).isoformat(timespec="seconds")
     payload = {
         "candidate_features": args.candidate_features,
         "left_trace": args.left_trace,
         "right_trace": args.right_trace,
+        "left_chain_graph": getattr(args, "left_chain_graph", ""),
+        "right_chain_graph": getattr(args, "right_chain_graph", ""),
         "raw_data": args.raw_data,
         "coverage_diff": getattr(args, "coverage_diff", ""),
         "resolved_split": getattr(args, "resolved_split", ""),
         "event_id": event_id,
         "created_at": created,
     }
+    translation_items = collect_translation_items(
+        row,
+        raw_row=raw_row,
+        coverage_diff=coverage_diff,
+        left_trace=left_trace,
+        right_trace=right_trace,
+        left_graph_row=left_graph_row,
+        right_graph_row=right_graph_row,
+        max_candidates=int(args.max_candidates),
+    )
+    missing_translation_count = sum(
+        1 for key in translation_items if not str(translations.get(key) or "").strip()
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -476,19 +554,21 @@ def render_html(
   <header>
     <h1>{esc(title)}</h1>
     <div class="meta">
-      gold_label={esc(str(row.get("gold_label") or ""))} |
+      gold_label={esc(gold_label)} |
       left={esc(str(left_trace.get("selector_name") or left_label))} |
       right={esc(str(right_trace.get("selector_name") or right_label))}
     </div>
-    <p class="claim">{trans_html("claim", row.get("claim"), translations)}</p>
+    <p class="claim text-wrap-safe">{trans_html("claim", row.get("claim"), translations)}</p>
     <div class="path-grid">
-      <div><b>split</b><span>{esc(getattr(args, "resolved_split", ""))}</span></div>
-      <div><b>features</b><span>{esc(args.candidate_features)}</span></div>
-      <div><b>{esc(left_label)}</b><span>{esc(args.left_trace)}</span></div>
-      <div><b>{esc(right_label)}</b><span>{esc(args.right_trace)}</span></div>
-      <div><b>coverage diff</b><span>{esc(getattr(args, "coverage_diff", ""))}</span></div>
+      <div><b>split</b><span class="path-value">{esc(getattr(args, "resolved_split", ""))}</span></div>
+      <div><b>features</b><span class="path-value">{esc(args.candidate_features)}</span></div>
+      <div><b>{esc(left_label)}</b><span class="path-value">{esc(args.left_trace)}</span></div>
+      <div><b>{esc(right_label)}</b><span class="path-value">{esc(args.right_trace)}</span></div>
+      <div><b>{esc(left_label)} graph</b><span class="path-value">{esc(getattr(args, "left_chain_graph", ""))}</span></div>
+      <div><b>{esc(right_label)} graph</b><span class="path-value">{esc(getattr(args, "right_chain_graph", ""))}</span></div>
+      <div><b>coverage diff</b><span class="path-value">{esc(getattr(args, "coverage_diff", ""))}</span></div>
     </div>
-    {map_html.render_translation_toolbar(translations)}
+    {render_translation_toolbar(translations, args=args, missing_count=missing_translation_count)}
   </header>
   <main>
     <section class="section">
@@ -509,7 +589,7 @@ def render_html(
     </section>
     <section class="section">
       <h2>Evidence Map Graphs</h2>
-      {render_evidence_map_graphs(candidates, atoms=atoms, left_trace=left_trace, right_trace=right_trace, left_label=left_label, right_label=right_label, translations=translations)}
+      {render_evidence_map_graphs(candidates, atoms=atoms, left_trace=left_trace, right_trace=right_trace, left_graph_row=left_graph_row, right_graph_row=right_graph_row, left_label=left_label, right_label=right_label, translations=translations, max_candidates=int(args.max_candidates))}
     </section>
     <section class="section">
       <h2>Selected Flow</h2>
@@ -527,7 +607,8 @@ def render_html(
       <pre class="raw">{esc(json.dumps(payload, ensure_ascii=False, indent=2))}</pre>
     </section>
   </main>
-  {map_html.translation_toggle_script(translations)}
+  {translation_toggle_script(translations, args=args, missing_count=missing_translation_count)}
+  {graph_switcher_script()}
 </body>
 </html>
 """
@@ -577,7 +658,7 @@ def render_overview_card(trace: dict[str, Any], *, label: str, side: str) -> str
     return (
         f'<article class="overview-card {esc(side)}">'
         f"<h3>{esc(label)}</h3>"
-        f'<div class="selector">{esc(str(trace.get("selector_name") or ""))}</div>'
+        f'<div class="selector text-wrap-safe">{esc(str(trace.get("selector_name") or ""))}</div>'
         f'<div class="metric-grid">{cells}</div>'
         f"{objective_html}"
         "</article>"
@@ -605,7 +686,7 @@ def render_gold_explanation(
     return (
         '<article class="gold-explain">'
         f"{meta}"
-        f'<p>{trans_html("gold_explain", explain, translations)}</p>'
+        f'<p class="text-wrap-safe">{trans_html("gold_explain", explain, translations)}</p>'
         "</article>"
     )
 
@@ -695,7 +776,7 @@ def render_coverage_preview_table(coverage_diff: dict[str, Any], *, translations
             f"<td>{esc(' | '.join(source_bits))}</td>"
             f"<td>{esc(' | '.join(score_bits))}</td>"
             f"<td>{render_anchor_hits(preview.get('anchor_hits'))}</td>"
-            f'<td class="text-cell">{trans_html(f"coverage_preview:{idx}:text", text, translations)}</td>'
+            f'<td class="text-cell text-wrap-safe">{trans_html(f"coverage_preview:{idx}:text", text, translations)}</td>'
             "</tr>"
         )
     return table(["rank", "source", "scores", "anchor hits", "text"], rows)
@@ -764,7 +845,7 @@ def render_atom_coverage(
         rows.append(
             "<tr>"
             f"<td>{esc(atom_id)}</td>"
-            f"<td class='text-cell'>{esc(str(atom.get('text') or ''))}</td>"
+            f"<td class='text-cell text-wrap-safe'>{esc(str(atom.get('text') or ''))}</td>"
             f"<td>{render_hit_badges(left_hits)}</td>"
             f"<td>{render_hit_badges(right_hits)}</td>"
             "</tr>"
@@ -778,28 +859,235 @@ def render_evidence_map_graphs(
     atoms: list[dict[str, Any]],
     left_trace: dict[str, Any],
     right_trace: dict[str, Any],
+    left_graph_row: dict[str, Any] | None = None,
+    right_graph_row: dict[str, Any] | None = None,
     left_label: str,
     right_label: str,
     translations: dict[str, str],
+    max_candidates: int,
 ) -> str:
     if not candidates or not atoms:
         return '<div class="small">No graphable atom/evidence links available.</div>'
     left_selected = selected_index_for_candidates(left_trace, candidates)
     right_selected = selected_index_for_candidates(right_trace, candidates)
+    left_count = len(selected_ids(left_trace))
+    right_count = len(selected_ids(right_trace))
+    left_coverage = fmt(left_trace.get("weighted_atom_coverage@5"))
+    right_coverage = fmt(right_trace.get("weighted_atom_coverage@5"))
     return f"""
-<div class="map-graph-grid">
-  <article class="map-graph-panel left">
+<div class="map-graph-shell" data-graph-switcher>
+  <div class="graph-switcher" role="tablist" aria-label="Selector graph">
+    <button class="graph-option active left" type="button" data-graph-option="left" role="tab" aria-selected="true">
+      <b>{esc(left_label)}</b>
+      <span class="text-wrap-safe">{esc(str(left_trace.get("selector_name") or ""))}</span>
+      <small>{left_count} selected · coverage {left_coverage}</small>
+    </button>
+    <button class="graph-option right" type="button" data-graph-option="right" role="tab" aria-selected="false">
+      <b>{esc(right_label)}</b>
+      <span class="text-wrap-safe">{esc(str(right_trace.get("selector_name") or ""))}</span>
+      <small>{right_count} selected · coverage {right_coverage}</small>
+    </button>
+  </div>
+  <div class="graph-controls">
+    <label>relation
+      <select data-graph-relation-filter>
+        <option value="">all</option>
+        <option value="support">support</option>
+        <option value="refute">refute</option>
+        <option value="qualify">qualify</option>
+        <option value="mixed">mixed</option>
+        <option value="background">background</option>
+        <option value="irrelevant">irrelevant</option>
+      </select>
+    </label>
+    <label>edge
+      <select data-graph-edge-filter>
+        <option value="">all</option>
+        <option value="complements">complements</option>
+        <option value="corroborates">corroborates</option>
+        <option value="tension">tension</option>
+        <option value="bridge_context">bridge_context</option>
+        <option value="duplicate">duplicate</option>
+        <option value="same_source_context">same_source_context</option>
+        <option value="evidence_covers_atom">evidence_covers_atom</option>
+      </select>
+    </label>
+    <label class="checkbox-label"><input type="checkbox" data-graph-selected-only> selected only</label>
+    <button type="button" data-graph-fit-toggle>Natural width</button>
+  </div>
+  {render_graph_detail_panel()}
+  <article class="map-graph-panel left graph-panel-active" data-graph-panel="left">
     <h3>{esc(left_label)}</h3>
-    <div class="selector small">{esc(str(left_trace.get("selector_name") or ""))}</div>
-    {map_html.render_evidence_graph(candidates, atoms=atoms, selected_index=left_selected, translations=translations)}
+    <div class="selector small text-wrap-safe">{esc(str(left_trace.get("selector_name") or ""))}</div>
+    {render_selector_graph_panel(left_graph_row, candidates=candidates, atoms=atoms, trace=left_trace, selected_index=left_selected, side="left", translations=translations, max_candidates=max_candidates)}
   </article>
-  <article class="map-graph-panel right">
+  <article class="map-graph-panel right graph-panel-hidden" data-graph-panel="right">
     <h3>{esc(right_label)}</h3>
-    <div class="selector small">{esc(str(right_trace.get("selector_name") or ""))}</div>
-    {map_html.render_evidence_graph(candidates, atoms=atoms, selected_index=right_selected, translations=translations)}
+    <div class="selector small text-wrap-safe">{esc(str(right_trace.get("selector_name") or ""))}</div>
+    {render_selector_graph_panel(right_graph_row, candidates=candidates, atoms=atoms, trace=right_trace, selected_index=right_selected, side="right", translations=translations, max_candidates=max_candidates)}
   </article>
 </div>
 """
+
+
+def render_selector_graph_panel(
+    graph_row: dict[str, Any] | None,
+    *,
+    candidates: list[dict[str, Any]],
+    atoms: list[dict[str, Any]],
+    trace: dict[str, Any],
+    selected_index: dict[str, int],
+    side: str,
+    translations: dict[str, str],
+    max_candidates: int,
+) -> str:
+    if graph_row:
+        evidence_nodes = list(graph_row.get("evidence_nodes") or [])[: max(int(max_candidates), 1)]
+        selected_ids_for_graph = {str(eid) for eid in graph_row.get("selected_evidence_ids") or []}
+        graph_html = chain_html.render_graph(
+            graph_row,
+            evidence_nodes=evidence_nodes,
+            selected_ids=selected_ids_for_graph,
+            translations=translations,
+        )
+        graph_html = normalize_chain_graph_html(graph_html, side=side)
+        return graph_html + render_chain_graph_edge_relationships(graph_row, evidence_nodes=evidence_nodes)
+    return (
+        map_html.render_evidence_graph(candidates, atoms=atoms, selected_index=selected_index, translations=translations)
+        + render_evidence_relationships(trace, candidates)
+    )
+
+
+def normalize_chain_graph_html(graph_html: str, *, side: str) -> str:
+    safe_side = map_html.slug(side) or "graph"
+    html = graph_html.replace('id="chainGraphSvg"', f'id="chainGraphSvg-{safe_side}"')
+    html = html.replace('class="graph-svg"', 'class="graph-svg chain-graph-svg"')
+    return html
+
+
+def render_chain_graph_edge_relationships(graph_row: dict[str, Any], *, evidence_nodes: list[dict[str, Any]]) -> str:
+    displayed_ids = {str(node.get("node_id") or node.get("evidence_id") or "") for node in evidence_nodes}
+    selected_ids_for_graph = {str(eid) for eid in graph_row.get("selected_evidence_ids") or []}
+    rows: list[str] = []
+    for edge in graph_row.get("edges") or []:
+        source = str(edge.get("source") or "")
+        target = str(edge.get("target") or "")
+        if source not in displayed_ids or target not in displayed_ids:
+            continue
+        edge_type = str(edge.get("edge_type") or "")
+        selected = source in selected_ids_for_graph and target in selected_ids_for_graph
+        atom_ids = [str(atom_id) for atom_id in edge.get("atom_ids") or [] if str(atom_id).strip()]
+        rows.append(
+            f'<tr class="edge-row" data-graph-relationship="1" data-from-evidence-id="{esc(source)}" '
+            f'data-to-evidence-id="{esc(target)}" data-source="{esc(source)}" data-target="{esc(target)}" '
+            f'data-edge-type="{esc(edge_type)}" data-selected="{"1" if selected else "0"}">'
+            f"<td>{map_html.badge(edge_type, class_name=edge_type)}</td>"
+            f"<td><b>{esc(source)}</b> → <b>{esc(target)}</b></td>"
+            f"<td>{fmt(edge.get('weight'))}</td>"
+            f"<td>{esc(', '.join(atom_ids) or '-')}</td>"
+            f"<td>{esc(str(edge.get('reason') or edge.get('relation') or ''))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        return '<section class="evidence-relationships"><h3>Evidence-Evidence Edges</h3><div class="small">No evidence-evidence graph edges recorded for the displayed candidates.</div></section>'
+    return (
+        '<section class="evidence-relationships">'
+        "<h3>Evidence-Evidence Edges</h3>"
+        + table(["type", "edge", "weight", "atoms", "note"], rows)
+        + "</section>"
+    )
+
+
+def render_graph_detail_panel() -> str:
+    return """
+  <aside class="graph-detail" data-graph-detail>
+    <div>
+      <h3 data-graph-detail-title>Evidence detail</h3>
+      <div class="small" data-graph-detail-meta>Click an evidence node in the map.</div>
+    </div>
+    <div class="graph-detail-body text-wrap-safe" data-graph-detail-body>
+      Select an evidence card to inspect relation, directness, covered atoms, source, and linked evidence relationships.
+    </div>
+  </aside>
+"""
+
+
+def render_evidence_relationships(trace: dict[str, Any], candidates: list[dict[str, Any]]) -> str:
+    by_id = candidate_by_id(candidates)
+    rows: list[str] = []
+    for step in trace.get("selection_steps") or []:
+        eid = str(step.get("evidence_id") or "")
+        anchors = [str(anchor) for anchor in step.get("anchor_evidence_ids") or [] if str(anchor).strip()]
+        if not anchors:
+            continue
+        candidate = by_id.get(eid, {})
+        for anchor_id in anchors:
+            anchor = by_id.get(anchor_id, {})
+            relation = relationship_label(step)
+            shared_atoms = shared_atom_ids(candidate, anchor)
+            rows.append(
+                f'<tr data-graph-relationship="1" data-from-evidence-id="{esc(eid)}" data-to-evidence-id="{esc(anchor_id)}">'
+                f"<td><b>{esc(eid)}</b> → <b>{esc(anchor_id)}</b></td>"
+                f"<td>{esc(relation)}</td>"
+                f"<td>{esc(step.get('relation') or candidate.get('map_relation') or '')}/"
+                f"{esc(step.get('directness') or candidate.get('map_directness') or '')}</td>"
+                f"<td>{esc(', '.join(shared_atoms) or '-')}</td>"
+                f"<td>{render_relationship_delta_summary(step.get('component_deltas') or {})}</td>"
+                "</tr>"
+            )
+    if not rows:
+        return '<section class="evidence-relationships"><h3>Evidence Relationships</h3><div class="small">No anchor or pair relationships recorded for this selector trace.</div></section>'
+    return (
+        '<section class="evidence-relationships">'
+        "<h3>Evidence Relationships</h3>"
+        + table(["edge", "relationship", "map", "shared atoms", "delta summary"], rows)
+        + "</section>"
+    )
+
+
+def relationship_label(step: dict[str, Any]) -> str:
+    deltas = step.get("component_deltas") or {}
+    labels: list[str] = []
+    for key, label in (
+        ("complements_gain", "complements"),
+        ("corroborates_gain", "corroborates"),
+        ("conditional_tension_gain", "tension"),
+        ("bridge_context_gain", "bridge context"),
+    ):
+        try:
+            value = float(deltas.get(key) or 0.0)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value > 0:
+            labels.append(label)
+    try:
+        pair_utility = float(deltas.get("pair_utility") or 0.0)
+    except (TypeError, ValueError):
+        pair_utility = 0.0
+    if pair_utility and "pair utility" not in labels:
+        labels.append("pair utility")
+    if not labels:
+        labels.append("anchors")
+    return " + ".join(labels)
+
+
+def render_relationship_delta_summary(deltas: Mapping[str, Any]) -> str:
+    wanted = [
+        ("pair utility", deltas.get("pair_utility")),
+        ("complements", deltas.get("complements_gain")),
+        ("corroborates", deltas.get("corroborates_gain")),
+        ("tension", deltas.get("conditional_tension_gain")),
+        ("bridge", deltas.get("bridge_context_gain")),
+        ("redundancy", deltas.get("redundancy_penalty")),
+    ]
+    parts = [f"{label}={fmt(value)}" for label, value in wanted if value not in (None, "")]
+    return esc(" | ".join(parts) or "-")
+
+
+def shared_atom_ids(a: dict[str, Any], b: dict[str, Any]) -> list[str]:
+    left = {str(atom_id) for atom_id in a.get("covered_atom_ids") or [] if str(atom_id).strip()}
+    right = {str(atom_id) for atom_id in b.get("covered_atom_ids") or [] if str(atom_id).strip()}
+    return sorted(left & right)
 
 
 def render_selected_flow(
@@ -838,12 +1126,12 @@ def render_selected_flow(
             )
             body.append(render_delta_strip(step.get("component_deltas") or {}))
         if text:
-            body.append(f'<div class="flow-text">{trans_html(text_key, text, translations, original_html=esc(map_html.truncate(text, 260)))}</div>')
+            body.append(f'<div class="flow-text text-wrap-safe">{trans_html(text_key, text, translations, original_html=esc(map_html.truncate(text, 260)))}</div>')
         items.append(f'<article class="flow-card">{"".join(body)}</article>')
     return (
         f'<div class="flow-panel {esc(side)}">'
         f"<h3>{esc(label)}</h3>"
-        f'<div class="selector small">{esc(str(trace.get("selector_name") or ""))}</div>'
+        f'<div class="selector small text-wrap-safe">{esc(str(trace.get("selector_name") or ""))}</div>'
         f'<div class="stop small">stop: {esc(str(trace.get("adaptive_stop_reason") or ""))}</div>'
         f'{"".join(items)}'
         "</div>"
@@ -887,7 +1175,7 @@ def render_candidate_table(
             f"<td>{esc(', '.join(str(atom_id) for atom_id in candidate.get('covered_atom_ids') or []))}</td>"
             f"<td>{esc(' | '.join(score_bits))}</td>"
             f"<td>{esc(candidate.get('source_group'))}</td>"
-            f'<td class="text-cell">{trans_html(text_key, candidate.get("text"), translations, original_html=map_html.highlight_text(str(candidate.get("text") or ""), spans))}{render_spans(candidate, translations)}</td>'
+            f'<td class="text-cell text-wrap-safe">{trans_html(text_key, candidate.get("text"), translations, original_html=map_html.highlight_text(str(candidate.get("text") or ""), spans))}{render_spans(candidate, translations)}</td>'
             "</tr>"
         )
     return table(
@@ -1048,7 +1336,7 @@ def objective_penalty_total(components: dict[str, Any]) -> float:
 
 
 def metric_cell(name: str, value: Any) -> str:
-    return f'<div class="metric"><b>{esc(name)}</b><span>{fmt(value)}</span></div>'
+    return f'<div class="metric"><b>{esc(name)}</b><span class="metric-value">{fmt(value)}</span></div>'
 
 
 def bool_text(value: Any) -> Any:
@@ -1095,6 +1383,367 @@ def table(headers: list[str], rows: list[str]) -> str:
 
 def trans_html(key: str, text: Any, translations: dict[str, str], *, original_html: str | None = None) -> str:
     return map_html.trans_html(key, text, translations, original_html=original_html)
+
+
+def render_translation_toolbar(translations: dict[str, str], *, args: argparse.Namespace, missing_count: int = 0) -> str:
+    count = len(translations)
+    web_enabled = bool(getattr(args, "web_translation_enabled", False))
+    disabled = "" if count or web_enabled else " disabled"
+    if count and missing_count > 0 and web_enabled:
+        status = f"{count} zh translations embedded; {missing_count} missing, click to update."
+    elif count and missing_count > 0:
+        status = f"{count} zh translations embedded; {missing_count} missing. Re-render with --translate-zh."
+    elif count:
+        status = f"{count} zh translations embedded"
+    elif web_enabled:
+        status = "尚未翻译，点击后调用 API。未缓存 case 需要服务环境提供 DEEPSEEK_API_KEY。"
+    else:
+        status = "No zh translations embedded. Re-render with --translate-zh or enable live translation."
+    return (
+        '<div class="translation-toolbar" data-translation-toolbar>'
+        f'<button type="button" data-translation-toggle{disabled}>显示中文</button>'
+        f'<span class="small" data-translation-status>{esc(status)}</span>'
+        "</div>"
+    )
+
+
+def translation_toggle_script(
+    translations: dict[str, str],
+    *,
+    args: argparse.Namespace,
+    missing_count: int = 0,
+) -> str:
+    return _translation_toggle_script(translations, args=args, missing_count=missing_count)
+
+
+def _translation_toggle_script(translations: dict[str, str], *, args: argparse.Namespace, missing_count: int) -> str:
+    payload = json.dumps(translations, ensure_ascii=False).replace("</", "<\\/")
+    request = translation_request_payload(args)
+    request_payload = json.dumps(request, ensure_ascii=False).replace("</", "<\\/")
+    return f"""<script>
+window.EVIDENCE_TRANSLATIONS = {payload};
+window.EVIDENCE_TRANSLATION_REQUEST = {request_payload};
+window.EVIDENCE_TRANSLATION_MISSING_COUNT = {int(max(missing_count, 0))};
+(() => {{
+  const translations = window.EVIDENCE_TRANSLATIONS || {{}};
+  const request = window.EVIDENCE_TRANSLATION_REQUEST || {{}};
+  const missingTranslationCount = Number(window.EVIDENCE_TRANSLATION_MISSING_COUNT || 0);
+  const button = document.querySelector("[data-translation-toggle]");
+  const status = document.querySelector("[data-translation-status]");
+  const svgTexts = Array.from(document.querySelectorAll("[data-i18n-svg-key]"));
+  const reloadKey = "evidence-map-show-zh-after-translation";
+  const compact = (value, maxChars) => {{
+    const text = String(value || "");
+    if (!maxChars || text.length <= maxChars) return text;
+    return text.slice(0, Math.max(maxChars - 3, 0)).trimEnd() + "...";
+  }};
+  const setSvgLanguage = (lang) => {{
+    svgTexts.forEach((el) => {{
+      const original = el.dataset.i18nOriginal || "";
+      const zh = el.dataset.i18nZh || "";
+      const maxChars = Number(el.dataset.i18nMax || "0");
+      el.textContent = compact(lang === "zh" && zh ? zh : original, maxChars);
+    }});
+  }};
+  const setLanguage = (lang) => {{
+    document.body.classList.toggle("zh-mode", lang === "zh");
+    setSvgLanguage(lang);
+    if (button) button.textContent = lang === "zh" ? "Show English" : "显示中文";
+    if (status) {{
+      const cachedCount = Object.keys(translations).length;
+      const missingText = missingTranslationCount > 0 ? `; ${{missingTranslationCount}} missing` : "";
+      status.textContent = lang === "zh" ? `中文翻译已显示${{missingText}}` : `${{cachedCount}} zh translations embedded${{missingText}}`;
+    }}
+  }};
+  const fetchTranslations = async () => {{
+    if (!request.enabled || !request.url) return;
+    if (status) status.textContent = "正在翻译，请稍候...";
+    if (button) {{
+      button.disabled = true;
+      button.textContent = "翻译中...";
+    }}
+    try {{
+      const response = await fetch(request.url, {{
+        method: "POST",
+        headers: {{"Content-Type": "application/json"}},
+        body: JSON.stringify(request.payload || {{}})
+      }});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `HTTP ${{response.status}}`);
+      if (status) status.textContent = `翻译完成，已缓存 ${{data.translation_count || 0}} 条，正在刷新...`;
+      sessionStorage.setItem(reloadKey, "1");
+      window.location.reload();
+    }} catch (error) {{
+      if (status) status.textContent = `翻译失败：${{error.message || error}}`;
+      if (button) {{
+        button.disabled = false;
+        button.textContent = "显示中文";
+      }}
+    }}
+  }};
+  if (!button) return;
+  let lang = "en";
+  const hasTranslations = Object.keys(translations).length > 0;
+  button.addEventListener("click", () => {{
+    if (!hasTranslations || (missingTranslationCount > 0 && request.enabled)) {{
+      fetchTranslations();
+      return;
+    }}
+    lang = lang === "en" ? "zh" : "en";
+    setLanguage(lang);
+  }});
+  if (hasTranslations && sessionStorage.getItem(reloadKey) === "1") {{
+    sessionStorage.removeItem(reloadKey);
+    lang = "zh";
+    setLanguage(lang);
+  }} else {{
+    setSvgLanguage(lang);
+  }}
+}})();
+</script>"""
+
+
+def translation_request_payload(args: argparse.Namespace) -> dict[str, Any]:
+    if not bool(getattr(args, "web_translation_enabled", False)):
+        return {"enabled": False}
+    base_path = str(getattr(args, "web_base_path", "") or "").rstrip("/")
+    if not base_path:
+        return {"enabled": False}
+    token = str(getattr(args, "web_token", "") or "")
+    url = f"{base_path}/api/translate"
+    if token:
+        url += f"?token={quote(token, safe='')}"
+    return {
+        "enabled": True,
+        "url": url,
+        "payload": {
+            "split": str(getattr(args, "web_split", "") or getattr(args, "resolved_split", "") or ""),
+            "event_id": str(getattr(args, "web_event_id", "") or ""),
+            "left_label": str(getattr(args, "left_label", "") or DEFAULT_LEFT_LABEL),
+            "right_label": str(getattr(args, "right_label", "") or DEFAULT_RIGHT_LABEL),
+        },
+    }
+
+
+def graph_switcher_script() -> str:
+    return """<script>
+(() => {
+  const root = document.querySelector("[data-graph-switcher]");
+  if (!root) return;
+  const options = Array.from(root.querySelectorAll("[data-graph-option]"));
+  const panels = Array.from(root.querySelectorAll("[data-graph-panel]"));
+  const relationFilter = root.querySelector("[data-graph-relation-filter]");
+  const edgeFilter = root.querySelector("[data-graph-edge-filter]");
+  const selectedOnly = root.querySelector("[data-graph-selected-only]");
+  const fitToggle = root.querySelector("[data-graph-fit-toggle]");
+  const detail = root.querySelector("[data-graph-detail]");
+  const detailTitle = root.querySelector("[data-graph-detail-title]");
+  const detailMeta = root.querySelector("[data-graph-detail-meta]");
+  const detailBody = root.querySelector("[data-graph-detail-body]");
+
+  const escapeHtml = (value) => String(value || "").replace(/[&<>"']/g, ch => (
+    {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]
+  ));
+
+  const activePanel = () => panels.find((panel) => panel.classList.contains("graph-panel-active")) || panels[0];
+
+  const setActive = (side) => {
+    options.forEach((option) => {
+      const active = option.dataset.graphOption === side;
+      option.classList.toggle("active", active);
+      option.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    panels.forEach((panel) => {
+      const active = panel.dataset.graphPanel === side;
+      panel.classList.toggle("graph-panel-active", active);
+      panel.classList.toggle("graph-panel-hidden", !active);
+    });
+    applyFilters();
+  };
+
+  const evidenceRelationships = (panel, evidenceId) => {
+    return Array.from(panel.querySelectorAll("[data-graph-relationship='1']")).filter((row) => (
+      row.dataset.fromEvidenceId === evidenceId || row.dataset.toEvidenceId === evidenceId
+    ));
+  };
+
+  const setEvidenceDetail = (node) => {
+    if (!node || !detail) return;
+    const panel = node.closest("[data-graph-panel]") || activePanel();
+    const evidenceId = node.dataset.graphEvidenceId || "";
+    const relation = node.dataset.relation || "";
+    const directness = node.dataset.directness || "";
+    const selected = node.dataset.selected === "1" ? "selected" : "not selected";
+    const atoms = (node.dataset.coveredAtoms || "").split("|").filter(Boolean).join(", ") || "-";
+    const source = node.dataset.sourceGroup || "-";
+    const role = node.dataset.role || "-";
+    const relationships = evidenceRelationships(panel, evidenceId);
+    const relationshipText = relationships.length
+      ? relationships.map((row) => row.innerText.trim().replace(/\\s+/g, " ")).join("\\n")
+      : "No recorded anchor/pair relationship for this evidence in the active selector trace.";
+    if (detailTitle) detailTitle.textContent = evidenceId ? `Evidence ${evidenceId}` : "Evidence detail";
+    if (detailMeta) detailMeta.textContent = `${relation}/${directness} · ${selected} · atoms ${atoms}`;
+    if (detailBody) {
+      detailBody.innerHTML = [
+        `<div><b>role</b>: ${escapeHtml(role)}</div>`,
+        `<div><b>source</b>: ${escapeHtml(source)}</div>`,
+        `<div><b>relationships</b>:<pre class="graph-detail-relationships">${escapeHtml(relationshipText)}</pre></div>`,
+        `<div><b>text</b>: ${escapeHtml(node.dataset.graphText || "")}</div>`,
+      ].join("");
+    }
+  };
+
+  const highlightEvidence = (node) => {
+    const panel = node.closest("[data-graph-panel]") || activePanel();
+    const evidenceId = node.dataset.graphEvidenceId || "";
+    panels.forEach((item) => {
+      item.querySelectorAll("[data-graph-node='evidence']").forEach((el) => {
+        el.classList.toggle("graph-node-active", el === node);
+      });
+      item.querySelectorAll("[data-graph-edge], .graph-edge[data-source][data-target]").forEach((el) => {
+        const connected = el.dataset.evidenceId === evidenceId ||
+          el.dataset.source === evidenceId ||
+          el.dataset.target === evidenceId;
+        el.classList.toggle("graph-edge-active", Boolean(evidenceId && connected && item === panel));
+      });
+      item.querySelectorAll("[data-graph-relationship='1']").forEach((row) => {
+        const active = item === panel && evidenceId && (
+          row.dataset.fromEvidenceId === evidenceId || row.dataset.toEvidenceId === evidenceId
+        );
+        row.classList.toggle("relationship-active", Boolean(active));
+      });
+    });
+    setEvidenceDetail(node);
+  };
+
+  const applyFilters = () => {
+    const relation = relationFilter ? relationFilter.value : "";
+    const edgeType = edgeFilter ? edgeFilter.value : "";
+    const onlySelected = Boolean(selectedOnly && selectedOnly.checked);
+    panels.forEach((panel) => {
+      panel.querySelectorAll("[data-graph-node='evidence'], [data-graph-edge]").forEach((el) => {
+        const itemRelation = el.dataset.relation || "";
+        const itemSelected = el.dataset.selected === "1";
+        const itemEdgeType = el.dataset.edgeType || "";
+        const hiddenByRelation = relation && itemRelation !== relation;
+        const hiddenByEdge = edgeType && itemEdgeType && itemEdgeType !== edgeType;
+        const hiddenBySelection = onlySelected && !itemSelected;
+        el.classList.toggle("graph-filter-hidden", Boolean(hiddenByRelation || hiddenByEdge || hiddenBySelection));
+      });
+      panel.querySelectorAll(".graph-edge[data-source][data-target], .edge-row[data-edge-type]").forEach((el) => {
+        const itemEdgeType = el.dataset.edgeType || "";
+        const itemSelected = el.dataset.selected === "1";
+        const hiddenByEdge = edgeType && itemEdgeType !== edgeType;
+        const hiddenBySelection = onlySelected && !itemSelected;
+        el.classList.toggle("graph-filter-hidden", Boolean(hiddenByEdge || hiddenBySelection));
+      });
+    });
+  };
+
+  options.forEach((option) => {
+    option.addEventListener("click", () => setActive(option.dataset.graphOption || "left"));
+  });
+  if (relationFilter) relationFilter.addEventListener("change", applyFilters);
+  if (edgeFilter) edgeFilter.addEventListener("change", applyFilters);
+  if (selectedOnly) selectedOnly.addEventListener("change", applyFilters);
+  if (fitToggle) {
+    fitToggle.addEventListener("click", () => {
+      root.classList.toggle("graph-fit-natural");
+      fitToggle.textContent = root.classList.contains("graph-fit-natural") ? "Fit width" : "Natural width";
+    });
+  }
+  root.addEventListener("click", (event) => {
+    const node = event.target.closest("[data-graph-node='evidence']");
+    if (node && root.contains(node)) highlightEvidence(node);
+  });
+  root.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const node = event.target.closest("[data-graph-node='evidence']");
+    if (!node || !root.contains(node)) return;
+    event.preventDefault();
+    highlightEvidence(node);
+  });
+  setActive("left");
+  initChainGraphDragging(root);
+})();
+
+function initChainGraphDragging(root) {
+  const svgs = Array.from(root.querySelectorAll("svg.chain-graph-svg"));
+  for (const svg of svgs) {
+    const nodes = new Map();
+    const refreshNodes = () => {
+      nodes.clear();
+      svg.querySelectorAll(".graph-node[data-node-id]").forEach((node) => {
+        const id = node.dataset.nodeId;
+        if (id) nodes.set(id, node);
+      });
+    };
+    const centerOf = (id) => {
+      const node = nodes.get(id);
+      if (!node) return null;
+      const x = Number(node.dataset.x || 0);
+      const y = Number(node.dataset.y || 0);
+      const w = Number(node.dataset.w || 0);
+      const h = Number(node.dataset.h || 0);
+      return {x: x + w / 2, y: y + h / 2};
+    };
+    const updateEdges = () => {
+      refreshNodes();
+      svg.querySelectorAll(".graph-edge[data-source][data-target]").forEach((edge) => {
+        const source = centerOf(edge.dataset.source);
+        const target = centerOf(edge.dataset.target);
+        if (!source || !target) return;
+        const dx = target.x - source.x;
+        const curve = Math.max(70, Math.min(230, Math.abs(dx) * 0.45));
+        const d = `M ${source.x.toFixed(1)} ${source.y.toFixed(1)} C ${(source.x + curve).toFixed(1)} ${source.y.toFixed(1)}, ${(target.x - curve).toFixed(1)} ${target.y.toFixed(1)}, ${target.x.toFixed(1)} ${target.y.toFixed(1)}`;
+        edge.setAttribute("d", d);
+      });
+    };
+    const svgPoint = (evt) => {
+      const point = svg.createSVGPoint();
+      point.x = evt.clientX;
+      point.y = evt.clientY;
+      return point.matrixTransform(svg.getScreenCTM().inverse());
+    };
+    let drag = null;
+    svg.querySelectorAll(".graph-node.draggable").forEach((node) => {
+      node.addEventListener("pointerdown", (evt) => {
+        evt.preventDefault();
+        node.setPointerCapture(evt.pointerId);
+        const point = svgPoint(evt);
+        drag = {
+          node,
+          pointerId: evt.pointerId,
+          offsetX: point.x - Number(node.dataset.x || 0),
+          offsetY: point.y - Number(node.dataset.y || 0),
+        };
+        node.classList.add("dragging");
+      });
+      node.addEventListener("pointermove", (evt) => {
+        if (!drag || drag.node !== node) return;
+        const point = svgPoint(evt);
+        const x = point.x - drag.offsetX;
+        const y = point.y - drag.offsetY;
+        node.dataset.x = x.toFixed(1);
+        node.dataset.y = y.toFixed(1);
+        node.setAttribute("transform", `translate(${x.toFixed(1)},${y.toFixed(1)})`);
+        updateEdges();
+      });
+      node.addEventListener("pointerup", (evt) => {
+        if (!drag || drag.node !== node) return;
+        node.releasePointerCapture(evt.pointerId);
+        node.classList.remove("dragging");
+        drag = null;
+      });
+      node.addEventListener("pointercancel", () => {
+        node.classList.remove("dragging");
+        drag = null;
+      });
+    });
+    updateEdges();
+  }
+}
+</script>"""
 
 
 def fmt(value: Any) -> str:
@@ -1162,7 +1811,19 @@ h3 { font-size: 14px; margin: 0 0 8px; letter-spacing: 0; }
 }
 .path-grid div { border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background: #fbfcfd; }
 .path-grid b { display: block; color: #384459; margin-bottom: 2px; }
-.path-grid span { color: var(--muted); overflow-wrap: anywhere; }
+.path-value {
+  display: block;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  max-height: 4.8em;
+  overflow: auto;
+}
+.text-wrap-safe {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  min-width: 0;
+}
 .translation-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
 .translation-toolbar button {
   min-height: 32px;
@@ -1186,11 +1847,79 @@ body.zh-mode .i18n-zh { display: inline; }
   gap: 14px;
   align-items: start;
 }
-.map-graph-grid {
+.map-graph-shell { display: grid; gap: 12px; min-width: 0; }
+.graph-switcher {
   display: grid;
-  grid-template-columns: repeat(2, minmax(420px, 1fr));
-  gap: 14px;
-  align-items: start;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 10px;
+}
+.graph-option {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+  min-width: 0;
+}
+.graph-option.active { outline: 2px solid var(--common); outline-offset: -2px; }
+.graph-option.left { box-shadow: inset 4px 0 0 var(--left); }
+.graph-option.right { box-shadow: inset 4px 0 0 var(--right); }
+.graph-option b, .graph-option span, .graph-option small { display: block; min-width: 0; }
+.graph-option span { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.graph-option small { margin-top: 5px; color: #46576e; }
+.graph-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 9px 10px;
+}
+.graph-controls label {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+.graph-controls select, .graph-controls button {
+  min-height: 30px;
+  border: 1px solid #b8c6d7;
+  border-radius: 6px;
+  background: #fff;
+  color: #29435f;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+.checkbox-label input { margin: 0; }
+.graph-detail {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.32fr) minmax(260px, 1fr);
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 11px 12px;
+  min-width: 0;
+}
+.graph-detail h3 { margin-bottom: 4px; }
+.graph-detail-body {
+  font-size: 12px;
+  color: #344155;
+}
+.graph-detail-body b { color: #253044; }
+.graph-detail-relationships {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  color: #46576e;
 }
 .map-graph-panel {
   border: 1px solid var(--line);
@@ -1198,7 +1927,10 @@ body.zh-mode .i18n-zh { display: inline; }
   background: #fbfcfd;
   padding: 13px;
   min-width: 0;
+  overflow: hidden;
 }
+.map-graph-panel.graph-panel-hidden { display: none; }
+.map-graph-panel.graph-panel-active { display: block; }
 .map-graph-panel.left { box-shadow: inset 4px 0 0 var(--left); }
 .map-graph-panel.right { box-shadow: inset 4px 0 0 var(--right); }
 .overview-card, .flow-panel {
@@ -1263,9 +1995,10 @@ body.zh-mode .i18n-zh { display: inline; }
   border-radius: 6px;
   background: #fff;
   padding: 7px 8px;
+  min-width: 0;
 }
 .metric b { display: block; color: var(--muted); font-size: 12px; font-weight: 620; }
-.metric span { display: block; font-size: 16px; font-weight: 720; margin-top: 2px; overflow-wrap: anywhere; }
+.metric-value { display: block; font-size: 16px; font-weight: 720; margin-top: 2px; overflow-wrap: anywhere; min-width: 0; }
 .flow-card {
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -1287,7 +2020,7 @@ body.zh-mode .i18n-zh { display: inline; }
   font-weight: 750;
 }
 .gain-line { margin-top: 7px; font-size: 13px; color: #29435f; }
-.flow-text { margin-top: 8px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.flow-text { margin-top: 8px; font-size: 13px; }
 .badges, .legend, .span-list {
   display: flex;
   flex-wrap: wrap;
@@ -1313,6 +2046,12 @@ body.zh-mode .i18n-zh { display: inline; }
 .badge.background, .badge.context { background: #edf1f5; color: #536171; }
 .badge.irrelevant, .badge.none { background: #f3e9ee; color: #8a4361; }
 .badge.fallback { background: #fff2d9; color: #7a5a18; }
+.badge.complements, .badge.corroborates { background: #e6f6ee; color: #247a52; }
+.badge.tension { background: #fdebea; color: #b8443e; }
+.badge.bridge_context, .badge.bridge-context { background: #fff2d9; color: #a5681f; }
+.badge.duplicate { background: #f3e9ee; color: #8a4361; }
+.badge.same_source_context, .badge.same-source-context { background: #edf1f5; color: #536171; }
+.badge.evidence_covers_atom, .badge.evidence-covers-atom, .badge.selected_chain_step, .badge.selected-chain-step { background: #e7efff; color: #2f6fcf; }
 .status-badge.common, .swatch.common { background: #e7efff; color: var(--common); }
 .status-badge.left-only, .swatch.left-only { background: #fff2d9; color: var(--left); }
 .status-badge.right-only, .swatch.right-only { background: #ddf4f1; color: var(--right); }
@@ -1332,18 +2071,46 @@ body.zh-mode .i18n-zh { display: inline; }
   margin-top: 8px;
 }
 .graph-svg { display: block; width: 100%; min-width: 1080px; }
+.graph-fit-natural .graph-svg { width: auto; }
+.graph-filter-hidden { display: none; }
 .graph-node rect { fill: #fff; stroke: #bdc7d3; stroke-width: 1.1; }
 .graph-node.atom rect { fill: #f6f9fd; }
 .graph-node.selected rect { fill: #eef4ff; stroke: #2f6fcf; stroke-width: 1.8; }
+.graph-node.claim rect { fill: #f7faff; stroke: #a9c6f7; }
+.graph-node.side rect { fill: #fff; stroke: #d8e0ea; }
 .graph-node.evidence.common rect { fill: #eef4ff; stroke: var(--common); stroke-width: 1.8; }
 .graph-node.evidence.left-only rect { fill: #fff7e8; stroke: var(--left); stroke-width: 1.8; }
 .graph-node.evidence.right-only rect { fill: #e8f8f5; stroke: var(--right); stroke-width: 1.8; }
 .graph-node.evidence.unselected rect { fill: #fbfcfd; stroke: #cbd5e1; }
+.graph-node.evidence { cursor: pointer; }
+.graph-node.draggable { cursor: grab; touch-action: none; }
+.graph-node.dragging { cursor: grabbing; }
+.graph-node.dragging rect { stroke: #2f6fcf; stroke-width: 2.4; }
+.graph-node.evidence:focus rect,
+.graph-node.evidence.graph-node-active rect {
+  stroke: #172f66;
+  stroke-width: 2.6;
+  filter: drop-shadow(0 2px 4px rgba(23, 47, 102, 0.22));
+}
 .graph-title { font-size: 12px; font-weight: 730; fill: #253044; }
 .graph-subtitle { font-size: 11px; fill: #667386; }
+.graph-evidence-text {
+  color: #667386;
+  font-size: 11px;
+  line-height: 1.22;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
 .graph-rank { font-size: 10px; font-weight: 800; fill: #2f6fcf; }
 .graph-oracle { font-size: 9px; font-weight: 800; fill: #8a4361; }
 .graph-edge { fill: none; }
+.graph-edge.selected_chain_step { stroke-width: 4.2; opacity: .94; }
+.graph-edge.graph-edge-active {
+  opacity: 1;
+  stroke-width: 4.2;
+}
+.svg-badge { font-size: 10px; font-weight: 800; fill: #b8443e; }
+.svg-badge.selected { fill: #2f6fcf; }
 .graph-legend {
   display: flex;
   flex-wrap: wrap;
@@ -1364,6 +2131,17 @@ body.zh-mode .i18n-zh { display: inline; }
   height: 12px;
   border-radius: 3px;
 }
+.evidence-relationships {
+  margin-top: 12px;
+}
+.evidence-relationships .table-wrap {
+  background: #fff;
+}
+tr.relationship-active {
+  background: #fff7d8;
+  outline: 2px solid #d4a626;
+  outline-offset: -2px;
+}
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 th, td { border-bottom: 1px solid var(--line); padding: 8px 9px; text-align: left; vertical-align: top; }
 th { color: #3f4b5f; background: #f8fafc; font-weight: 720; position: sticky; top: 0; z-index: 1; }
@@ -1371,7 +2149,7 @@ th { color: #3f4b5f; background: #f8fafc; font-weight: 720; position: sticky; to
 tr.common { background: #f6f9ff; }
 tr.left-only { background: #fffaf0; }
 tr.right-only { background: #f1fbf9; }
-.text-cell { min-width: 320px; max-width: 640px; overflow-wrap: anywhere; }
+.text-cell { min-width: 320px; max-width: 640px; }
 .span {
   border-left: 3px solid #d4a626;
   background: #fff9df;
@@ -1384,7 +2162,7 @@ mark { background: #fff0a8; color: inherit; padding: 0 2px; border-radius: 2px; 
 @media (max-width: 900px) {
   header { position: static; padding: 18px; }
   main { padding: 18px; }
-  .overview-grid, .two-col, .map-graph-grid { grid-template-columns: 1fr; }
+  .overview-grid, .two-col, .graph-switcher, .graph-detail { grid-template-columns: 1fr; }
 }
 """
 

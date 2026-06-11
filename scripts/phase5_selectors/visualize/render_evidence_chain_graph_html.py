@@ -20,8 +20,34 @@ if str(SRC_ROOT) not in sys.path:
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from fact_checking.selectors.evidence_chain_graph import GRAPH_VERSION
-from fact_checking.utils.io import read_json, read_jsonl, save_json
+try:
+    from fact_checking.selectors.evidence_chain_graph import GRAPH_VERSION
+except ModuleNotFoundError as exc:
+    if exc.name != "numpy":
+        raise
+    GRAPH_VERSION = "evidence_chain_graph_v0_6b"
+try:
+    from fact_checking.utils.io import read_json, read_jsonl, save_json
+except ModuleNotFoundError as exc:
+    if exc.name != "yaml":
+        raise
+
+    def read_json(path: str | Path) -> dict[str, Any]:
+        with Path(path).open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        with Path(path).open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    rows.append(json.loads(line))
+        return rows
+
+    def save_json(payload: dict[str, Any], path: str | Path) -> None:
+        out = Path(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 import render_evidence_map_claim_html as map_html
 
 
@@ -281,6 +307,7 @@ def render_candidates(row: dict[str, Any], evidence_nodes: list[dict[str, Any]],
 
 def render_edges(row: dict[str, Any], *, displayed_evidence_ids: set[str]) -> str:
     atom_ids = {str(atom.get("node_id") or "") for atom in row.get("atom_nodes") or []}
+    selected_ids = {str(eid) for eid in row.get("selected_evidence_ids") or []}
     rows = []
     for edge in row.get("edges") or []:
         source = str(edge.get("source") or "")
@@ -290,8 +317,10 @@ def render_edges(row: dict[str, Any], *, displayed_evidence_ids: set[str]) -> st
         if target.startswith("E") and target not in displayed_evidence_ids:
             continue
         atom_data = "|".join(str(atom_id) for atom_id in edge.get("atom_ids") or ([] if target not in atom_ids else [target]))
+        selected = source in selected_ids and target in selected_ids
         rows.append(
-            f"<tr class='edge-row' data-edge-type='{esc(str(edge.get('edge_type') or ''))}' data-atoms='{esc(atom_data)}'>"
+            f"<tr class='edge-row' data-edge-type='{esc(str(edge.get('edge_type') or ''))}' data-atoms='{esc(atom_data)}' "
+            f"data-source='{esc(source)}' data-target='{esc(target)}' data-selected='{'1' if selected else '0'}'>"
             f"<td>{badge(edge.get('edge_type'), str(edge.get('edge_type') or ''))}</td>"
             f"<td>{esc(source)} -> {esc(target)}</td>"
             f"<td>{fmt(edge.get('weight'))}</td>"
@@ -429,6 +458,17 @@ def render_graph(row: dict[str, Any], *, evidence_nodes: list[dict[str, Any]], s
                 subtitle_key=text_key,
                 subtitle_zh=sub_zh,
                 reserve_right=96 if selected or oracle else 0,
+                data_attrs=(
+                    f'data-graph-node="evidence" data-graph-evidence-id="{esc(evidence_id)}" '
+                    f'role="button" tabindex="0" data-selected="{"1" if selected else "0"}" '
+                    f'data-relation="{esc(str(node.get("relation") or ""))}" '
+                    f'data-directness="{esc(str(node.get("directness") or ""))}" '
+                    f'data-covered-atoms="{esc("|".join(str(atom_id) for atom_id in node.get("covered_atom_ids") or []))}" '
+                    f'data-source-group="{esc(str(node.get("source_group") or ""))}" '
+                    f'data-role="{esc(str(node.get("role") or node.get("evidence_role") or ""))}" '
+                    f'data-graph-title="{esc(label)}" '
+                    f'data-graph-text="{esc(str(node.get("text") or ""))}"'
+                ),
             )
         )
     claim_node = svg_node(
@@ -516,7 +556,7 @@ def svg_defs() -> str:
 def svg_edge(edge_type: str, source: str, target: str, *, selected: bool, label: str = "") -> str:
     return (
         f'<path class="graph-edge {esc(edge_type)}" data-source="{esc(source)}" data-target="{esc(target)}" '
-        f'data-edge-type="{esc(edge_type)}" stroke="{edge_color(edge_type)}" stroke-width="{"3.4" if selected else "1.4"}" '
+        f'data-edge-type="{esc(edge_type)}" data-selected="{"1" if selected else "0"}" stroke="{edge_color(edge_type)}" stroke-width="{"3.4" if selected else "1.4"}" '
         f'opacity="{"0.88" if selected else "0.30"}" marker-end="url(#arrow-default)">'
         f"<title>{esc(label or edge_type)}</title></path>"
     )
@@ -547,6 +587,7 @@ def svg_node(
     subtitle_key: str = "",
     subtitle_zh: str | None = None,
     reserve_right: int = 0,
+    data_attrs: str = "",
 ) -> str:
     text_width = max(int(width) - 24 - int(reserve_right), 90)
     title_lines = wrap_text_for_svg(str(title or ""), svg_line_units(text_width, kind="title", zh=False), max_lines=SVG_TITLE_LINES)
@@ -566,7 +607,7 @@ def svg_node(
     title_html = svg_i18n_text(12, 17, "graph-title", title_lines, key=title_key, zh_lines=title_zh_lines)
     subtitle_html = svg_i18n_text(12, subtitle_y, "graph-subtitle", subtitle_lines, key=subtitle_key, zh_lines=subtitle_zh_lines)
     return f"""
-<g class="graph-node {esc(css_class)} draggable" data-node-id="{esc(node_id)}" data-x="{x:.1f}" data-y="{y:.1f}" data-w="{width:.1f}" data-h="{height:.1f}" transform="translate({x:.1f},{y:.1f})">
+<g class="graph-node {esc(css_class)} draggable" data-node-id="{esc(node_id)}" {data_attrs} data-x="{x:.1f}" data-y="{y:.1f}" data-w="{width:.1f}" data-h="{height:.1f}" transform="translate({x:.1f},{y:.1f})">
   <rect width="{width:.1f}" height="{height:.1f}" rx="7" />
   {title_html}
   {subtitle_html}

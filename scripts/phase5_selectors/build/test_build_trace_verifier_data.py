@@ -139,20 +139,48 @@ def test_rawfc_boundaries_prompt_style_uses_rawfc_three_label_boundaries() -> No
     assert "mostly-true" not in system_prompt
 
 
-def _write_minimal_inputs(tmp_path: Path) -> tuple[Path, Path]:
+def test_coverage_label_from_processed_raw_is_preserved_in_build_rows(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_minimal_inputs(tmp_path, coverage_label="weak_covered")
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_with_coverage", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="plain",
+        expected_selector_name="test_selector",
+        top_k=2,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+    )
+
+    assert report["coverage_labels"] == {"weak_covered": 1}
+    assert rows[0]["coverage_label"] == "weak_covered"
+    assert "Coverage: B" in rows[0]["target"]
+    assert "Evidence coverage labels:" in rows[0]["prompt"]
+
+
+def _write_minimal_inputs(tmp_path: Path, coverage_label: str | None = None) -> tuple[Path, Path]:
+    raw_row = {
+        "event_id": "event-1",
+        "claim": "Original claim",
+        "label": "true",
+        "explain": "",
+        "reports": [],
+    }
+    if coverage_label is not None:
+        raw_row["coverage_label"] = coverage_label
+        raw_row["coverage_score"] = 0.42
     raw_path = tmp_path / "val.json"
     raw_path.write_text(
-        json.dumps(
-            [
-                {
-                    "event_id": "event-1",
-                    "claim": "Original claim",
-                    "label": "true",
-                    "explain": "",
-                    "reports": [],
-                }
-            ]
-        ),
+        json.dumps([raw_row]),
         encoding="utf-8",
     )
 

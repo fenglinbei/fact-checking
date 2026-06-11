@@ -125,16 +125,22 @@ def validate_sentence_candidates(row: dict[str, Any], split: str, line_no: int) 
     return checked, bad
 
 
-def clean_row(row: dict[str, Any]) -> dict[str, Any]:
+def clean_row(
+    row: dict[str, Any],
+    *,
+    selector_name: str = CLEAN_SELECTOR_NAME,
+    graph_version: str = CLEAN_GRAPH_VERSION,
+    adaptive_policy: str = CLEAN_ADAPTIVE_POLICY,
+) -> dict[str, Any]:
     cleaned = dict(row)
-    cleaned["selector_name"] = CLEAN_SELECTOR_NAME
-    cleaned["graph_version"] = CLEAN_GRAPH_VERSION
-    cleaned["adaptive_policy"] = CLEAN_ADAPTIVE_POLICY
+    cleaned["selector_name"] = selector_name
+    cleaned["graph_version"] = graph_version
+    cleaned["adaptive_policy"] = adaptive_policy
 
     metadata = dict(cleaned.get("candidate_pool_metadata") or {})
-    metadata["selector_name"] = CLEAN_SELECTOR_NAME
-    metadata["graph_version"] = CLEAN_GRAPH_VERSION
-    metadata["adaptive_policy"] = CLEAN_ADAPTIVE_POLICY
+    metadata["selector_name"] = selector_name
+    metadata["graph_version"] = graph_version
+    metadata["adaptive_policy"] = adaptive_policy
     cleaned["candidate_pool_metadata"] = metadata
     return cleaned
 
@@ -155,13 +161,27 @@ def stage_split(
     target_path: Path,
     sample_limit: int,
     force: bool,
+    selector_name: str = CLEAN_SELECTOR_NAME,
+    graph_version: str = CLEAN_GRAPH_VERSION,
+    adaptive_policy: str = CLEAN_ADAPTIVE_POLICY,
+    expected_fingerprint: str | None = None,
+    forbidden_fingerprints: set[str] | None = None,
 ) -> dict[str, Any]:
     if target_path.exists() and not force:
-        return audit_existing(dataset=dataset, split=split, target_path=target_path)
+        return audit_existing(
+            dataset=dataset,
+            split=split,
+            target_path=target_path,
+            selector_name=selector_name,
+            expected_fingerprint=expected_fingerprint,
+            forbidden_fingerprints=forbidden_fingerprints,
+        )
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    expected_fingerprint: str | None = DATASET_SPECS[dataset]["expected_fingerprint"]  # type: ignore[assignment]
-    forbidden_fingerprints: set[str] = DATASET_SPECS[dataset]["forbidden_fingerprints"]  # type: ignore[assignment]
+    if expected_fingerprint is None:
+        expected_fingerprint = DATASET_SPECS[dataset]["expected_fingerprint"]  # type: ignore[assignment]
+    if forbidden_fingerprints is None:
+        forbidden_fingerprints = DATASET_SPECS[dataset]["forbidden_fingerprints"]  # type: ignore[assignment]
 
     rows = 0
     checked_candidates = 0
@@ -178,7 +198,19 @@ def stage_split(
                 fingerprints.add(fingerprint)
             checked, _ = validate_sentence_candidates(row, split, line_no)
             checked_candidates += checked
-            dst.write(json.dumps(clean_row(row), ensure_ascii=False, sort_keys=True) + "\n")
+            dst.write(
+                json.dumps(
+                    clean_row(
+                        row,
+                        selector_name=selector_name,
+                        graph_version=graph_version,
+                        adaptive_policy=adaptive_policy,
+                    ),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
             rows += 1
 
     if rows == 0:
@@ -196,9 +228,9 @@ def stage_split(
     manifest = {
         "dataset": dataset,
         "split": split,
-        "selector_name": CLEAN_SELECTOR_NAME,
-        "graph_version": CLEAN_GRAPH_VERSION,
-        "adaptive_policy": CLEAN_ADAPTIVE_POLICY,
+        "selector_name": selector_name,
+        "graph_version": graph_version,
+        "adaptive_policy": adaptive_policy,
         "chunk_mmr_fingerprint": fingerprint,
         "rows": rows,
         "sample_limit": sample_limit,
@@ -216,7 +248,15 @@ def stage_split(
     return manifest
 
 
-def audit_existing(*, dataset: str, split: str, target_path: Path) -> dict[str, Any]:
+def audit_existing(
+    *,
+    dataset: str,
+    split: str,
+    target_path: Path,
+    selector_name: str = CLEAN_SELECTOR_NAME,
+    expected_fingerprint: str | None = None,
+    forbidden_fingerprints: set[str] | None = None,
+) -> dict[str, Any]:
     rows = 0
     checked_candidates = 0
     fingerprints: set[str] = set()
@@ -225,10 +265,8 @@ def audit_existing(*, dataset: str, split: str, target_path: Path) -> dict[str, 
             if not line.strip():
                 continue
             row = json.loads(line)
-            if row.get("selector_name") != CLEAN_SELECTOR_NAME:
+            if row.get("selector_name") != selector_name:
                 raise SystemExit(f"{target_path}:{line_no} has selector_name={row.get('selector_name')!r}")
-            if row.get("graph_version") != CLEAN_GRAPH_VERSION:
-                raise SystemExit(f"{target_path}:{line_no} has graph_version={row.get('graph_version')!r}")
             fingerprint = row_fingerprint(row)
             if fingerprint:
                 fingerprints.add(fingerprint)
@@ -241,8 +279,10 @@ def audit_existing(*, dataset: str, split: str, target_path: Path) -> dict[str, 
     if len(fingerprints) != 1:
         raise SystemExit(f"Existing staged trace has inconsistent fingerprints: {sorted(fingerprints)}")
     fingerprint = next(iter(fingerprints))
-    expected_fingerprint: str | None = DATASET_SPECS[dataset]["expected_fingerprint"]  # type: ignore[assignment]
-    forbidden_fingerprints: set[str] = DATASET_SPECS[dataset]["forbidden_fingerprints"]  # type: ignore[assignment]
+    if expected_fingerprint is None:
+        expected_fingerprint = DATASET_SPECS[dataset]["expected_fingerprint"]  # type: ignore[assignment]
+    if forbidden_fingerprints is None:
+        forbidden_fingerprints = DATASET_SPECS[dataset]["forbidden_fingerprints"]  # type: ignore[assignment]
     if expected_fingerprint and fingerprint != expected_fingerprint:
         raise SystemExit(f"{dataset}/{split} fingerprint mismatch: expected {expected_fingerprint}, got {fingerprint}")
     if fingerprint in forbidden_fingerprints:
@@ -250,9 +290,7 @@ def audit_existing(*, dataset: str, split: str, target_path: Path) -> dict[str, 
     return {
         "dataset": dataset,
         "split": split,
-        "selector_name": CLEAN_SELECTOR_NAME,
-        "graph_version": CLEAN_GRAPH_VERSION,
-        "adaptive_policy": CLEAN_ADAPTIVE_POLICY,
+        "selector_name": selector_name,
         "chunk_mmr_fingerprint": fingerprint,
         "rows": rows,
         "sentence_chunk_audit": {
@@ -277,6 +315,16 @@ def main() -> int:
     parser.add_argument("--dataset", required=True, help="liar_raw or rawfc")
     parser.add_argument("--output-root", default="outputs/sentence_trace_method")
     parser.add_argument("--source-root", default=None, help="Optional clean source root; supports <root>_<split> layout.")
+    parser.add_argument("--selector-name", default=CLEAN_SELECTOR_NAME)
+    parser.add_argument("--graph-version", default=CLEAN_GRAPH_VERSION)
+    parser.add_argument("--adaptive-policy", default=CLEAN_ADAPTIVE_POLICY)
+    parser.add_argument("--expected-fingerprint", default=None)
+    parser.add_argument(
+        "--forbidden-fingerprint",
+        action="append",
+        default=[],
+        help="Fingerprint that must not appear; may be repeated.",
+    )
     parser.add_argument("--splits", default="train,val,test")
     parser.add_argument("--sample-limit", type=int, default=0)
     parser.add_argument("--force", action="store_true")
@@ -289,7 +337,8 @@ def main() -> int:
     output_root = Path(args.output_root)
     source_root = Path(args.source_root) if args.source_root else None
     sample_suffix = f"_sample{args.sample_limit}" if args.sample_limit > 0 else ""
-    staged_root = output_root / "_sources" / dataset / f"{CLEAN_SELECTOR_NAME}{sample_suffix}"
+    staged_root = output_root / "_sources" / dataset / f"{args.selector_name}{sample_suffix}"
+    forbidden_fingerprints = set(str(item) for item in (args.forbidden_fingerprint or []))
 
     manifests = []
     trace_paths: dict[str, Path] = {}
@@ -297,7 +346,14 @@ def main() -> int:
     for split in splits:
         target_path = staged_root / split / f"selection_trace_{split}.jsonl"
         if target_path.exists() and not args.force:
-            manifest = audit_existing(dataset=dataset, split=split, target_path=target_path)
+            manifest = audit_existing(
+                dataset=dataset,
+                split=split,
+                target_path=target_path,
+                selector_name=str(args.selector_name),
+                expected_fingerprint=args.expected_fingerprint,
+                forbidden_fingerprints=forbidden_fingerprints or None,
+            )
             manifests.append(manifest)
             trace_paths[split] = target_path
             fingerprints.add(manifest["chunk_mmr_fingerprint"])
@@ -310,6 +366,11 @@ def main() -> int:
             target_path=target_path,
             sample_limit=args.sample_limit,
             force=args.force,
+            selector_name=str(args.selector_name),
+            graph_version=str(args.graph_version),
+            adaptive_policy=str(args.adaptive_policy),
+            expected_fingerprint=args.expected_fingerprint,
+            forbidden_fingerprints=forbidden_fingerprints or None,
         )
         manifests.append(manifest)
         trace_paths[split] = target_path

@@ -19,6 +19,7 @@ from fact_checking.build.candidates import (
     _select_candidates_raw_top_evidence,
     _trial_prompt_budget_row,
 )
+from fact_checking.build.prompts import build_target, build_user_content
 from fact_checking.data.io import iter_sentences
 from fact_checking.data.types import SampleRecord
 
@@ -130,6 +131,26 @@ def test_premmr_fingerprint_ignores_non_embedding_settings() -> None:
     changed["prompt"]["max_length"] = 1024
 
     assert _premmr_config_fingerprint(base) == _premmr_config_fingerprint(changed)
+
+
+def test_label_with_coverage_prompt_and_target_use_two_output_lines() -> None:
+    user_content = build_user_content(
+        "Claim text",
+        ["Evidence sentence"],
+        "label_with_coverage",
+        "letter",
+        "liar6",
+    )
+    target = build_target(
+        {"label_schema": "liar6", "coverage_label": "weak_covered"},
+        "true",
+        "label_with_coverage",
+        "letter",
+    )
+
+    assert "Evidence coverage labels:" in user_content
+    assert "Coverage: <a single letter from A-C>" in user_content
+    assert target == "Label: F\nCoverage: B"
 
 
 def test_premmr_fingerprint_keeps_embedding_settings() -> None:

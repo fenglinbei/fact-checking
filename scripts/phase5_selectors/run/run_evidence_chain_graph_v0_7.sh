@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SPLIT="${SPLIT:-val}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
 INPUT="${INPUT:-outputs/selectors/evidence_map_selector/v0_6b_${SPLIT}/candidate_evidence_map_features_${SPLIT}.jsonl}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_${SPLIT}}"
 CANDIDATE_TOP_N="${CANDIDATE_TOP_N:-20}"
@@ -25,7 +26,7 @@ echo "[evidence-chain-graph-v0.7] top_n/min/max: ${CANDIDATE_TOP_N}/${MIN_TOP_K}
 echo "[evidence-chain-graph-v0.7] fingerprint : ${CHUNK_MMR_FINGERPRINT}"
 echo "[evidence-chain-graph-v0.7] stop        : ${TARGET_COVERAGE}/${STOP_GAIN_THRESHOLD}/${INSUFFICIENT_GAIN_THRESHOLD}"
 
-PYTHONPATH=src python scripts/phase5_selectors/build/build_evidence_chain_graph_v0_7.py \
+PYTHONPATH=src "$PYTHON_BIN" scripts/phase5_selectors/build/build_evidence_chain_graph_v0_7.py \
   --input "${INPUT}" \
   --output-dir "${OUTPUT_DIR}" \
   --split "${SPLIT}" \

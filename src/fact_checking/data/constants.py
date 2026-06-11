@@ -90,6 +90,22 @@ RAWFC_NUMERIC_LABELS = {
     "5": "true",
 }
 
+COVERAGE_LABELS = ["covered", "weak_covered", "uncovered"]
+COVERAGE_LABEL2ID = {label: idx for idx, label in enumerate(COVERAGE_LABELS)}
+COVERAGE_ID2LABEL = {idx: label for label, idx in COVERAGE_LABEL2ID.items()}
+COVERAGE_LABEL_LETTERS = {
+    "covered": "A",
+    "weak_covered": "B",
+    "uncovered": "C",
+}
+COVERAGE_LETTER2LABEL = {letter: label for label, letter in COVERAGE_LABEL_LETTERS.items()}
+COVERAGE_LETTER_ORDER = [COVERAGE_LABEL_LETTERS[label] for label in COVERAGE_LABELS]
+COVERAGE_LABEL_DEFINITIONS = {
+    "covered": "the selected evidence is sufficient for deciding the claim",
+    "weak_covered": "the selected evidence is partially useful but misses important support or context",
+    "uncovered": "the selected evidence is insufficient for deciding the claim",
+}
+
 LABEL_SCHEMAS = {
     "liar6": LabelSchema(
         name="liar6",

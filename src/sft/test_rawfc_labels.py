@@ -95,6 +95,35 @@ def test_ordinal_loss_disabled_matches_weighted_cross_entropy() -> None:
     assert float(losses["ordinal_loss"]) == 0.0
 
 
+def test_coverage_auxiliary_loss_is_added_when_enabled() -> None:
+    label_logits = torch.tensor([[2.0, 0.0, -1.0]], dtype=torch.float32)
+    coverage_logits = torch.tensor([[0.0, 3.0, -1.0]], dtype=torch.float32)
+    gold_ids = torch.tensor([0], dtype=torch.long)
+    coverage_gold_ids = torch.tensor([2], dtype=torch.long)
+    class_weights = torch.ones(3, dtype=torch.float32)
+    coverage_class_weights = torch.ones(3, dtype=torch.float32)
+    train_cfg = {
+        "label_token_ce": {"ordinal_loss": {"enabled": False}},
+        "coverage_label_token": {"enabled": True, "loss_weight": 0.4},
+    }
+
+    losses = _compute_label_token_losses(
+        label_logits=label_logits,
+        gold_ids=gold_ids,
+        class_weights=class_weights,
+        train_cfg=train_cfg,
+        coverage_label_logits=coverage_logits,
+        coverage_gold_ids=coverage_gold_ids,
+        coverage_class_weights=coverage_class_weights,
+    )
+
+    expected_truth = F.cross_entropy(label_logits, gold_ids)
+    expected_coverage = F.cross_entropy(coverage_logits, coverage_gold_ids)
+    assert torch.allclose(losses["ce_loss"], expected_truth)
+    assert torch.allclose(losses["coverage_ce_loss"], expected_coverage)
+    assert torch.allclose(losses["loss"], expected_truth + 0.4 * expected_coverage)
+
+
 def test_label_logit_adjust_changes_prediction_logits_only() -> None:
     logits = torch.tensor([[1.0, 2.0]], dtype=torch.float32)
     logit_adjust_cfg = {
