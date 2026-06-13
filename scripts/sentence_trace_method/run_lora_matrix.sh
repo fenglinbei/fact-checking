@@ -42,6 +42,7 @@ LORA_ALPHA="${LORA_ALPHA:-32}"
 LORA_DROPOUT="${LORA_DROPOUT:-0.05}"
 LORA_BIAS="${LORA_BIAS:-none}"
 SFT_GRADIENT_ACCUMULATION_STEPS="${SFT_GRADIENT_ACCUMULATION_STEPS:-}"
+SFT_LEARNING_RATE="${SFT_LEARNING_RATE:-}"
 SFT_NUM_TRAIN_EPOCHS="${SFT_NUM_TRAIN_EPOCHS:-}"
 SFT_EVAL_STEPS="${SFT_EVAL_STEPS:-}"
 SFT_SAVE_STEPS="${SFT_SAVE_STEPS:-}"
@@ -234,6 +235,9 @@ prepare_lora_config() {
     --deepspeed-config "$DEEPSPEED_CONFIG")
   if [[ -n "$SFT_GRADIENT_ACCUMULATION_STEPS" ]]; then
     cmd+=(--gradient-accumulation-steps "$SFT_GRADIENT_ACCUMULATION_STEPS")
+  fi
+  if [[ -n "$SFT_LEARNING_RATE" ]]; then
+    cmd+=(--learning-rate "$SFT_LEARNING_RATE")
   fi
   if [[ -n "$SFT_NUM_TRAIN_EPOCHS" ]]; then
     cmd+=(--num-train-epochs "$SFT_NUM_TRAIN_EPOCHS")

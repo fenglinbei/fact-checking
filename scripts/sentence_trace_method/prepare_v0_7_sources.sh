@@ -17,16 +17,17 @@ SAMPLE_LIMIT="${SAMPLE_LIMIT:-0}"
 FORCE_GRAPH_BUILD="${FORCE_GRAPH_BUILD:-false}"
 FORCE_STAGE="${FORCE_STAGE:-true}"
 
-SELECTOR_NAME="${SELECTOR_NAME:-v0_7_budgeted_marginal_chain_adaptive3_10}"
-SELECTOR_GRAPH_VERSION="${SELECTOR_GRAPH_VERSION:-evidence_chain_graph_v0_7}"
-SELECTOR_ADAPTIVE_POLICY="${SELECTOR_ADAPTIVE_POLICY:-budgeted_marginal_v0_7}"
 CANDIDATE_TOP_N="${CANDIDATE_TOP_N:-20}"
 MIN_TOP_K="${MIN_TOP_K:-3}"
 MAX_TOP_K="${MAX_TOP_K:-10}"
+SELECTOR_NAME="${SELECTOR_NAME:-v0_7_budgeted_marginal_chain_adaptive${MIN_TOP_K}_${MAX_TOP_K}}"
+SELECTOR_GRAPH_VERSION="${SELECTOR_GRAPH_VERSION:-evidence_chain_graph_v0_7}"
+SELECTOR_ADAPTIVE_POLICY="${SELECTOR_ADAPTIVE_POLICY:-budgeted_marginal_v0_7}"
 CHUNK_MMR_FINGERPRINT="${CHUNK_MMR_FINGERPRINT:-432dfc970e75}"
 TARGET_COVERAGE="${TARGET_COVERAGE:-0.80}"
 STOP_GAIN_THRESHOLD="${STOP_GAIN_THRESHOLD:-0.10}"
 INSUFFICIENT_GAIN_THRESHOLD="${INSUFFICIENT_GAIN_THRESHOLD:-0.05}"
+V0_7_GRAPH_SLUG="${V0_7_GRAPH_SLUG:-adaptive${MIN_TOP_K}_${MAX_TOP_K}}"
 
 normalize_dataset() {
   case "${1//-/_}" in
@@ -48,8 +49,8 @@ input_path_for() {
 graph_root_for() {
   local dataset="$1"
   case "$dataset" in
-    liar_raw) printf '%s\n' "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10" ;;
-    rawfc) printf '%s\n' "outputs/sentence_trace_method/_raw_sources/rawfc/sentence_rule_step_adaptive5_10/v0_7_budgeted_marginal_adaptive3_10" ;;
+    liar_raw) printf '%s\n' "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_${V0_7_GRAPH_SLUG}" ;;
+    rawfc) printf '%s\n' "outputs/sentence_trace_method/_raw_sources/rawfc/sentence_rule_step_adaptive5_10/v0_7_budgeted_marginal_${V0_7_GRAPH_SLUG}" ;;
   esac
 }
 

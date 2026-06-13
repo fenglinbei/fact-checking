@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bias", default="none")
     parser.add_argument("--deepspeed-config", default=None)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=None)
+    parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--num-train-epochs", type=float, default=None)
     parser.add_argument("--eval-steps", type=int, default=None)
     parser.add_argument("--save-steps", type=int, default=None)
@@ -57,6 +58,7 @@ def main() -> int:
             output_config,
             deepspeed_config=args.deepspeed_config,
             gradient_accumulation_steps=args.gradient_accumulation_steps,
+            learning_rate=args.learning_rate,
             num_train_epochs=args.num_train_epochs,
             eval_steps=args.eval_steps,
             save_steps=args.save_steps,
@@ -104,6 +106,7 @@ def main() -> int:
     _apply_sft_overrides(
         cfg,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
+        learning_rate=args.learning_rate,
         num_train_epochs=args.num_train_epochs,
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,
@@ -171,6 +174,7 @@ def _apply_sft_overrides(
     cfg: dict[str, Any],
     *,
     gradient_accumulation_steps: int | None,
+    learning_rate: float | None,
     num_train_epochs: float | None,
     eval_steps: int | None,
     save_steps: int | None,
@@ -187,6 +191,7 @@ def _apply_sft_overrides(
 
     scalar_overrides: dict[str, int | float | None] = {
         "gradient_accumulation_steps": gradient_accumulation_steps,
+        "learning_rate": learning_rate,
         "num_train_epochs": num_train_epochs,
         "eval_steps": eval_steps,
         "save_steps": save_steps,
@@ -250,6 +255,7 @@ def _sync_existing_config(
     *,
     deepspeed_config: str | None,
     gradient_accumulation_steps: int | None,
+    learning_rate: float | None,
     num_train_epochs: float | None,
     eval_steps: int | None,
     save_steps: int | None,
@@ -281,6 +287,7 @@ def _sync_existing_config(
         _apply_sft_overrides(
             cfg,
             gradient_accumulation_steps=gradient_accumulation_steps,
+            learning_rate=learning_rate,
             num_train_epochs=num_train_epochs,
             eval_steps=eval_steps,
             save_steps=save_steps,
