@@ -33,10 +33,11 @@ class _FakeMistralCommonTokenizer:
         messages: list[dict[str, str]],
         *,
         tokenize: bool = False,
-        add_generation_prompt: bool = True,
         **kwargs: object,
     ) -> dict[str, list[int]]:
-        del messages, add_generation_prompt, kwargs
+        del messages
+        if kwargs:
+            raise ValueError(f"Unsupported kwargs: {sorted(kwargs)}")
         self.seen_tokenize_values.append(bool(tokenize))
         if not tokenize:
             raise AssertionError("MistralCommon chat templates must be tokenized directly.")

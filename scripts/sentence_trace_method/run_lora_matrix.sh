@@ -29,6 +29,7 @@ SELECTOR_GRAPH_VERSION="${SELECTOR_GRAPH_VERSION:-sentence_evidence_chain_graph}
 SELECTOR_ADAPTIVE_POLICY="${SELECTOR_ADAPTIVE_POLICY:-sentence_rule_step}"
 EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME:-$SELECTOR_NAME}"
 PROMPT_OUTPUT_MODE="${PROMPT_OUTPUT_MODE:-}"
+REQUIRE_PROMPT_INPUT_IDS="${REQUIRE_PROMPT_INPUT_IDS:-false}"
 RAW_ROOT="${RAW_ROOT:-}"
 COVERAGE_DATA_ROOT="${COVERAGE_DATA_ROOT:-}"
 COVERAGE_POLICY="${COVERAGE_POLICY:-all}"
@@ -78,6 +79,7 @@ normalize_model() {
   case "${1//-/_}" in
     llama31_8b|llama3_8b|llama3_1_8b|llama31) printf '%s\n' "llama31_8b" ;;
     qwen3_4b_2507|qwen3_4b|qwen3) printf '%s\n' "qwen3_4b_2507" ;;
+    ministral3_8b|ministral3|mistral3_8b) printf '%s\n' "ministral3_8b" ;;
     *) printf 'Unsupported model=%s\n' "$1" >&2; exit 2 ;;
   esac
 }
@@ -152,6 +154,29 @@ expected_rows_for_split() {
   fi
 }
 
+prompt_input_ids_ready() {
+  local case_name="$1"
+  "$PYTHON_BIN" -c '
+import json
+import sys
+from pathlib import Path
+
+case_root = Path(sys.argv[1])
+for split in ("train", "val", "test"):
+    path = case_root / "build" / f"build_{split}.jsonl"
+    if not path.exists():
+        raise SystemExit(1)
+    with path.open(encoding="utf-8") as handle:
+        line = handle.readline().strip()
+    if not line:
+        raise SystemExit(1)
+    row = json.loads(line)
+    ids = row.get("prompt_input_ids")
+    if not isinstance(ids, list) or not ids:
+        raise SystemExit(1)
+' "${OUTPUT_ROOT}/${case_name}"
+}
+
 build_ready() {
   local dataset="$1"
   local case_name="$2"
@@ -163,6 +188,9 @@ build_ready() {
       return 1
     fi
   done
+  if [[ "$REQUIRE_PROMPT_INPUT_IDS" == "true" ]] && ! prompt_input_ids_ready "$case_name"; then
+    return 1
+  fi
   return 0
 }
 
@@ -182,6 +210,7 @@ ensure_build() {
     SELECTOR_ADAPTIVE_POLICY="$SELECTOR_ADAPTIVE_POLICY" \
     EXPECTED_SELECTOR_NAME="$EXPECTED_SELECTOR_NAME" \
     PROMPT_OUTPUT_MODE="$PROMPT_OUTPUT_MODE" \
+    REQUIRE_PROMPT_INPUT_IDS="$REQUIRE_PROMPT_INPUT_IDS" \
     RAW_ROOT="$RAW_ROOT" \
     COVERAGE_DATA_ROOT="$COVERAGE_DATA_ROOT" \
     COVERAGE_POLICY="$COVERAGE_POLICY" \
@@ -210,6 +239,7 @@ ensure_build() {
     SELECTOR_ADAPTIVE_POLICY="$SELECTOR_ADAPTIVE_POLICY" \
     EXPECTED_SELECTOR_NAME="$EXPECTED_SELECTOR_NAME" \
     PROMPT_OUTPUT_MODE="$PROMPT_OUTPUT_MODE" \
+    REQUIRE_PROMPT_INPUT_IDS="$REQUIRE_PROMPT_INPUT_IDS" \
     RAW_ROOT="$RAW_ROOT" \
     COVERAGE_DATA_ROOT="$COVERAGE_DATA_ROOT" \
     COVERAGE_POLICY="$COVERAGE_POLICY" \

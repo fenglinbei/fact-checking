@@ -1,0 +1,159 @@
+label_schema: liar6
+
+experiment:
+  name: liar_raw__ministral3_8b
+
+baseline:
+  variant: liar_raw__ministral3_8b
+  chunking_strategy: sentence_trace_method
+  label_schema: liar6
+
+build:
+  data:
+    dataset: liar_raw
+    label_schema: liar6
+    train_path: data/raw/LIAR-RAW/train.json
+    val_path: data/raw/LIAR-RAW/val.json
+    test_path: data/raw/LIAR-RAW/test.json
+    sample_limit: 0
+  retrieval:
+    embedder_model: /data/models/bge-base-en-v1.5/
+    device: cuda
+    max_length: 256
+    batch_size: 64
+    top_k: 10
+    alpha_dense: 0.70
+    alpha_lexical: 0.20
+    alpha_bm25: 0.10
+    mmr_lambda: 0.70
+    selection_method: mmr
+    precision: bf16
+    num_gpus: 4
+    prefetch_size: 200
+    cpu_workers: 4
+    chunking:
+      strategy: sentence
+      context_k: 1
+      theta: 0.7
+      embedder_model: null
+      device: cpu
+      max_length: 256
+      batch_size: 64
+      precision: fp32
+  prompt:
+    model_name_or_path: /data/models/Ministral-3-8B-Instruct-2512
+    max_length: 1024
+    output_mode: label_only
+    label_format: letter
+    label_schema: liar6
+    system_prompt: null
+    chat_template:
+      mode: tokenizer_default
+      add_generation_prompt: true
+      template_kwargs: {}
+      migration_note: transfer_backbone_tokenizer_default
+
+train:
+  model_name_or_path: /data/models/Ministral-3-8B-Instruct-2512
+  deepspeed_config: configs/deepspeed_zero3_bsz1_ga8_lowpeak.json
+
+sft_train:
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 2.0e-06
+  num_train_epochs: 5
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  bf16: true
+  max_length: 1024
+  logging_steps: 2
+  save_steps: 50
+  eval_steps: 50
+  dataloader_num_workers: 4
+  gradient_checkpointing: true
+  use_flash_attention_2: true
+  lr_scheduler_type: cosine_with_restarts
+  lr_scheduler_kwargs:
+    num_cycles: 2
+  max_grad_norm: 1.0
+  padding: longest
+  use_length_bucket: true
+  empty_cache_steps: 0
+  empty_cache_on_eval: true
+  empty_cache_on_save: true
+  max_new_tokens: 1
+  temperature: 0.0
+  early_stopping_patience: 6
+  eval_log_predictions: 0
+  label_schema: liar6
+  logit_adjust:
+    enabled: false
+    tau: 1.0
+  lora:
+    enabled: false
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    modules_to_save: null
+  label_token_ce:
+    label_prefix: "Label:"
+    early_stopping_metric: macro_f1_plus_true_side_plus_mae
+    true_side_metric_weight: 0.5
+    mae_metric_weight: 0.3
+    class_weights:
+      pants-fire: 1.0
+      "false": 1.0
+      barely-true: 1.0
+      half-true: 1.0
+      mostly-true: 1.0
+      "true": 1.0
+    ordinal_loss:
+      enabled: true
+      alpha: 0.2
+      normalize_distance: true
+      alpha_warmup_ratio: 0.3
+
+infer:
+  provider: label_token
+  merge_lora_cache:
+    enabled: false
+  server:
+    extra_args:
+      - --tokenizer-mode
+      - mistral
+      - --config-format
+      - mistral
+      - --load-format
+      - mistral
+
+tracking:
+  enabled: true
+  backend: swanlab
+
+swanlab:
+  project: fact-checking-sentence-trace-method
+  experiment_name: liar_raw__ministral3_8b
+
+sentence_trace_method:
+  case_name: liar_raw__ministral3_8b
+  dataset: liar_raw
+  model: ministral3_8b
+  output_root: outputs/sentence_trace_method
+  selector_name: sentence_rule_step_adaptive5_10
+  graph_version: sentence_evidence_chain_graph
+  adaptive_policy: sentence_rule_step
+  selection_mode: trace
+  trace_prompt_style: plain
+  top_k: 10
+  expected_chunk_mmr_fingerprint: "432dfc970e75"
+  forbidden_chunk_mmr_fingerprints: []

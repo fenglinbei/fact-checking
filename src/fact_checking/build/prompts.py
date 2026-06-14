@@ -158,6 +158,27 @@ def _uses_tokenized_chat_template(tokenizer: AutoTokenizer) -> bool:
     return is_mistral_common_tokenizer(tokenizer)
 
 
+_MISTRAL_COMMON_CHAT_TEMPLATE_KWARGS = {
+    "tools",
+    "continue_final_message",
+    "padding",
+    "truncation",
+    "max_length",
+    "return_tensors",
+    "return_dict",
+}
+
+
+def _mistral_common_template_kwargs(template_kwargs: dict[str, Any]) -> dict[str, Any]:
+    unsupported = sorted(set(template_kwargs) - _MISTRAL_COMMON_CHAT_TEMPLATE_KWARGS)
+    if unsupported:
+        raise ValueError(
+            "Unsupported MistralCommon chat template kwargs: "
+            f"{unsupported}. Supported: {sorted(_MISTRAL_COMMON_CHAT_TEMPLATE_KWARGS)}"
+        )
+    return dict(template_kwargs)
+
+
 def _as_input_ids(encoded: Any) -> list[int]:
     input_ids = encoded.get("input_ids") if hasattr(encoded, "get") else encoded
     if hasattr(input_ids, "tolist"):
@@ -197,8 +218,7 @@ def build_chat_prompt_with_input_ids(
         encoded = tokenizer.apply_chat_template(
             messages,
             tokenize=True,
-            add_generation_prompt=add_generation_prompt,
-            **template_kwargs,
+            **_mistral_common_template_kwargs(template_kwargs),
         )
         return (
             _readable_chat_prompt(system_msg, user_content, add_generation_prompt=add_generation_prompt),

@@ -47,7 +47,8 @@
       "WebFetch(domain:api-docs.deepseek.com)",
       "Bash(curl -sL \"https://api-docs.deepseek.com/api/create-chat-completion\")",
       "Bash(curl -sL \"https://api-docs.deepseek.com/guides/thinking_mode\")",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(chmod +x *)"
     ]
   }
 }

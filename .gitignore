@@ -241,5 +241,8 @@ wandb/
 multirun/
 swanlog/
 
+# Queue state files (checkpoint for multi-script queue runners)
+.queue_state*
+
 # Generated document exports
 docs/**/*.html

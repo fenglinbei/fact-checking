@@ -61,6 +61,7 @@ normalize_model() {
   case "${1//-/_}" in
     llama31_8b|llama3_8b|llama3_1_8b|llama31) printf '%s\n' "llama31_8b" ;;
     qwen3_4b_2507|qwen3_4b|qwen3) printf '%s\n' "qwen3_4b_2507" ;;
+    ministral3_8b|ministral3|mistral3_8b) printf '%s\n' "ministral3_8b" ;;
     *) printf 'Unsupported MODEL=%s\n' "$1" >&2; exit 2 ;;
   esac
 }
@@ -119,6 +120,7 @@ esac
 case "$MODEL" in
   llama31_8b) MODEL_PATH="/data/models/Meta-Llama-3.1-8B-Instruct" ;;
   qwen3_4b_2507) MODEL_PATH="/data/models/Qwen3-4B-Instruct-2507" ;;
+  ministral3_8b) MODEL_PATH="/data/models/Ministral-3-8B-Instruct-2512" ;;
 esac
 
 mkdir -p "$RUN_DIR"
