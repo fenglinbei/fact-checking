@@ -305,6 +305,7 @@ def _build_split(
                 claim=sample.claim,
                 candidates=candidates,
                 claim_atoms=trace.get("claim_atoms") or [],
+                chain_steps=trace.get("chain_steps") or [],
                 style=trace_prompt_style,
             )
         else:
@@ -403,6 +404,7 @@ def _apply_qec_prompt_fields(
     claim: str,
     candidates: list[dict[str, Any]],
     claim_atoms: list[dict[str, Any]],
+    chain_steps: list[dict[str, Any]] | None = None,
     style: str,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     if style not in {"qec_min", "qec_map"}:
@@ -426,14 +428,28 @@ def _apply_qec_prompt_fields(
     directness_counts: Counter[str] = Counter()
     focus_counts: Counter[str] = Counter()
     check_token_counts: list[int] = []
+    aligned_chain_steps = _align_qec_chain_steps(chain_steps or [], candidates)
 
     for step_idx, candidate in enumerate(candidates, start=1):
         copied = dict(candidate)
-        original_text = str(copied.get("text", "")).strip()
-        cue = _select_qec_cue(copied, atom_by_id=atom_by_id, atom_order=atom_order)
-        covers = _render_covered_atom_ids(copied.get("covered_atom_ids"))
-        relation = _compact_whitespace(copied.get("map_relation") or "") or "unknown"
-        directness = _compact_whitespace(copied.get("map_directness") or "") or "unknown"
+        chain_step = aligned_chain_steps[step_idx - 1] if step_idx - 1 < len(aligned_chain_steps) else None
+        original_text = _qec_step_evidence_text(chain_step, copied)
+        cue = _select_qec_cue_from_chain_step(chain_step)
+        if cue is None:
+            cue = _select_qec_cue(copied, atom_by_id=atom_by_id, atom_order=atom_order)
+        covers = _render_covered_atom_ids(
+            chain_step.get("covered_atom_ids") if isinstance(chain_step, dict) else copied.get("covered_atom_ids")
+        )
+        relation = (
+            _compact_whitespace(chain_step.get("relation") or "")
+            if isinstance(chain_step, dict)
+            else _compact_whitespace(copied.get("map_relation") or "")
+        ) or "unknown"
+        directness = (
+            _compact_whitespace(chain_step.get("directness") or "")
+            if isinstance(chain_step, dict)
+            else _compact_whitespace(copied.get("map_directness") or "")
+        ) or "unknown"
 
         if style == "qec_map":
             copied["text"] = (
@@ -468,6 +484,7 @@ def _apply_qec_prompt_fields(
                 "covered_atom_ids": _covered_atom_ids(copied.get("covered_atom_ids")),
                 "map_relation": relation,
                 "map_directness": directness,
+                "role": str(chain_step.get("role") or "") if isinstance(chain_step, dict) else "",
             }
         )
 
@@ -483,6 +500,70 @@ def _apply_qec_prompt_fields(
         "mean_check_token_count": float(np.mean(check_token_counts)) if check_token_counts else 0.0,
     }
     return str(claim), rendered_candidates, {"steps": steps, "diagnostics": diagnostics}
+
+
+def _align_qec_chain_steps(
+    chain_steps: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any] | None]:
+    if not chain_steps:
+        return [None for _ in candidates]
+    by_selector_idx: dict[int, dict[str, Any]] = {}
+    by_candidate_idx: dict[int, dict[str, Any]] = {}
+    by_evidence_id: dict[str, dict[str, Any]] = {}
+    for step in chain_steps:
+        if not isinstance(step, dict):
+            continue
+        selector_idx = _int_or_none(step.get("selector_candidate_idx"))
+        if selector_idx is not None:
+            by_selector_idx[selector_idx] = step
+        candidate_idx = _int_or_none(step.get("candidate_idx"))
+        if candidate_idx is not None:
+            by_candidate_idx[candidate_idx] = step
+        evidence_id = _compact_whitespace(step.get("evidence_id") or "")
+        if evidence_id:
+            by_evidence_id[evidence_id] = step
+
+    aligned: list[dict[str, Any] | None] = []
+    for fallback_idx, candidate in enumerate(candidates):
+        selector_idx = _int_or_none(candidate.get("selector_candidate_idx"))
+        if selector_idx is not None and selector_idx in by_selector_idx:
+            aligned.append(by_selector_idx[selector_idx])
+            continue
+        candidate_idx = _int_or_none(candidate.get("candidate_idx"))
+        if candidate_idx is not None and candidate_idx in by_candidate_idx:
+            aligned.append(by_candidate_idx[candidate_idx])
+            continue
+        evidence_id = _compact_whitespace(candidate.get("evidence_id") or "")
+        if evidence_id and evidence_id in by_evidence_id:
+            aligned.append(by_evidence_id[evidence_id])
+            continue
+        aligned.append(chain_steps[fallback_idx] if fallback_idx < len(chain_steps) and isinstance(chain_steps[fallback_idx], dict) else None)
+    return aligned
+
+
+def _select_qec_cue_from_chain_step(chain_step: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(chain_step, dict):
+        return None
+    cue_text = _compact_whitespace(chain_step.get("cue_text") or "")
+    if not cue_text:
+        return None
+    return {
+        "cue_type": "chain_step",
+        "check": cue_text,
+        "question_id": _compact_whitespace(chain_step.get("qd_question_id") or ""),
+        "question_focus": _compact_whitespace(chain_step.get("question_focus") or ""),
+        "question_route_rank": _int_or_none(chain_step.get("qd_question_rank")),
+        "question_route_hybrid_score": _float_or_none(chain_step.get("qd_question_hybrid_score")),
+    }
+
+
+def _qec_step_evidence_text(chain_step: dict[str, Any] | None, candidate: dict[str, Any]) -> str:
+    if isinstance(chain_step, dict):
+        text = str(chain_step.get("evidence_text") or "").strip()
+        if text:
+            return text
+    return str(candidate.get("text", "")).strip()
 
 
 def _select_qec_cue(

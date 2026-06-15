@@ -170,6 +170,41 @@ def test_qec_min_prompt_uses_question_then_atom_then_fallback_cues(tmp_path: Pat
     assert "[covers=" not in prompt
 
 
+def test_qec_min_prefers_trace_chain_steps_when_present(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_qec_chain_step_inputs(tmp_path)
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="qec_min",
+        expected_selector_name="test_selector",
+        top_k=2,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+    )
+
+    row = rows[0]
+    prompt = row["prompt"]
+    assert report["trace_prompt_style"] == "qec_min"
+    assert "Check: Atom-step cue" in prompt
+    assert "Check: Second chain cue" in prompt
+    assert "Chain-step evidence override." in prompt
+    assert "Did route question win?" not in prompt
+    assert "role=primary" not in prompt
+    assert "map_confidence" not in prompt
+    assert row["qec_steps"][0]["check"] == "Atom-step cue"
+    assert row["qec_steps"][0]["cue_type"] == "chain_step"
+
+
 def test_qec_map_prompt_adds_compact_map_tags(tmp_path: Path) -> None:
     raw_path, trace_path = _write_qec_inputs(tmp_path)
 
@@ -380,6 +415,94 @@ def _write_qec_inputs(tmp_path: Path) -> tuple[Path, Path]:
         "claim_atoms": [
             {"atom_id": "A1", "text": "First atom", "importance": 0.4},
             {"atom_id": "A2", "text": "Second atom", "importance": 0.9},
+        ],
+    }
+    trace_path = tmp_path / "trace.jsonl"
+    trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
+    return raw_path, trace_path
+
+
+def _write_qec_chain_step_inputs(tmp_path: Path) -> tuple[Path, Path]:
+    raw_row = {
+        "event_id": "event-chain-qec",
+        "claim": "Original claim",
+        "label": "true",
+        "explain": "",
+        "reports": [],
+    }
+    raw_path = tmp_path / "val.json"
+    raw_path.write_text(json.dumps([raw_row]), encoding="utf-8")
+
+    trace = {
+        "event_id": "event-chain-qec",
+        "selector_name": "test_selector",
+        "fingerprint": "fp",
+        "candidate_pool": [
+            {
+                "text": "Evidence with route question.",
+                "candidate_idx": 0,
+                "evidence_id": "E20",
+                "covered_atom_ids": ["A1"],
+                "map_relation": "support",
+                "map_directness": "direct",
+                "map_confidence": 0.91,
+                "qd_question_routes": [
+                    {
+                        "question_id": "q-route",
+                        "question": "Did route question win?",
+                        "focus": "quantity",
+                        "rank": 1,
+                        "hybrid_score": 0.99,
+                    }
+                ],
+            },
+            {
+                "text": "Second candidate evidence.",
+                "candidate_idx": 1,
+                "evidence_id": "E21",
+                "covered_atom_ids": ["A2"],
+                "map_relation": "refute",
+                "map_directness": "partial",
+            },
+        ],
+        "candidate_scores": [
+            {"candidate_idx": 0},
+            {"candidate_idx": 1},
+        ],
+        "selector_ordered_indices": [0, 1],
+        "oracle_ordered_indices": [0],
+        "claim_atoms": [
+            {"atom_id": "A1", "text": "First atom", "importance": 0.4},
+            {"atom_id": "A2", "text": "Second atom", "importance": 0.9},
+        ],
+        "chain_steps": [
+            {
+                "step": 1,
+                "candidate_idx": 0,
+                "selector_candidate_idx": 0,
+                "evidence_id": "E20",
+                "cue_text": "Atom-step cue",
+                "cue_source": "qd_question",
+                "evidence_text": "Chain-step evidence override.",
+                "role": "primary",
+                "relation": "support",
+                "directness": "direct",
+                "map_confidence": 0.91,
+                "covered_atom_ids": ["A1"],
+            },
+            {
+                "step": 2,
+                "candidate_idx": 1,
+                "selector_candidate_idx": 1,
+                "evidence_id": "E21",
+                "cue_text": "Second chain cue",
+                "cue_source": "claim_atom",
+                "evidence_text": "Second chain evidence override.",
+                "role": "primary",
+                "relation": "refute",
+                "directness": "partial",
+                "covered_atom_ids": ["A2"],
+            },
         ],
     }
     trace_path = tmp_path / "trace.jsonl"

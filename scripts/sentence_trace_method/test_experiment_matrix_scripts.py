@@ -102,6 +102,23 @@ def test_qec_v1_ministral3_prompt_matrix_dry_run_expands_only_new_qec_cases() ->
     assert "_lora_ebs16_lr1em5_ep12_eval100_pat8_rawfc" not in output
 
 
+def test_aa_qec_stage1_ministral3_dry_run_expands_rawfc_view_cases() -> None:
+    output = _run_script("scripts/sentence_trace_method/run_aa_qec_stage1_ministral3.sh")
+
+    assert "rawfc__ministral3_8b__aa_qec_o1_view_atom_order" in output
+    assert "rawfc__ministral3_8b__aa_qec_o2_view_primary_secondary_order" in output
+    assert "rawfc__ministral3_8b__aa_qec_o3_view_shuffled" in output
+    assert "TRACE_PROMPT_STYLE=qec_min" in output
+    assert "SFT_LEARNING_RATE=1e-5" in output
+    assert "SFT_NUM_TRAIN_EPOCHS=10" in output
+    assert "SFT_EVAL_STEPS=50" in output
+    assert "SFT_SAVE_STEPS=50" in output
+    assert "SFT_EARLY_STOPPING_PATIENCE=8" in output
+    assert "REQUIRE_PROMPT_INPUT_IDS=true" in output
+    assert "liar_raw__ministral3_8b__aa_qec" not in output
+    assert "__aa_qec_f1" not in output
+
+
 def test_run_one_dry_run_uses_trace_prompt_style(tmp_path: Path) -> None:
     output = _run_script(
         "scripts/sentence_trace_method/run_one.sh",
