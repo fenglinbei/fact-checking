@@ -55,7 +55,7 @@ DEFAULT_LEFT_TRACE = (
     "selection_trace_val.jsonl"
 )
 DEFAULT_RIGHT_TRACE = (
-    "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_val/"
+    "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_val/"
     "selection_trace_val.jsonl"
 )
 DEFAULT_RAW_DATA = "data/raw/LIAR-RAW/val.json"
@@ -66,13 +66,13 @@ DEFAULT_COVERAGE_DIFF = (
 DEFAULT_SPLITS = ("train", "val", "test")
 DEFAULT_OUTPUT_DIR = "outputs/analysis/map/v0.7"
 DEFAULT_LEFT_LABEL = "v0.6c RuleStep"
-DEFAULT_RIGHT_LABEL = "v0.7 BudgetedMarginal"
+DEFAULT_RIGHT_LABEL = "v0.7 BudgetedMarginal adaptive5_10"
 DEFAULT_TRANSLATION_BASE_URL = "https://api.deepseek.com"
 DEFAULT_TRANSLATION_MODEL = "deepseek-v4-flash"
 
 LIAR_RAW_V07_BUILD_COMMAND = """SPLIT=val \\
 INPUT=outputs/selectors/evidence_map_selector/v0_6b_val/candidate_evidence_map_features_val.jsonl \\
-OUTPUT_DIR=outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_val \\
+OUTPUT_DIR=outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_val \\
 bash scripts/phase5_selectors/run/run_evidence_chain_graph_v0_7.sh"""
 
 
@@ -279,7 +279,7 @@ def default_left_trace_path(split: str) -> str:
 
 def default_right_trace_path(split: str) -> str:
     return (
-        f"outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_{split}/"
+        f"outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_{split}/"
         f"selection_trace_{split}.jsonl"
     )
 
@@ -293,7 +293,7 @@ def default_left_chain_graph_path(split: str) -> str:
 
 def default_right_chain_graph_path(split: str) -> str:
     return (
-        f"outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_{split}/"
+        f"outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_{split}/"
         f"chain_graph_{split}.jsonl"
     )
 
@@ -351,7 +351,7 @@ def missing_trace_message(path: str, *, role: str) -> str:
 def liar_raw_v07_build_command(split: str) -> str:
     return f"""SPLIT={split} \\
 INPUT={default_candidate_features_path(split)} \\
-OUTPUT_DIR=outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_{split} \\
+OUTPUT_DIR=outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_{split} \\
 bash scripts/phase5_selectors/run/run_evidence_chain_graph_v0_7.sh"""
 
 

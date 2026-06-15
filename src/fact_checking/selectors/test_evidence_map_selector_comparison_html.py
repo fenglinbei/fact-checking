@@ -52,7 +52,7 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         )
         self.assertEqual(
             default_right_trace_path("val"),
-            "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_val/selection_trace_val.jsonl",
+            "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_val/selection_trace_val.jsonl",
         )
         self.assertEqual(
             default_left_chain_graph_path("val"),
@@ -60,7 +60,7 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         )
         self.assertEqual(
             default_right_chain_graph_path("val"),
-            "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive3_10_val/chain_graph_val.jsonl",
+            "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_val/chain_graph_val.jsonl",
         )
         self.assertNotIn("liar_raw_dense", default_candidate_features_path("val"))
         self.assertNotIn("liar_raw_dense", default_left_trace_path("val"))
@@ -500,7 +500,7 @@ def _left_trace() -> dict:
 def _right_trace() -> dict:
     return {
         "event_id": "case.json",
-        "selector_name": "v0_7_budgeted_marginal_chain_adaptive3_10",
+        "selector_name": "v0_7_budgeted_marginal_chain_adaptive5_10",
         "selected_evidence_ids": ["E01", "E03"],
         "precision@5": 0.5,
         "recall@5": 0.5,

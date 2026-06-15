@@ -120,6 +120,95 @@ def test_plain_prompt_style_preserves_existing_prompt_shape(tmp_path: Path) -> N
     assert rows[0]["candidates"][0]["text"] == "Evidence one."
 
 
+def test_qec_min_prompt_uses_question_then_atom_then_fallback_cues(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_qec_inputs(tmp_path)
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="qec_min",
+        expected_selector_name="test_selector",
+        top_k=3,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+    )
+
+    row = rows[0]
+    assert report["trace_prompt_style"] == "qec_min"
+    assert row["trace_prompt_style"] == "qec_min"
+    assert row["qec_diagnostics"]["cue_type_counts"] == {
+        "qd_question": 1,
+        "claim_atom": 1,
+        "fallback": 1,
+    }
+    assert row["qec_diagnostics"]["qd_cue_rate"] == 1 / 3
+    assert row["qec_diagnostics"]["atom_fallback_rate"] == 1 / 3
+    assert row["qec_diagnostics"]["fallback_rate"] == 1 / 3
+    assert [step["cue_type"] for step in row["qec_steps"]] == [
+        "qd_question",
+        "claim_atom",
+        "fallback",
+    ]
+    assert row["qec_steps"][0]["question_id"] == "q1"
+    assert row["qec_steps"][0]["question_focus"] == "quantity"
+    assert row["qec_steps"][1]["check"] == "Second atom"
+    assert row["qec_steps"][2]["check"] == "Verify the main factual claim."
+
+    prompt = row["prompt"]
+    assert "Check: Did the amount increase?" in prompt
+    assert "Check: Second atom" in prompt
+    assert "Check: Verify the main factual claim." in prompt
+    assert "[covers=" not in prompt
+
+
+def test_qec_map_prompt_adds_compact_map_tags(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_qec_inputs(tmp_path)
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="qec_map",
+        expected_selector_name="test_selector",
+        top_k=3,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+    )
+
+    row = rows[0]
+    assert report["trace_prompt_style"] == "qec_map"
+    assert row["qec_diagnostics"]["map_relation_counts"] == {
+        "support": 1,
+        "refute": 1,
+        "unknown": 1,
+    }
+
+    prompt = row["prompt"]
+    assert "Check: Did the amount increase? [covers=A1; relation=support; directness=direct]" in prompt
+    assert "Check: Second atom [covers=A2; relation=refute; directness=partial]" in prompt
+    assert (
+        "Check: Verify the main factual claim. [covers=none; relation=unknown; directness=unknown]"
+        in prompt
+    )
+
+
 def test_rawfc_boundaries_prompt_style_uses_rawfc_three_label_boundaries() -> None:
     prompt_cfg = build_trace_verifier_data._prompt_cfg_for_trace_style(
         {"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
@@ -220,5 +309,79 @@ def _write_minimal_inputs(tmp_path: Path, coverage_label: str | None = None) -> 
         "adaptive_stop_reason": "sufficiency",
         "sufficiency_state": {"complete": True},
     }
+    trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
+    return raw_path, trace_path
+
+
+def _write_qec_inputs(tmp_path: Path) -> tuple[Path, Path]:
+    raw_row = {
+        "event_id": "event-qec",
+        "claim": "Original claim",
+        "label": "true",
+        "explain": "",
+        "reports": [],
+    }
+    raw_path = tmp_path / "val.json"
+    raw_path.write_text(json.dumps([raw_row]), encoding="utf-8")
+
+    trace = {
+        "event_id": "event-qec",
+        "selector_name": "test_selector",
+        "fingerprint": "fp",
+        "candidate_pool": [
+            {
+                "text": "Evidence with a QD route.",
+                "candidate_idx": 10,
+                "evidence_id": "E10",
+                "covered_atom_ids": ["A1"],
+                "map_relation": "support",
+                "map_directness": "direct",
+                "qd_question_routes": [
+                    {
+                        "question_id": "q2",
+                        "question": "Did the less relevant question match?",
+                        "focus": "overall",
+                        "rank": 2,
+                        "hybrid_score": 0.99,
+                    },
+                    {
+                        "question_id": "q1",
+                        "question": "Did the amount increase?",
+                        "focus": "quantity",
+                        "rank": 1,
+                        "hybrid_score": 0.50,
+                    },
+                ],
+            },
+            {
+                "text": "Evidence with only an atom.",
+                "candidate_idx": 11,
+                "evidence_id": "E11",
+                "covered_atom_ids": ["A2"],
+                "map_relation": "refute",
+                "map_directness": "partial",
+            },
+            {
+                "text": "Evidence with no cue metadata.",
+                "candidate_idx": 12,
+                "evidence_id": "E12",
+                "covered_atom_ids": [],
+                "map_relation": "",
+                "map_directness": "",
+            },
+        ],
+        "candidate_scores": [
+            {"candidate_idx": 0},
+            {"candidate_idx": 1},
+            {"candidate_idx": 2},
+        ],
+        "selector_ordered_indices": [0, 1, 2],
+        "oracle_ordered_indices": [0],
+        "claim_atoms": [
+            {"atom_id": "A1", "text": "First atom", "importance": 0.4},
+            {"atom_id": "A2", "text": "Second atom", "importance": 0.9},
+        ],
+    }
+    trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
     return raw_path, trace_path

@@ -238,6 +238,51 @@ class EvidenceMapSelectorComparisonServerTest(unittest.TestCase):
         self.assertIn("DEEPSEEK_API_KEY=SET", result.stdout)
         self.assertIn("--token token-from-shell", result.stdout)
 
+    def test_web_launcher_honors_python_bin_override(self) -> None:
+        launcher_source = Path("scripts/phase5_selectors/run/run_evidence_map_selector_comparison_web.sh").read_text(
+            encoding="utf-8"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            launcher_path = root / "scripts/phase5_selectors/run/run_evidence_map_selector_comparison_web.sh"
+            launcher_path.parent.mkdir(parents=True)
+            launcher_path.write_text(launcher_source, encoding="utf-8")
+            launcher_path.chmod(0o755)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            fake_python = fake_bin / "custom-python"
+            fake_python.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf 'PYTHON_BIN_USED=%s\\n' \"$0\"\n"
+                "printf 'ARGS=%s\\n' \"$*\"\n",
+                encoding="utf-8",
+            )
+            fake_python.chmod(0o755)
+            path_python = fake_bin / "python"
+            path_python.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf 'PATH_PYTHON_USED=%s\\n' \"$0\"\n"
+                "printf 'ARGS=%s\\n' \"$*\"\n",
+                encoding="utf-8",
+            )
+            path_python.chmod(0o755)
+
+            result = subprocess.run(
+                ["bash", str(launcher_path)],
+                cwd=root,
+                env={
+                    "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+                    "EVIDENCE_MAP_TOKEN": "token-from-shell",
+                    "PYTHON_BIN": str(fake_python),
+                },
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        self.assertIn(f"PYTHON_BIN_USED={fake_python}", result.stdout)
+        self.assertIn("--token token-from-shell", result.stdout)
+
 
 def _write_fixture_split(split: str, *, include_chain_graph: bool = False) -> None:
     _write_jsonl(default_candidate_features_path(split), [_row()])

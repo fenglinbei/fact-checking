@@ -34,6 +34,7 @@ BASE_PATH="${BASE_PATH:-/evidence-map}"
 SPLITS="${SPLITS:-val}"
 MAX_CANDIDATES="${MAX_CANDIDATES:-20}"
 ENABLE_LIVE_TRANSLATION="${ENABLE_LIVE_TRANSLATION:-1}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
 
 if [[ -z "${EVIDENCE_MAP_TOKEN:-}" ]]; then
   echo "ERROR: EVIDENCE_MAP_TOKEN must be set." >&2
@@ -53,4 +54,4 @@ if [[ "${ENABLE_LIVE_TRANSLATION}" == "1" || "${ENABLE_LIVE_TRANSLATION}" == "tr
   args+=(--enable-live-translation)
 fi
 
-PYTHONPATH=.:src python scripts/phase5_selectors/visualize/serve_evidence_map_selector_comparison.py "${args[@]}"
+PYTHONPATH=.:src "${PYTHON_BIN}" scripts/phase5_selectors/visualize/serve_evidence_map_selector_comparison.py "${args[@]}"

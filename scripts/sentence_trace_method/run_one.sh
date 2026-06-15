@@ -29,6 +29,7 @@ SELECTOR_GRAPH_VERSION="${SELECTOR_GRAPH_VERSION:-sentence_evidence_chain_graph}
 SELECTOR_ADAPTIVE_POLICY="${SELECTOR_ADAPTIVE_POLICY:-sentence_rule_step}"
 EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME:-$SELECTOR_NAME}"
 PROMPT_OUTPUT_MODE="${PROMPT_OUTPUT_MODE:-}"
+TRACE_PROMPT_STYLE="${TRACE_PROMPT_STYLE:-plain}"
 RAW_ROOT="${RAW_ROOT:-}"
 COVERAGE_DATA_ROOT="${COVERAGE_DATA_ROOT:-}"
 COVERAGE_POLICY="${COVERAGE_POLICY:-all}"
@@ -39,6 +40,18 @@ MIXED_PRECISION="${MIXED_PRECISION:-bf16}"
 DEEPSPEED_CONFIG="${DEEPSPEED_CONFIG:-configs/deepspeed_zero3_bsz1_ga8_lowpeak.json}"
 SAVE_LATEST_TRAIN_STATE="${SAVE_LATEST_TRAIN_STATE:-true}"
 RESUME_LATEST_TRAIN_STATE="${RESUME_LATEST_TRAIN_STATE:-$SAVE_LATEST_TRAIN_STATE}"
+REQUIRE_PROMPT_INPUT_IDS="${REQUIRE_PROMPT_INPUT_IDS:-false}"
+SFT_GRADIENT_ACCUMULATION_STEPS="${SFT_GRADIENT_ACCUMULATION_STEPS:-}"
+SFT_LEARNING_RATE="${SFT_LEARNING_RATE:-}"
+SFT_NUM_TRAIN_EPOCHS="${SFT_NUM_TRAIN_EPOCHS:-}"
+SFT_EVAL_STEPS="${SFT_EVAL_STEPS:-}"
+SFT_SAVE_STEPS="${SFT_SAVE_STEPS:-}"
+SFT_EARLY_STOPPING_PATIENCE="${SFT_EARLY_STOPPING_PATIENCE:-}"
+SFT_WEIGHT_DECAY="${SFT_WEIGHT_DECAY:-}"
+SFT_WARMUP_RATIO="${SFT_WARMUP_RATIO:-}"
+SFT_MAX_GRAD_NORM="${SFT_MAX_GRAD_NORM:-}"
+SWANLAB_PROJECT="${SWANLAB_PROJECT:-}"
+LIAR_CLASS_WEIGHTS="${LIAR_CLASS_WEIGHTS:-}"
 
 if [[ -z "${ACCELERATE_BIN:-}" ]]; then
   py_dir="$(dirname "$PYTHON_BIN")"
@@ -161,6 +174,8 @@ stage_sources() {
 do_build() {
   if [[ -f "${RUN_DIR}/train.resolved.yaml" && -f "${RUN_DIR}/build/build_report.json" && "$FORCE_BUILD" != "true" ]]; then
     printf 'Build artifacts already exist for %s; set FORCE_BUILD=true to rebuild.\n' "$CASE_NAME"
+    apply_train_config_overrides
+    validate_prompt_input_ids_if_required
     return 0
   fi
   if [[ "$DRY_RUN" == "true" && ! -f "$SOURCE_ENV" ]]; then
@@ -185,7 +200,7 @@ do_build() {
     --label-schema "$LABEL_SCHEMA"
     --output-dir "$RUN_DIR"
     --selection-mode trace
-    --trace-prompt-style plain
+    --trace-prompt-style "$TRACE_PROMPT_STYLE"
     --expected-selector-name "$EXPECTED_SELECTOR_NAME"
     --expected-chunk-mmr-fingerprint "$EXPECTED_CHUNK_MMR_FINGERPRINT"
     --top-k 10
@@ -201,10 +216,86 @@ do_build() {
     cmd+=(--sample-limit "$SAMPLE_LIMIT")
   fi
   run_cmd "${cmd[@]}"
+  apply_train_config_overrides
+  validate_prompt_input_ids_if_required
+}
+
+apply_train_config_overrides() {
+  local config_path="${RUN_DIR}/train.resolved.yaml"
+  if [[ "$DRY_RUN" != "true" && ! -f "$config_path" ]]; then
+    return 0
+  fi
+  local cmd=("$PYTHON_BIN" scripts/sentence_trace_method/apply_train_config_overrides.py
+    --config "$config_path"
+    --deepspeed-config "$DEEPSPEED_CONFIG")
+  if [[ -n "$SFT_GRADIENT_ACCUMULATION_STEPS" ]]; then
+    cmd+=(--gradient-accumulation-steps "$SFT_GRADIENT_ACCUMULATION_STEPS")
+  fi
+  if [[ -n "$SFT_LEARNING_RATE" ]]; then
+    cmd+=(--learning-rate "$SFT_LEARNING_RATE")
+  fi
+  if [[ -n "$SFT_NUM_TRAIN_EPOCHS" ]]; then
+    cmd+=(--num-train-epochs "$SFT_NUM_TRAIN_EPOCHS")
+  fi
+  if [[ -n "$SFT_EVAL_STEPS" ]]; then
+    cmd+=(--eval-steps "$SFT_EVAL_STEPS")
+  fi
+  if [[ -n "$SFT_SAVE_STEPS" ]]; then
+    cmd+=(--save-steps "$SFT_SAVE_STEPS")
+  fi
+  if [[ -n "$SFT_EARLY_STOPPING_PATIENCE" ]]; then
+    cmd+=(--early-stopping-patience "$SFT_EARLY_STOPPING_PATIENCE")
+  fi
+  if [[ -n "$SFT_WEIGHT_DECAY" ]]; then
+    cmd+=(--weight-decay "$SFT_WEIGHT_DECAY")
+  fi
+  if [[ -n "$SFT_WARMUP_RATIO" ]]; then
+    cmd+=(--warmup-ratio "$SFT_WARMUP_RATIO")
+  fi
+  if [[ -n "$SFT_MAX_GRAD_NORM" ]]; then
+    cmd+=(--max-grad-norm "$SFT_MAX_GRAD_NORM")
+  fi
+  if [[ -n "$SWANLAB_PROJECT" ]]; then
+    cmd+=(--swanlab-project "$SWANLAB_PROJECT")
+  fi
+  if [[ "$CASE_NAME" == liar_raw__* && -n "$LIAR_CLASS_WEIGHTS" ]]; then
+    local raw_weight class_weight
+    IFS=',' read -r -a class_weight_array <<< "$LIAR_CLASS_WEIGHTS"
+    for raw_weight in "${class_weight_array[@]}"; do
+      class_weight="${raw_weight// /}"
+      [[ -z "$class_weight" ]] && continue
+      cmd+=(--class-weight "$class_weight")
+    done
+  fi
+  cmd+=(--swanlab-experiment-name "$CASE_NAME")
+  run_cmd "${cmd[@]}"
+}
+
+validate_prompt_input_ids_if_required() {
+  if [[ "$REQUIRE_PROMPT_INPUT_IDS" != "true" || "$DRY_RUN" == "true" ]]; then
+    return 0
+  fi
+  "$PYTHON_BIN" -c '
+import json
+import sys
+from pathlib import Path
+
+case_root = Path(sys.argv[1])
+for split in ("train", "val", "test"):
+    path = case_root / "build" / f"build_{split}.jsonl"
+    with path.open(encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            row = json.loads(line)
+            ids = row.get("prompt_input_ids")
+            if not isinstance(ids, list) or not ids:
+                raise SystemExit(f"{path}:{line_no} missing prompt_input_ids")
+' "$RUN_DIR"
 }
 
 do_train() {
   local train_dir="${RUN_DIR}/train"
+  apply_train_config_overrides
+  validate_prompt_input_ids_if_required
   if training_complete "$train_dir" && [[ "$FORCE_TRAIN" != "true" ]]; then
     printf 'Training is already complete for %s; set FORCE_TRAIN=true to launch training again.\n' "$CASE_NAME"
     return 0
@@ -230,6 +321,8 @@ do_train() {
 }
 
 do_eval() {
+  apply_train_config_overrides
+  validate_prompt_input_ids_if_required
   IFS=',' read -r -a split_array <<< "$EVAL_SPLITS"
   IFS=',' read -r -a checkpoint_array <<< "$CHECKPOINTS"
   for split in "${split_array[@]}"; do

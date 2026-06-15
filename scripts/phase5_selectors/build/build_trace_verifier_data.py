@@ -40,7 +40,7 @@ SELECTION_MODES = (
     "same_set_candidate_pool_order",
     "same_set_random_order",
 )
-TRACE_PROMPT_STYLES = ("plain", "trace_lite", "rawfc_boundaries")
+TRACE_PROMPT_STYLES = ("plain", "trace_lite", "rawfc_boundaries", "qec_min", "qec_map")
 
 RAWFC_BOUNDARIES_SYSTEM_PROMPT = (
     "You are a careful fact-checking assistant for RAWFC claims. "
@@ -293,11 +293,19 @@ def _build_split(
             skipped["no_selected_evidence"] += 1
             continue
 
+        qec_payload: dict[str, Any] | None = None
         if trace_prompt_style == "trace_lite":
             claim, candidates = _apply_trace_lite_prompt_fields(
                 claim=sample.claim,
                 candidates=candidates,
                 claim_atoms=trace.get("claim_atoms") or [],
+            )
+        elif trace_prompt_style in {"qec_min", "qec_map"}:
+            claim, candidates, qec_payload = _apply_qec_prompt_fields(
+                claim=sample.claim,
+                candidates=candidates,
+                claim_atoms=trace.get("claim_atoms") or [],
+                style=trace_prompt_style,
             )
         else:
             claim = sample.claim
@@ -321,6 +329,9 @@ def _build_split(
             retrieval_row["coverage"] = sample_metadata["coverage"]
         training_row = build_training_row(retrieval_row, tokenizer, prompt_cfg_for_style)
         training_row["trace_prompt_style"] = trace_prompt_style
+        if qec_payload is not None:
+            training_row["qec_steps"] = qec_payload["steps"]
+            training_row["qec_diagnostics"] = qec_payload["diagnostics"]
         training_row["selector_trace"] = {
             "source_type": source_type,
             "source_path": str(source_path),
@@ -387,6 +398,170 @@ def _build_split(
     return out_rows, report
 
 
+def _apply_qec_prompt_fields(
+    *,
+    claim: str,
+    candidates: list[dict[str, Any]],
+    claim_atoms: list[dict[str, Any]],
+    style: str,
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    if style not in {"qec_min", "qec_map"}:
+        raise ValueError(f"unsupported QEC prompt style: {style}")
+
+    atom_by_id: dict[str, dict[str, Any]] = {}
+    atom_order: dict[str, int] = {}
+    for idx, atom in enumerate(claim_atoms):
+        if not isinstance(atom, dict):
+            continue
+        atom_id = _compact_whitespace(atom.get("atom_id") or atom.get("node_id") or "")
+        if not atom_id:
+            continue
+        atom_by_id[atom_id] = atom
+        atom_order[atom_id] = idx
+
+    rendered_candidates: list[dict[str, Any]] = []
+    steps: list[dict[str, Any]] = []
+    cue_type_counts: Counter[str] = Counter()
+    relation_counts: Counter[str] = Counter()
+    directness_counts: Counter[str] = Counter()
+    focus_counts: Counter[str] = Counter()
+    check_token_counts: list[int] = []
+
+    for step_idx, candidate in enumerate(candidates, start=1):
+        copied = dict(candidate)
+        original_text = str(copied.get("text", "")).strip()
+        cue = _select_qec_cue(copied, atom_by_id=atom_by_id, atom_order=atom_order)
+        covers = _render_covered_atom_ids(copied.get("covered_atom_ids"))
+        relation = _compact_whitespace(copied.get("map_relation") or "") or "unknown"
+        directness = _compact_whitespace(copied.get("map_directness") or "") or "unknown"
+
+        if style == "qec_map":
+            copied["text"] = (
+                f"Check: {cue['check']} "
+                f"[covers={covers}; relation={relation}; directness={directness}]\n"
+                f"{original_text}"
+            )
+        else:
+            copied["text"] = f"Check: {cue['check']}\n{original_text}"
+        rendered_candidates.append(copied)
+
+        cue_type = str(cue["cue_type"])
+        cue_type_counts[cue_type] += 1
+        relation_counts[relation] += 1
+        directness_counts[directness] += 1
+        if cue.get("question_focus"):
+            focus_counts[str(cue["question_focus"])] += 1
+        check_token_counts.append(len(str(cue["check"]).split()))
+
+        steps.append(
+            {
+                "step": int(step_idx),
+                "candidate_idx": int(copied.get("candidate_idx", copied.get("selector_candidate_idx", step_idx - 1))),
+                "evidence_id": str(copied.get("evidence_id") or copied.get("selector_pool_evidence_id") or ""),
+                "selector_rank": int(copied.get("selector_trace_rank", step_idx - 1)) + 1,
+                "cue_type": cue_type,
+                "check": str(cue["check"]),
+                "question_id": str(cue.get("question_id") or ""),
+                "question_focus": str(cue.get("question_focus") or ""),
+                "question_route_rank": cue.get("question_route_rank"),
+                "question_route_hybrid_score": cue.get("question_route_hybrid_score"),
+                "covered_atom_ids": _covered_atom_ids(copied.get("covered_atom_ids")),
+                "map_relation": relation,
+                "map_directness": directness,
+            }
+        )
+
+    total = max(len(rendered_candidates), 1)
+    diagnostics = {
+        "cue_type_counts": dict(cue_type_counts),
+        "qd_cue_rate": float(cue_type_counts.get("qd_question", 0) / total),
+        "atom_fallback_rate": float(cue_type_counts.get("claim_atom", 0) / total),
+        "fallback_rate": float(cue_type_counts.get("fallback", 0) / total),
+        "map_relation_counts": dict(relation_counts),
+        "map_directness_counts": dict(directness_counts),
+        "question_focus_counts": dict(focus_counts),
+        "mean_check_token_count": float(np.mean(check_token_counts)) if check_token_counts else 0.0,
+    }
+    return str(claim), rendered_candidates, {"steps": steps, "diagnostics": diagnostics}
+
+
+def _select_qec_cue(
+    candidate: dict[str, Any],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    atom_order: dict[str, int],
+) -> dict[str, Any]:
+    route = _best_qd_route(candidate.get("qd_question_routes") or candidate.get("question_routes") or [])
+    if route is not None:
+        return {
+            "cue_type": "qd_question",
+            "check": _compact_whitespace(route.get("question") or ""),
+            "question_id": _compact_whitespace(route.get("question_id") or ""),
+            "question_focus": _compact_whitespace(route.get("focus") or ""),
+            "question_route_rank": _int_or_none(route.get("rank")),
+            "question_route_hybrid_score": _float_or_none(route.get("hybrid_score")),
+        }
+
+    atom = _best_covered_atom(candidate.get("covered_atom_ids"), atom_by_id=atom_by_id, atom_order=atom_order)
+    if atom is not None:
+        return {
+            "cue_type": "claim_atom",
+            "check": _compact_whitespace(atom.get("text") or ""),
+        }
+
+    return {
+        "cue_type": "fallback",
+        "check": "Verify the main factual claim.",
+    }
+
+
+def _best_qd_route(routes: Any) -> dict[str, Any] | None:
+    if not isinstance(routes, list):
+        return None
+    usable = [
+        route
+        for route in routes
+        if isinstance(route, dict) and _compact_whitespace(route.get("question") or "")
+    ]
+    if not usable:
+        return None
+    return min(
+        usable,
+        key=lambda route: (
+            _rank_sort_value(route.get("rank")),
+            -_float_or_default(route.get("hybrid_score"), 0.0),
+            _focus_priority(route.get("focus")),
+            _compact_whitespace(route.get("question_id") or ""),
+        ),
+    )
+
+
+def _best_covered_atom(
+    covered_atom_ids: Any,
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    atom_order: dict[str, int],
+) -> dict[str, Any] | None:
+    candidates: list[tuple[float, int, dict[str, Any]]] = []
+    for atom_id in _covered_atom_ids(covered_atom_ids):
+        atom = atom_by_id.get(atom_id)
+        if atom is None:
+            continue
+        if not _compact_whitespace(atom.get("text") or ""):
+            continue
+        candidates.append(
+            (
+                _float_or_default(atom.get("importance"), 0.0),
+                atom_order.get(atom_id, 10**9),
+                atom,
+            )
+        )
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return candidates[0][2]
+
+
 def _apply_trace_lite_prompt_fields(
     *,
     claim: str,
@@ -434,8 +609,15 @@ def _prompt_cfg_for_trace_style(
 
 
 def _render_covered_atom_ids(value: Any) -> str:
-    if value is None:
+    rendered = _covered_atom_ids(value)
+    if not rendered:
         return "none"
+    return ",".join(rendered)
+
+
+def _covered_atom_ids(value: Any) -> list[str]:
+    if value is None:
+        return []
     if isinstance(value, str):
         items = [value]
     elif isinstance(value, list):
@@ -443,14 +625,41 @@ def _render_covered_atom_ids(value: Any) -> str:
     else:
         items = list(value) if isinstance(value, tuple) else []
     rendered = [_compact_whitespace(item) for item in items]
-    rendered = [item for item in rendered if item]
-    if not rendered:
-        return "none"
-    return ",".join(rendered)
+    return [item for item in rendered if item]
 
 
 def _compact_whitespace(value: Any) -> str:
     return " ".join(str(value).split())
+
+
+def _rank_sort_value(value: Any) -> int:
+    parsed = _int_or_none(value)
+    if parsed is None:
+        return 10**9
+    return parsed
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _focus_priority(value: Any) -> int:
+    focus = _compact_whitespace(value or "").lower()
+    if focus in {"quantity", "attribution", "entity", "comparison", "policy", "time", "causal"}:
+        return 0
+    if focus == "overall":
+        return 2
+    return 1
 
 
 def _resolve_split_source(split: str, trace_path: str | None, oracle_path: str | None) -> tuple[str, str]:

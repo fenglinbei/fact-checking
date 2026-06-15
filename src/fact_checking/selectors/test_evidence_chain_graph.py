@@ -21,6 +21,7 @@ from fact_checking.selectors.evidence_chain_graph import (
     build_sufficiency_contradiction_evidence_chain_graph_row,
     budgeted_marginal_chain_selector_name,
     rule_step_chain_selector_name,
+    summarize_budgeted_marginal_chain_graph_rows,
 )
 from scripts.phase5_selectors.visualize.render_evidence_chain_graph_html import (
     load_or_build_translations,
@@ -599,6 +600,23 @@ class EvidenceChainGraphTest(unittest.TestCase):
         self.assertEqual([step["evidence_id"] for step in graph["selection_steps"]], graph["selected_evidence_ids"])
         self.assertTrue(all("marginal_gain" in step and "component_deltas" in step for step in graph["selection_steps"]))
         self.assertTrue(all(0 <= idx < len(pool) for idx in trace["selector_ordered_indices"]))
+
+    def test_budgeted_marginal_summary_uses_row_selector_name(self) -> None:
+        row = _row(
+            [
+                _candidate("E01", atoms=["A1"], relation="support", directness="direct", source="report:1", base=0.99),
+                _candidate("E02", atoms=["A2"], relation="support", directness="direct", source="report:2", base=0.98),
+                _candidate("E03", atoms=["A3"], relation="support", directness="direct", source="report:3", base=0.97),
+                _candidate("E04", atoms=[], relation="irrelevant", directness="none", source="report:4", base=0.96),
+                _candidate("E05", atoms=[], relation="irrelevant", directness="none", source="report:5", base=0.95),
+            ]
+        )
+
+        graph = build_budgeted_marginal_chain_graph_row(row, params=BudgetedMarginalChainParams(min_top_k=5, max_top_k=10))
+        summary = summarize_budgeted_marginal_chain_graph_rows([graph])
+
+        self.assertEqual(graph["selector_name"], "v0_7_budgeted_marginal_chain_adaptive5_10")
+        self.assertEqual(summary["selector_name"], graph["selector_name"])
 
     def test_oracle_zero_step_is_preserved_and_rendered_as_one_based_badge(self) -> None:
         graph = build_evidence_chain_graph_row(_row([_candidate("E01", atoms=["A1"], base=0.9, oracle=True)]), params=EvidenceChainParams(top_k=1))

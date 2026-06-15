@@ -20,26 +20,25 @@ export OUTPUT_ROOT
 export MODE
 export EVAL_SPLITS
 export CHECKPOINTS
-export DATASETS="rawfc"
-export MODELS="ministral3_8b"
+export DATASET="rawfc"
+export MODEL="ministral3_8b"
 export SELECTOR_NAME="${SELECTOR_NAME:-v0_7_budgeted_marginal_chain_adaptive5_10}"
 export SELECTOR_GRAPH_VERSION="${SELECTOR_GRAPH_VERSION:-evidence_chain_graph_v0_7}"
 export SELECTOR_ADAPTIVE_POLICY="${SELECTOR_ADAPTIVE_POLICY:-budgeted_marginal_v0_7}"
 export EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME:-$SELECTOR_NAME}"
-export CASE_SUFFIX="${CASE_SUFFIX:-__v0_7_bm_adaptive5_10}"
-export LORA_SUFFIX="${LORA_SUFFIX:-_lora_ebs16_lr1em5_ep12_eval100_pat8_rawfc}"
-export LORA_R="${LORA_R:-16}"
-export LORA_ALPHA="${LORA_ALPHA:-32}"
-export LORA_DROPOUT="${LORA_DROPOUT:-0.05}"
-export DEEPSPEED_CONFIG="${DEEPSPEED_CONFIG:-configs/deepspeed_zero2_bsz1_ga4.json}"
+export CASE_SUFFIX="${CASE_SUFFIX:-__v0_7_bm_adaptive5_10_fullft_ebs16_lr1em5_ep12_eval100_pat8_rawfc}"
+export DEEPSPEED_CONFIG="${DEEPSPEED_CONFIG:-configs/deepspeed_zero3_bsz1_ga4_lowpeak.json}"
 export SFT_GRADIENT_ACCUMULATION_STEPS="${SFT_GRADIENT_ACCUMULATION_STEPS:-4}"
 export SFT_LEARNING_RATE="${SFT_LEARNING_RATE:-1e-5}"
 export SFT_NUM_TRAIN_EPOCHS="${SFT_NUM_TRAIN_EPOCHS:-12}"
 export SFT_EVAL_STEPS="${SFT_EVAL_STEPS:-100}"
 export SFT_SAVE_STEPS="${SFT_SAVE_STEPS:-$SFT_EVAL_STEPS}"
 export SFT_EARLY_STOPPING_PATIENCE="${SFT_EARLY_STOPPING_PATIENCE:-8}"
+export SFT_WEIGHT_DECAY="${SFT_WEIGHT_DECAY:-0.01}"
+export SFT_WARMUP_RATIO="${SFT_WARMUP_RATIO:-0.03}"
+export SFT_MAX_GRAD_NORM="${SFT_MAX_GRAD_NORM:-1.0}"
 export REQUIRE_PROMPT_INPUT_IDS="${REQUIRE_PROMPT_INPUT_IDS:-true}"
-export SWANLAB_PROJECT="${SWANLAB_PROJECT:-fact-checking-sentence-trace-method-rawfc-selector-lora-lr}"
+export SWANLAB_PROJECT="${SWANLAB_PROJECT:-fact-checking-sentence-trace-method-rawfc-selector-fullft-lr}"
 
 should_run_tau_eval() {
   case "$RUN_TAU_EVAL" in
@@ -55,11 +54,23 @@ should_run_tau_eval() {
   esac
 }
 
-bash "${SCRIPT_DIR}/run_lora_matrix.sh"
+printf '[fullft-aligned] DATASET=%s MODEL=%s\n' "$DATASET" "$MODEL"
+printf '[fullft-aligned] SELECTOR_NAME=%s\n' "$SELECTOR_NAME"
+printf '[fullft-aligned] CASE_SUFFIX=%s\n' "$CASE_SUFFIX"
+printf '[fullft-aligned] DEEPSPEED_CONFIG=%s\n' "$DEEPSPEED_CONFIG"
+printf '[fullft-aligned] SFT_GRADIENT_ACCUMULATION_STEPS=%s\n' "$SFT_GRADIENT_ACCUMULATION_STEPS"
+printf '[fullft-aligned] SFT_LEARNING_RATE=%s\n' "$SFT_LEARNING_RATE"
+printf '[fullft-aligned] SFT_NUM_TRAIN_EPOCHS=%s\n' "$SFT_NUM_TRAIN_EPOCHS"
+printf '[fullft-aligned] SFT_EVAL_STEPS=%s\n' "$SFT_EVAL_STEPS"
+printf '[fullft-aligned] SFT_SAVE_STEPS=%s\n' "$SFT_SAVE_STEPS"
+printf '[fullft-aligned] SFT_EARLY_STOPPING_PATIENCE=%s\n' "$SFT_EARLY_STOPPING_PATIENCE"
+printf '[fullft-aligned] REQUIRE_PROMPT_INPUT_IDS=%s\n' "$REQUIRE_PROMPT_INPUT_IDS"
+
+bash "${SCRIPT_DIR}/run_one.sh"
 
 if [[ "${DRY_RUN:-false}" != "true" ]] && should_run_tau_eval; then
   PYTHON_BIN="$PYTHON_BIN" \
-    CASE_ROOT="${OUTPUT_ROOT}/rawfc__ministral3_8b${CASE_SUFFIX}${LORA_SUFFIX}" \
+    CASE_ROOT="${OUTPUT_ROOT}/rawfc__ministral3_8b${CASE_SUFFIX}" \
     SPLITS="$TAU_SPLITS" \
     CHECKPOINTS=best \
     TAUS="$TAUS" \

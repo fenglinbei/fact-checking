@@ -15,14 +15,29 @@ from fact_checking.selectors.count_amplified_stance_bucket_selector import (
 from fact_checking.selectors.evidence_map_selector import evidence_map_selection_metrics
 
 
+def rule_step_chain_selector_name(min_top_k: int, max_top_k: int) -> str:
+    return f"v0_6c_rule_step_adaptive{int(min_top_k)}_{int(max_top_k)}"
+
+
+def budgeted_marginal_chain_selector_name(min_top_k: int, max_top_k: int) -> str:
+    return f"v0_7_budgeted_marginal_chain_adaptive{int(min_top_k)}_{int(max_top_k)}"
+
+
 GRAPH_VERSION = "evidence_chain_graph_v0_6b"
 CHAIN_SELECTOR = "v0_6b_chain_graph_top5"
 RULE_STEP_GRAPH_VERSION = "evidence_chain_graph_v0_6c"
-RULE_STEP_CHAIN_SELECTOR = "v0_6c_rule_step_adaptive5_10"
+DEFAULT_RULE_STEP_MIN_TOP_K = 5
+DEFAULT_RULE_STEP_MAX_TOP_K = 10
+RULE_STEP_CHAIN_SELECTOR = rule_step_chain_selector_name(DEFAULT_RULE_STEP_MIN_TOP_K, DEFAULT_RULE_STEP_MAX_TOP_K)
 SUFFICIENCY_CONTRADICTION_GRAPH_VERSION = "evidence_chain_graph_v0_6d"
 SUFFICIENCY_CONTRADICTION_SELECTOR = "v0_6d_sufficiency_contradiction_adaptive5_10"
 BUDGETED_MARGINAL_GRAPH_VERSION = "evidence_chain_graph_v0_7"
-BUDGETED_MARGINAL_SELECTOR = "v0_7_budgeted_marginal_chain_adaptive3_10"
+DEFAULT_BUDGETED_MARGINAL_MIN_TOP_K = 3
+DEFAULT_BUDGETED_MARGINAL_MAX_TOP_K = 10
+BUDGETED_MARGINAL_SELECTOR = budgeted_marginal_chain_selector_name(
+    DEFAULT_BUDGETED_MARGINAL_MIN_TOP_K,
+    DEFAULT_BUDGETED_MARGINAL_MAX_TOP_K,
+)
 DEFAULT_CHUNK_MMR_FINGERPRINT = "432dfc970e75"
 DEFAULT_IMPORTANT_ATOM_THRESHOLD = 0.50
 DEFAULT_SUFFICIENCY_WEIGHTED_COVERAGE_THRESHOLD = 0.80
@@ -44,14 +59,6 @@ DIRECTNESS_VALUES = {"direct", "partial"}
 POLAR_RELATIONS = {"support", "refute", "qualify", "mixed"}
 
 
-def rule_step_chain_selector_name(min_top_k: int, max_top_k: int) -> str:
-    return f"v0_6c_rule_step_adaptive{int(min_top_k)}_{int(max_top_k)}"
-
-
-def budgeted_marginal_chain_selector_name(min_top_k: int, max_top_k: int) -> str:
-    return f"v0_7_budgeted_marginal_chain_adaptive{int(min_top_k)}_{int(max_top_k)}"
-
-
 @dataclass(frozen=True)
 class EvidenceChainParams:
     candidate_top_n: int = 20
@@ -63,8 +70,8 @@ class EvidenceChainParams:
 @dataclass(frozen=True)
 class RuleStepEvidenceChainParams:
     candidate_top_n: int = 20
-    min_top_k: int = 5
-    max_top_k: int = 10
+    min_top_k: int = DEFAULT_RULE_STEP_MIN_TOP_K
+    max_top_k: int = DEFAULT_RULE_STEP_MAX_TOP_K
     chunk_mmr_fingerprint: str = DEFAULT_CHUNK_MMR_FINGERPRINT
 
 
@@ -97,8 +104,8 @@ class BudgetedMarginalObjectiveWeights:
 @dataclass(frozen=True)
 class BudgetedMarginalChainParams:
     candidate_top_n: int = 20
-    min_top_k: int = 3
-    max_top_k: int = 10
+    min_top_k: int = DEFAULT_BUDGETED_MARGINAL_MIN_TOP_K
+    max_top_k: int = DEFAULT_BUDGETED_MARGINAL_MAX_TOP_K
     chunk_mmr_fingerprint: str = DEFAULT_CHUNK_MMR_FINGERPRINT
     target_coverage: float = DEFAULT_BUDGETED_TARGET_COVERAGE
     stop_gain_threshold: float = DEFAULT_BUDGETED_STOP_GAIN_THRESHOLD
@@ -468,6 +475,15 @@ def build_evidence_chain_trace(row: dict[str, Any], graph_row: dict[str, Any], *
     return trace
 
 
+def _summary_selector_name(rows: Sequence[dict[str, Any]], *, fallback: str) -> str:
+    selector_names = sorted({str(row.get("selector_name") or "") for row in rows if row.get("selector_name")})
+    if len(selector_names) == 1:
+        return selector_names[0]
+    if selector_names:
+        return "mixed"
+    return fallback
+
+
 def summarize_chain_graph_rows(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     traces = [row.get("selection_trace") or {} for row in rows]
     diagnostics = [row.get("diagnostics") or {} for row in rows]
@@ -631,7 +647,7 @@ def summarize_budgeted_marginal_chain_graph_rows(rows: Sequence[dict[str, Any]])
                     background_additions += 1
     return {
         "graph_version": BUDGETED_MARGINAL_GRAPH_VERSION,
-        "selector_name": BUDGETED_MARGINAL_SELECTOR,
+        "selector_name": _summary_selector_name(rows, fallback=BUDGETED_MARGINAL_SELECTOR),
         "n_events": len(rows),
         "n_edges_by_type": dict(sorted(edge_counts.items())),
         "selected_lengths": dict(sorted(selected_lengths.items())),
