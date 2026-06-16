@@ -20,6 +20,7 @@ CHECKPOINTS="${CHECKPOINTS:-best}"
 CASE_SUFFIX="${CASE_SUFFIX:-}"
 DRY_RUN="${DRY_RUN:-false}"
 FORCE_STAGE="${FORCE_STAGE:-false}"
+ALLOW_MULTI_SENTENCE_CANDIDATES="${ALLOW_MULTI_SENTENCE_CANDIDATES:-false}"
 FORCE_BUILD="${FORCE_BUILD:-auto}"
 FORCE_LORA_CONFIG="${FORCE_LORA_CONFIG:-false}"
 FORCE_TRAIN="${FORCE_TRAIN:-false}"
@@ -219,6 +220,7 @@ ensure_build() {
     MODE=stage \
     SAMPLE_LIMIT=0 \
     FORCE_STAGE="$FORCE_STAGE" \
+    ALLOW_MULTI_SENTENCE_CANDIDATES="$ALLOW_MULTI_SENTENCE_CANDIDATES" \
     bash scripts/sentence_trace_method/run_one.sh
 
   if [[ "$FORCE_BUILD" != "true" && "$DRY_RUN" != "true" ]] && build_ready "$dataset" "$case_name"; then
@@ -249,6 +251,7 @@ ensure_build() {
     MODE=build \
     SAMPLE_LIMIT="$SAMPLE_LIMIT" \
     FORCE_BUILD="$force_build_flag" \
+    ALLOW_MULTI_SENTENCE_CANDIDATES="$ALLOW_MULTI_SENTENCE_CANDIDATES" \
     bash scripts/sentence_trace_method/run_one.sh
 }
 

@@ -48,7 +48,13 @@
       "Bash(curl -sL \"https://api-docs.deepseek.com/api/create-chat-completion\")",
       "Bash(curl -sL \"https://api-docs.deepseek.com/guides/thinking_mode\")",
       "Bash(curl *)",
-      "Bash(chmod +x *)"
+      "Bash(chmod +x *)",
+      "Bash(env)",
+      "Read(//root/**)",
+      "Read(//etc/**)",
+      "Bash(systemctl status *)",
+      "Bash(netstat -tlnp)",
+      "Bash(su *)"
     ]
   }
 }

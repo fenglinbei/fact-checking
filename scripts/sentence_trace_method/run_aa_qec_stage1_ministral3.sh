@@ -6,7 +6,7 @@ cd "$ROOT_DIR"
 
 SCRIPT_DIR="${ROOT_DIR}/scripts/sentence_trace_method"
 
-PYTHON_BIN="${PYTHON_BIN:-/data/liaozijie/conda/accelerate-fc/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-/data/liaozijie/conda/accelerate-fc-gemma4/bin/python}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/sentence_trace_method}"
 MODE="${MODE:-build}"
 EVAL_SPLITS="${EVAL_SPLITS:-val}"

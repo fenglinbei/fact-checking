@@ -1474,7 +1474,7 @@ def render_evidence_graph(
         label_attrs = trans_svg_attrs(label_key, label, translations, max_chars=44, zh_text=zh_label)
         atom_nodes.append(
             f"""
-<g class="graph-node atom" data-graph-node="atom" transform="translate({atom_x},{y - node_h / 2:.1f})">
+<g class="graph-node atom" data-graph-node="atom" data-atom-id="{esc(atom_id)}" transform="translate({atom_x},{y - node_h / 2:.1f})">
   <rect width="{atom_w}" height="{node_h}" rx="7" />
   <title>{esc(text)}</title>
   <text x="12" y="15" class="graph-title" {label_attrs}>{esc(label)}</text>

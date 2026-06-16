@@ -47,7 +47,7 @@ import render_evidence_chain_graph_html as chain_html
 
 
 DEFAULT_CANDIDATE_FEATURES = (
-    "outputs/selectors/evidence_map_selector/v0_6b_val/"
+    "outputs/selectors/evidence_map_selector/v0_7_atom_facts_val/"
     "candidate_evidence_map_features_val.jsonl"
 )
 DEFAULT_LEFT_TRACE = (
@@ -55,7 +55,7 @@ DEFAULT_LEFT_TRACE = (
     "selection_trace_val.jsonl"
 )
 DEFAULT_RIGHT_TRACE = (
-    "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_val/"
+    "outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_val/"
     "selection_trace_val.jsonl"
 )
 DEFAULT_RAW_DATA = "data/raw/LIAR-RAW/val.json"
@@ -66,14 +66,14 @@ DEFAULT_COVERAGE_DIFF = (
 DEFAULT_SPLITS = ("train", "val", "test")
 DEFAULT_OUTPUT_DIR = "outputs/analysis/map/v0.7"
 DEFAULT_LEFT_LABEL = "v0.6c RuleStep"
-DEFAULT_RIGHT_LABEL = "v0.7 BudgetedMarginal adaptive5_10"
+DEFAULT_RIGHT_LABEL = "v0.7 AtomFacts BudgetedMarginal adaptive5_10"
 DEFAULT_TRANSLATION_BASE_URL = "https://api.deepseek.com"
 DEFAULT_TRANSLATION_MODEL = "deepseek-v4-flash"
 
 LIAR_RAW_V07_BUILD_COMMAND = """SPLIT=val \\
-INPUT=outputs/selectors/evidence_map_selector/v0_6b_val/candidate_evidence_map_features_val.jsonl \\
-OUTPUT_DIR=outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_val \\
-bash scripts/phase5_selectors/run/run_evidence_chain_graph_v0_7.sh"""
+INPUT=outputs/selectors/evidence_map_selector/v0_7_atom_facts_val/candidate_evidence_map_features_val.jsonl \\
+OUTPUT_DIR=outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_val \\
+bash scripts/phase5_selectors/run/run_evidence_chain_graph_v0_7_atom_facts.sh"""
 
 
 @dataclass
@@ -265,7 +265,7 @@ def infer_split_from_path(path: str) -> str:
 
 def default_candidate_features_path(split: str) -> str:
     return (
-        f"outputs/selectors/evidence_map_selector/v0_6b_{split}/"
+        f"outputs/selectors/evidence_map_selector/v0_7_atom_facts_{split}/"
         f"candidate_evidence_map_features_{split}.jsonl"
     )
 
@@ -279,7 +279,7 @@ def default_left_trace_path(split: str) -> str:
 
 def default_right_trace_path(split: str) -> str:
     return (
-        f"outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_{split}/"
+        f"outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_{split}/"
         f"selection_trace_{split}.jsonl"
     )
 
@@ -293,7 +293,7 @@ def default_left_chain_graph_path(split: str) -> str:
 
 def default_right_chain_graph_path(split: str) -> str:
     return (
-        f"outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_{split}/"
+        f"outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_{split}/"
         f"chain_graph_{split}.jsonl"
     )
 
@@ -351,8 +351,8 @@ def missing_trace_message(path: str, *, role: str) -> str:
 def liar_raw_v07_build_command(split: str) -> str:
     return f"""SPLIT={split} \\
 INPUT={default_candidate_features_path(split)} \\
-OUTPUT_DIR=outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_{split} \\
-bash scripts/phase5_selectors/run/run_evidence_chain_graph_v0_7.sh"""
+OUTPUT_DIR=outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_{split} \\
+bash scripts/phase5_selectors/run/run_evidence_chain_graph_v0_7_atom_facts.sh"""
 
 
 def load_raw_row(path: str, *, event_id: str) -> dict[str, Any] | None:
@@ -588,6 +588,10 @@ def render_html(
       {render_atom_coverage(atoms, candidates, left_trace, right_trace, left_label=left_label, right_label=right_label)}
     </section>
     <section class="section">
+      <h2>Evidence Chain Process</h2>
+      {render_chain_process(left_trace, right_trace, candidates=candidates, atoms=atoms, left_label=left_label, right_label=right_label, translations=translations)}
+    </section>
+    <section class="section">
       <h2>Evidence Map Graphs</h2>
       {render_evidence_map_graphs(candidates, atoms=atoms, left_trace=left_trace, right_trace=right_trace, left_graph_row=left_graph_row, right_graph_row=right_graph_row, left_label=left_label, right_label=right_label, translations=translations, max_candidates=int(args.max_candidates))}
     </section>
@@ -609,6 +613,7 @@ def render_html(
   </main>
   {translation_toggle_script(translations, args=args, missing_count=missing_translation_count)}
   {graph_switcher_script()}
+  {chain_process_script()}
 </body>
 </html>
 """
@@ -849,8 +854,224 @@ def render_atom_coverage(
             f"<td>{render_hit_badges(left_hits)}</td>"
             f"<td>{render_hit_badges(right_hits)}</td>"
             "</tr>"
-        )
+    )
     return table(["atom", "text", left_label, right_label], rows)
+
+
+def render_chain_process(
+    left_trace: dict[str, Any],
+    right_trace: dict[str, Any],
+    *,
+    candidates: list[dict[str, Any]],
+    atoms: list[dict[str, Any]],
+    left_label: str,
+    right_label: str,
+    translations: dict[str, str],
+) -> str:
+    return (
+        '<div class="chain-process-grid">'
+        + render_chain_process_panel(left_trace, candidates, atoms, label=left_label, side="left", translations=translations)
+        + render_chain_process_panel(right_trace, candidates, atoms, label=right_label, side="right", translations=translations)
+        + "</div>"
+    )
+
+
+def render_chain_process_panel(
+    trace: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    atoms: list[dict[str, Any]],
+    *,
+    label: str,
+    side: str,
+    translations: dict[str, str],
+) -> str:
+    steps = normalized_selection_steps(trace)
+    if not steps:
+        return (
+            f'<article class="chain-process-panel {esc(side)}" data-chain-process data-chain-side="{esc(side)}" '
+            'data-current-chain-step="0">'
+            f"<h3>{esc(label)}</h3>"
+            '<div class="small">No selection steps recorded.</div>'
+            "</article>"
+        )
+    summary = render_process_summary(trace, steps)
+    controls = (
+        '<div class="chain-controls">'
+        f'<button type="button" data-chain-reset data-chain-side="{esc(side)}">Step 0</button>'
+        f'<button type="button" data-chain-play data-chain-side="{esc(side)}">Play</button>'
+        '<span class="small">Click a step to replay the selector state in the graph.</span>'
+        "</div>"
+    )
+    step_cards = "".join(
+        render_chain_step_card(step, candidates, side=side, translations=translations)
+        for step in steps
+    )
+    return (
+        f'<article class="chain-process-panel {esc(side)}" data-chain-process data-chain-side="{esc(side)}" '
+        'data-current-chain-step="0">'
+        f"<h3>{esc(label)}</h3>"
+        f'<div class="selector small text-wrap-safe">{esc(str(trace.get("selector_name") or ""))}</div>'
+        f"{summary}"
+        f"{controls}"
+        f'<div class="chain-step-list">{step_cards}</div>'
+        f"{render_coverage_accumulation(steps, atoms)}"
+        f"{render_decision_waterfall(steps)}"
+        "</article>"
+    )
+
+
+def render_process_summary(trace: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    values = [
+        ("steps", len(steps)),
+        ("stop", trace.get("adaptive_stop_reason") or "-"),
+        ("coverage", trace.get("weighted_atom_coverage@5")),
+    ]
+    if "objective_final_score" in trace:
+        values.append(("objective", trace.get("objective_final_score")))
+    return (
+        '<div class="process-summary" data-process-summary>'
+        + "".join(metric_cell(label, value) for label, value in values)
+        + "</div>"
+    )
+
+
+def render_chain_step_card(
+    step: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    *,
+    side: str,
+    translations: dict[str, str],
+) -> str:
+    by_id = candidate_by_id(candidates)
+    evidence_id = str(step.get("evidence_id") or "")
+    candidate = by_id.get(evidence_id, {})
+    step_num = step_number(step)
+    new_atoms = [str(atom_id) for atom_id in step.get("covered_new_atom_ids") or [] if str(atom_id).strip()]
+    anchors = [str(eid) for eid in step.get("anchor_evidence_ids") or [] if str(eid).strip()]
+    relation = str(step.get("relation") or candidate.get("map_relation") or "")
+    directness = str(step.get("directness") or candidate.get("map_directness") or "")
+    text = str(candidate.get("text") or "")
+    text_key = f"{map_html.candidate_translation_base(candidate)}:text" if candidate else ""
+    delta_summary = render_relationship_delta_summary(step.get("component_deltas") or {})
+    gain = ""
+    if "marginal_gain" in step:
+        gain = (
+            f'<div class="chain-step-gain">marginal <b>{fmt(step.get("marginal_gain"))}</b>'
+            f' · coverage after <b>{fmt(step.get("coverage_after_step"))}</b></div>'
+        )
+    return (
+        f'<button class="chain-step-card" type="button" data-chain-step="{esc(step_num)}" '
+        f'data-chain-side="{esc(side)}" data-step-evidence-id="{esc(evidence_id)}" '
+        f'data-step-covered-atoms="{esc("|".join(new_atoms))}" '
+        f'data-step-anchor-evidence-ids="{esc("|".join(anchors))}">'
+        f'<span class="chain-step-rank">Step {esc(step_num)}</span>'
+        f'<b>{esc(evidence_id)}</b>'
+        '<span class="chain-step-badges">'
+        + map_html.badge(step.get("rule"))
+        + map_html.badge(relation, class_name=relation)
+        + map_html.badge(directness, class_name=directness)
+        + "</span>"
+        f'<span class="small">new atoms={esc(", ".join(new_atoms) or "-")} | anchors={esc(", ".join(anchors) or "-")}</span>'
+        f"{gain}"
+        f'<span class="small">delta: {delta_summary}</span>'
+        f'<span class="chain-step-text text-wrap-safe">{trans_html(text_key, text, translations, original_html=esc(map_html.truncate(text, 180)))}</span>'
+        "</button>"
+    )
+
+
+def render_coverage_accumulation(steps: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> str:
+    atom_ids = [str(atom.get("atom_id") or "") for atom in atoms if str(atom.get("atom_id") or "").strip()]
+    if not atom_ids:
+        return '<section class="coverage-process"><h3>Coverage Accumulation</h3><div class="small">No atoms available.</div></section>'
+    rows: list[str] = []
+    for atom_id in atom_ids:
+        cells: list[str] = []
+        prior_covered: set[str] = set()
+        for step in steps:
+            step_num = step_number(step)
+            new_atoms = {str(item) for item in step.get("covered_new_atom_ids") or [] if str(item).strip()}
+            state = "new" if atom_id in new_atoms else "covered" if atom_id in prior_covered else "missing"
+            if atom_id in new_atoms:
+                prior_covered.add(atom_id)
+            cells.append(
+                f'<span class="heatmap-cell {esc(state)}" data-heatmap-atom="{esc(atom_id)}" '
+                f'data-heatmap-step="{esc(step_num)}" data-heatmap-state="{esc(state)}" '
+                f'title="{esc(atom_id)} at step {esc(step_num)}: {esc(state)}">{esc(state)}</span>'
+            )
+        cell_html = "".join(cells)
+        rows.append(f'<div class="heatmap-row"><b>{esc(atom_id)}</b><div>{cell_html}</div></div>')
+    legend = (
+        '<div class="heatmap-legend small">'
+        '<span class="heatmap-cell new">new coverage</span>'
+        '<span class="heatmap-cell covered">already covered</span>'
+        '<span class="heatmap-cell missing">missing</span>'
+        "</div>"
+    )
+    return (
+        '<section class="coverage-process">'
+        "<h3>Coverage Accumulation</h3>"
+        f'<div class="coverage-heatmap" data-coverage-heatmap>{"".join(rows)}</div>'
+        f"{legend}"
+        "</section>"
+    )
+
+
+def render_decision_waterfall(steps: list[dict[str, Any]]) -> str:
+    rows: list[str] = []
+    for step in steps:
+        deltas = step.get("component_deltas") or {}
+        components = top_component_deltas(deltas, limit=6)
+        if not components:
+            continue
+        bars = []
+        for key, value in components:
+            numeric = numeric_value(value)
+            direction = "negative" if numeric < 0 else "positive"
+            magnitude = min(abs(numeric), 1.0)
+            bars.append(
+                f'<span class="delta-bar {direction}" data-delta-component="{esc(key)}" '
+                f'data-delta-direction="{direction}" style="--delta-mag:{magnitude:.3f}">'
+                f'<b>{esc(key.replace("_", " "))}</b><i>{fmt(value)}</i></span>'
+            )
+        rows.append(
+            f'<div class="waterfall-step"><span class="chain-step-rank">Step {esc(step_number(step))}</span>'
+            f'<div class="waterfall-bars">{"".join(bars)}</div></div>'
+        )
+    if not rows:
+        return '<section class="decision-waterfall"><h3>Decision Waterfall</h3><div class="small">No component deltas recorded.</div></section>'
+    return (
+        '<section class="decision-waterfall" data-decision-waterfall>'
+        "<h3>Decision Waterfall</h3>"
+        f'{"".join(rows)}'
+        "</section>"
+    )
+
+
+def normalized_selection_steps(trace: dict[str, Any]) -> list[dict[str, Any]]:
+    steps = [dict(step) for step in trace.get("selection_steps") or [] if step.get("evidence_id")]
+    if not steps:
+        steps = [
+            {"step": idx, "evidence_id": evidence_id}
+            for idx, evidence_id in enumerate(trace.get("selected_evidence_ids") or [], start=1)
+            if str(evidence_id).strip()
+        ]
+    for idx, step in enumerate(steps, start=1):
+        step.setdefault("step", idx)
+    return steps
+
+
+def step_number(step: Mapping[str, Any]) -> str:
+    value = step.get("step")
+    if value in (None, ""):
+        return ""
+    return str(value)
+
+
+def numeric_value(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def render_evidence_map_graphs(
@@ -1746,6 +1967,119 @@ function initChainGraphDragging(root) {
 </script>"""
 
 
+def chain_process_script() -> str:
+    return """<script>
+(() => {
+  const processes = Array.from(document.querySelectorAll("[data-chain-process]"));
+  if (!processes.length) return;
+
+  const graphRoot = document.querySelector("[data-graph-switcher]");
+  const graphPanels = () => Array.from(document.querySelectorAll("[data-graph-panel]"));
+  const stepButtons = (process) => Array.from(process.querySelectorAll("[data-chain-step]"));
+  const splitList = (value) => String(value || "").split("|").map((item) => item.trim()).filter(Boolean);
+
+  const graphPanelForSide = (side) => {
+    const safeSide = String(side || "").replace(/"/g, "");
+    const selector = `[data-graph-panel="${safeSide}"]`;
+    return document.querySelector(selector);
+  };
+
+  const setGraphSide = (side) => {
+    const safeSide = String(side || "").replace(/"/g, "");
+    const option = graphRoot ? graphRoot.querySelector(`[data-graph-option="${safeSide}"]`) : null;
+    if (option) {
+      option.click();
+      return;
+    }
+    graphPanels().forEach((panel) => {
+      const active = panel.dataset.graphPanel === side;
+      panel.classList.toggle("graph-panel-active", active);
+      panel.classList.toggle("graph-panel-hidden", !active);
+    });
+  };
+
+  const clearGraphProcessState = () => {
+    graphPanels().forEach((panel) => {
+      panel.querySelectorAll(".graph-process-active, .graph-process-complete, .graph-process-dim, .graph-step-atom-active").forEach((el) => {
+        el.classList.remove("graph-process-active", "graph-process-complete", "graph-process-dim", "graph-step-atom-active");
+      });
+    });
+  };
+
+  const applyGraphProcessState = (side, stepNumber, activeButton, completedEvidenceIds) => {
+    clearGraphProcessState();
+    if (!stepNumber || Number(stepNumber) <= 0) return;
+    const panel = graphPanelForSide(side);
+    if (!panel) return;
+    const activeEvidenceId = activeButton ? activeButton.dataset.stepEvidenceId || "" : "";
+    const coveredAtoms = splitList(activeButton ? activeButton.dataset.stepCoveredAtoms : "");
+    const anchors = splitList(activeButton ? activeButton.dataset.stepAnchorEvidenceIds : "");
+    panel.querySelectorAll("[data-graph-node='evidence']").forEach((node) => {
+      const evidenceId = node.dataset.graphEvidenceId || node.dataset.nodeId || "";
+      const isComplete = completedEvidenceIds.has(evidenceId);
+      const isActive = evidenceId === activeEvidenceId;
+      node.classList.toggle("graph-process-complete", isComplete && !isActive);
+      node.classList.toggle("graph-process-active", isActive);
+      node.classList.toggle("graph-process-dim", Boolean(completedEvidenceIds.size && !isComplete && !isActive));
+    });
+    panel.querySelectorAll("[data-graph-node='atom'], .graph-node[data-node-id]").forEach((node) => {
+      const atomId = node.dataset.atomId || node.dataset.nodeId || "";
+      node.classList.toggle("graph-step-atom-active", coveredAtoms.includes(atomId));
+    });
+    panel.querySelectorAll("[data-graph-edge], .graph-edge[data-source][data-target]").forEach((edge) => {
+      const evidenceId = edge.dataset.evidenceId || "";
+      const source = edge.dataset.source || "";
+      const target = edge.dataset.target || "";
+      const edgeAtom = edge.dataset.atomId || "";
+      const connected = evidenceId === activeEvidenceId || source === activeEvidenceId || target === activeEvidenceId ||
+        anchors.includes(source) || anchors.includes(target) || coveredAtoms.includes(edgeAtom);
+      edge.classList.toggle("graph-edge-active", Boolean(connected));
+      edge.classList.toggle("graph-process-dim", Boolean(completedEvidenceIds.size && !connected));
+    });
+  };
+
+  window.activateChainStep = (process, stepNumber) => {
+    if (!process) return;
+    const side = process.dataset.chainSide || "";
+    const targetStep = Number(stepNumber || 0);
+    process.dataset.currentChainStep = String(targetStep);
+    setGraphSide(side);
+    const buttons = stepButtons(process);
+    let activeButton = null;
+    const completedEvidenceIds = new Set();
+    buttons.forEach((button) => {
+      const buttonStep = Number(button.dataset.chainStep || 0);
+      const evidenceId = button.dataset.stepEvidenceId || "";
+      const isActive = buttonStep === targetStep && targetStep > 0;
+      const isComplete = buttonStep > 0 && buttonStep < targetStep;
+      button.classList.toggle("is-active", isActive);
+      button.classList.toggle("is-complete", isComplete);
+      if (buttonStep > 0 && buttonStep <= targetStep && evidenceId) completedEvidenceIds.add(evidenceId);
+      if (isActive) activeButton = button;
+    });
+    applyGraphProcessState(side, targetStep, activeButton, completedEvidenceIds);
+  };
+
+  processes.forEach((process) => {
+    stepButtons(process).forEach((button) => {
+      button.addEventListener("click", () => window.activateChainStep(process, button.dataset.chainStep || "0"));
+    });
+    const reset = process.querySelector("[data-chain-reset]");
+    if (reset) reset.addEventListener("click", () => window.activateChainStep(process, "0"));
+    const play = process.querySelector("[data-chain-play]");
+    if (play) {
+      play.addEventListener("click", () => {
+        const buttons = stepButtons(process);
+        const current = Number(process.dataset.currentChainStep || 0);
+        const next = current >= buttons.length ? 1 : current + 1;
+        window.activateChainStep(process, String(next));
+      });
+    }
+  });
+})();
+</script>"""
+
+
 def fmt(value: Any) -> str:
     return map_html.fmt(value)
 
@@ -1847,6 +2181,172 @@ body.zh-mode .i18n-zh { display: inline; }
   gap: 14px;
   align-items: start;
 }
+.chain-process-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.chain-process-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 13px;
+  min-width: 0;
+}
+.chain-process-panel.left { box-shadow: inset 4px 0 0 var(--left); }
+.chain-process-panel.right { box-shadow: inset 4px 0 0 var(--right); }
+.process-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+.chain-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.chain-controls button {
+  min-height: 30px;
+  border: 1px solid #b8c6d7;
+  border-radius: 6px;
+  background: #fff;
+  color: #29435f;
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.chain-step-list {
+  display: grid;
+  gap: 8px;
+}
+.chain-step-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 9px;
+  align-items: start;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink);
+  padding: 9px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.chain-step-card.is-active {
+  outline: 2px solid var(--common);
+  outline-offset: -2px;
+  background: #f6f9ff;
+}
+.chain-step-card.is-complete { background: #f7fbf8; }
+.chain-step-rank {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #e7efff;
+  color: var(--common);
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 780;
+  white-space: nowrap;
+}
+.chain-step-card b, .chain-step-card .small, .chain-step-card .chain-step-text, .chain-step-gain {
+  min-width: 0;
+}
+.chain-step-badges, .chain-step-card .small, .chain-step-gain, .chain-step-text {
+  grid-column: 2;
+}
+.chain-step-gain {
+  color: #29435f;
+  font-size: 12px;
+}
+.chain-step-text {
+  display: block;
+  color: #344155;
+  font-size: 12px;
+}
+.coverage-process, .decision-waterfall {
+  margin-top: 12px;
+}
+.coverage-heatmap {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  padding: 8px;
+}
+.heatmap-row {
+  display: grid;
+  grid-template-columns: minmax(42px, 64px) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+.heatmap-row b { font-size: 12px; color: #384459; }
+.heatmap-row div, .heatmap-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.heatmap-legend { margin-top: 6px; }
+.heatmap-cell {
+  display: inline-flex;
+  min-height: 22px;
+  min-width: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  border: 1px solid #d8e0ea;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #536171;
+  background: #f8fafc;
+}
+.heatmap-cell.new { background: #dff5e9; border-color: #9fd8b9; color: #247a52; }
+.heatmap-cell.covered { background: #e7efff; border-color: #b8ccf7; color: var(--common); }
+.heatmap-cell.missing { background: #f5f7fa; color: #69778a; }
+.waterfall-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  margin-top: 7px;
+}
+.waterfall-bars {
+  display: grid;
+  gap: 5px;
+}
+.delta-bar {
+  display: grid;
+  grid-template-columns: minmax(90px, .45fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-size: 12px;
+  background:
+    linear-gradient(90deg, rgba(49,95,186,.16) calc(var(--delta-mag) * 100%), transparent 0),
+    #fff;
+  border: 1px solid #d8e0ea;
+}
+.delta-bar.negative {
+  background:
+    linear-gradient(90deg, rgba(184,68,62,.16) calc(var(--delta-mag) * 100%), transparent 0),
+    #fff;
+}
+.delta-bar b { color: #384459; overflow-wrap: anywhere; }
+.delta-bar i { justify-self: end; font-style: normal; font-weight: 760; }
 .map-graph-shell { display: grid; gap: 12px; min-width: 0; }
 .graph-switcher {
   display: grid;
@@ -2092,6 +2592,24 @@ body.zh-mode .i18n-zh { display: inline; }
   stroke-width: 2.6;
   filter: drop-shadow(0 2px 4px rgba(23, 47, 102, 0.22));
 }
+.graph-node.graph-process-active rect {
+  stroke: #172f66;
+  stroke-width: 3.0;
+  fill: #fff7d8;
+  filter: drop-shadow(0 2px 5px rgba(212, 166, 38, 0.32));
+}
+.graph-node.graph-process-complete rect {
+  stroke: #247a52;
+  stroke-width: 2.2;
+}
+.graph-node.graph-step-atom-active rect {
+  stroke: #d4a626;
+  stroke-width: 2.4;
+  fill: #fff9df;
+}
+.graph-process-dim {
+  opacity: .24;
+}
 .graph-title { font-size: 12px; font-weight: 730; fill: #253044; }
 .graph-subtitle { font-size: 11px; fill: #667386; }
 .graph-evidence-text {
@@ -2162,7 +2680,7 @@ mark { background: #fff0a8; color: inherit; padding: 0 2px; border-radius: 2px; 
 @media (max-width: 900px) {
   header { position: static; padding: 18px; }
   main { padding: 18px; }
-  .overview-grid, .two-col, .graph-switcher, .graph-detail { grid-template-columns: 1fr; }
+  .overview-grid, .two-col, .chain-process-grid, .graph-switcher, .graph-detail { grid-template-columns: 1fr; }
 }
 """
 

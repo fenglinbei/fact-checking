@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fact_checking.selectors.evidence_map_selector import attach_evidence_map_annotations
+from fact_checking.selectors.evidence_map_selector import attach_evidence_map_annotations, summarize_atom_quality_rows
 from fact_checking.utils.io import read_jsonl, save_json, write_jsonl
 
 
@@ -37,7 +37,10 @@ def main() -> None:
     annotations = read_jsonl(annotations_path) if annotations_path.exists() else []
     features = attach_evidence_map_annotations(rows, annotations)
     output_path = out_dir / f"candidate_evidence_map_features_{args.split}.jsonl"
+    atom_quality_path = out_dir / "atom_quality_summary.json"
+    atom_quality_summary = summarize_atom_quality_rows(features)
     write_jsonl(features, output_path)
+    save_json(atom_quality_summary, atom_quality_path)
     manifest: dict[str, Any] = {
         "status": "completed",
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -51,7 +54,13 @@ def main() -> None:
         "n_annotations": len(annotations),
         "n_candidates": sum(len(row.get("candidates") or []) for row in features),
         "parse_status_counts": _counts(str(row.get("evidence_map_parse_status") or "") for row in features),
-        "outputs": {"candidate_features": str(output_path)},
+        "atom_quality": {
+            "total_atoms": int(atom_quality_summary.get("total_atoms") or 0),
+            "fragment_atom_count": int(atom_quality_summary.get("fragment_atom_count") or 0),
+            "rows_with_fragment_atoms": int(atom_quality_summary.get("rows_with_fragment_atoms") or 0),
+            "row_fragment_rate": float(atom_quality_summary.get("row_fragment_rate") or 0.0),
+        },
+        "outputs": {"candidate_features": str(output_path), "atom_quality_summary": str(atom_quality_path)},
         "elapsed_seconds": round(time.time() - started_at, 3),
     }
     save_json(manifest, out_dir / "postprocess_manifest.json")

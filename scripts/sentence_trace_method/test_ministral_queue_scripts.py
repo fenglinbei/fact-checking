@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 
@@ -43,3 +45,53 @@ def test_ministral_fullft_qec_queue_enforces_order_deadline_and_checkpoint_signa
     assert "RESUME_LATEST_TRAIN_STATE=true" in text
     assert "trainer_pids_for_tree" in text
     assert "kill -TERM $trainer_pids" in text
+
+
+def test_rawfc_ministral3_lora_tuning_queue_waits_active_first_then_runs_ordered() -> None:
+    queue_script = SCRIPT_DIR / "run_rawfc_ministral3_lora_tuning_queue.sh"
+    text = queue_script.read_text(encoding="utf-8")
+
+    first = "run_rawfc_ministral3_v0_7_adaptive5_10_lora_r32a64_d005_lr1e5_ep12.sh"
+    second = "run_rawfc_ministral3_v0_7_adaptive5_10_lora_r16a32_d010_lr1e5_ep12.sh"
+    third = "run_rawfc_ministral3_v0_7_adaptive5_10_lora_r16a32_d005_lr5e6_ep12.sh"
+
+    assert text.index(first) < text.index(second) < text.index(third)
+    assert 'PYTHON_BIN="${PYTHON_BIN:-/data/liaozijie/conda/accelerate-fc-gemma4/bin/python}"' in text
+    assert "rawfc__ministral3_8b__v0_7_bm_adaptive5_10_lora_r32a64_d005_ebs16_lr1em5_ep12_eval50_pat8_rawfc" in text
+    assert "rawfc__ministral3_8b__v0_7_bm_adaptive5_10_lora_r16a32_d010_ebs16_lr1em5_ep12_eval50_pat8_rawfc" in text
+    assert "rawfc__ministral3_8b__v0_7_bm_adaptive5_10_lora_r16a32_d005_ebs16_lr5em6_ep12_eval50_pat8_rawfc" in text
+    assert "eval100_pat8_rawfc" not in text
+    assert "active_pids_for_run" in text
+    assert "wait_for_active_stage" in text
+    assert "training_complete" in text
+    assert "queue stop requested while waiting for externally active" in text
+    assert "SAVE_LATEST_TRAIN_STATE=true" in text
+    assert "RESUME_LATEST_TRAIN_STATE=true" in text
+
+
+def test_rawfc_ministral3_lora_tuning_queue_dry_run_runs_all_stages(tmp_path: Path) -> None:
+    queue_script = SCRIPT_DIR / "run_rawfc_ministral3_lora_tuning_queue.sh"
+    env = {
+        **os.environ,
+        "DRY_RUN": "true",
+        "RUN_TAU_EVAL": "false",
+        "PREPARE_V0_7_SOURCES": "false",
+        "PREPARE_SELECTOR_SOURCES": "false",
+        "QUEUE_LOG_ROOT": str(tmp_path),
+        "POLL_SECONDS": "1",
+    }
+    result = subprocess.run(
+        ["bash", str(queue_script)],
+        cwd=ROOT,
+        env=env,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    output = result.stdout + result.stderr
+
+    assert "starting rawfc_lora_r32a64_d005_lr1e5" in output
+    assert "starting rawfc_lora_r16a32_d010_lr1e5" in output
+    assert "starting rawfc_lora_r16a32_d005_lr5e6" in output
+    assert output.count("dry-run completed; skipping completed-marker check") == 3
+    assert "queue completed successfully" in output

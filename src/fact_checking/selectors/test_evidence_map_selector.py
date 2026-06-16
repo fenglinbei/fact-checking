@@ -3,16 +3,19 @@ from __future__ import annotations
 import unittest
 
 from fact_checking.selectors.evidence_map_selector import (
+    ATOM_FACTS_PROMPT_VERSION,
     COMPACT_PROMPT_VERSION,
     EVIDENCE_MAP_BASE_ONLY_SELECTOR,
     EVIDENCE_MAP_SELECTOR,
     EvidenceMapParams,
     attach_event_base_scores,
+    atom_quality_diagnostics,
     audit_teacher_prompt,
     build_all_evidence_map_traces,
     build_teacher_messages,
     prepare_evidence_map_candidate_rows,
     select_evidence_map_topk,
+    summarize_atom_quality_rows,
     validate_evidence_map_payload,
 )
 from scripts.phase5_selectors.build.build_evidence_map_verifier_data import _render_until_fit
@@ -55,6 +58,29 @@ class EvidenceMapSelectorTest(unittest.TestCase):
             self.assertNotIn(forbidden, prompt)
         audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
 
+    def test_atom_facts_prompt_requires_complete_proposition_atoms_and_excludes_metadata(self) -> None:
+        event = _event()
+        event["claim"] = "Says Sen. Kay Hagan has missed half of the Senate Armed Services Committee hearings in 2014."
+        event["candidates"][0]["candidate_uid"] = "secret-uid-1"
+        event["candidates"][0]["candidate_key"] = "secret-key-1"
+        row = prepare_evidence_map_candidate_rows([event], candidate_top_n=1)[0]
+
+        system_prompt, user_prompt = build_teacher_messages(
+            row,
+            prompt_version=ATOM_FACTS_PROMPT_VERSION,
+            max_evidence_chars=120,
+        )
+
+        prompt = system_prompt + "\n" + user_prompt
+        self.assertIn("complete proposition", prompt)
+        self.assertIn("subject, predicate, object", prompt)
+        self.assertIn("Do not create standalone entity, date, or quantity atoms", prompt)
+        self.assertIn("usually one atom", prompt)
+        self.assertNotIn("Keep atoms small", prompt)
+        self.assertNotIn("secret-uid-1", prompt)
+        self.assertNotIn("secret-key-1", prompt)
+        audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
+
     def test_schema_validation_clamps_and_fills_alignments(self) -> None:
         payload = {
             "claim_atoms": [{"atom_id": "A1", "text": "Budget increased", "type": "quantity", "importance": 9}],
@@ -81,6 +107,71 @@ class EvidenceMapSelectorTest(unittest.TestCase):
         self.assertEqual(first["confidence"], 1.0)
         second = {row["evidence_id"]: row for row in valid["candidate_alignments"]}["E02"]
         self.assertEqual(second["directness"], "none")
+
+    def test_atom_quality_diagnostics_flags_10004_style_fragments(self) -> None:
+        diagnostics = atom_quality_diagnostics(
+            [
+                {"atom_id": "A1", "text": "Sen. Kay Hagan", "type": "entity", "importance": 1.0},
+                {"atom_id": "A2", "text": "has missed half", "type": "quantity", "importance": 1.0},
+                {"atom_id": "A3", "text": "of the Senate Armed Services Committee's hearings", "type": "entity", "importance": 1.0},
+                {"atom_id": "A4", "text": "in 2014", "type": "date", "importance": 0.8},
+            ]
+        )
+
+        self.assertEqual(diagnostics["atom_count"], 4)
+        self.assertEqual(diagnostics["fragment_atom_count"], 4)
+        self.assertEqual(diagnostics["fragment_atom_ids"], ["A1", "A2", "A3", "A4"])
+        self.assertIn("standalone_entity_or_modifier", diagnostics["issues_by_atom"]["A1"])
+        self.assertIn("preposition_start", diagnostics["issues_by_atom"]["A3"])
+        self.assertIn("preposition_start", diagnostics["issues_by_atom"]["A4"])
+
+    def test_atom_quality_diagnostics_accepts_complete_proposition_atom(self) -> None:
+        diagnostics = atom_quality_diagnostics(
+            [
+                {
+                    "atom_id": "A1",
+                    "text": "Sen. Kay Hagan missed half of the Senate Armed Services Committee hearings in 2014.",
+                    "type": "quantity",
+                    "importance": 1.0,
+                }
+            ]
+        )
+
+        self.assertEqual(diagnostics["atom_count"], 1)
+        self.assertEqual(diagnostics["fragment_atom_count"], 0)
+        self.assertEqual(diagnostics["fragment_atom_ids"], [])
+
+    def test_summarize_atom_quality_rows_counts_fragment_cases(self) -> None:
+        summary = summarize_atom_quality_rows(
+            [
+                {
+                    "event_id": "10004.json",
+                    "evidence_map": {
+                        "claim_atoms": [
+                            {"atom_id": "A1", "text": "Sen. Kay Hagan", "type": "entity"},
+                            {"atom_id": "A2", "text": "has missed half", "type": "quantity"},
+                        ]
+                    },
+                },
+                {
+                    "event_id": "ok.json",
+                    "evidence_map": {
+                        "claim_atoms": [
+                            {
+                                "atom_id": "A1",
+                                "text": "Sen. Kay Hagan missed half of the Senate Armed Services Committee hearings in 2014.",
+                                "type": "quantity",
+                            }
+                        ]
+                    },
+                },
+            ]
+        )
+
+        self.assertEqual(summary["n_rows"], 2)
+        self.assertEqual(summary["rows_with_fragment_atoms"], 1)
+        self.assertEqual(summary["fragment_atom_count"], 2)
+        self.assertEqual(summary["examples"][0]["event_id"], "10004.json")
 
     def test_evidence_id_mapping_round_trips_to_candidate_rows(self) -> None:
         row = prepare_evidence_map_candidate_rows([_event()], candidate_top_n=2)[0]

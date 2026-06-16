@@ -44,7 +44,7 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
     def test_default_paths_use_sentence_qd_union_mainline(self) -> None:
         self.assertEqual(
             default_candidate_features_path("val"),
-            "outputs/selectors/evidence_map_selector/v0_6b_val/candidate_evidence_map_features_val.jsonl",
+            "outputs/selectors/evidence_map_selector/v0_7_atom_facts_val/candidate_evidence_map_features_val.jsonl",
         )
         self.assertEqual(
             default_left_trace_path("val"),
@@ -52,7 +52,7 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         )
         self.assertEqual(
             default_right_trace_path("val"),
-            "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_val/selection_trace_val.jsonl",
+            "outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_val/selection_trace_val.jsonl",
         )
         self.assertEqual(
             default_left_chain_graph_path("val"),
@@ -60,7 +60,7 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         )
         self.assertEqual(
             default_right_chain_graph_path("val"),
-            "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_val/chain_graph_val.jsonl",
+            "outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_val/chain_graph_val.jsonl",
         )
         self.assertNotIn("liar_raw_dense", default_candidate_features_path("val"))
         self.assertNotIn("liar_raw_dense", default_left_trace_path("val"))
@@ -219,6 +219,47 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         self.assertIn('data-to-evidence-id="E01"', html)
         self.assertIn("pair utility", html)
 
+    def test_renderer_outputs_chain_process_replay_controls(self) -> None:
+        html = render_html(_row(), left_trace=_left_trace(), right_trace=_right_trace(), args=_args(), translations={})
+
+        self.assertIn("Evidence Chain Process", html)
+        self.assertIn("data-chain-process", html)
+        self.assertIn('data-chain-side="right"', html)
+        self.assertIn('data-chain-step="1"', html)
+        self.assertIn('data-chain-step="2"', html)
+        self.assertIn('data-step-evidence-id="E03"', html)
+        self.assertIn('data-step-anchor-evidence-ids="E01"', html)
+        self.assertIn("Step 2", html)
+        self.assertIn("sufficient_low_marginal_gain", html)
+        self.assertIn("data-chain-play", html)
+        self.assertIn("data-chain-reset", html)
+        self.assertIn("data-process-summary", html)
+
+    def test_renderer_outputs_chain_coverage_heatmap_and_decision_waterfall(self) -> None:
+        html = render_html(_row(), left_trace=_left_trace(), right_trace=_right_trace(), args=_args(), translations={})
+
+        self.assertIn("Coverage Accumulation", html)
+        self.assertIn("data-coverage-heatmap", html)
+        self.assertIn('data-heatmap-atom="A3"', html)
+        self.assertIn('data-heatmap-step="2"', html)
+        self.assertIn('data-heatmap-state="new"', html)
+        self.assertIn("Decision Waterfall", html)
+        self.assertIn("data-decision-waterfall", html)
+        self.assertIn('data-delta-component="pair_utility"', html)
+        self.assertIn('data-delta-direction="positive"', html)
+        self.assertIn('data-delta-component="background_penalty"', html)
+        self.assertIn('data-delta-direction="negative"', html)
+
+    def test_chain_process_script_links_steps_to_graph_nodes(self) -> None:
+        html = render_html(_row(), left_trace=_left_trace(), right_trace=_right_trace(), args=_args(), translations={})
+
+        self.assertIn("activateChainStep", html)
+        self.assertIn("data-current-chain-step", html)
+        self.assertIn("graph-process-active", html)
+        self.assertIn("graph-process-complete", html)
+        self.assertIn("graph-process-dim", html)
+        self.assertIn("graph-step-atom-active", html)
+
     def test_graph_evidence_candidate_nodes_use_adaptive_wrapped_cards(self) -> None:
         row = _row()
         row["candidates"][0]["text"] = "A long evidence candidate sentence " + ("with enough content to require wrapping " * 8)
@@ -354,8 +395,8 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         message = missing_trace_message(DEFAULT_RIGHT_TRACE, role="right")
 
         self.assertIn("Missing right trace file", message)
-        self.assertIn("run_evidence_chain_graph_v0_7.sh", message)
-        self.assertIn("v0_6b_val", message)
+        self.assertIn("run_evidence_chain_graph_v0_7_atom_facts.sh", message)
+        self.assertIn("v0_7_atom_facts_val", message)
         self.assertNotIn("liar_raw_dense", message)
 
 
@@ -369,7 +410,7 @@ def _args() -> Namespace:
         splits="train,val,test",
         output_dir=DEFAULT_OUTPUT_DIR,
         left_label="v0.6c RuleStep",
-        right_label="v0.7 BudgetedMarginal",
+        right_label="v0.7 AtomFacts BudgetedMarginal",
         max_candidates=20,
     )
 

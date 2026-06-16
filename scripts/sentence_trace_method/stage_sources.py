@@ -105,13 +105,20 @@ def iter_candidate_pool(row: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def validate_sentence_candidates(row: dict[str, Any], split: str, line_no: int) -> tuple[int, int]:
+def validate_sentence_candidates(
+    row: dict[str, Any],
+    split: str,
+    line_no: int,
+    *,
+    allow_multi_sentence_candidates: bool = False,
+) -> tuple[int, int, int]:
     checked = 0
     bad = 0
+    multi_sentence = 0
     for candidate in iter_candidate_pool(row):
         indices = candidate.get("chunk_sent_indices")
         checked += 1
-        if not isinstance(indices, list) or len(indices) != 1:
+        if not isinstance(indices, list) or not indices:
             bad += 1
             if bad <= 3:
                 claim_id = row.get("claim_id") or row.get("id") or "<unknown>"
@@ -119,10 +126,21 @@ def validate_sentence_candidates(row: dict[str, Any], split: str, line_no: int) 
                     f"{split}:{line_no} claim={claim_id} has non-sentence candidate "
                     f"chunk_sent_indices={indices!r}"
                 )
+            continue
+        if len(indices) != 1:
+            multi_sentence += 1
+            if not allow_multi_sentence_candidates:
+                bad += 1
+                if bad <= 3:
+                    claim_id = row.get("claim_id") or row.get("id") or "<unknown>"
+                    raise ValueError(
+                        f"{split}:{line_no} claim={claim_id} has non-sentence candidate "
+                        f"chunk_sent_indices={indices!r}"
+                    )
     if checked == 0:
         claim_id = row.get("claim_id") or row.get("id") or "<unknown>"
         raise ValueError(f"{split}:{line_no} claim={claim_id} has no auditable candidate_pool.")
-    return checked, bad
+    return checked, bad, multi_sentence
 
 
 def clean_row(
@@ -166,6 +184,7 @@ def stage_split(
     adaptive_policy: str = CLEAN_ADAPTIVE_POLICY,
     expected_fingerprint: str | None = None,
     forbidden_fingerprints: set[str] | None = None,
+    allow_multi_sentence_candidates: bool = False,
 ) -> dict[str, Any]:
     if target_path.exists() and not force:
         return audit_existing(
@@ -175,6 +194,7 @@ def stage_split(
             selector_name=selector_name,
             expected_fingerprint=expected_fingerprint,
             forbidden_fingerprints=forbidden_fingerprints,
+            allow_multi_sentence_candidates=allow_multi_sentence_candidates,
         )
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -185,6 +205,7 @@ def stage_split(
 
     rows = 0
     checked_candidates = 0
+    multi_sentence_candidates = 0
     fingerprints: set[str] = set()
     with source_path.open("r", encoding="utf-8") as src, target_path.open("w", encoding="utf-8") as dst:
         for line_no, line in enumerate(src, start=1):
@@ -196,8 +217,14 @@ def stage_split(
             fingerprint = row_fingerprint(row)
             if fingerprint:
                 fingerprints.add(fingerprint)
-            checked, _ = validate_sentence_candidates(row, split, line_no)
+            checked, _, multi_sentence = validate_sentence_candidates(
+                row,
+                split,
+                line_no,
+                allow_multi_sentence_candidates=allow_multi_sentence_candidates,
+            )
             checked_candidates += checked
+            multi_sentence_candidates += multi_sentence
             dst.write(
                 json.dumps(
                     clean_row(
@@ -237,7 +264,13 @@ def stage_split(
         "sentence_chunk_audit": {
             "candidate_pool_rows": rows,
             "checked_candidates": checked_candidates,
-            "rule": "every candidate_pool.chunk_sent_indices must contain exactly one sentence index",
+            "multi_sentence_candidates": multi_sentence_candidates,
+            "allow_multi_sentence_candidates": allow_multi_sentence_candidates,
+            "rule": (
+                "candidate_pool.chunk_sent_indices must be non-empty; multi-sentence candidates are allowed"
+                if allow_multi_sentence_candidates
+                else "every candidate_pool.chunk_sent_indices must contain exactly one sentence index"
+            ),
         },
         "source_file_name": source_path.name,
         "source_sha256": source_sha256(source_path),
@@ -256,9 +289,11 @@ def audit_existing(
     selector_name: str = CLEAN_SELECTOR_NAME,
     expected_fingerprint: str | None = None,
     forbidden_fingerprints: set[str] | None = None,
+    allow_multi_sentence_candidates: bool = False,
 ) -> dict[str, Any]:
     rows = 0
     checked_candidates = 0
+    multi_sentence_candidates = 0
     fingerprints: set[str] = set()
     with target_path.open("r", encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, start=1):
@@ -270,8 +305,14 @@ def audit_existing(
             fingerprint = row_fingerprint(row)
             if fingerprint:
                 fingerprints.add(fingerprint)
-            checked, _ = validate_sentence_candidates(row, split, line_no)
+            checked, _, multi_sentence = validate_sentence_candidates(
+                row,
+                split,
+                line_no,
+                allow_multi_sentence_candidates=allow_multi_sentence_candidates,
+            )
             checked_candidates += checked
+            multi_sentence_candidates += multi_sentence
             rows += 1
 
     if rows == 0:
@@ -296,6 +337,8 @@ def audit_existing(
         "sentence_chunk_audit": {
             "candidate_pool_rows": rows,
             "checked_candidates": checked_candidates,
+            "multi_sentence_candidates": multi_sentence_candidates,
+            "allow_multi_sentence_candidates": allow_multi_sentence_candidates,
         },
         "staged_trace": str(target_path),
         "reused_existing_staged_trace": True,
@@ -330,6 +373,14 @@ def main() -> int:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--env-file", default=None)
     parser.add_argument("--print-json", action="store_true")
+    parser.add_argument(
+        "--allow-multi-sentence-candidates",
+        action="store_true",
+        help=(
+            "Allow candidate_pool.chunk_sent_indices with more than one sentence index. "
+            "Malformed or empty indices still fail."
+        ),
+    )
     args = parser.parse_args()
 
     dataset = normalize_dataset(args.dataset)
@@ -353,6 +404,7 @@ def main() -> int:
                 selector_name=str(args.selector_name),
                 expected_fingerprint=args.expected_fingerprint,
                 forbidden_fingerprints=forbidden_fingerprints or None,
+                allow_multi_sentence_candidates=args.allow_multi_sentence_candidates,
             )
             manifests.append(manifest)
             trace_paths[split] = target_path
@@ -371,6 +423,7 @@ def main() -> int:
             adaptive_policy=str(args.adaptive_policy),
             expected_fingerprint=args.expected_fingerprint,
             forbidden_fingerprints=forbidden_fingerprints or None,
+            allow_multi_sentence_candidates=args.allow_multi_sentence_candidates,
         )
         manifests.append(manifest)
         trace_paths[split] = target_path
@@ -382,7 +435,7 @@ def main() -> int:
 
     summary = {
         "dataset": dataset,
-        "source_set": f"{CLEAN_SELECTOR_NAME}{sample_suffix}",
+        "source_set": f"{args.selector_name}{sample_suffix}",
         "output_root": str(staged_root),
         "chunk_mmr_fingerprint": fingerprint,
         "traces": {split: str(path) for split, path in trace_paths.items()},

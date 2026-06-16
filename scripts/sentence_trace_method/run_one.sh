@@ -20,6 +20,7 @@ SAMPLE_LIMIT="${SAMPLE_LIMIT:-0}"
 CASE_SUFFIX="${CASE_SUFFIX:-}"
 DRY_RUN="${DRY_RUN:-false}"
 FORCE_STAGE="${FORCE_STAGE:-false}"
+ALLOW_MULTI_SENTENCE_CANDIDATES="${ALLOW_MULTI_SENTENCE_CANDIDATES:-false}"
 FORCE_BUILD="${FORCE_BUILD:-false}"
 FORCE_TRAIN="${FORCE_TRAIN:-false}"
 FORCE_EVAL="${FORCE_EVAL:-false}"
@@ -164,6 +165,9 @@ stage_sources() {
     --env-file "$SOURCE_ENV")
   if [[ "$FORCE_STAGE" == "true" ]]; then
     cmd+=(--force)
+  fi
+  if [[ "$ALLOW_MULTI_SENTENCE_CANDIDATES" == "true" || "$ALLOW_MULTI_SENTENCE_CANDIDATES" == "1" ]]; then
+    cmd+=(--allow-multi-sentence-candidates)
   fi
   if [[ -n "$SOURCE_ROOT" ]]; then
     cmd+=(--source-root "$SOURCE_ROOT")

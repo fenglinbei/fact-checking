@@ -31,6 +31,7 @@ EVIDENCE_MAP_BASE_ONLY_SELECTOR = "v0_5a_base_only_top5"
 EVIDENCE_MAP_COVERAGE_ONLY_SELECTOR = "v0_5a_coverage_only_top5"
 PROMPT_VERSION = "evidence_map_v0_5a"
 COMPACT_PROMPT_VERSION = "evidence_map_v0_6b"
+ATOM_FACTS_PROMPT_VERSION = "evidence_map_v0_7_atom_facts"
 DEFAULT_MAX_EVIDENCE_CHARS = 700
 
 ALLOWED_RELATIONS = {"support", "refute", "qualify", "mixed", "background", "irrelevant"}
@@ -168,6 +169,13 @@ def build_teacher_messages(
         )
         audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
         return system_prompt, user_prompt
+    if prompt_version == ATOM_FACTS_PROMPT_VERSION:
+        system_prompt, user_prompt = _build_atom_facts_teacher_messages(
+            row,
+            max_evidence_chars=max_evidence_chars,
+        )
+        audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
+        return system_prompt, user_prompt
 
     system_prompt = (
         "You are a careful fact-checking evidence analyst. Build a compact evidence map "
@@ -254,6 +262,62 @@ def _build_compact_teacher_messages(
     return system_prompt, "\n".join(lines)
 
 
+def _build_atom_facts_teacher_messages(
+    row: dict[str, Any],
+    *,
+    max_evidence_chars: int | None,
+) -> tuple[str, str]:
+    system_prompt = (
+        "You are a fact-checking evidence analyst. Use only the claim and the "
+        "provided evidence passages to map evidence to complete proposition atoms. "
+        "Return valid JSON only."
+    )
+    schema = (
+        '{"claim_atoms":[{"atom_id":"A1","text":"...","type":"entity|quantity|date|comparison|cause|outcome|other","importance":1.0}],'
+        '"candidate_alignments":[{"evidence_id":"E01","covered_atom_ids":["A1"],"relation":"support|refute|qualify|mixed|background|irrelevant",'
+        '"directness":"direct|partial|context|none","evidence_role":"primary_support|primary_refute|partial_support|partial_refute|qualifying_context|background_context|duplicate|irrelevant",'
+        '"key_spans":["short quote"],"duplicate_group":"G1","confidence":0.0}]}'
+    )
+    lines = [
+        "Task: read the claim and the evidence passages, then return one JSON object.",
+        "The JSON object must contain exactly two arrays: claim_atoms and candidate_alignments.",
+        "Use this schema and do not add other fields:",
+        schema,
+        "",
+        "Atom policy:",
+        "- Each claim_atoms.text must be a complete proposition: include the subject, predicate, object, and necessary qualifiers.",
+        "- Do not create standalone entity, date, or quantity atoms.",
+        "- Attach dates, quantities, comparison targets, offices, locations, and attribution to the proposition they qualify.",
+        "- Split only when the claim contains multiple separately verifiable propositions.",
+        "- A single-sentence claim making one factual assertion should usually one atom.",
+        "- Preserve the claim's meaning; do not add facts not present in the claim.",
+        "",
+        "Field guide:",
+        "- claim_atoms.atom_id: A1, A2, ... in claim order.",
+        "- claim_atoms.text: one independently verifiable claim proposition.",
+        "- claim_atoms.type: entity, quantity, date, comparison, cause, outcome, or other.",
+        "- claim_atoms.importance: 0.0 to 1.0; higher means more central to checking the claim.",
+        "- candidate_alignments.evidence_id: one of the evidence IDs below.",
+        "- candidate_alignments.covered_atom_ids: complete proposition atoms addressed by the passage.",
+        "- candidate_alignments.relation: support, refute, qualify, mixed, background, or irrelevant.",
+        "- candidate_alignments.directness: direct, partial, context, or none.",
+        "- candidate_alignments.evidence_role: primary_support, primary_refute, partial_support, partial_refute, qualifying_context, background_context, duplicate, or irrelevant.",
+        "- candidate_alignments.key_spans: short substrings copied from the passage.",
+        "- candidate_alignments.duplicate_group: same group ID for near-duplicate passages; use an empty string if none.",
+        "- candidate_alignments.confidence: 0.0 to 1.0 for how certain the alignment is.",
+        "",
+        "Claim:",
+        str(row.get("claim") or "").strip(),
+        "",
+        "Evidence passages:",
+    ]
+    for item in row.get("evidence_items") or []:
+        evidence_id = str(item.get("evidence_id") or "")
+        text = _compact_evidence_text(str(item.get("text") or ""), max_evidence_chars=max_evidence_chars)
+        lines.append(f"{evidence_id}: {text}")
+    return system_prompt, "\n".join(lines)
+
+
 def audit_teacher_prompt(row: dict[str, Any], *, system_prompt: str, user_prompt: str) -> None:
     prompt = f"{system_prompt}\n{user_prompt}"
     lowered = prompt.lower()
@@ -288,6 +352,66 @@ def validate_evidence_map_payload(payload: Any, *, valid_evidence_ids: Iterable[
         valid_atom_ids=atom_ids,
     )
     return {"claim_atoms": atoms, "candidate_alignments": alignments}
+
+
+def atom_quality_diagnostics(atoms: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    issues_by_atom: dict[str, list[str]] = {}
+    fragment_atom_ids: list[str] = []
+    issue_counts: Counter[str] = Counter()
+    for idx, atom in enumerate(atoms, start=1):
+        atom_id = str(atom.get("atom_id") or atom.get("node_id") or f"A{idx}")
+        issues = _atom_fragment_issues(atom)
+        if issues:
+            issues_by_atom[atom_id] = issues
+            fragment_atom_ids.append(atom_id)
+            issue_counts.update(issues)
+    atom_count = len([atom for atom in atoms if isinstance(atom, dict)])
+    return {
+        "atom_count": atom_count,
+        "fragment_atom_count": len(fragment_atom_ids),
+        "fragment_atom_rate": float(len(fragment_atom_ids) / atom_count) if atom_count else 0.0,
+        "fragment_atom_ids": fragment_atom_ids,
+        "issue_counts": dict(sorted(issue_counts.items())),
+        "issues_by_atom": issues_by_atom,
+    }
+
+
+def summarize_atom_quality_rows(rows: Sequence[dict[str, Any]], *, max_examples: int = 20) -> dict[str, Any]:
+    issue_counts: Counter[str] = Counter()
+    total_atoms = 0
+    fragment_atom_count = 0
+    rows_with_fragments = 0
+    examples: list[dict[str, Any]] = []
+    for row in rows:
+        evidence_map = row.get("evidence_map") if isinstance(row.get("evidence_map"), dict) else {}
+        atoms = list((evidence_map or {}).get("claim_atoms") or row.get("claim_atoms") or [])
+        diagnostics = atom_quality_diagnostics(atoms)
+        total_atoms += int(diagnostics.get("atom_count") or 0)
+        row_fragment_count = int(diagnostics.get("fragment_atom_count") or 0)
+        fragment_atom_count += row_fragment_count
+        issue_counts.update(diagnostics.get("issue_counts") or {})
+        if row_fragment_count:
+            rows_with_fragments += 1
+            if len(examples) < int(max_examples):
+                examples.append(
+                    {
+                        "event_id": str(row.get("event_id") or ""),
+                        "fragment_atom_count": row_fragment_count,
+                        "fragment_atom_ids": list(diagnostics.get("fragment_atom_ids") or []),
+                        "issues_by_atom": dict(diagnostics.get("issues_by_atom") or {}),
+                    }
+                )
+    n_rows = len(rows)
+    return {
+        "n_rows": n_rows,
+        "total_atoms": total_atoms,
+        "fragment_atom_count": fragment_atom_count,
+        "fragment_atom_rate": float(fragment_atom_count / total_atoms) if total_atoms else 0.0,
+        "rows_with_fragment_atoms": rows_with_fragments,
+        "row_fragment_rate": float(rows_with_fragments / n_rows) if n_rows else 0.0,
+        "issue_counts": dict(sorted(issue_counts.items())),
+        "examples": examples,
+    }
 
 
 def mock_evidence_map_for_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -1126,6 +1250,108 @@ def _mock_atom_type(text: str) -> str:
     if any(word in lowered for word in ("because", "caused", "due to")):
         return "cause"
     return "other"
+
+
+_ATOM_PREPOSITION_STARTS = {
+    "about",
+    "after",
+    "at",
+    "before",
+    "by",
+    "during",
+    "for",
+    "from",
+    "in",
+    "inside",
+    "into",
+    "of",
+    "on",
+    "over",
+    "than",
+    "to",
+    "under",
+    "with",
+    "within",
+}
+_ATOM_PREDICATE_HINTS = {
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "has",
+    "have",
+    "had",
+    "did",
+    "does",
+    "do",
+    "says",
+    "said",
+    "say",
+    "claim",
+    "claims",
+    "claimed",
+    "miss",
+    "missed",
+    "missing",
+    "increase",
+    "increased",
+    "decrease",
+    "decreased",
+    "raise",
+    "raised",
+    "lower",
+    "lowered",
+    "support",
+    "supported",
+    "oppose",
+    "opposed",
+    "vote",
+    "voted",
+    "spend",
+    "spent",
+    "cost",
+    "costs",
+    "make",
+    "made",
+    "create",
+    "created",
+    "cut",
+    "reduced",
+    "reduce",
+}
+
+
+def _atom_fragment_issues(atom: dict[str, Any]) -> list[str]:
+    text = " ".join(str(atom.get("text") or "").split())
+    lowered = text.lower()
+    tokens = re.findall(r"[a-z0-9']+", lowered)
+    atom_type = str(atom.get("type") or atom.get("atom_type") or "").strip().lower()
+    issues: list[str] = []
+    if len(tokens) < 4:
+        issues.append("too_short")
+    if tokens and tokens[0] in _ATOM_PREPOSITION_STARTS:
+        issues.append("preposition_start")
+    has_predicate = _atom_has_predicate(tokens)
+    if not has_predicate:
+        issues.append("missing_predicate")
+    slot_type = atom_type in {"entity", "date", "quantity", "comparison"}
+    if slot_type and (not has_predicate or len(tokens) <= 4):
+        issues.append("standalone_entity_or_modifier")
+    return issues
+
+
+def _atom_has_predicate(tokens: Sequence[str]) -> bool:
+    token_set = set(tokens)
+    if token_set & _ATOM_PREDICATE_HINTS:
+        return True
+    return any(
+        token.endswith(("ed", "ing"))
+        and token not in {"according", "during", "thing", "something", "anything", "nothing"}
+        for token in tokens
+    )
 
 
 def _content_tokens(text: str) -> list[str]:
