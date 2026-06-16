@@ -66,7 +66,7 @@ from fact_checking.retrieval.text_utils import (
     lexical_overlap_f1_from_counters,
 )
 from fact_checking.utils.logging import init_logger
-from fact_checking.utils.text import robust_sentence_split
+from fact_checking.utils.text import robust_sentence_split, word_tokens
 from sft.data.labels import normalize_gold_label
 from sft.data.types import PreparedSample
 from sft.prompting.stats import (
@@ -211,13 +211,15 @@ def _build_chunk_candidate_rows(
         if not split_sents:
             continue
         embeddings_by_sent_idx = content_embeddings.get(content)
-        if embeddings_by_sent_idx is None:
-            chunk_records = strategy.chunks_from_presplit(split_sents)
-        else:
-            chunk_records = strategy.chunks_from_presplit_with_embeddings(split_sents, embeddings_by_sent_idx)
+        chunk_records = strategy.chunks_from_presplit_with_context(
+            split_sents,
+            claim=pre.claim,
+            claim_embedding=pre.claim_emb,
+            embeddings_by_sent_idx=embeddings_by_sent_idx,
+        )
 
         available = {int(sent.sent_idx): sent for sent in report_sents}
-        for chunk in chunk_records:
+        for chunk_number, chunk in enumerate(chunk_records, start=1):
             anchors = [available[idx] for idx in chunk.sent_indices if idx in available]
             if not anchors:
                 continue
@@ -225,16 +227,23 @@ def _build_chunk_candidate_rows(
             text = str(chunk.text).strip()
             if not text:
                 continue
-            candidates.append(
-                {
-                    "report_id": anchor.report_id,
-                    "sent_idx": anchor.sent_idx,
-                    "chunk_sent_indices": list(chunk.sent_indices),
-                    "text": text,
-                    "source_report": _source_report(anchor),
-                    **_raw_sentence_candidate_metadata(anchor),
-                }
-            )
+            chunk_metadata = dict(getattr(chunk, "metadata", {}) or {})
+            if chunk.sent_indices:
+                chunk_metadata.setdefault("sent_start", int(min(chunk.sent_indices)))
+                chunk_metadata.setdefault("sent_end", int(max(chunk.sent_indices)))
+            chunk_metadata.setdefault("num_sentences", int(len(chunk.sent_indices)))
+            chunk_metadata.setdefault("num_tokens", int(len(word_tokens(text))))
+            chunk_metadata.setdefault("chunk_id", f"{anchor.report_id}_C{chunk_number}")
+            candidate = {
+                "report_id": anchor.report_id,
+                "sent_idx": anchor.sent_idx,
+                "chunk_sent_indices": list(chunk.sent_indices),
+                "text": text,
+                "source_report": _source_report(anchor),
+                **_raw_sentence_candidate_metadata(anchor),
+            }
+            candidate.update(chunk_metadata)
+            candidates.append(candidate)
 
     for sent in no_content_rows:
         text = str(sent.text).strip()

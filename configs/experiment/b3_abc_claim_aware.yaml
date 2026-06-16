@@ -1,0 +1,33 @@
+# @package _global_
+# b3_abc_claim_aware: 在 b0 baseline 基础上，将 evidence unit 切换为
+# ABC-claim-aware-v1。该配置只改变 chunking 策略和 ABC 参数，保留现有
+# chunk embedding、hybrid score、MMR 和 prompt 渲染口径。
+defaults:
+  - b0
+  - _self_
+
+experiment:
+  name: b3_abc_claim_aware
+
+baseline:
+  variant: b3_abc_claim_aware
+  chunking_strategy: abc_claim_aware
+
+build:
+  retrieval:
+    chunking:
+      strategy: abc_claim_aware
+      boundary_mode: local_peak
+      lambda_std: 0.5
+      w_sem: 0.75
+      w_rel: 0.25
+      max_sent_per_chunk: 3
+      max_tokens_per_chunk: 150
+      min_tokens_per_chunk: 20
+      allow_single_sentence_if_relevant: true
+      single_sentence_relevance_threshold: 0.55
+      high_rel_threshold: 0.70
+      coref_boundary_discount: 0.10
+
+swanlab:
+  experiment_name: b3_abc_claim_aware

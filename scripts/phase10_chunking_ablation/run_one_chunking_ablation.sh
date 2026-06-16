@@ -38,8 +38,9 @@ normalize_chunking() {
     raw|report|raw_report|raw-report) printf "%s" "raw" ;;
     semantic|semantic_chunk|semantic-chunk) printf "%s" "semantic" ;;
     sentence|sent) printf "%s" "sentence" ;;
+    abc_claim_aware|abc-claim-aware|abc) printf "%s" "abc_claim_aware" ;;
     *)
-      echo "[chunking-ablation] CHUNKING must be raw, semantic, or sentence, got: ${1:-}" >&2
+      echo "[chunking-ablation] CHUNKING must be raw, semantic, sentence, or abc_claim_aware, got: ${1:-}" >&2
       return 2
       ;;
   esac
@@ -73,6 +74,16 @@ ALPHA_DENSE="${ALPHA_DENSE:-0.70}"
 ALPHA_LEXICAL="${ALPHA_LEXICAL:-0.20}"
 ALPHA_BM25="${ALPHA_BM25:-0.10}"
 SEMANTIC_THETA="${SEMANTIC_THETA:-0.5}"
+ABC_BOUNDARY_MODE="${ABC_BOUNDARY_MODE:-local_peak}"
+ABC_LAMBDA_STD="${ABC_LAMBDA_STD:-0.5}"
+ABC_W_SEM="${ABC_W_SEM:-0.75}"
+ABC_W_REL="${ABC_W_REL:-0.25}"
+ABC_MAX_SENT_PER_CHUNK="${ABC_MAX_SENT_PER_CHUNK:-3}"
+ABC_MAX_TOKENS_PER_CHUNK="${ABC_MAX_TOKENS_PER_CHUNK:-150}"
+ABC_MIN_TOKENS_PER_CHUNK="${ABC_MIN_TOKENS_PER_CHUNK:-20}"
+ABC_SINGLE_SENTENCE_RELEVANCE_THRESHOLD="${ABC_SINGLE_SENTENCE_RELEVANCE_THRESHOLD:-0.55}"
+ABC_HIGH_REL_THRESHOLD="${ABC_HIGH_REL_THRESHOLD:-0.70}"
+ABC_COREF_BOUNDARY_DISCOUNT="${ABC_COREF_BOUNDARY_DISCOUNT:-0.10}"
 
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
@@ -268,7 +279,6 @@ cmd=(
   "build.retrieval.alpha_bm25=${ALPHA_BM25}"
   "build.retrieval.num_gpus=${RETRIEVAL_NUM_GPUS}"
   "build.retrieval.chunking.strategy=${CHUNKING}"
-  "build.retrieval.chunking.theta=${SEMANTIC_THETA}"
   "build.prompt.model_name_or_path=${MODEL_PATH}"
   "build.prompt.auto_length=true"
   "build.prompt.max_length=${MAX_LENGTH}"
@@ -291,6 +301,27 @@ cmd=(
   "tracking.enabled=${TRACKING_ENABLED}"
   "swanlab.experiment_name=${CASE_NAME}"
 )
+
+case "${CHUNKING}" in
+  semantic)
+    cmd+=("build.retrieval.chunking.theta=${SEMANTIC_THETA}")
+    ;;
+  abc_claim_aware)
+    cmd+=(
+      "build.retrieval.chunking.boundary_mode=${ABC_BOUNDARY_MODE}"
+      "build.retrieval.chunking.lambda_std=${ABC_LAMBDA_STD}"
+      "build.retrieval.chunking.w_sem=${ABC_W_SEM}"
+      "build.retrieval.chunking.w_rel=${ABC_W_REL}"
+      "build.retrieval.chunking.max_sent_per_chunk=${ABC_MAX_SENT_PER_CHUNK}"
+      "build.retrieval.chunking.max_tokens_per_chunk=${ABC_MAX_TOKENS_PER_CHUNK}"
+      "build.retrieval.chunking.min_tokens_per_chunk=${ABC_MIN_TOKENS_PER_CHUNK}"
+      "build.retrieval.chunking.allow_single_sentence_if_relevant=true"
+      "build.retrieval.chunking.single_sentence_relevance_threshold=${ABC_SINGLE_SENTENCE_RELEVANCE_THRESHOLD}"
+      "build.retrieval.chunking.high_rel_threshold=${ABC_HIGH_REL_THRESHOLD}"
+      "build.retrieval.chunking.coref_boundary_discount=${ABC_COREF_BOUNDARY_DISCOUNT}"
+    )
+    ;;
+esac
 
 case "${SELECTION_METHOD}" in
   mmr_prompt_budget|prompt_budget_mmr|adaptive_budget_mmr)

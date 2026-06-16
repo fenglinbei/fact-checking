@@ -10,6 +10,7 @@ from fact_checking.build.candidates import (
     ChunkMMRSample,
     PreMMRSample,
     _auto_truncate_evidence,
+    _build_chunk_candidate_rows,
     _chunk_mmr_config_fingerprint,
     _compute_chunk_mmr_batch,
     _premmr_config_fingerprint,
@@ -19,7 +20,7 @@ from fact_checking.build.candidates import (
     _select_candidates_raw_top_evidence,
     _trial_prompt_budget_row,
 )
-from fact_checking.build.prompts import build_target, build_user_content
+from fact_checking.build.prompts import build_target, build_training_row, build_user_content
 from fact_checking.data.io import iter_sentences
 from fact_checking.data.types import SampleRecord
 
@@ -239,6 +240,55 @@ class _PairFirstTwoChunking(ChunkingStrategy):
         ]
 
 
+class _ContextAwareChunking(ChunkingStrategy):
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def chunk(self, content: str, sent_idx: int) -> str:
+        del content, sent_idx
+        return ""
+
+    def chunks_from_presplit(self, sents: list[str]) -> list[ChunkRecord]:
+        del sents
+        return []
+
+    def chunks_from_presplit_with_context(
+        self,
+        sents: list[str],
+        *,
+        claim: str,
+        claim_embedding: np.ndarray | None,
+        embeddings_by_sent_idx: dict[int, np.ndarray] | None,
+    ) -> list[ChunkRecord]:
+        self.calls.append(
+            {
+                "claim": claim,
+                "claim_embedding": None if claim_embedding is None else claim_embedding.copy(),
+                "embedding_keys": sorted((embeddings_by_sent_idx or {}).keys()),
+            }
+        )
+        return [
+            ChunkRecord(
+                text=" ".join(sents[:2]),
+                sent_indices=(0, 1),
+                metadata={
+                    "chunking_method": "ABC-claim-aware-v1",
+                    "chunk_id": "R1_C1",
+                    "sent_start": 0,
+                    "sent_end": 1,
+                    "num_sentences": 2,
+                    "num_tokens": 4,
+                    "claim_relevance": 0.75,
+                    "anchor_sent_idx": 1,
+                    "anchor_text": sents[1],
+                    "anchor_claim_relevance": 0.9,
+                    "boundary_left_score": None,
+                    "boundary_right_score": 0.4,
+                },
+            )
+        ]
+
+
 class _ChunkEmbedder:
     def __init__(self) -> None:
         self.calls: list[tuple[tuple[str, ...], bool]] = []
@@ -292,6 +342,75 @@ def test_mmr_selects_over_reembedded_chunks_not_pre_chunk_sentences() -> None:
 
     assert embedder.calls == [(("Alpha. Beta.", "Gamma."), False)]
     assert [candidate["text"] for candidate in row["candidates"]] == ["Alpha. Beta.", "Gamma."]
+
+
+def test_build_chunk_candidate_rows_passes_claim_context_and_preserves_chunk_metadata() -> None:
+    content = "Alpha. Beta."
+    pre = PreMMRSample(
+        event_id="e1",
+        claim="alpha claim",
+        label="true",
+        explain="",
+        sentences=[
+            {"event_id": "e1", "report_id": "r1", "sent_idx": 0, "text": "Alpha.", "raw": {"content": content}},
+            {"event_id": "e1", "report_id": "r1", "sent_idx": 1, "text": "Beta.", "raw": {"content": content}},
+        ],
+        sent_emb=np.array(
+            [
+                [1.0, 0.0],
+                [0.0, 1.0],
+            ],
+            dtype=np.float32,
+        ),
+        claim_emb=np.array([0.5, 0.5], dtype=np.float32),
+    )
+    strategy = _ContextAwareChunking()
+
+    rows = _build_chunk_candidate_rows(pre, strategy, reuse_chunk_embeddings=True)
+
+    assert len(strategy.calls) == 1
+    assert strategy.calls[0]["claim"] == "alpha claim"
+    np.testing.assert_allclose(strategy.calls[0]["claim_embedding"], np.array([0.5, 0.5], dtype=np.float32))
+    assert strategy.calls[0]["embedding_keys"] == [0, 1]
+    assert rows[0]["chunk_sent_indices"] == [0, 1]
+    assert rows[0]["chunking_method"] == "ABC-claim-aware-v1"
+    assert rows[0]["anchor_sent_idx"] == 1
+    assert rows[0]["anchor_text"] == "Beta."
+    assert rows[0]["boundary_right_score"] == 0.4
+
+
+def test_build_training_row_preserves_anchor_metadata_without_rendering_anchor_format() -> None:
+    row = {
+        "event_id": "e1",
+        "claim": "Claim text",
+        "label": "true",
+        "label_schema": "liar6",
+        "explain": "",
+        "candidates": [
+            {
+                "text": "Visible chunk.",
+                "anchor_text": "Hidden anchor.",
+                "anchor_sent_idx": 3,
+                "chunking_method": "ABC-claim-aware-v1",
+            }
+        ],
+    }
+
+    training_row = build_training_row(
+        row,
+        _FakeTokenizer(),
+        {
+            "auto_length": False,
+            "max_length": 128,
+            "output_mode": "label_only",
+            "label_format": "letter",
+            "label_schema": "liar6",
+        },
+    )
+
+    assert training_row["candidates"][0]["anchor_text"] == "Hidden anchor."
+    assert "Visible chunk." in training_row["prompt"]
+    assert "Hidden anchor." not in training_row["prompt"]
 
 
 def test_raw_top_evidence_hybrid_uses_only_positive_labels_without_padding() -> None:
