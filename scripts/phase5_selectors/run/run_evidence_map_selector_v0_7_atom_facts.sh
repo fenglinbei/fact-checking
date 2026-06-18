@@ -7,6 +7,13 @@ QD_UNION_POOL_FILE="${QD_UNION_POOL_FILE:-outputs/selectors/question_decomp_retr
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/selectors/evidence_map_selector/v0_7_atom_facts_${SPLIT}}"
 CANDIDATE_TOP_N="${CANDIDATE_TOP_N:-20}"
 TOP_K="${TOP_K:-5}"
+SELECTOR_BASE_WEIGHT="${SELECTOR_BASE_WEIGHT:-}"
+SELECTOR_ATOM_COVERAGE_WEIGHT="${SELECTOR_ATOM_COVERAGE_WEIGHT:-}"
+SELECTOR_DIRECTNESS_WEIGHT="${SELECTOR_DIRECTNESS_WEIGHT:-}"
+SELECTOR_POLAR_RELATION_WEIGHT="${SELECTOR_POLAR_RELATION_WEIGHT:-}"
+SELECTOR_DUPLICATE_PENALTY="${SELECTOR_DUPLICATE_PENALTY:-}"
+SELECTOR_SOURCE_PENALTY="${SELECTOR_SOURCE_PENALTY:-}"
+SELECTOR_BACKGROUND_PENALTY="${SELECTOR_BACKGROUND_PENALTY:-}"
 RUN_TEACHER="${RUN_TEACHER:-false}"
 MOCK_EVIDENCE_MAPS="${MOCK_EVIDENCE_MAPS:-false}"
 TEACHER_BASE_URL="${TEACHER_BASE_URL:-https://api.deepseek.com}"
@@ -49,6 +56,29 @@ if [[ -n "${SAMPLE_LIMIT}" ]]; then
   SAMPLE_ARGS=(--sample-limit "${SAMPLE_LIMIT}")
 fi
 
+SELECTOR_ARGS=()
+if [[ -n "${SELECTOR_BASE_WEIGHT}" ]]; then
+  SELECTOR_ARGS+=(--selector-base-weight "${SELECTOR_BASE_WEIGHT}")
+fi
+if [[ -n "${SELECTOR_ATOM_COVERAGE_WEIGHT}" ]]; then
+  SELECTOR_ARGS+=(--selector-atom-coverage-weight "${SELECTOR_ATOM_COVERAGE_WEIGHT}")
+fi
+if [[ -n "${SELECTOR_DIRECTNESS_WEIGHT}" ]]; then
+  SELECTOR_ARGS+=(--selector-directness-weight "${SELECTOR_DIRECTNESS_WEIGHT}")
+fi
+if [[ -n "${SELECTOR_POLAR_RELATION_WEIGHT}" ]]; then
+  SELECTOR_ARGS+=(--selector-polar-relation-weight "${SELECTOR_POLAR_RELATION_WEIGHT}")
+fi
+if [[ -n "${SELECTOR_DUPLICATE_PENALTY}" ]]; then
+  SELECTOR_ARGS+=(--selector-duplicate-penalty "${SELECTOR_DUPLICATE_PENALTY}")
+fi
+if [[ -n "${SELECTOR_SOURCE_PENALTY}" ]]; then
+  SELECTOR_ARGS+=(--selector-source-penalty "${SELECTOR_SOURCE_PENALTY}")
+fi
+if [[ -n "${SELECTOR_BACKGROUND_PENALTY}" ]]; then
+  SELECTOR_ARGS+=(--selector-background-penalty "${SELECTOR_BACKGROUND_PENALTY}")
+fi
+
 ORACLE_ARGS=()
 if [[ -n "${ORACLE_RESULTS}" ]]; then
   ORACLE_ARGS=(--oracle-results "${ORACLE_RESULTS}")
@@ -77,6 +107,7 @@ echo "[evidence-map-v0.7-atom-facts] output      : ${OUTPUT_DIR}"
 echo "[evidence-map-v0.7-atom-facts] top_n/top_k : ${CANDIDATE_TOP_N}/${TOP_K}"
 echo "[evidence-map-v0.7-atom-facts] prompt      : ${PROMPT_VERSION}"
 echo "[evidence-map-v0.7-atom-facts] max chars   : ${MAX_EVIDENCE_CHARS}"
+echo "[evidence-map-v0.7-atom-facts] selector    : directness=${SELECTOR_DIRECTNESS_WEIGHT:-default} background=${SELECTOR_BACKGROUND_PENALTY:-default}"
 echo "[evidence-map-v0.7-atom-facts] run teacher : ${RUN_TEACHER}"
 echo "[evidence-map-v0.7-atom-facts] model       : ${TEACHER_MODEL}"
 echo "[evidence-map-v0.7-atom-facts] concurrency : ${CONCURRENCY}"
@@ -139,6 +170,7 @@ PYTHONPATH=src "$PYTHON_BIN" scripts/phase5_selectors/eval/eval_evidence_map_sel
   --split "${SPLIT}" \
   --top-k "${TOP_K}" \
   --case-ids "${CASE_IDS}" \
+  "${SELECTOR_ARGS[@]}" \
   "${SAMPLE_ARGS[@]}"
 
 if [[ "${BUILD_VERIFIER_DATA}" == "true" ]]; then

@@ -5,7 +5,7 @@ import json
 import math
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Sequence
 
 import numpy as np
@@ -32,6 +32,7 @@ EVIDENCE_MAP_COVERAGE_ONLY_SELECTOR = "v0_5a_coverage_only_top5"
 PROMPT_VERSION = "evidence_map_v0_5a"
 COMPACT_PROMPT_VERSION = "evidence_map_v0_6b"
 ATOM_FACTS_PROMPT_VERSION = "evidence_map_v0_7_atom_facts"
+ATOM_FACTS_ABC_PROMPT_VERSION = "evidence_map_v0_7_atom_facts_abc"
 DEFAULT_MAX_EVIDENCE_CHARS = 700
 
 ALLOWED_RELATIONS = {"support", "refute", "qualify", "mixed", "background", "irrelevant"}
@@ -169,7 +170,7 @@ def build_teacher_messages(
         )
         audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
         return system_prompt, user_prompt
-    if prompt_version == ATOM_FACTS_PROMPT_VERSION:
+    if prompt_version in {ATOM_FACTS_PROMPT_VERSION, ATOM_FACTS_ABC_PROMPT_VERSION}:
         system_prompt, user_prompt = _build_atom_facts_teacher_messages(
             row,
             max_evidence_chars=max_evidence_chars,
@@ -705,12 +706,17 @@ def build_evidence_map_trace(
     return trace
 
 
-def build_all_evidence_map_traces(rows: Sequence[dict[str, Any]], *, top_k: int) -> list[dict[str, Any]]:
+def build_all_evidence_map_traces(
+    rows: Sequence[dict[str, Any]],
+    *,
+    top_k: int,
+    params: EvidenceMapParams | None = None,
+) -> list[dict[str, Any]]:
     traces: list[dict[str, Any]] = []
     for row in rows:
         candidates = list(row.get("candidates") or [])
-        params = EvidenceMapParams(top_k=top_k)
-        selected, slots = select_evidence_map_topk(candidates, params=params, selector_name=EVIDENCE_MAP_SELECTOR)
+        primary_params = replace(params, top_k=top_k) if params is not None else EvidenceMapParams(top_k=top_k)
+        selected, slots = select_evidence_map_topk(candidates, params=primary_params, selector_name=EVIDENCE_MAP_SELECTOR)
         traces.append(build_evidence_map_trace(row, selected, selector_name=EVIDENCE_MAP_SELECTOR, top_k=top_k, slot_trace=slots))
         base_selected = select_by_score(candidates, score_field="evidence_map_base_score", top_k=top_k, selector_name=EVIDENCE_MAP_BASE_ONLY_SELECTOR)
         traces.append(build_evidence_map_trace(row, base_selected, selector_name=EVIDENCE_MAP_BASE_ONLY_SELECTOR, top_k=top_k))

@@ -479,6 +479,7 @@ class AdjacentBoundaryClaimAwareChunking(_SemanticBase):
         single_sentence_relevance_threshold: float = 0.55,
         high_rel_threshold: float = 0.70,
         coref_boundary_discount: float = 0.10,
+        chunking_method: str = "ABC-claim-aware-v1",
     ) -> None:
         super().__init__(theta=0.0, embedder_cfg=embedder_cfg)
         self.boundary_mode = str(boundary_mode or "local_peak").strip().lower()
@@ -493,6 +494,7 @@ class AdjacentBoundaryClaimAwareChunking(_SemanticBase):
         self.single_sentence_relevance_threshold = float(single_sentence_relevance_threshold)
         self.high_rel_threshold = float(high_rel_threshold)
         self.coref_boundary_discount = max(0.0, float(coref_boundary_discount))
+        self.chunking_method = str(chunking_method or "ABC-claim-aware-v1")
 
     def chunk(self, content: str, sent_idx: int) -> str:
         sents = robust_sentence_split(content)
@@ -770,7 +772,7 @@ class AdjacentBoundaryClaimAwareChunking(_SemanticBase):
         anchor_idx = start + anchor_offset
         token_count = _span_token_count(sents, start, end)
         metadata: dict[str, Any] = {
-            "chunking_method": "ABC-claim-aware-v1",
+            "chunking_method": self.chunking_method,
             "sent_start": int(start),
             "sent_end": int(end),
             "num_sentences": int(end - start + 1),
@@ -789,6 +791,24 @@ class AdjacentBoundaryClaimAwareChunking(_SemanticBase):
             sent_indices=indices,
             metadata=metadata,
         )
+
+
+class AdjacentBoundaryRawfcTightChunking(AdjacentBoundaryClaimAwareChunking):
+    """RAWFC-specific tighter ABC preset without changing the base ABC strategy."""
+
+    def __init__(self, embedder_cfg: EmbedderConfig, **kwargs: Any) -> None:
+        kwargs.setdefault("lambda_std", 0.35)
+        kwargs.setdefault("w_sem", 0.65)
+        kwargs.setdefault("w_rel", 0.35)
+        kwargs.setdefault("max_sent_per_chunk", 2)
+        kwargs.setdefault("max_tokens_per_chunk", 150)
+        kwargs.setdefault("min_tokens_per_chunk", 20)
+        kwargs.setdefault("allow_single_sentence_if_relevant", True)
+        kwargs.setdefault("single_sentence_relevance_threshold", 0.55)
+        kwargs.setdefault("high_rel_threshold", 0.70)
+        kwargs.setdefault("coref_boundary_discount", 0.10)
+        kwargs.setdefault("chunking_method", "ABC-claim-aware-rawfc-tight-v1")
+        super().__init__(embedder_cfg, **kwargs)
 
 
 def _build_semantic_embedder_cfg(
@@ -849,5 +869,23 @@ def build_chunking_strategy(
             single_sentence_relevance_threshold=float(cfg.get("single_sentence_relevance_threshold", 0.55)),
             high_rel_threshold=float(cfg.get("high_rel_threshold", 0.70)),
             coref_boundary_discount=float(cfg.get("coref_boundary_discount", 0.10)),
+        )
+    if strategy == "abc_claim_aware_rawfc_tight":
+        embedder_cfg = _build_semantic_embedder_cfg(cfg, retrieval_cfg)
+        return AdjacentBoundaryRawfcTightChunking(
+            embedder_cfg=embedder_cfg,
+            boundary_mode=str(cfg.get("boundary_mode", "local_peak")),
+            boundary_threshold=float(cfg.get("boundary_threshold", 0.55)),
+            lambda_std=float(cfg.get("lambda_std", 0.35)),
+            w_sem=float(cfg.get("w_sem", 0.65)),
+            w_rel=float(cfg.get("w_rel", 0.35)),
+            max_sent_per_chunk=int(cfg.get("max_sent_per_chunk", 2)),
+            max_tokens_per_chunk=int(cfg.get("max_tokens_per_chunk", 150)),
+            min_tokens_per_chunk=int(cfg.get("min_tokens_per_chunk", 20)),
+            allow_single_sentence_if_relevant=bool(cfg.get("allow_single_sentence_if_relevant", True)),
+            single_sentence_relevance_threshold=float(cfg.get("single_sentence_relevance_threshold", 0.55)),
+            high_rel_threshold=float(cfg.get("high_rel_threshold", 0.70)),
+            coref_boundary_discount=float(cfg.get("coref_boundary_discount", 0.10)),
+            chunking_method=str(cfg.get("chunking_method", "ABC-claim-aware-rawfc-tight-v1")),
         )
     raise ValueError(f"Unknown chunking strategy: {strategy!r}")

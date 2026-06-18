@@ -1,0 +1,17 @@
+# @package _global_
+# LIAR-RAW ABC claim-aware evidence units for v0_7_atom_facts_abc
+# evidence-map construction. This keeps the b3_abc_claim_aware chunking
+# parameters unchanged and only gives the LIAR-RAW lineage a clear name.
+
+defaults:
+  - b3_abc_claim_aware
+  - _self_
+
+experiment:
+  name: v0_7_liar_raw_atom_facts_abc_chunking
+
+baseline:
+  variant: v0_7_atom_facts_abc
+
+swanlab:
+  experiment_name: v0_7_liar_raw_atom_facts_abc

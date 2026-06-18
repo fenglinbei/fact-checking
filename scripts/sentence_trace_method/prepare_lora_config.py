@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-steps", type=int, default=None)
     parser.add_argument("--save-steps", type=int, default=None)
     parser.add_argument("--early-stopping-patience", type=int, default=None)
+    parser.add_argument("--early-stopping-metric", default=None)
     parser.add_argument("--logit-adjust-enabled", choices=["true", "false"], default=None)
     parser.add_argument("--logit-adjust-tau", type=float, default=None)
     parser.add_argument("--coverage-label-token-enabled", choices=["true", "false"], default=None)
@@ -63,6 +64,7 @@ def main() -> int:
             eval_steps=args.eval_steps,
             save_steps=args.save_steps,
             early_stopping_patience=args.early_stopping_patience,
+            early_stopping_metric=args.early_stopping_metric,
             logit_adjust_enabled=logit_adjust_enabled,
             logit_adjust_tau=args.logit_adjust_tau,
             coverage_label_token_enabled=coverage_label_token_enabled,
@@ -111,6 +113,7 @@ def main() -> int:
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,
         early_stopping_patience=args.early_stopping_patience,
+        early_stopping_metric=args.early_stopping_metric,
         logit_adjust_enabled=logit_adjust_enabled,
         logit_adjust_tau=args.logit_adjust_tau,
         coverage_label_token_enabled=coverage_label_token_enabled,
@@ -179,6 +182,7 @@ def _apply_sft_overrides(
     eval_steps: int | None,
     save_steps: int | None,
     early_stopping_patience: int | None,
+    early_stopping_metric: str | None,
     logit_adjust_enabled: bool | None,
     logit_adjust_tau: float | None,
     coverage_label_token_enabled: bool | None,
@@ -222,6 +226,15 @@ def _apply_sft_overrides(
         label_token_ce["class_weights"] = existing_weights
         sft_train["label_token_ce"] = label_token_ce
 
+    if early_stopping_metric is not None:
+        metric = str(early_stopping_metric).strip()
+        if metric:
+            label_token_ce = dict(sft_train.get("label_token_ce") or {})
+            if label_token_ce.get("early_stopping_metric") != metric:
+                label_token_ce["early_stopping_metric"] = metric
+                changed = True
+            sft_train["label_token_ce"] = label_token_ce
+
     if (
         coverage_label_token_enabled is not None
         or coverage_label_token_loss_weight is not None
@@ -260,6 +273,7 @@ def _sync_existing_config(
     eval_steps: int | None,
     save_steps: int | None,
     early_stopping_patience: int | None,
+    early_stopping_metric: str | None,
     logit_adjust_enabled: bool | None,
     logit_adjust_tau: float | None,
     coverage_label_token_enabled: bool | None,
@@ -289,10 +303,11 @@ def _sync_existing_config(
             gradient_accumulation_steps=gradient_accumulation_steps,
             learning_rate=learning_rate,
             num_train_epochs=num_train_epochs,
-            eval_steps=eval_steps,
-            save_steps=save_steps,
-            early_stopping_patience=early_stopping_patience,
-            logit_adjust_enabled=logit_adjust_enabled,
+        eval_steps=eval_steps,
+        save_steps=save_steps,
+        early_stopping_patience=early_stopping_patience,
+        early_stopping_metric=early_stopping_metric,
+        logit_adjust_enabled=logit_adjust_enabled,
             logit_adjust_tau=logit_adjust_tau,
             coverage_label_token_enabled=coverage_label_token_enabled,
             coverage_label_token_loss_weight=coverage_label_token_loss_weight,

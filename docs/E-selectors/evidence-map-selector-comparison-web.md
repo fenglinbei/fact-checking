@@ -7,7 +7,7 @@
 - 外部 URL：`https://fc.fenglin.pro/evidence-map/?token=<EVIDENCE_MAP_TOKEN>`
 - 便捷入口：`https://fc.fenglin.pro/` 会由 Nginx `302` 到 `/evidence-map/`
 - 数据机器 app：`127.0.0.1:8765`，`BASE_PATH=/evidence-map`
-- 当前数据源：candidate features 读取 `v0_7_atom_facts_val`，左侧 trace/graph 读取 `v0_6c_adaptive5_10_val`，右侧 trace/graph 读取 `v0_7_atom_facts_budgeted_marginal_adaptive5_10_val`
+- 当前数据源：页面 source 下拉默认 `RAWFC` + `val`；`RAWFC` 读取 `rawfc_v0_7_atom_facts_abc_val`、左侧 `rawfc_v0_7_atom_facts_abc_budgeted_marginal_adaptive5_10_val`、右侧 `rawfc_v0_7_atom_facts_budgeted_marginal_adaptive5_10_val`；可切到 `LIAR-RAW`，读取 `v0_7_atom_facts_val`、左侧 `v0_7_budgeted_marginal_adaptive5_10_val`、右侧 `v0_7_atom_facts_budgeted_marginal_adaptive5_10_val`
 - 公网服务器 tunnel 入口：`165.22.48.237` 上的 `127.0.0.1:18765`
 - 公网服务器 Nginx 配置：`/etc/nginx/conf.d/fc-fenglin.conf`
 - 证书：`/etc/letsencrypt/live/fc.fenglin.pro/fullchain.pem`

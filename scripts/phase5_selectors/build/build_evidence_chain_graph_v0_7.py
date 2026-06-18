@@ -19,6 +19,7 @@ from fact_checking.selectors.evidence_chain_graph import (
     DEFAULT_BUDGETED_TARGET_COVERAGE,
     DEFAULT_CHUNK_MMR_FINGERPRINT,
     BudgetedMarginalChainParams,
+    BudgetedMarginalObjectiveWeights,
     build_budgeted_marginal_chain_graph_row,
     budgeted_marginal_chain_selector_name,
     render_budgeted_marginal_case_studies,
@@ -44,6 +45,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-coverage", type=float, default=DEFAULT_BUDGETED_TARGET_COVERAGE)
     parser.add_argument("--stop-gain-threshold", type=float, default=DEFAULT_BUDGETED_STOP_GAIN_THRESHOLD)
     parser.add_argument("--insufficient-gain-threshold", type=float, default=DEFAULT_BUDGETED_INSUFFICIENT_GAIN_THRESHOLD)
+    parser.add_argument("--objective-coverage", type=float, default=BudgetedMarginalObjectiveWeights.coverage)
+    parser.add_argument("--objective-map-quality", type=float, default=BudgetedMarginalObjectiveWeights.map_quality)
+    parser.add_argument("--objective-base-score", type=float, default=BudgetedMarginalObjectiveWeights.base_score)
+    parser.add_argument("--objective-key-span", type=float, default=BudgetedMarginalObjectiveWeights.key_span)
+    parser.add_argument("--objective-complements", type=float, default=BudgetedMarginalObjectiveWeights.complements)
+    parser.add_argument("--objective-corroborates", type=float, default=BudgetedMarginalObjectiveWeights.corroborates)
+    parser.add_argument("--objective-conditional-tension", type=float, default=BudgetedMarginalObjectiveWeights.conditional_tension)
+    parser.add_argument("--objective-bridge-context", type=float, default=BudgetedMarginalObjectiveWeights.bridge_context)
+    parser.add_argument("--objective-duplicate-repeat", type=float, default=BudgetedMarginalObjectiveWeights.duplicate_repeat)
+    parser.add_argument("--objective-background-or-irrelevant", type=float, default=BudgetedMarginalObjectiveWeights.background_or_irrelevant)
+    parser.add_argument("--objective-same-source-excess-after-two", type=float, default=BudgetedMarginalObjectiveWeights.same_source_excess_after_two)
+    parser.add_argument("--objective-length", type=float, default=BudgetedMarginalObjectiveWeights.length)
     return parser.parse_args()
 
 
@@ -55,19 +68,11 @@ def main() -> None:
     rows = read_jsonl(input_path)
     if int(args.sample_limit) > 0:
         rows = rows[: int(args.sample_limit)]
-    params = BudgetedMarginalChainParams(
-        candidate_top_n=int(args.candidate_top_n),
-        min_top_k=int(args.min_top_k),
-        max_top_k=int(args.max_top_k),
-        chunk_mmr_fingerprint=str(args.chunk_mmr_fingerprint or ""),
-        target_coverage=float(args.target_coverage),
-        stop_gain_threshold=float(args.stop_gain_threshold),
-        insufficient_gain_threshold=float(args.insufficient_gain_threshold),
-    )
+    params = _budgeted_params_from_args(args)
     graph_rows = [build_budgeted_marginal_chain_graph_row(row, params=params) for row in rows]
     traces = [row.get("selection_trace") or {} for row in graph_rows]
     diagnostics = summarize_budgeted_marginal_chain_graph_rows(graph_rows)
-    manifest = _manifest(args=args, input_path=input_path, rows=rows, graph_rows=graph_rows)
+    manifest = _manifest(args=args, input_path=input_path, rows=rows, graph_rows=graph_rows, params=params)
 
     write_jsonl(graph_rows, output_dir / f"chain_graph_{args.split}.jsonl")
     write_jsonl(traces, output_dir / f"selection_trace_{args.split}.jsonl")
@@ -80,7 +85,14 @@ def main() -> None:
     print(f"Diagnostics: {output_dir / 'graph_diagnostics.json'}")
 
 
-def _manifest(*, args: argparse.Namespace, input_path: Path, rows: list[dict[str, Any]], graph_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _manifest(
+    *,
+    args: argparse.Namespace,
+    input_path: Path,
+    rows: list[dict[str, Any]],
+    graph_rows: list[dict[str, Any]],
+    params: BudgetedMarginalChainParams,
+) -> dict[str, Any]:
     return {
         "graph_version": BUDGETED_MARGINAL_GRAPH_VERSION,
         "selector_name": budgeted_marginal_chain_selector_name(int(args.min_top_k), int(args.max_top_k)),
@@ -97,10 +109,38 @@ def _manifest(*, args: argparse.Namespace, input_path: Path, rows: list[dict[str
             "target_coverage": float(args.target_coverage),
             "stop_gain_threshold": float(args.stop_gain_threshold),
             "insufficient_gain_threshold": float(args.insufficient_gain_threshold),
+            "objective_weights": params.objective_weights.__dict__,
         },
         "n_input_rows": len(rows),
         "n_graph_rows": len(graph_rows),
     }
+
+
+def _budgeted_params_from_args(args: argparse.Namespace) -> BudgetedMarginalChainParams:
+    objective_weights = BudgetedMarginalObjectiveWeights(
+        coverage=float(args.objective_coverage),
+        map_quality=float(args.objective_map_quality),
+        base_score=float(args.objective_base_score),
+        key_span=float(args.objective_key_span),
+        complements=float(args.objective_complements),
+        corroborates=float(args.objective_corroborates),
+        conditional_tension=float(args.objective_conditional_tension),
+        bridge_context=float(args.objective_bridge_context),
+        duplicate_repeat=float(args.objective_duplicate_repeat),
+        background_or_irrelevant=float(args.objective_background_or_irrelevant),
+        same_source_excess_after_two=float(args.objective_same_source_excess_after_two),
+        length=float(args.objective_length),
+    )
+    return BudgetedMarginalChainParams(
+        candidate_top_n=int(args.candidate_top_n),
+        min_top_k=int(args.min_top_k),
+        max_top_k=int(args.max_top_k),
+        chunk_mmr_fingerprint=str(args.chunk_mmr_fingerprint or ""),
+        target_coverage=float(args.target_coverage),
+        stop_gain_threshold=float(args.stop_gain_threshold),
+        insufficient_gain_threshold=float(args.insufficient_gain_threshold),
+        objective_weights=objective_weights,
+    )
 
 
 if __name__ == "__main__":

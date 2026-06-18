@@ -19,6 +19,7 @@ from typing import Any
 from tqdm.auto import tqdm
 
 from fact_checking.selectors.evidence_map_selector import (
+    ATOM_FACTS_ABC_PROMPT_VERSION,
     COMPACT_PROMPT_VERSION,
     DEFAULT_MAX_EVIDENCE_CHARS,
     PROMPT_VERSION,
@@ -167,7 +168,11 @@ def _build_jobs(rows: list[dict[str, Any]], *, model: str, prompt_version: str) 
             event_id=event_id,
             prompt_version=prompt_version,
             model=model,
-            evidence_fingerprint=evidence_items_fingerprint(row.get("evidence_items") or []) if prompt_version == COMPACT_PROMPT_VERSION else "",
+            evidence_fingerprint=(
+                evidence_items_fingerprint(row.get("evidence_items") or [])
+                if prompt_version in {COMPACT_PROMPT_VERSION, ATOM_FACTS_ABC_PROMPT_VERSION}
+                else ""
+            ),
         )
         if key in seen:
             continue

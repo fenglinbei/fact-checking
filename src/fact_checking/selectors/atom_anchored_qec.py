@@ -8,8 +8,16 @@ from typing import Any
 
 GRAPH_VERSION = "atom_anchored_qec_v1"
 ADAPTIVE_POLICY = "aa_qec_view"
+CONSTRAINED_ADAPTIVE_POLICY = "aa_qec_constrained_atom_facts_abc"
 DEFAULT_SOURCE_SELECTOR_NAME = "v0_7_budgeted_marginal_chain_adaptive5_10"
 FALLBACK_CUE = "Verify the main factual claim."
+STAGE1_SELECTION_POLICIES = {"keep_all_reorder", "primary_secondary_order", "shuffled"}
+CONSTRAINED_SELECTION_POLICIES = {
+    "primary_only",
+    "primary_secondary",
+    "primary_secondary_fallback_min5",
+    "primary_fallback_min5_no_secondary",
+}
 
 
 @dataclass(frozen=True)
@@ -28,7 +36,7 @@ class AtomAnchoredQECParams:
 
 def atom_anchored_qec_selector_name(params: AtomAnchoredQECParams) -> str:
     if params.candidate_scope != "selected":
-        raise ValueError(f"Stage 1 only supports candidate_scope=selected, got {params.candidate_scope!r}")
+        raise ValueError(f"AA-QEC only supports candidate_scope=selected, got {params.candidate_scope!r}")
     policy = str(params.selection_policy)
     if policy == "keep_all_reorder":
         policy_slug = "keep_all"
@@ -37,11 +45,20 @@ def atom_anchored_qec_selector_name(params: AtomAnchoredQECParams) -> str:
     elif policy == "shuffled":
         policy_slug = "shuffled"
     else:
-        raise ValueError(f"unsupported AA-QEC Stage 1 selection_policy={policy!r}")
+        return _constrained_atom_facts_abc_selector_name(params)
     return (
         f"aa_qec_view_{policy_slug}_{params.cue_policy}_"
         f"{params.candidate_scope}_min{int(params.min_chain_steps)}_{int(params.max_chain_steps)}"
     )
+
+
+def atom_anchored_qec_adaptive_policy(params: AtomAnchoredQECParams) -> str:
+    policy = str(params.selection_policy)
+    if policy in STAGE1_SELECTION_POLICIES:
+        return ADAPTIVE_POLICY
+    if policy in CONSTRAINED_SELECTION_POLICIES:
+        return CONSTRAINED_ADAPTIVE_POLICY
+    raise ValueError(f"unsupported AA-QEC selection_policy={policy!r}")
 
 
 def build_atom_anchored_qec_trace_row(
@@ -51,7 +68,7 @@ def build_atom_anchored_qec_trace_row(
 ) -> dict[str, Any]:
     params = params or AtomAnchoredQECParams()
     if params.candidate_scope != "selected":
-        raise ValueError("AA-QEC Stage 1 only supports candidate_scope=selected.")
+        raise ValueError("AA-QEC only supports candidate_scope=selected.")
 
     candidate_pool = [dict(candidate) for candidate in row.get("candidate_pool") or []]
     if not candidate_pool:
@@ -64,21 +81,30 @@ def build_atom_anchored_qec_trace_row(
     claim_atoms = _claim_atoms(row)
     atom_by_id = {_atom_id(atom): atom for atom in claim_atoms if _atom_id(atom)}
     atom_order = {_atom_id(atom): idx for idx, atom in enumerate(claim_atoms) if _atom_id(atom)}
-    role_by_idx, anchor_atom_by_idx = _assign_stage1_roles(
-        selected_indices,
-        candidate_pool=candidate_pool,
-        atom_order=atom_order,
-    )
-    ordered_indices = _stage1_order(
-        selected_indices,
-        candidate_pool=candidate_pool,
-        role_by_idx=role_by_idx,
-        anchor_atom_by_idx=anchor_atom_by_idx,
-        atom_order=atom_order,
-        params=params,
-    )
+    if str(params.selection_policy) in CONSTRAINED_SELECTION_POLICIES:
+        ordered_indices, role_by_idx, anchor_atom_by_idx = _stage2_order_and_roles(
+            selected_indices,
+            candidate_pool=candidate_pool,
+            atom_order=atom_order,
+            params=params,
+        )
+    else:
+        role_by_idx, anchor_atom_by_idx = _assign_stage1_roles(
+            selected_indices,
+            candidate_pool=candidate_pool,
+            atom_order=atom_order,
+        )
+        ordered_indices = _stage1_order(
+            selected_indices,
+            candidate_pool=candidate_pool,
+            role_by_idx=role_by_idx,
+            anchor_atom_by_idx=anchor_atom_by_idx,
+            atom_order=atom_order,
+            params=params,
+        )
 
     selector_name = atom_anchored_qec_selector_name(params)
+    adaptive_policy = atom_anchored_qec_adaptive_policy(params)
     fingerprint = _trace_fingerprint(row)
     chain_steps = _chain_steps(
         ordered_indices,
@@ -102,7 +128,7 @@ def build_atom_anchored_qec_trace_row(
             "chunk_mmr_fingerprint": fingerprint,
             "selector_name": selector_name,
             "graph_version": GRAPH_VERSION,
-            "adaptive_policy": ADAPTIVE_POLICY,
+            "adaptive_policy": adaptive_policy,
             "source_selector_name": str(row.get("selector_name") or params.source_selector_name),
         }
     )
@@ -125,9 +151,13 @@ def build_atom_anchored_qec_trace_row(
         "selected_keys": [str(candidate.get("candidate_key") or "") for candidate in selected_candidates],
         "claim_atoms": claim_atoms,
         "chain_steps": chain_steps,
-        "chain_diagnostics": _chain_diagnostics(chain_steps, selected_indices=selected_indices),
+        "chain_diagnostics": _chain_diagnostics(
+            chain_steps,
+            selected_indices=selected_indices,
+            claim_atoms=claim_atoms,
+        ),
         "params": asdict(params),
-        "adaptive_policy": ADAPTIVE_POLICY,
+        "adaptive_policy": adaptive_policy,
         "source_selector_name": str(row.get("selector_name") or params.source_selector_name),
     }
     return trace
@@ -141,6 +171,12 @@ def summarize_atom_anchored_qec_traces(rows: list[dict[str, Any]]) -> dict[str, 
     qd_rates: list[float] = []
     atom_rates: list[float] = []
     fallback_rates: list[float] = []
+    duplicate_rates: list[float] = []
+    fallback_fill_rates: list[float] = []
+    atom_coverage_rates: list[float] = []
+    uncovered_atom_rates: list[float] = []
+    secondary_step_rates: list[float] = []
+    multi_atom_evidence_rates: list[float] = []
 
     for row in rows:
         selector_names[str(row.get("selector_name") or "")] += 1
@@ -154,6 +190,12 @@ def summarize_atom_anchored_qec_traces(rows: list[dict[str, Any]]) -> dict[str, 
             qd_rates.append(float(diagnostics.get("qd_cue_rate") or 0.0))
             atom_rates.append(float(diagnostics.get("atom_cue_rate") or 0.0))
             fallback_rates.append(float(diagnostics.get("claim_fallback_rate") or 0.0))
+            duplicate_rates.append(float(diagnostics.get("duplicate_evidence_rate") or 0.0))
+            fallback_fill_rates.append(float(diagnostics.get("fallback_fill_rate") or 0.0))
+            atom_coverage_rates.append(float(diagnostics.get("atom_coverage_rate") or 0.0))
+            uncovered_atom_rates.append(float(diagnostics.get("uncovered_atom_rate") or 0.0))
+            secondary_step_rates.append(float(diagnostics.get("secondary_step_rate") or 0.0))
+            multi_atom_evidence_rates.append(float(diagnostics.get("multi_atom_evidence_rate") or 0.0))
 
     return {
         "n_rows": len(rows),
@@ -164,7 +206,130 @@ def summarize_atom_anchored_qec_traces(rows: list[dict[str, Any]]) -> dict[str, 
         "qd_cue_rate": _numeric_summary(qd_rates),
         "atom_cue_rate": _numeric_summary(atom_rates),
         "claim_fallback_rate": _numeric_summary(fallback_rates),
+        "duplicate_evidence_rate": _numeric_summary(duplicate_rates),
+        "fallback_fill_rate": _numeric_summary(fallback_fill_rates),
+        "atom_coverage_rate": _numeric_summary(atom_coverage_rates),
+        "uncovered_atom_rate": _numeric_summary(uncovered_atom_rates),
+        "secondary_step_rate": _numeric_summary(secondary_step_rates),
+        "multi_atom_evidence_rate": _numeric_summary(multi_atom_evidence_rates),
     }
+
+
+def _constrained_atom_facts_abc_selector_name(params: AtomAnchoredQECParams) -> str:
+    policy = str(params.selection_policy)
+    prefix = "aa_qec_constrained_atom_facts_abc"
+    cue_scope = f"{params.cue_policy}_{params.candidate_scope}"
+    max_steps = int(params.max_chain_steps)
+    min_steps = int(params.min_chain_steps)
+    if policy == "primary_only":
+        return f"{prefix}_primary_only_{cue_scope}_max{max_steps}"
+    if policy == "primary_secondary":
+        return f"{prefix}_primary_secondary_{cue_scope}_max{max_steps}"
+    if policy == "primary_secondary_fallback_min5":
+        return f"{prefix}_primary_secondary_fallback_{cue_scope}_min{min_steps}_{max_steps}"
+    if policy == "primary_fallback_min5_no_secondary":
+        return f"{prefix}_primary_fallback_no_secondary_{cue_scope}_min{min_steps}_{max_steps}"
+    raise ValueError(f"unsupported AA-QEC selection_policy={policy!r}")
+
+
+def _stage2_order_and_roles(
+    selected_indices: list[int],
+    *,
+    candidate_pool: list[dict[str, Any]],
+    atom_order: dict[str, int],
+    params: AtomAnchoredQECParams,
+) -> tuple[list[int], dict[int, str], dict[int, str]]:
+    selected_indices = _dedupe_in_range(selected_indices, len(candidate_pool))
+    if params.candidate_top_n > 0:
+        selected_indices = selected_indices[: int(params.candidate_top_n)]
+    selected_rank = {idx: rank for rank, idx in enumerate(selected_indices)}
+    policy = str(params.selection_policy)
+    include_secondary = policy in {"primary_secondary", "primary_secondary_fallback_min5"}
+    fill_to_min = policy in {"primary_secondary_fallback_min5", "primary_fallback_min5_no_secondary"}
+    max_steps = max(int(params.max_chain_steps), 0)
+    min_steps = max(int(params.min_chain_steps), 0) if fill_to_min else 0
+
+    role_by_idx: dict[int, str] = {}
+    anchor_atom_by_idx: dict[int, str] = {}
+    ordered: list[int] = []
+    used_indices: set[int] = set()
+
+    atom_ids = [atom_id for atom_id, _ in sorted(atom_order.items(), key=lambda item: item[1])]
+    for atom_id in atom_ids:
+        atom_candidates = [
+            idx
+            for idx in selected_indices
+            if idx not in used_indices and atom_id in _covered_atom_ids(candidate_pool[idx].get("covered_atom_ids"))
+        ]
+        if not atom_candidates:
+            continue
+        primary_idx = min(
+            atom_candidates,
+            key=lambda idx: _primary_sort_key(candidate_pool[idx], atom_id=atom_id, selected_rank=selected_rank, idx=idx),
+        )
+        ordered.append(primary_idx)
+        used_indices.add(primary_idx)
+        role_by_idx[primary_idx] = "primary"
+        anchor_atom_by_idx[primary_idx] = atom_id
+
+        if include_secondary:
+            secondary_candidates = [
+                idx
+                for idx in selected_indices
+                if idx not in used_indices and atom_id in _covered_atom_ids(candidate_pool[idx].get("covered_atom_ids"))
+            ]
+            if secondary_candidates:
+                primary_relation = _relation_group(candidate_pool[primary_idx].get("map_relation"))
+                secondary_idx = min(
+                    secondary_candidates,
+                    key=lambda idx: _secondary_sort_key(
+                        candidate_pool[idx],
+                        primary_relation=primary_relation,
+                        selected_rank=selected_rank,
+                        idx=idx,
+                        min_confidence=float(params.min_secondary_confidence),
+                    ),
+                )
+                ordered.append(secondary_idx)
+                used_indices.add(secondary_idx)
+                role_by_idx[secondary_idx] = "secondary"
+                anchor_atom_by_idx[secondary_idx] = atom_id
+
+        if max_steps and len(ordered) >= max_steps:
+            ordered = ordered[:max_steps]
+            break
+
+    if not ordered and selected_indices:
+        fallback_idx = selected_indices[0]
+        ordered.append(fallback_idx)
+        used_indices.add(fallback_idx)
+        role_by_idx[fallback_idx] = "fallback"
+        anchor_atom = _best_candidate_atom(candidate_pool[fallback_idx], atom_order)
+        if anchor_atom:
+            anchor_atom_by_idx[fallback_idx] = anchor_atom
+
+    if fill_to_min and len(ordered) < min_steps:
+        for idx in selected_indices:
+            if idx in used_indices:
+                continue
+            ordered.append(idx)
+            used_indices.add(idx)
+            role_by_idx[idx] = "fallback"
+            anchor_atom = _best_candidate_atom(candidate_pool[idx], atom_order)
+            if anchor_atom:
+                anchor_atom_by_idx[idx] = anchor_atom
+            if len(ordered) >= min_steps:
+                break
+
+    if max_steps:
+        ordered = ordered[:max_steps]
+    for idx in ordered:
+        role_by_idx.setdefault(idx, "fallback")
+        if idx not in anchor_atom_by_idx:
+            anchor_atom = _best_candidate_atom(candidate_pool[idx], atom_order)
+            if anchor_atom:
+                anchor_atom_by_idx[idx] = anchor_atom
+    return ordered, role_by_idx, anchor_atom_by_idx
 
 
 def _stage1_order(
@@ -337,7 +502,12 @@ def _best_covered_atom(
     return atom_by_id[atom_ids[0]]
 
 
-def _chain_diagnostics(chain_steps: list[dict[str, Any]], *, selected_indices: list[int]) -> dict[str, Any]:
+def _chain_diagnostics(
+    chain_steps: list[dict[str, Any]],
+    *,
+    selected_indices: list[int],
+    claim_atoms: list[dict[str, Any]],
+) -> dict[str, Any]:
     role_counts = Counter(str(step.get("role") or "") for step in chain_steps)
     cue_counts = Counter(str(step.get("cue_source") or "") for step in chain_steps)
     evidence_ids = [str(step.get("evidence_id") or "") for step in chain_steps]
@@ -348,6 +518,34 @@ def _chain_diagnostics(chain_steps: list[dict[str, Any]], *, selected_indices: l
         for step in chain_steps
         for atom_id in step.get("covered_atom_ids") or []
         if str(atom_id)
+    }
+    claim_atom_ids = {_atom_id(atom) for atom in claim_atoms if _atom_id(atom)}
+    covered_claim_atoms = covered_atoms & claim_atom_ids
+    n_claim_atoms = max(len(claim_atom_ids), 1)
+    multi_atom_count = sum(1 for step in chain_steps if len(step.get("covered_atom_ids") or []) > 1)
+    fallback_steps = int(role_counts.get("fallback", 0))
+    secondary_steps = int(role_counts.get("secondary", 0))
+    return {
+        "chain_steps": len(chain_steps),
+        "input_selected_count": len(selected_indices),
+        "role_counts": dict(role_counts),
+        "cue_source_counts": dict(cue_counts),
+        "qd_cue_rate": float(cue_counts.get("qd_question", 0) / total),
+        "atom_cue_rate": float(cue_counts.get("claim_atom", 0) / total),
+        "claim_fallback_rate": float(cue_counts.get("fallback", 0) / total),
+        "primary_step_count": int(role_counts.get("primary", 0)),
+        "secondary_step_count": secondary_steps,
+        "fallback_step_count": fallback_steps,
+        "secondary_step_rate": float(secondary_steps / total),
+        "fallback_fill_rate": float(fallback_steps / total),
+        "duplicate_evidence_count": int(duplicate_count),
+        "duplicate_evidence_rate": float(duplicate_count / total),
+        "covered_atom_ids": sorted(covered_atoms),
+        "covered_claim_atom_ids": sorted(covered_claim_atoms),
+        "atom_coverage_rate": float(len(covered_claim_atoms) / n_claim_atoms),
+        "uncovered_atom_rate": float((len(claim_atom_ids) - len(covered_claim_atoms)) / n_claim_atoms),
+        "multi_atom_evidence_count": int(multi_atom_count),
+        "multi_atom_evidence_rate": float(multi_atom_count / total),
     }
 
 
@@ -361,21 +559,6 @@ def _numeric_summary(values: list[int] | list[float]) -> dict[str, float]:
         "min": float(ordered[0]),
         "max": float(ordered[-1]),
         "mean": float(sum(ordered) / count),
-    }
-    return {
-        "chain_steps": len(chain_steps),
-        "input_selected_count": len(selected_indices),
-        "role_counts": dict(role_counts),
-        "cue_source_counts": dict(cue_counts),
-        "qd_cue_rate": float(cue_counts.get("qd_question", 0) / total),
-        "atom_cue_rate": float(cue_counts.get("claim_atom", 0) / total),
-        "claim_fallback_rate": float(cue_counts.get("fallback", 0) / total),
-        "primary_step_count": int(role_counts.get("primary", 0)),
-        "secondary_step_count": int(role_counts.get("secondary", 0)),
-        "fallback_step_count": int(role_counts.get("fallback", 0)),
-        "duplicate_evidence_count": int(duplicate_count),
-        "duplicate_evidence_rate": float(duplicate_count / total),
-        "covered_atom_ids": sorted(covered_atoms),
     }
 
 
@@ -416,6 +599,129 @@ def _best_candidate_atom(candidate: dict[str, Any], atom_order: dict[str, int]) 
         return ""
     atoms.sort(key=lambda atom_id: atom_order.get(atom_id, 10**9))
     return atoms[0]
+
+
+def _primary_sort_key(
+    candidate: dict[str, Any],
+    *,
+    atom_id: str,
+    selected_rank: dict[int, int],
+    idx: int,
+) -> tuple[Any, ...]:
+    relation = _relation_group(candidate.get("map_relation"))
+    return (
+        _primary_relation_priority(relation),
+        _directness_priority(candidate.get("map_directness")),
+        -_float_or_default(candidate.get("map_confidence"), 0.0),
+        -_candidate_quality_score(candidate),
+        -_candidate_base_score(candidate),
+        -_candidate_qd_score(candidate),
+        len(_covered_atom_ids(candidate.get("covered_atom_ids"))),
+        selected_rank.get(idx, 10**9),
+        _candidate_rank(candidate, idx),
+        atom_id,
+        idx,
+    )
+
+
+def _secondary_sort_key(
+    candidate: dict[str, Any],
+    *,
+    primary_relation: str,
+    selected_rank: dict[int, int],
+    idx: int,
+    min_confidence: float,
+) -> tuple[Any, ...]:
+    relation = _relation_group(candidate.get("map_relation"))
+    confidence = _float_or_default(candidate.get("map_confidence"), 0.0)
+    return (
+        _secondary_relation_priority(primary_relation, relation),
+        0 if confidence >= min_confidence else 1,
+        _directness_priority(candidate.get("map_directness")),
+        -confidence,
+        -_candidate_quality_score(candidate),
+        -_candidate_base_score(candidate),
+        -_candidate_qd_score(candidate),
+        selected_rank.get(idx, 10**9),
+        _candidate_rank(candidate, idx),
+        idx,
+    )
+
+
+def _primary_relation_priority(relation: str) -> int:
+    if relation == "support":
+        return 0
+    if relation == "refute":
+        return 1
+    if relation in {"qualify", "mixed"}:
+        return 2
+    if relation == "background":
+        return 3
+    return 4
+
+
+def _secondary_relation_priority(primary_relation: str, relation: str) -> int:
+    if primary_relation == "support":
+        order = {"refute": 0, "qualify": 1, "mixed": 2, "support": 8}
+    elif primary_relation == "refute":
+        order = {"support": 0, "qualify": 1, "mixed": 2, "refute": 8}
+    else:
+        order = {"support": 0, "refute": 1, "qualify": 4, "mixed": 4}
+    return order.get(relation, 5)
+
+
+def _relation_group(value: Any) -> str:
+    relation = _compact(value or "").lower()
+    if relation in {"support", "supports", "supported_by", "entails", "consistent"}:
+        return "support"
+    if relation in {"refute", "refutes", "contradict", "contradicts", "counter", "conflict"}:
+        return "refute"
+    if relation in {"qualify", "qualifies", "qualified", "condition", "context", "hedge"}:
+        return "qualify"
+    if relation in {"mixed", "partially_supports", "partial"}:
+        return "mixed"
+    if relation in {"background", "unknown", "none", ""}:
+        return "background"
+    return relation
+
+
+def _directness_priority(value: Any) -> int:
+    directness = _compact(value or "").lower()
+    if directness == "direct":
+        return 0
+    if directness == "partial":
+        return 1
+    if directness in {"indirect", "context"}:
+        return 2
+    if directness in {"background", "unknown", ""}:
+        return 3
+    return 4
+
+
+def _candidate_quality_score(candidate: dict[str, Any]) -> float:
+    return _float_or_default(candidate.get("evidence_map_quality_score"), 0.0)
+
+
+def _candidate_base_score(candidate: dict[str, Any]) -> float:
+    for key in ("evidence_map_base_score", "hybrid_score", "selection_score"):
+        value = _float_or_none(candidate.get(key))
+        if value is not None:
+            return value
+    return 0.0
+
+
+def _candidate_qd_score(candidate: dict[str, Any]) -> float:
+    value = _float_or_none(candidate.get("qd_max_question_hybrid"))
+    if value is not None:
+        return value
+    routes = candidate.get("qd_question_routes") or candidate.get("question_routes") or []
+    if not isinstance(routes, list):
+        return 0.0
+    scores = [_float_or_none(route.get("hybrid_score")) for route in routes if isinstance(route, dict)]
+    usable = [score for score in scores if score is not None]
+    if not usable:
+        return 0.0
+    return max(usable)
 
 
 def _covered_atom_ids(value: Any) -> list[str]:

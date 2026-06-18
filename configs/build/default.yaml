@@ -28,7 +28,7 @@ build:
     prefetch_size: 200             # samples per embedding batch (1 = per-sample)
     cpu_workers: 4               # thread workers for CPU post-embedding work
     chunking:
-      strategy: sentence           # sentence | raw | ctx_window | semantic | ctx_semantic | abc_claim_aware
+      strategy: sentence           # sentence | raw | ctx_window | semantic | ctx_semantic | abc_claim_aware | abc_claim_aware_rawfc_tight
       context_k: 1                 # ctx_window / ctx_semantic 窗口大小
       theta: 0.7                   # semantic / ctx_semantic 相似度阈值
       embedder_model: null         # null = 复用 retrieval.embedder_model

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import unittest
+import sys
+from unittest.mock import patch
 
 from fact_checking.selectors.evidence_map_selector import (
+    ATOM_FACTS_ABC_PROMPT_VERSION,
     ATOM_FACTS_PROMPT_VERSION,
     COMPACT_PROMPT_VERSION,
     EVIDENCE_MAP_BASE_ONLY_SELECTOR,
@@ -13,12 +16,15 @@ from fact_checking.selectors.evidence_map_selector import (
     audit_teacher_prompt,
     build_all_evidence_map_traces,
     build_teacher_messages,
+    evidence_items_fingerprint,
     prepare_evidence_map_candidate_rows,
     select_evidence_map_topk,
     summarize_atom_quality_rows,
     validate_evidence_map_payload,
 )
+from scripts.phase5_selectors.build.annotate_evidence_maps_deepseek import _build_jobs
 from scripts.phase5_selectors.build.build_evidence_map_verifier_data import _render_until_fit
+from scripts.phase5_selectors.eval import eval_evidence_map_selector_v0_5a as eval_map_cli
 
 
 class EvidenceMapSelectorTest(unittest.TestCase):
@@ -80,6 +86,29 @@ class EvidenceMapSelectorTest(unittest.TestCase):
         self.assertNotIn("secret-uid-1", prompt)
         self.assertNotIn("secret-key-1", prompt)
         audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
+
+    def test_atom_facts_abc_prompt_reuses_atom_facts_schema_and_keys_by_evidence_fingerprint(self) -> None:
+        event = _event()
+        row = prepare_evidence_map_candidate_rows([event], candidate_top_n=1)[0]
+        changed_event = _event()
+        changed_event["candidates"][0]["text"] = "Evidence 1 states a different ABC chunk."
+        changed_row = prepare_evidence_map_candidate_rows([changed_event], candidate_top_n=1)[0]
+
+        system_prompt, user_prompt = build_teacher_messages(
+            row,
+            prompt_version=ATOM_FACTS_ABC_PROMPT_VERSION,
+            max_evidence_chars=120,
+        )
+        prompt = system_prompt + "\n" + user_prompt
+
+        self.assertIn("complete proposition", prompt)
+        self.assertIn("subject, predicate, object", prompt)
+        self.assertEqual(evidence_items_fingerprint(row["evidence_items"]), row["evidence_items_fingerprint"])
+        self.assertNotEqual(row["evidence_items_fingerprint"], changed_row["evidence_items_fingerprint"])
+
+        job = _build_jobs([row], model="deepseek-v4-flash", prompt_version=ATOM_FACTS_ABC_PROMPT_VERSION)[0]
+        changed_job = _build_jobs([changed_row], model="deepseek-v4-flash", prompt_version=ATOM_FACTS_ABC_PROMPT_VERSION)[0]
+        self.assertNotEqual(job.annotation_key, changed_job.annotation_key)
 
     def test_schema_validation_clamps_and_fills_alignments(self) -> None:
         payload = {
@@ -216,6 +245,55 @@ class EvidenceMapSelectorTest(unittest.TestCase):
         selected, _ = select_evidence_map_topk(candidates, params=EvidenceMapParams(top_k=2, base_weight=0.2))
 
         self.assertEqual([row["candidate_key"] for row in selected], ["a", "c"])
+
+    def test_build_all_traces_accepts_custom_primary_selector_params(self) -> None:
+        row = {
+            **_event(),
+            "candidates": [
+                _candidate("background", uid="background", fusion=0.95, atoms=["A1"], directness="none", relation="background", union_rank=1),
+                _candidate("direct", uid="direct", fusion=0.10, atoms=["A1"], directness="direct", relation="support", union_rank=2),
+            ],
+        }
+        attach_event_base_scores([row])
+
+        traces = build_all_evidence_map_traces(
+            [row],
+            top_k=1,
+            params=EvidenceMapParams(
+                top_k=1,
+                base_weight=0.0,
+                atom_coverage_weight=0.0,
+                directness_weight=0.30,
+                polar_relation_weight=0.0,
+                duplicate_penalty=0.0,
+                source_penalty=0.0,
+                background_penalty=0.30,
+            ),
+        )
+        primary = [trace for trace in traces if trace["selector_name"] == EVIDENCE_MAP_SELECTOR][0]
+
+        self.assertEqual(primary["selected_keys"], ["direct"])
+
+    def test_eval_evidence_map_cli_accepts_tight_selector_weight_overrides(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "eval_evidence_map_selector_v0_5a.py",
+                "--candidate-features",
+                "features.jsonl",
+                "--selector-directness-weight",
+                "0.30",
+                "--selector-background-penalty",
+                "0.30",
+            ],
+        ):
+            args = eval_map_cli.parse_args()
+
+        params = eval_map_cli._evidence_map_params_from_args(args)
+
+        self.assertEqual(params.directness_weight, 0.30)
+        self.assertEqual(params.background_penalty, 0.30)
 
     def test_base_only_order_is_deterministic(self) -> None:
         row = {

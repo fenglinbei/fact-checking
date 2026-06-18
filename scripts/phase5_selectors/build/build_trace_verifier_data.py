@@ -41,6 +41,7 @@ SELECTION_MODES = (
     "same_set_random_order",
 )
 TRACE_PROMPT_STYLES = ("plain", "trace_lite", "rawfc_boundaries", "qec_min", "qec_map")
+EVIDENCE_TEXT_MODES = ("full", "anchor_only")
 
 RAWFC_BOUNDARIES_SYSTEM_PROMPT = (
     "You are a careful fact-checking assistant for RAWFC claims. "
@@ -68,6 +69,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir", required=True)
     p.add_argument("--selection-mode", default="trace", choices=SELECTION_MODES)
     p.add_argument("--trace-prompt-style", default="plain", choices=TRACE_PROMPT_STYLES)
+    p.add_argument(
+        "--evidence-text-mode",
+        default="full",
+        choices=EVIDENCE_TEXT_MODES,
+        help="Prompt-visible evidence text projection: full chunk text or ABC anchor_text only.",
+    )
     p.add_argument("--prompt-output-mode", default=None)
     p.add_argument("--expected-selector-name", default="")
     p.add_argument("--top-k", type=int, default=DEFAULT_SELECTOR_TOP_K)
@@ -133,6 +140,7 @@ def main() -> None:
             prompt_cfg=prompt_cfg,
             selection_mode=str(args.selection_mode),
             trace_prompt_style=str(args.trace_prompt_style),
+            evidence_text_mode=str(args.evidence_text_mode),
             expected_selector_name=str(args.expected_selector_name or ""),
             top_k=int(args.top_k),
             random_seed=int(args.random_seed),
@@ -167,6 +175,7 @@ def main() -> None:
         "build_dir": str(build_dir),
         "selection_mode": args.selection_mode,
         "trace_prompt_style": args.trace_prompt_style,
+        "evidence_text_mode": args.evidence_text_mode,
         "expected_selector_name": args.expected_selector_name,
         "top_k": int(args.top_k),
         "random_seed": int(args.random_seed),
@@ -212,6 +221,7 @@ def _build_split(
     prompt_cfg: dict[str, Any],
     selection_mode: str,
     trace_prompt_style: str,
+    evidence_text_mode: str = "full",
     expected_selector_name: str,
     top_k: int,
     random_seed: int,
@@ -219,6 +229,9 @@ def _build_split(
     sample_limit: int | None,
     show_progress: bool,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if evidence_text_mode not in EVIDENCE_TEXT_MODES:
+        raise ValueError(f"unsupported evidence_text_mode: {evidence_text_mode}")
+
     raw_by_event = {
         sample.event_id: sample
         for sample in load_split(raw_path, dataset=dataset, label_schema=label_schema)
@@ -292,6 +305,7 @@ def _build_split(
         if not candidates:
             skipped["no_selected_evidence"] += 1
             continue
+        candidates = _apply_evidence_text_mode(candidates, evidence_text_mode)
 
         qec_payload: dict[str, Any] | None = None
         if trace_prompt_style == "trace_lite":
@@ -330,6 +344,7 @@ def _build_split(
             retrieval_row["coverage"] = sample_metadata["coverage"]
         training_row = build_training_row(retrieval_row, tokenizer, prompt_cfg_for_style)
         training_row["trace_prompt_style"] = trace_prompt_style
+        training_row["evidence_text_mode"] = evidence_text_mode
         if qec_payload is not None:
             training_row["qec_steps"] = qec_payload["steps"]
             training_row["qec_diagnostics"] = qec_payload["diagnostics"]
@@ -377,6 +392,7 @@ def _build_split(
         "raw_path": str(raw_path),
         "selection_mode": selection_mode,
         "trace_prompt_style": trace_prompt_style,
+        "evidence_text_mode": evidence_text_mode,
         "top_k": int(top_k),
         "random_seed": int(random_seed),
         "n_source_rows": len(source_rows),
@@ -397,6 +413,32 @@ def _build_split(
         "evidence_count_before": _summary(evidence_counts_before),
     }
     return out_rows, report
+
+
+def _apply_evidence_text_mode(
+    candidates: list[dict[str, Any]],
+    evidence_text_mode: str,
+) -> list[dict[str, Any]]:
+    if evidence_text_mode == "full":
+        return candidates
+    if evidence_text_mode != "anchor_only":
+        raise ValueError(f"unsupported evidence_text_mode: {evidence_text_mode}")
+
+    rendered: list[dict[str, Any]] = []
+    for candidate in candidates:
+        copied = dict(candidate)
+        full_text = str(copied.get("text") or "").strip()
+        anchor_text = str(copied.get("anchor_text") or "").strip()
+        copied["full_chunk_text"] = full_text
+        copied["evidence_text_mode"] = "anchor_only"
+        if anchor_text:
+            copied["text"] = anchor_text
+            copied["evidence_text_source"] = "anchor_text"
+        else:
+            copied["text"] = full_text
+            copied["evidence_text_source"] = "text_fallback"
+        rendered.append(copied)
+    return rendered
 
 
 def _apply_qec_prompt_fields(
@@ -559,6 +601,10 @@ def _select_qec_cue_from_chain_step(chain_step: dict[str, Any] | None) -> dict[s
 
 
 def _qec_step_evidence_text(chain_step: dict[str, Any] | None, candidate: dict[str, Any]) -> str:
+    if str(candidate.get("evidence_text_mode") or "") == "anchor_only":
+        text = str(candidate.get("text") or "").strip()
+        if text:
+            return text
     if isinstance(chain_step, dict):
         text = str(chain_step.get("evidence_text") or "").strip()
         if text:

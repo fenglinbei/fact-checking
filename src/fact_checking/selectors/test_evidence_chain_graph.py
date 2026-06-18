@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
+from unittest.mock import patch
 
 from fact_checking.selectors.evidence_chain_graph import (
     BUDGETED_MARGINAL_SELECTOR,
@@ -29,6 +31,7 @@ from scripts.phase5_selectors.visualize.render_evidence_chain_graph_html import 
     visual_width,
     wrap_text_for_svg,
 )
+from scripts.phase5_selectors.build import build_evidence_chain_graph_v0_7 as graph_cli
 
 
 class EvidenceChainGraphTest(unittest.TestCase):
@@ -600,6 +603,25 @@ class EvidenceChainGraphTest(unittest.TestCase):
         self.assertEqual([step["evidence_id"] for step in graph["selection_steps"]], graph["selected_evidence_ids"])
         self.assertTrue(all("marginal_gain" in step and "component_deltas" in step for step in graph["selection_steps"]))
         self.assertTrue(all(0 <= idx < len(pool) for idx in trace["selector_ordered_indices"]))
+
+    def test_budgeted_marginal_cli_accepts_tight_objective_weight_overrides(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "build_evidence_chain_graph_v0_7.py",
+                "--objective-background-or-irrelevant",
+                "0.24",
+                "--objective-length",
+                "0.08",
+            ],
+        ):
+            args = graph_cli.parse_args()
+
+        params = graph_cli._budgeted_params_from_args(args)
+
+        self.assertEqual(params.objective_weights.background_or_irrelevant, 0.24)
+        self.assertEqual(params.objective_weights.length, 0.08)
 
     def test_budgeted_marginal_summary_uses_row_selector_name(self) -> None:
         row = _row(

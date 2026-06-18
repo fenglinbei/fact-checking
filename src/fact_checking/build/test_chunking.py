@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from fact_checking.build.chunking import AdjacentBoundaryClaimAwareChunking, SemanticChunking
+from fact_checking.build.chunking import (
+    AdjacentBoundaryClaimAwareChunking,
+    SemanticChunking,
+    build_chunking_strategy,
+)
 from fact_checking.retrieval.embedder import EmbedderConfig
 
 
@@ -265,3 +269,70 @@ def test_abc_same_report_different_claims_do_not_share_claim_aware_metadata() ->
 
     assert tax_chunks[0].metadata["anchor_sent_idx"] == 0
     assert officials_chunks[0].metadata["anchor_sent_idx"] == 1
+
+
+def test_abc_rawfc_tight_strategy_defaults_are_isolated_from_base_abc() -> None:
+    retrieval_cfg = {"embedder_model": "unused"}
+
+    base = build_chunking_strategy({"strategy": "abc_claim_aware"}, retrieval_cfg)
+    tight = build_chunking_strategy({"strategy": "abc_claim_aware_rawfc_tight"}, retrieval_cfg)
+
+    assert isinstance(base, AdjacentBoundaryClaimAwareChunking)
+    assert isinstance(tight, AdjacentBoundaryClaimAwareChunking)
+    assert base.max_sent_per_chunk == 3
+    assert base.lambda_std == 0.5
+    assert base.w_sem == 0.75
+    assert base.w_rel == 0.25
+    assert base.chunking_method == "ABC-claim-aware-v1"
+    assert tight.max_sent_per_chunk == 2
+    assert tight.lambda_std == 0.35
+    assert tight.w_sem == 0.65
+    assert tight.w_rel == 0.35
+    assert tight.chunking_method == "ABC-claim-aware-rawfc-tight-v1"
+
+
+def test_abc_rawfc_tight_local_peak_threshold_is_more_sensitive_than_base_abc() -> None:
+    base = _abc_strategy(lambda_std=0.5)
+    tight = _abc_strategy(lambda_std=0.35, max_sent_per_chunk=2)
+
+    scores = [0.02, 0.20, 0.02, 0.40, 0.02]
+
+    assert base._decide_boundaries(scores) == [False, False, False, True, False]
+    assert tight._decide_boundaries(scores) == [False, True, False, True, False]
+
+
+def test_abc_rawfc_tight_chunks_use_tight_metadata_and_two_sentence_cap() -> None:
+    strategy = build_chunking_strategy(
+        {"strategy": "abc_claim_aware_rawfc_tight", "min_tokens_per_chunk": 0},
+        {"embedder_model": "unused"},
+    )
+    assert isinstance(strategy, AdjacentBoundaryClaimAwareChunking)
+
+    def fake_encode(texts: list[str]) -> np.ndarray:
+        raise AssertionError(f"unexpected encoding call: {texts}")
+
+    strategy._encode = fake_encode  # type: ignore[method-assign]
+    sents = [
+        "Alpha one.",
+        "Alpha two.",
+        "Alpha three.",
+        "Alpha four.",
+        "Alpha five.",
+    ]
+    embeddings_by_idx = {
+        idx: np.array([1.0, 0.0], dtype=np.float32)
+        for idx in range(len(sents))
+    }
+
+    chunks = strategy.chunks_from_presplit_with_context(
+        sents,
+        claim="alpha",
+        claim_embedding=np.array([1.0, 0.0], dtype=np.float32),
+        embeddings_by_sent_idx=embeddings_by_idx,
+    )
+
+    assert chunks
+    assert all(len(chunk.sent_indices) <= 2 for chunk in chunks)
+    assert [idx for chunk in chunks for idx in chunk.sent_indices] == list(range(len(sents)))
+    assert {chunk.metadata["chunking_method"] for chunk in chunks} == {"ABC-claim-aware-rawfc-tight-v1"}
+    assert all("anchor_text" in chunk.metadata for chunk in chunks)

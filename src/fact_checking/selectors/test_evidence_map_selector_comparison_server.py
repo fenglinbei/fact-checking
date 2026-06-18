@@ -33,7 +33,7 @@ class EvidenceMapSelectorComparisonServerTest(unittest.TestCase):
             try:
                 _write_fixture_split("val")
 
-                store = ComparisonStore.load(Path(tmp), splits=["val"], max_candidates=20)
+                store = ComparisonStore.load(Path(tmp), sources=["rawfc", "liar_raw"], splits=["val"], max_candidates=20)
                 results = store.search_cases("city budget", split="val", limit=5)
             finally:
                 os.chdir(old_cwd)
@@ -43,6 +43,34 @@ class EvidenceMapSelectorComparisonServerTest(unittest.TestCase):
         self.assertEqual(results[0]["split"], "val")
         self.assertEqual(results[0]["gold_label"], "mostly-true")
         self.assertEqual(results[0]["coverage_label"], "uncovered")
+
+    def test_store_loads_source_profiles_and_filters_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                _write_fixture_split("val", source="rawfc", event_id="rawfc-case", claim="RAWFC source claim.")
+                _write_fixture_split("val", source="liar_raw", event_id="liar-case.json", claim="LIAR-RAW source claim.")
+
+                store = ComparisonStore.load(Path(tmp), sources=["rawfc", "liar_raw"], splits=["val"], max_candidates=20)
+                rawfc_results = store.search_cases("source claim", source="rawfc", split="val", limit=5)
+                liar_results = store.search_cases("source claim", source="liar_raw", split="val", limit=5)
+                liar_html = store.render_case(
+                    source="liar_raw",
+                    split="val",
+                    event_id="liar-case.json",
+                    left_label="left",
+                    right_label="right",
+                )
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual([item["event_id"] for item in rawfc_results], ["rawfc-case"])
+        self.assertEqual(rawfc_results[0]["source"], "rawfc")
+        self.assertEqual([item["event_id"] for item in liar_results], ["liar-case.json"])
+        self.assertEqual(liar_results[0]["source"], "liar_raw")
+        self.assertIn("data/raw/LIAR-RAW/val.json", liar_html)
+        self.assertIn("LIAR-RAW source claim.", liar_html)
 
     def test_store_search_skips_cases_missing_right_trace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -66,7 +94,7 @@ class EvidenceMapSelectorComparisonServerTest(unittest.TestCase):
             try:
                 _write_fixture_split("val")
 
-                store = ComparisonStore.load(Path(tmp), splits=["val"], max_candidates=20)
+                store = ComparisonStore.load(Path(tmp), sources=["rawfc", "liar_raw"], splits=["val"], max_candidates=20)
                 html = store.render_case(split="val", event_id="case", left_label="left", right_label="right")
             finally:
                 os.chdir(old_cwd)
@@ -109,13 +137,19 @@ class EvidenceMapSelectorComparisonServerTest(unittest.TestCase):
             os.chdir(tmp)
             try:
                 _write_fixture_split("val")
-                store = ComparisonStore.load(Path(tmp), splits=["val"], max_candidates=20)
+                _write_fixture_split("val", source="liar_raw", event_id="liar-case.json", claim="LIAR-RAW source claim.")
+                store = ComparisonStore.load(Path(tmp), sources=["rawfc", "liar_raw"], splits=["val"], max_candidates=20)
                 html = index_html(store, base_path="/evidence-map", query={"token": ["secret"]}, translation_enabled=False)
             finally:
                 os.chdir(old_cwd)
 
         self.assertIn("data-sidebar-toggle", html)
         self.assertIn("data-sidebar-state", html)
+        self.assertIn('id="source"', html)
+        self.assertIn('value="rawfc"', html)
+        self.assertIn('value="liar_raw"', html)
+        self.assertIn("source: source.value", html)
+        self.assertIn("source: item.source", html)
         self.assertNotIn('id="translate"', html)
         self.assertNotIn("translateStatus", html)
         self.assertIn("localStorage", html)
@@ -284,15 +318,39 @@ class EvidenceMapSelectorComparisonServerTest(unittest.TestCase):
         self.assertIn("--token token-from-shell", result.stdout)
 
 
-def _write_fixture_split(split: str, *, include_chain_graph: bool = False) -> None:
-    _write_jsonl(default_candidate_features_path(split), [_row()])
-    _write_jsonl(default_left_trace_path(split), [_left_trace()])
-    _write_jsonl(default_right_trace_path(split), [_right_trace()])
+def _write_fixture_split(
+    split: str,
+    *,
+    source: str = "rawfc",
+    event_id: str = "case.json",
+    claim: str = "The city budget increased.",
+    include_chain_graph: bool = False,
+) -> None:
+    row = _row()
+    row["event_id"] = event_id
+    row["claim"] = claim
+    left_trace = _left_trace()
+    left_trace["event_id"] = event_id
+    right_trace = _right_trace()
+    right_trace["event_id"] = event_id
+    raw_row = _raw_row()
+    raw_row["event_id"] = event_id
+    raw_row["explain"] = f"The raw explanation describes {claim}"
+    coverage_diff = _coverage_diff()
+    coverage_diff["event_id"] = event_id
+
+    _write_jsonl(default_candidate_features_path(split, source=source), [row])
+    _write_jsonl(default_left_trace_path(split, source=source), [left_trace])
+    _write_jsonl(default_right_trace_path(split, source=source), [right_trace])
     if include_chain_graph:
-        _write_jsonl(default_left_chain_graph_path(split), [_chain_graph_row()])
-        _write_jsonl(default_right_chain_graph_path(split), [_chain_graph_row()])
-    _write_json(default_raw_data_path(split), {"case": _raw_row()})
-    _write_jsonl(default_coverage_diff_path(split), [_coverage_diff()])
+        left_graph = _chain_graph_row()
+        left_graph["event_id"] = event_id
+        right_graph = _chain_graph_row()
+        right_graph["event_id"] = event_id
+        _write_jsonl(default_left_chain_graph_path(split, source=source), [left_graph])
+        _write_jsonl(default_right_chain_graph_path(split, source=source), [right_graph])
+    _write_json(default_raw_data_path(split, source=source), {"case": raw_row})
+    _write_jsonl(default_coverage_diff_path(split, source=source), [coverage_diff])
     _write_json(
         Path("outputs/analysis/map/v0.7") / f"{split}_evidence_map_compare_case_left_vs_right.zh.json",
         {"translations": {"claim": "城市预算增加。"}},

@@ -46,39 +46,140 @@ import render_evidence_map_claim_html as map_html
 import render_evidence_chain_graph_html as chain_html
 
 
-DEFAULT_CANDIDATE_FEATURES = (
-    "outputs/selectors/evidence_map_selector/v0_7_atom_facts_val/"
-    "candidate_evidence_map_features_val.jsonl"
-)
-DEFAULT_LEFT_TRACE = (
-    "outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_val/"
-    "selection_trace_val.jsonl"
-)
-DEFAULT_RIGHT_TRACE = (
-    "outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_val/"
-    "selection_trace_val.jsonl"
-)
-DEFAULT_RAW_DATA = "data/raw/LIAR-RAW/val.json"
-DEFAULT_COVERAGE_DIFF = (
-    "outputs/data_quality/source_coverage_flash/liar_raw/original_diff/"
-    "case_coverage_diff_val.jsonl"
-)
+@dataclass(frozen=True)
+class SourceProfile:
+    key: str
+    label: str
+    candidate_features_template: str
+    left_trace_template: str
+    right_trace_template: str
+    left_chain_graph_template: str
+    right_chain_graph_template: str
+    raw_data_template: str
+    coverage_diff_template: str
+    left_label: str
+    right_label: str
+
+
+DEFAULT_SOURCE = "rawfc"
+SOURCE_ALIASES = {
+    "rawfc": "rawfc",
+    "raw_fc": "rawfc",
+    "liar_raw": "liar_raw",
+    "liar-raw": "liar_raw",
+    "liarraw": "liar_raw",
+}
+SOURCE_PROFILES: dict[str, SourceProfile] = {
+    "rawfc": SourceProfile(
+        key="rawfc",
+        label="RAWFC",
+        candidate_features_template=(
+            "outputs/selectors/evidence_map_selector/rawfc_v0_7_atom_facts_abc_{split}/"
+            "candidate_evidence_map_features_{split}.jsonl"
+        ),
+        left_trace_template=(
+            "outputs/selectors/evidence_chain_graph/rawfc_v0_7_atom_facts_abc_budgeted_marginal_adaptive5_10_{split}/"
+            "selection_trace_{split}.jsonl"
+        ),
+        right_trace_template=(
+            "outputs/selectors/evidence_chain_graph/rawfc_v0_7_atom_facts_budgeted_marginal_adaptive5_10_{split}/"
+            "selection_trace_{split}.jsonl"
+        ),
+        left_chain_graph_template=(
+            "outputs/selectors/evidence_chain_graph/rawfc_v0_7_atom_facts_abc_budgeted_marginal_adaptive5_10_{split}/"
+            "chain_graph_{split}.jsonl"
+        ),
+        right_chain_graph_template=(
+            "outputs/selectors/evidence_chain_graph/rawfc_v0_7_atom_facts_budgeted_marginal_adaptive5_10_{split}/"
+            "chain_graph_{split}.jsonl"
+        ),
+        raw_data_template="data/raw/RAWFC/{split}.json",
+        coverage_diff_template=(
+            "outputs/data_quality/source_coverage_flash/rawfc/original_diff/"
+            "case_coverage_diff_{split}.jsonl"
+        ),
+        left_label="v0.7 AtomFacts ABC BudgetedMarginal",
+        right_label="v0.7 AtomFacts BudgetedMarginal baseline",
+    ),
+    "liar_raw": SourceProfile(
+        key="liar_raw",
+        label="LIAR-RAW",
+        candidate_features_template=(
+            "outputs/selectors/evidence_map_selector/v0_7_atom_facts_{split}/"
+            "candidate_evidence_map_features_{split}.jsonl"
+        ),
+        left_trace_template=(
+            "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_{split}/"
+            "selection_trace_{split}.jsonl"
+        ),
+        right_trace_template=(
+            "outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_{split}/"
+            "selection_trace_{split}.jsonl"
+        ),
+        left_chain_graph_template=(
+            "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_{split}/"
+            "chain_graph_{split}.jsonl"
+        ),
+        right_chain_graph_template=(
+            "outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_{split}/"
+            "chain_graph_{split}.jsonl"
+        ),
+        raw_data_template="data/raw/LIAR-RAW/{split}.json",
+        coverage_diff_template=(
+            "outputs/data_quality/source_coverage_flash/liar_raw/original_diff/"
+            "case_coverage_diff_{split}.jsonl"
+        ),
+        left_label="v0.7 BudgetedMarginal legacy",
+        right_label="v0.7 AtomFacts BudgetedMarginal adaptive5_10",
+    ),
+}
 DEFAULT_SPLITS = ("train", "val", "test")
 DEFAULT_OUTPUT_DIR = "outputs/analysis/map/v0.7"
-DEFAULT_LEFT_LABEL = "v0.6c RuleStep"
-DEFAULT_RIGHT_LABEL = "v0.7 AtomFacts BudgetedMarginal adaptive5_10"
+DEFAULT_CANDIDATE_FEATURES = SOURCE_PROFILES[DEFAULT_SOURCE].candidate_features_template.format(split="val")
+DEFAULT_LEFT_TRACE = SOURCE_PROFILES[DEFAULT_SOURCE].left_trace_template.format(split="val")
+DEFAULT_RIGHT_TRACE = SOURCE_PROFILES[DEFAULT_SOURCE].right_trace_template.format(split="val")
+DEFAULT_RAW_DATA = SOURCE_PROFILES[DEFAULT_SOURCE].raw_data_template.format(split="val")
+DEFAULT_COVERAGE_DIFF = SOURCE_PROFILES[DEFAULT_SOURCE].coverage_diff_template.format(split="val")
+DEFAULT_LEFT_LABEL = SOURCE_PROFILES[DEFAULT_SOURCE].left_label
+DEFAULT_RIGHT_LABEL = SOURCE_PROFILES[DEFAULT_SOURCE].right_label
 DEFAULT_TRANSLATION_BASE_URL = "https://api.deepseek.com"
 DEFAULT_TRANSLATION_MODEL = "deepseek-v4-flash"
 
-LIAR_RAW_V07_BUILD_COMMAND = """SPLIT=val \\
-INPUT=outputs/selectors/evidence_map_selector/v0_7_atom_facts_val/candidate_evidence_map_features_val.jsonl \\
-OUTPUT_DIR=outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_val \\
+RAWFC_V07_BUILD_COMMAND = """SPLIT=val \\
+INPUT=outputs/selectors/evidence_map_selector/rawfc_v0_7_atom_facts_val/candidate_evidence_map_features_val.jsonl \\
+OUTPUT_DIR=outputs/selectors/evidence_chain_graph/rawfc_v0_7_atom_facts_budgeted_marginal_adaptive5_10_val \\
 bash scripts/phase5_selectors/run/run_evidence_chain_graph_v0_7_atom_facts.sh"""
+
+
+def source_key(source: str = "") -> str:
+    key = str(source or DEFAULT_SOURCE).strip().lower().replace("-", "_")
+    normalized = SOURCE_ALIASES.get(key, key)
+    if normalized not in SOURCE_PROFILES:
+        choices = ", ".join(sorted(SOURCE_PROFILES))
+        raise ValueError(f"Unknown source {source!r}; expected one of: {choices}.")
+    return normalized
+
+
+def source_profile(source: str = "") -> SourceProfile:
+    return SOURCE_PROFILES[source_key(source)]
+
+
+def source_options() -> list[SourceProfile]:
+    return [SOURCE_PROFILES[key] for key in sorted(SOURCE_PROFILES)]
+
+
+def default_left_label(source: str = "") -> str:
+    return source_profile(source).left_label
+
+
+def default_right_label(source: str = "") -> str:
+    return source_profile(source).right_label
 
 
 @dataclass
 class ResolvedInputs:
     split: str
+    source: str
     row: dict[str, Any]
     left_trace: dict[str, Any]
     right_trace: dict[str, Any]
@@ -112,10 +213,15 @@ def parse_args() -> argparse.Namespace:
         help="Optional case_coverage_diff_*.jsonl from compare_coverage_to_original.py.",
     )
     parser.add_argument("--splits", default=",".join(DEFAULT_SPLITS), help="Comma-separated default splits to scan.")
+    parser.add_argument(
+        "--source",
+        default=DEFAULT_SOURCE,
+        help=f"Dataset source profile to scan. Choices: {', '.join(sorted(SOURCE_PROFILES))}.",
+    )
     parser.add_argument("--event-id", default="", help="Event id to render. Accepts both 10004 and 10004.json.")
     parser.add_argument("--claim-contains", default="")
-    parser.add_argument("--left-label", default=DEFAULT_LEFT_LABEL)
-    parser.add_argument("--right-label", default=DEFAULT_RIGHT_LABEL)
+    parser.add_argument("--left-label", default="")
+    parser.add_argument("--right-label", default="")
     parser.add_argument("--max-candidates", type=int, default=20)
     parser.add_argument("--output", default="")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
@@ -188,9 +294,10 @@ def main() -> None:
 
 def resolve_inputs(args: argparse.Namespace) -> ResolvedInputs:
     search_errors: list[str] = []
+    resolved_source = source_key(str(getattr(args, "source", "") or DEFAULT_SOURCE))
     explicit_features = str(getattr(args, "candidate_features", "") or "").strip()
     split_candidates = [(infer_split_from_path(explicit_features) or first_split(args), explicit_features)] if explicit_features else [
-        (split, default_candidate_features_path(split)) for split in split_list(args)
+        (split, default_candidate_features_path(split, source=resolved_source)) for split in split_list(args)
     ]
     for split, candidate_features in split_candidates:
         features_path = Path(candidate_features)
@@ -203,18 +310,19 @@ def resolve_inputs(args: argparse.Namespace) -> ResolvedInputs:
             search_errors.append(f"{split}: no matching feature row in {candidate_features}")
             continue
         event_id = str(row.get("event_id") or getattr(args, "event_id", "") or "")
-        left_trace_path = str(getattr(args, "left_trace", "") or default_left_trace_path(split))
-        right_trace_path = str(getattr(args, "right_trace", "") or default_right_trace_path(split))
-        left_chain_graph_path = str(getattr(args, "left_chain_graph", "") or default_left_chain_graph_path(split))
-        right_chain_graph_path = str(getattr(args, "right_chain_graph", "") or default_right_chain_graph_path(split))
-        raw_data_path = str(getattr(args, "raw_data", "") or default_raw_data_path(split))
-        coverage_diff_path = str(getattr(args, "coverage_diff", "") or default_coverage_diff_path(split))
+        left_trace_path = str(getattr(args, "left_trace", "") or default_left_trace_path(split, source=resolved_source))
+        right_trace_path = str(getattr(args, "right_trace", "") or default_right_trace_path(split, source=resolved_source))
+        left_chain_graph_path = str(getattr(args, "left_chain_graph", "") or default_left_chain_graph_path(split, source=resolved_source))
+        right_chain_graph_path = str(getattr(args, "right_chain_graph", "") or default_right_chain_graph_path(split, source=resolved_source))
+        raw_data_path = str(getattr(args, "raw_data", "") or default_raw_data_path(split, source=resolved_source))
+        coverage_diff_path = str(getattr(args, "coverage_diff", "") or default_coverage_diff_path(split, source=resolved_source))
         left_trace = find_trace_row(left_trace_path, event_id=event_id, role="left")
         right_trace = find_trace_row(right_trace_path, event_id=event_id, role="right")
         left_graph_row = load_chain_graph_row(left_chain_graph_path, event_id=event_id)
         right_graph_row = load_chain_graph_row(right_chain_graph_path, event_id=event_id)
         raw_row = load_raw_row(raw_data_path, event_id=event_id)
         coverage_diff = load_coverage_diff_row(coverage_diff_path, event_id=event_id)
+        args.source = resolved_source
         args.candidate_features = candidate_features
         args.left_trace = left_trace_path
         args.right_trace = right_trace_path
@@ -223,8 +331,14 @@ def resolve_inputs(args: argparse.Namespace) -> ResolvedInputs:
         args.raw_data = raw_data_path
         args.coverage_diff = coverage_diff_path
         args.resolved_split = split
+        args.resolved_source = resolved_source
+        if not str(getattr(args, "left_label", "") or "").strip():
+            args.left_label = default_left_label(resolved_source)
+        if not str(getattr(args, "right_label", "") or "").strip():
+            args.right_label = default_right_label(resolved_source)
         return ResolvedInputs(
             split=split,
+            source=resolved_source,
             row=row,
             left_trace=left_trace,
             right_trace=right_trace,
@@ -263,47 +377,32 @@ def infer_split_from_path(path: str) -> str:
     return ""
 
 
-def default_candidate_features_path(split: str) -> str:
-    return (
-        f"outputs/selectors/evidence_map_selector/v0_7_atom_facts_{split}/"
-        f"candidate_evidence_map_features_{split}.jsonl"
-    )
+def default_candidate_features_path(split: str, *, source: str = DEFAULT_SOURCE) -> str:
+    return source_profile(source).candidate_features_template.format(split=split)
 
 
-def default_left_trace_path(split: str) -> str:
-    return (
-        f"outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_{split}/"
-        f"selection_trace_{split}.jsonl"
-    )
+def default_left_trace_path(split: str, *, source: str = DEFAULT_SOURCE) -> str:
+    return source_profile(source).left_trace_template.format(split=split)
 
 
-def default_right_trace_path(split: str) -> str:
-    return (
-        f"outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_{split}/"
-        f"selection_trace_{split}.jsonl"
-    )
+def default_right_trace_path(split: str, *, source: str = DEFAULT_SOURCE) -> str:
+    return source_profile(source).right_trace_template.format(split=split)
 
 
-def default_left_chain_graph_path(split: str) -> str:
-    return (
-        f"outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_{split}/"
-        f"chain_graph_{split}.jsonl"
-    )
+def default_left_chain_graph_path(split: str, *, source: str = DEFAULT_SOURCE) -> str:
+    return source_profile(source).left_chain_graph_template.format(split=split)
 
 
-def default_right_chain_graph_path(split: str) -> str:
-    return (
-        f"outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_{split}/"
-        f"chain_graph_{split}.jsonl"
-    )
+def default_right_chain_graph_path(split: str, *, source: str = DEFAULT_SOURCE) -> str:
+    return source_profile(source).right_chain_graph_template.format(split=split)
 
 
-def default_raw_data_path(split: str) -> str:
-    return f"data/raw/LIAR-RAW/{split}.json"
+def default_raw_data_path(split: str, *, source: str = DEFAULT_SOURCE) -> str:
+    return source_profile(source).raw_data_template.format(split=split)
 
 
-def default_coverage_diff_path(split: str) -> str:
-    return f"outputs/data_quality/source_coverage_flash/liar_raw/original_diff/case_coverage_diff_{split}.jsonl"
+def default_coverage_diff_path(split: str, *, source: str = DEFAULT_SOURCE) -> str:
+    return source_profile(source).coverage_diff_template.format(split=split)
 
 
 def find_trace_row(path: str, *, event_id: str, role: str, expected_selector_name: str = "") -> dict[str, Any]:
@@ -344,14 +443,14 @@ def load_chain_graph_row(path: str, *, event_id: str) -> dict[str, Any] | None:
 def missing_trace_message(path: str, *, role: str) -> str:
     message = f"Missing {role} trace file: {path}"
     if str(path) == DEFAULT_RIGHT_TRACE or "v0_7" in str(path):
-        message += "\nGenerate the LIAR-RAW v0.7 trace with:\n\n" + liar_raw_v07_build_command(infer_split_from_path(path) or "val")
+        message += "\nGenerate the RAWFC v0.7 trace with:\n\n" + rawfc_v07_build_command(infer_split_from_path(path) or "val")
     return message
 
 
-def liar_raw_v07_build_command(split: str) -> str:
+def rawfc_v07_build_command(split: str) -> str:
     return f"""SPLIT={split} \\
-INPUT={default_candidate_features_path(split)} \\
-OUTPUT_DIR=outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_{split} \\
+INPUT=outputs/selectors/evidence_map_selector/rawfc_v0_7_atom_facts_{split}/candidate_evidence_map_features_{split}.jsonl \\
+OUTPUT_DIR=outputs/selectors/evidence_chain_graph/rawfc_v0_7_atom_facts_budgeted_marginal_adaptive5_10_{split} \\
 bash scripts/phase5_selectors/run/run_evidence_chain_graph_v0_7_atom_facts.sh"""
 
 
@@ -513,8 +612,10 @@ def render_html(
     title = f"Evidence map selector comparison: {event_id}"
     candidates = comparison_candidates(row, left_trace, right_trace, max_candidates=int(args.max_candidates))
     atoms = list((row.get("evidence_map") or {}).get("claim_atoms") or row.get("claim_atoms") or [])
-    left_label = str(args.left_label or DEFAULT_LEFT_LABEL)
-    right_label = str(args.right_label or DEFAULT_RIGHT_LABEL)
+    resolved_source = source_key(str(getattr(args, "resolved_source", "") or getattr(args, "source", "") or DEFAULT_SOURCE))
+    left_label = str(args.left_label or default_left_label(resolved_source))
+    right_label = str(args.right_label or default_right_label(resolved_source))
+    source_label = source_profile(resolved_source).label
     gold_label = str(row.get("gold_label") or gold_label_text(raw_row) or "")
     created = datetime.now(timezone.utc).isoformat(timespec="seconds")
     payload = {
@@ -525,6 +626,7 @@ def render_html(
         "right_chain_graph": getattr(args, "right_chain_graph", ""),
         "raw_data": args.raw_data,
         "coverage_diff": getattr(args, "coverage_diff", ""),
+        "resolved_source": resolved_source,
         "resolved_split": getattr(args, "resolved_split", ""),
         "event_id": event_id,
         "created_at": created,
@@ -551,26 +653,36 @@ def render_html(
   <style>{css()}</style>
 </head>
 <body>
-  <header>
-    <h1>{esc(title)}</h1>
-    <div class="meta">
-      gold_label={esc(gold_label)} |
-      left={esc(str(left_trace.get("selector_name") or left_label))} |
-      right={esc(str(right_trace.get("selector_name") or right_label))}
-    </div>
-    <p class="claim text-wrap-safe">{trans_html("claim", row.get("claim"), translations)}</p>
-    <div class="path-grid">
-      <div><b>split</b><span class="path-value">{esc(getattr(args, "resolved_split", ""))}</span></div>
-      <div><b>features</b><span class="path-value">{esc(args.candidate_features)}</span></div>
-      <div><b>{esc(left_label)}</b><span class="path-value">{esc(args.left_trace)}</span></div>
-      <div><b>{esc(right_label)}</b><span class="path-value">{esc(args.right_trace)}</span></div>
-      <div><b>{esc(left_label)} graph</b><span class="path-value">{esc(getattr(args, "left_chain_graph", ""))}</span></div>
-      <div><b>{esc(right_label)} graph</b><span class="path-value">{esc(getattr(args, "right_chain_graph", ""))}</span></div>
-      <div><b>coverage diff</b><span class="path-value">{esc(getattr(args, "coverage_diff", ""))}</span></div>
-    </div>
-    {render_translation_toolbar(translations, args=args, missing_count=missing_translation_count)}
+  <header class="page-header">
+    <details class="header-collapse" data-header-collapse>
+      <summary class="header-summary">
+        <span class="header-title-group">
+          <h1>{esc(title)}</h1>
+          <span class="meta">
+            gold_label={esc(gold_label)} |
+            left={esc(str(left_trace.get("selector_name") or left_label))} |
+            right={esc(str(right_trace.get("selector_name") or right_label))}
+          </span>
+        </span>
+        <span class="header-summary-action">Details</span>
+      </summary>
+      <div class="header-details">
+        <p class="claim text-wrap-safe">{trans_html("claim", row.get("claim"), translations)}</p>
+        <div class="path-grid">
+          <div><b>source</b><span class="path-value">{esc(source_label)} ({esc(resolved_source)})</span></div>
+          <div><b>split</b><span class="path-value">{esc(getattr(args, "resolved_split", ""))}</span></div>
+          <div><b>features</b><span class="path-value">{esc(args.candidate_features)}</span></div>
+          <div><b>{esc(left_label)}</b><span class="path-value">{esc(args.left_trace)}</span></div>
+          <div><b>{esc(right_label)}</b><span class="path-value">{esc(args.right_trace)}</span></div>
+          <div><b>{esc(left_label)} graph</b><span class="path-value">{esc(getattr(args, "left_chain_graph", ""))}</span></div>
+          <div><b>{esc(right_label)} graph</b><span class="path-value">{esc(getattr(args, "right_chain_graph", ""))}</span></div>
+          <div><b>coverage diff</b><span class="path-value">{esc(getattr(args, "coverage_diff", ""))}</span></div>
+        </div>
+        {render_translation_toolbar(translations, args=args, missing_count=missing_translation_count)}
+      </div>
+    </details>
   </header>
-  <main>
+  <main class="workspace-main">
     <section class="section">
       <h2>Overview</h2>
       {render_overview(left_trace, right_trace, left_label=left_label, right_label=right_label)}
@@ -1135,6 +1247,11 @@ def render_evidence_map_graphs(
     </label>
     <label class="checkbox-label"><input type="checkbox" data-graph-selected-only> selected only</label>
     <button type="button" data-graph-fit-toggle>Natural width</button>
+    <div class="graph-zoom-controls" data-graph-zoom-controls aria-label="Graph zoom">
+      <button type="button" data-graph-zoom-out aria-label="Zoom graph out" title="Zoom graph out">-</button>
+      <button type="button" data-graph-zoom-reset aria-label="Reset graph zoom" title="Reset graph zoom"><span data-graph-zoom-level>100%</span></button>
+      <button type="button" data-graph-zoom-in aria-label="Zoom graph in" title="Zoom graph in">+</button>
+    </div>
   </div>
   {render_graph_detail_panel()}
   <article class="map-graph-panel left graph-panel-active" data-graph-panel="left">
@@ -1739,9 +1856,10 @@ def translation_request_payload(args: argparse.Namespace) -> dict[str, Any]:
         "url": url,
         "payload": {
             "split": str(getattr(args, "web_split", "") or getattr(args, "resolved_split", "") or ""),
+            "source": str(getattr(args, "web_source", "") or getattr(args, "resolved_source", "") or getattr(args, "source", "") or DEFAULT_SOURCE),
             "event_id": str(getattr(args, "web_event_id", "") or ""),
-            "left_label": str(getattr(args, "left_label", "") or DEFAULT_LEFT_LABEL),
-            "right_label": str(getattr(args, "right_label", "") or DEFAULT_RIGHT_LABEL),
+            "left_label": str(getattr(args, "left_label", "") or default_left_label(getattr(args, "resolved_source", "") or getattr(args, "source", "") or DEFAULT_SOURCE)),
+            "right_label": str(getattr(args, "right_label", "") or default_right_label(getattr(args, "resolved_source", "") or getattr(args, "source", "") or DEFAULT_SOURCE)),
         },
     }
 
@@ -1757,6 +1875,10 @@ def graph_switcher_script() -> str:
   const edgeFilter = root.querySelector("[data-graph-edge-filter]");
   const selectedOnly = root.querySelector("[data-graph-selected-only]");
   const fitToggle = root.querySelector("[data-graph-fit-toggle]");
+  const zoomOut = root.querySelector("[data-graph-zoom-out]");
+  const zoomReset = root.querySelector("[data-graph-zoom-reset]");
+  const zoomIn = root.querySelector("[data-graph-zoom-in]");
+  const zoomLevel = root.querySelector("[data-graph-zoom-level]");
   const detail = root.querySelector("[data-graph-detail]");
   const detailTitle = root.querySelector("[data-graph-detail-title]");
   const detailMeta = root.querySelector("[data-graph-detail-meta]");
@@ -1767,6 +1889,59 @@ def graph_switcher_script() -> str:
   ));
 
   const activePanel = () => panels.find((panel) => panel.classList.contains("graph-panel-active")) || panels[0];
+  let graphZoom = 1;
+  const minGraphZoom = 0.6;
+  const maxGraphZoom = 2.5;
+  const graphZoomStep = 0.05;
+  const clampGraphZoom = (value) => Math.max(minGraphZoom, Math.min(maxGraphZoom, value));
+  const graphSvgs = () => Array.from(root.querySelectorAll("svg.graph-svg"));
+  const parseViewBox = (svg) => {
+    const raw = svg.getAttribute("viewBox") || "";
+    const parts = raw.trim().split(/\\s+/).map(Number);
+    if (parts.length === 4 && parts.every(Number.isFinite) && parts[2] > 0 && parts[3] > 0) {
+      return {x: parts[0], y: parts[1], width: parts[2], height: parts[3]};
+    }
+    const attrWidth = Number.parseFloat(svg.getAttribute("width") || "");
+    const attrHeight = Number.parseFloat(svg.getAttribute("height") || "");
+    const rect = svg.getBoundingClientRect ? svg.getBoundingClientRect() : null;
+    const width = attrWidth || (rect ? Number(rect.width || 0) : 0) || 1080;
+    const height = attrHeight || (rect ? Number(rect.height || 0) : 0) || 640;
+    return {x: 0, y: 0, width, height};
+  };
+  const baseSvgViewBox = (svg) => {
+    if (svg.dataset.graphZoomBaseViewBox) {
+      const parts = svg.dataset.graphZoomBaseViewBox.split(" ").map(Number);
+      if (parts.length === 4 && parts.every(Number.isFinite) && parts[2] > 0 && parts[3] > 0) {
+        return {x: parts[0], y: parts[1], width: parts[2], height: parts[3]};
+      }
+    }
+    const base = parseViewBox(svg);
+    svg.dataset.graphZoomBaseViewBox = `${base.x} ${base.y} ${base.width} ${base.height}`;
+    return base;
+  };
+  const formatViewBoxNumber = (value) => Number(value).toFixed(2).replace(/\\.00$/, "");
+  const applyGraphZoom = () => {
+    graphZoom = clampGraphZoom(graphZoom);
+    root.dataset.graphZoom = graphZoom.toFixed(2);
+    if (zoomLevel) zoomLevel.textContent = `${Math.round(graphZoom * 100)}%`;
+    if (zoomOut) zoomOut.disabled = graphZoom <= minGraphZoom + 0.001;
+    if (zoomIn) zoomIn.disabled = graphZoom >= maxGraphZoom - 0.001;
+    graphSvgs().forEach((svg) => {
+      const base = baseSvgViewBox(svg);
+      const zoomedWidth = base.width / graphZoom;
+      const zoomedHeight = base.height / graphZoom;
+      const centerX = base.x + base.width / 2;
+      const centerY = base.y + base.height / 2;
+      const x = centerX - zoomedWidth / 2;
+      const y = centerY - zoomedHeight / 2;
+      svg.setAttribute("viewBox", [
+        formatViewBoxNumber(x),
+        formatViewBoxNumber(y),
+        formatViewBoxNumber(zoomedWidth),
+        formatViewBoxNumber(zoomedHeight),
+      ].join(" "));
+    });
+  };
 
   const setActive = (side) => {
     options.forEach((option) => {
@@ -1780,6 +1955,7 @@ def graph_switcher_script() -> str:
       panel.classList.toggle("graph-panel-hidden", !active);
     });
     applyFilters();
+    applyGraphZoom();
   };
 
   const evidenceRelationships = (panel, evidenceId) => {
@@ -1871,8 +2047,12 @@ def graph_switcher_script() -> str:
     fitToggle.addEventListener("click", () => {
       root.classList.toggle("graph-fit-natural");
       fitToggle.textContent = root.classList.contains("graph-fit-natural") ? "Fit width" : "Natural width";
+      applyGraphZoom();
     });
   }
+  if (zoomOut) zoomOut.addEventListener("click", () => { graphZoom = clampGraphZoom(graphZoom - graphZoomStep); applyGraphZoom(); });
+  if (zoomReset) zoomReset.addEventListener("click", () => { graphZoom = 1; applyGraphZoom(); });
+  if (zoomIn) zoomIn.addEventListener("click", () => { graphZoom = clampGraphZoom(graphZoom + graphZoomStep); applyGraphZoom(); });
   root.addEventListener("click", (event) => {
     const node = event.target.closest("[data-graph-node='evidence']");
     if (node && root.contains(node)) highlightEvidence(node);
@@ -2113,20 +2293,56 @@ body {
 header {
   background: #fff;
   border-bottom: 1px solid var(--line);
-  padding: 22px 28px 18px;
+  padding: 8px 10px;
   position: sticky;
   top: 0;
   z-index: 5;
 }
-main {
-  max-width: 1560px;
+main.workspace-main {
+  width: min(100%, calc(100vw - 20px));
+  max-width: none;
   margin: 0 auto;
-  padding: 22px 28px 44px;
+  padding: 12px 0 44px;
 }
-h1 { font-size: 22px; line-height: 1.2; margin: 0 0 8px; letter-spacing: 0; }
+.header-collapse { width: 100%; }
+.header-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+}
+.header-summary::-webkit-details-marker { display: none; }
+.header-title-group {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.header-summary h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.header-summary-action {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  border: 1px solid #b8c6d7;
+  border-radius: 6px;
+  background: #fff;
+  color: #29435f;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.header-collapse[open] .header-summary-action::after { content: " shown"; }
+.header-collapse:not([open]) .header-summary-action::after { content: " hidden"; }
+.header-details { padding-top: 10px; }
+h1 { font-size: 17px; line-height: 1.2; margin: 0; letter-spacing: 0; }
 h2 { font-size: 16px; margin: 0 0 12px; letter-spacing: 0; }
 h3 { font-size: 14px; margin: 0 0 8px; letter-spacing: 0; }
-.claim { max-width: 1180px; font-size: 16px; margin: 8px 0 0; }
+.claim { max-width: 1380px; font-size: 15px; margin: 0; }
 .meta, .small { color: var(--muted); font-size: 12px; }
 .section {
   margin-bottom: 18px;
@@ -2396,6 +2612,29 @@ body.zh-mode .i18n-zh { display: inline; }
   padding: 4px 8px;
   font: inherit;
   font-size: 12px;
+}
+.graph-zoom-controls {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  border-left: 1px solid var(--line);
+  padding-left: 10px;
+}
+.graph-zoom-controls button {
+  min-width: 34px;
+  text-align: center;
+  font-weight: 760;
+}
+.graph-zoom-controls button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+.graph-zoom-controls [data-graph-zoom-reset] {
+  min-width: 58px;
+}
+.graph-zoom-controls [data-graph-zoom-level] {
+  display: inline-block;
+  min-width: 40px;
 }
 .checkbox-label input { margin: 0; }
 .graph-detail {
@@ -2678,8 +2917,10 @@ tr.right-only { background: #f1fbf9; }
 mark { background: #fff0a8; color: inherit; padding: 0 2px; border-radius: 2px; }
 .raw { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 @media (max-width: 900px) {
-  header { position: static; padding: 18px; }
-  main { padding: 18px; }
+  header { position: static; padding: 10px; }
+  main.workspace-main { width: 100%; padding: 10px; }
+  .header-summary { grid-template-columns: 1fr; }
+  .header-summary h1 { white-space: normal; }
   .overview-grid, .two-col, .chain-process-grid, .graph-switcher, .graph-detail { grid-template-columns: 1fr; }
 }
 """

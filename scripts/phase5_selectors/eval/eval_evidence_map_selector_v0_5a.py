@@ -10,6 +10,7 @@ from typing import Any
 
 from fact_checking.selectors.evidence_map_selector import (
     EVIDENCE_MAP_SELECTOR,
+    EvidenceMapParams,
     build_all_evidence_map_traces,
     evidence_map_diagnostics,
     render_case_study_markdown,
@@ -29,6 +30,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--top-k", type=int, default=5)
     p.add_argument("--sample-limit", type=int, default=None)
     p.add_argument("--case-ids", default="")
+    p.add_argument("--selector-base-weight", type=float, default=EvidenceMapParams.base_weight)
+    p.add_argument("--selector-atom-coverage-weight", type=float, default=EvidenceMapParams.atom_coverage_weight)
+    p.add_argument("--selector-directness-weight", type=float, default=EvidenceMapParams.directness_weight)
+    p.add_argument("--selector-polar-relation-weight", type=float, default=EvidenceMapParams.polar_relation_weight)
+    p.add_argument("--selector-duplicate-penalty", type=float, default=EvidenceMapParams.duplicate_penalty)
+    p.add_argument("--selector-source-penalty", type=float, default=EvidenceMapParams.source_penalty)
+    p.add_argument("--selector-background-penalty", type=float, default=EvidenceMapParams.background_penalty)
     return p.parse_args()
 
 
@@ -42,7 +50,8 @@ def main() -> None:
         rows = rows[: int(args.sample_limit)]
     if not rows:
         raise ValueError(f"No rows loaded from {args.candidate_features}")
-    traces = build_all_evidence_map_traces(rows, top_k=int(args.top_k))
+    params = _evidence_map_params_from_args(args)
+    traces = build_all_evidence_map_traces(rows, top_k=int(args.top_k), params=params)
     selector_metrics = summarize_evidence_map_traces(traces)
     diagnostics = evidence_map_diagnostics(rows, traces, selector_metrics)
     case_ids = [item.strip() for item in str(args.case_ids or "").split(",") if item.strip()]
@@ -62,6 +71,7 @@ def main() -> None:
         "output_dir": str(out_dir),
         "split": str(args.split),
         "top_k": int(args.top_k),
+        "selector_params": params.__dict__,
         "sample_limit": int(args.sample_limit) if args.sample_limit is not None else None,
         "case_ids": case_ids,
         "n_events": len(rows),
@@ -86,6 +96,19 @@ def main() -> None:
             recall=float(primary.get("recall@5", 0.0)),
             coverage=float(primary.get("mean_weighted_atom_coverage@5", 0.0)),
         )
+    )
+
+
+def _evidence_map_params_from_args(args: argparse.Namespace) -> EvidenceMapParams:
+    return EvidenceMapParams(
+        top_k=int(args.top_k),
+        base_weight=float(args.selector_base_weight),
+        atom_coverage_weight=float(args.selector_atom_coverage_weight),
+        directness_weight=float(args.selector_directness_weight),
+        polar_relation_weight=float(args.selector_polar_relation_weight),
+        duplicate_penalty=float(args.selector_duplicate_penalty),
+        source_penalty=float(args.selector_source_penalty),
+        background_penalty=float(args.selector_background_penalty),
     )
 
 

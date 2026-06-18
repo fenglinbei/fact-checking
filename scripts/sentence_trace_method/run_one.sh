@@ -25,12 +25,14 @@ FORCE_BUILD="${FORCE_BUILD:-false}"
 FORCE_TRAIN="${FORCE_TRAIN:-false}"
 FORCE_EVAL="${FORCE_EVAL:-false}"
 SOURCE_ROOT="${SOURCE_ROOT:-}"
+EXPECTED_CHUNK_MMR_FINGERPRINT="${EXPECTED_CHUNK_MMR_FINGERPRINT:-}"
 SELECTOR_NAME="${SELECTOR_NAME:-sentence_rule_step_adaptive5_10}"
 SELECTOR_GRAPH_VERSION="${SELECTOR_GRAPH_VERSION:-sentence_evidence_chain_graph}"
 SELECTOR_ADAPTIVE_POLICY="${SELECTOR_ADAPTIVE_POLICY:-sentence_rule_step}"
 EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME:-$SELECTOR_NAME}"
 PROMPT_OUTPUT_MODE="${PROMPT_OUTPUT_MODE:-}"
 TRACE_PROMPT_STYLE="${TRACE_PROMPT_STYLE:-plain}"
+EVIDENCE_TEXT_MODE="${EVIDENCE_TEXT_MODE:-full}"
 RAW_ROOT="${RAW_ROOT:-}"
 COVERAGE_DATA_ROOT="${COVERAGE_DATA_ROOT:-}"
 COVERAGE_POLICY="${COVERAGE_POLICY:-all}"
@@ -172,6 +174,9 @@ stage_sources() {
   if [[ -n "$SOURCE_ROOT" ]]; then
     cmd+=(--source-root "$SOURCE_ROOT")
   fi
+  if [[ -n "$EXPECTED_CHUNK_MMR_FINGERPRINT" ]]; then
+    cmd+=(--expected-fingerprint "$EXPECTED_CHUNK_MMR_FINGERPRINT")
+  fi
   run_cmd "${cmd[@]}"
 }
 
@@ -187,7 +192,7 @@ do_build() {
     if [[ "$STAGE_SAMPLE_LIMIT" != "0" ]]; then
       source_suffix="_sample${STAGE_SAMPLE_LIMIT}"
     fi
-    EXPECTED_CHUNK_MMR_FINGERPRINT="<staged-fingerprint>"
+    EXPECTED_CHUNK_MMR_FINGERPRINT="${EXPECTED_CHUNK_MMR_FINGERPRINT:-<staged-fingerprint>}"
     TRAIN_TRACE="${OUTPUT_ROOT}/_sources/${DATASET}/${SELECTOR_NAME}${source_suffix}/train/selection_trace_train.jsonl"
     VAL_TRACE="${OUTPUT_ROOT}/_sources/${DATASET}/${SELECTOR_NAME}${source_suffix}/val/selection_trace_val.jsonl"
     TEST_TRACE="${OUTPUT_ROOT}/_sources/${DATASET}/${SELECTOR_NAME}${source_suffix}/test/selection_trace_test.jsonl"
@@ -205,6 +210,7 @@ do_build() {
     --output-dir "$RUN_DIR"
     --selection-mode trace
     --trace-prompt-style "$TRACE_PROMPT_STYLE"
+    --evidence-text-mode "$EVIDENCE_TEXT_MODE"
     --expected-selector-name "$EXPECTED_SELECTOR_NAME"
     --expected-chunk-mmr-fingerprint "$EXPECTED_CHUNK_MMR_FINGERPRINT"
     --top-k 10

@@ -1,0 +1,33 @@
+# @package _global_
+# RAWFC v0.6c verifier lineage with RAWFC-tight ABC claim-aware evidence units
+# for v0_7_atom_facts_abc_tight evidence-map construction.
+
+defaults:
+  - v0_6c_rawfc3_rule_step_adaptive5_10
+  - _self_
+
+experiment:
+  name: v0_6c_rawfc3_rule_step_adaptive5_10_abc_tight_chunking
+
+baseline:
+  variant: v0_7_atom_facts_abc_tight
+  chunking_strategy: abc_claim_aware_rawfc_tight
+
+build:
+  retrieval:
+    chunking:
+      strategy: abc_claim_aware_rawfc_tight
+      boundary_mode: local_peak
+      lambda_std: 0.35
+      w_sem: 0.65
+      w_rel: 0.35
+      max_sent_per_chunk: 2
+      max_tokens_per_chunk: 150
+      min_tokens_per_chunk: 20
+      allow_single_sentence_if_relevant: true
+      single_sentence_relevance_threshold: 0.55
+      high_rel_threshold: 0.70
+      coref_boundary_discount: 0.10
+
+swanlab:
+  experiment_name: v0_7_atom_facts_abc_tight

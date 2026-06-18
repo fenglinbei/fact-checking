@@ -51,6 +51,10 @@ def test_summarize_atom_anchored_qec_traces_reports_chain_diagnostics() -> None:
         params=AtomAnchoredQECParams(selection_policy="keep_all_reorder"),
     )
 
+    assert trace["chain_diagnostics"]["chain_steps"] == 3
+    assert trace["chain_diagnostics"]["primary_step_count"] == 2
+    assert trace["chain_diagnostics"]["fallback_step_count"] == 1
+
     summary = summarize_atom_anchored_qec_traces([trace])
 
     assert summary["n_rows"] == 1
@@ -58,6 +62,107 @@ def test_summarize_atom_anchored_qec_traces_reports_chain_diagnostics() -> None:
     assert summary["chain_steps"]["mean"] == 3.0
     assert summary["role_counts"] == {"primary": 2, "fallback": 1}
     assert summary["cue_source_counts"] == {"qd_question": 2, "fallback": 1}
+
+
+def test_constrained_primary_only_selects_best_primary_per_atom_from_selected_set() -> None:
+    row = _stage2_trace_row(selected_indices=[0, 1, 2, 3, 4, 5])
+
+    trace = build_atom_anchored_qec_trace_row(
+        row,
+        params=AtomAnchoredQECParams(
+            selection_policy="primary_only",
+            source_selector_name="v0_7_atom_facts_abc_budgeted_marginal_chain_adaptive5_10",
+        ),
+    )
+
+    assert trace["selector_name"] == "aa_qec_constrained_atom_facts_abc_primary_only_qd_prefer_selected_max10"
+    assert trace["candidate_pool_metadata"]["adaptive_policy"] == "aa_qec_constrained_atom_facts_abc"
+    assert trace["selector_ordered_indices"] == [1, 3]
+    assert [step["role"] for step in trace["chain_steps"]] == ["primary", "primary"]
+    assert trace["chain_diagnostics"]["primary_step_count"] == 2
+    assert set(trace["selector_ordered_indices"]).issubset(set(row["selected_indices"]))
+
+
+def test_constrained_primary_secondary_adds_counter_and_qualifier_steps() -> None:
+    row = _stage2_trace_row(selected_indices=[0, 1, 2, 3, 4, 5])
+
+    trace = build_atom_anchored_qec_trace_row(
+        row,
+        params=AtomAnchoredQECParams(selection_policy="primary_secondary"),
+    )
+
+    assert trace["selector_ordered_indices"] == [1, 2, 3, 4]
+    assert [step["role"] for step in trace["chain_steps"]] == [
+        "primary",
+        "secondary",
+        "primary",
+        "secondary",
+    ]
+    assert [step["relation"] for step in trace["chain_steps"]] == ["support", "refute", "support", "qualify"]
+    assert trace["chain_diagnostics"]["secondary_step_count"] == 2
+
+
+def test_constrained_primary_secondary_fallback_min5_fills_from_selected_order() -> None:
+    row = _stage2_trace_row(selected_indices=[0, 1, 2, 3, 4, 5])
+
+    trace = build_atom_anchored_qec_trace_row(
+        row,
+        params=AtomAnchoredQECParams(selection_policy="primary_secondary_fallback_min5"),
+    )
+
+    assert trace["selector_ordered_indices"] == [1, 2, 3, 4, 0]
+    assert [step["role"] for step in trace["chain_steps"]] == [
+        "primary",
+        "secondary",
+        "primary",
+        "secondary",
+        "fallback",
+    ]
+    assert trace["chain_diagnostics"]["fallback_step_count"] == 1
+    assert trace["chain_diagnostics"]["fallback_fill_rate"] == 0.2
+    assert set(trace["selector_ordered_indices"]).issubset(set(row["selected_indices"]))
+
+
+def test_constrained_primary_fallback_no_secondary_uses_fallback_roles_for_min5() -> None:
+    row = _stage2_trace_row(selected_indices=[0, 1, 2, 3, 4, 5])
+
+    trace = build_atom_anchored_qec_trace_row(
+        row,
+        params=AtomAnchoredQECParams(selection_policy="primary_fallback_min5_no_secondary"),
+    )
+
+    assert trace["selector_ordered_indices"] == [1, 3, 0, 2, 4]
+    assert [step["role"] for step in trace["chain_steps"]] == [
+        "primary",
+        "primary",
+        "fallback",
+        "fallback",
+        "fallback",
+    ]
+    assert trace["chain_diagnostics"]["secondary_step_count"] == 0
+    assert trace["chain_diagnostics"]["fallback_step_count"] == 3
+
+
+def test_constrained_primary_modes_keep_one_fallback_when_no_selected_candidate_covers_atoms() -> None:
+    row = _stage2_trace_row(selected_indices=[0, 1, 2, 3, 4, 5])
+    for candidate in row["candidate_pool"]:
+        candidate["covered_atom_ids"] = []
+        candidate["map_relation"] = "irrelevant"
+        candidate["map_directness"] = "none"
+        candidate["map_confidence"] = 0.0
+        candidate["evidence_map_quality_score"] = 0.0
+
+    for policy in ("primary_only", "primary_secondary"):
+        trace = build_atom_anchored_qec_trace_row(
+            row,
+            params=AtomAnchoredQECParams(selection_policy=policy),
+        )
+
+        assert trace["selector_ordered_indices"] == [0]
+        assert [step["role"] for step in trace["chain_steps"]] == ["fallback"]
+        assert trace["chain_diagnostics"]["primary_step_count"] == 0
+        assert trace["chain_diagnostics"]["fallback_step_count"] == 1
+        assert set(trace["selector_ordered_indices"]).issubset(set(row["selected_indices"]))
 
 
 def _trace_row(*, selected_indices: list[int]) -> dict:
@@ -94,6 +199,97 @@ def _trace_row(*, selected_indices: list[int]) -> dict:
     }
 
 
+def _stage2_trace_row(*, selected_indices: list[int]) -> dict:
+    row = _trace_row(selected_indices=selected_indices)
+    row["selector_name"] = "v0_7_atom_facts_abc_budgeted_marginal_chain_adaptive5_10"
+    row["fingerprint"] = "d4cbf7c18126"
+    row["candidate_pool_metadata"] = {
+        "chunk_mmr_fingerprint": "d4cbf7c18126",
+        "selector_name": "v0_7_atom_facts_abc_budgeted_marginal_chain_adaptive5_10",
+        "graph_version": "evidence_chain_graph_v0_7",
+        "adaptive_policy": "budgeted_marginal_v0_7",
+    }
+    row["candidate_pool"] = [
+        _candidate(
+            0,
+            "E01",
+            atoms=["A1"],
+            question="Did atom one happen?",
+            relation="support",
+            directness="direct",
+            confidence=0.6,
+            quality=0.50,
+            base_score=0.80,
+        ),
+        _candidate(
+            1,
+            "E02",
+            atoms=["A1"],
+            question="Did atom one happen?",
+            relation="support",
+            directness="direct",
+            confidence=0.95,
+            quality=0.95,
+            base_score=0.90,
+        ),
+        _candidate(
+            2,
+            "E03",
+            atoms=["A1"],
+            question="Could atom one be contradicted?",
+            relation="refute",
+            directness="partial",
+            confidence=0.80,
+            quality=0.70,
+            base_score=0.70,
+        ),
+        _candidate(
+            3,
+            "E04",
+            atoms=["A2"],
+            question="Did atom two happen?",
+            relation="support",
+            directness="direct",
+            confidence=0.90,
+            quality=0.90,
+            base_score=0.85,
+        ),
+        _candidate(
+            4,
+            "E05",
+            atoms=["A2"],
+            question="What qualifies atom two?",
+            relation="qualify",
+            directness="partial",
+            confidence=0.75,
+            quality=0.68,
+            base_score=0.65,
+        ),
+        _candidate(5, "E06", atoms=[]),
+        _candidate(
+            6,
+            "E07",
+            atoms=["A3"],
+            question="Unselected evidence should stay out?",
+            relation="support",
+            directness="direct",
+            confidence=0.99,
+            quality=0.99,
+            base_score=0.99,
+        ),
+    ]
+    row["claim_atoms"] = [
+        {"atom_id": "A1", "text": "Atom one", "importance": 1.0},
+        {"atom_id": "A2", "text": "Atom two", "importance": 1.0},
+        {"atom_id": "A3", "text": "Atom three", "importance": 1.0},
+    ]
+    row["candidate_scores"] = [
+        {"candidate_idx": candidate["candidate_idx"], "hybrid_score": candidate["hybrid_score"]}
+        for candidate in row["candidate_pool"]
+    ]
+    return row
+
+
 def _candidate(
     candidate_idx: int,
     evidence_id: str,
@@ -101,6 +297,11 @@ def _candidate(
     atoms: list[str],
     question: str = "",
     rank: int = 1,
+    relation: str | None = None,
+    directness: str | None = None,
+    confidence: float = 0.8,
+    quality: float = 0.7,
+    base_score: float = 0.6,
 ) -> dict:
     routes = []
     if question:
@@ -119,11 +320,12 @@ def _candidate(
         "evidence_id": evidence_id,
         "text": f"{evidence_id} evidence text.",
         "covered_atom_ids": atoms,
-        "map_relation": "support" if atoms else "background",
-        "map_directness": "direct" if atoms else "context",
-        "map_confidence": 0.8,
-        "evidence_map_quality_score": 0.7,
-        "evidence_map_base_score": 0.6,
+        "map_relation": relation or ("support" if atoms else "background"),
+        "map_directness": directness or ("direct" if atoms else "context"),
+        "map_confidence": confidence,
+        "evidence_map_quality_score": quality,
+        "evidence_map_base_score": base_score,
+        "hybrid_score": base_score,
         "qd_question_routes": routes,
         "from_qd": bool(routes),
         "qd_max_question_hybrid": 0.5 if routes else 0.0,

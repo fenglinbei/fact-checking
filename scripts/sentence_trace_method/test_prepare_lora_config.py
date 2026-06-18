@@ -70,6 +70,54 @@ def test_prepare_lora_config_applies_learning_rate_override(tmp_path: Path) -> N
     assert cfg["sft_train"]["learning_rate"] == 1.0e-5
 
 
+def test_prepare_lora_config_applies_label_token_early_stopping_metric(tmp_path: Path) -> None:
+    build_dir = tmp_path / "source" / "build"
+    build_dir.mkdir(parents=True)
+    for split in ("train", "val", "test"):
+        (build_dir / f"build_{split}.jsonl").write_text(json.dumps({"id": split}) + "\n", encoding="utf-8")
+
+    source_config = tmp_path / "source" / "train.resolved.yaml"
+    source_config.write_text(
+        yaml.safe_dump(
+            {
+                "data": {
+                    "train_candidates": str(build_dir / "build_train.jsonl"),
+                    "val_candidates": str(build_dir / "build_val.jsonl"),
+                    "test_candidates": str(build_dir / "build_test.jsonl"),
+                },
+                "sft_train": {
+                    "label_token_ce": {"early_stopping_metric": "macro_f1_plus_true_side_plus_mae"},
+                    "lora": {"enabled": False},
+                },
+                "train": {},
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    output_root = tmp_path / "case_lora"
+    subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--source-config",
+            str(source_config),
+            "--output-root",
+            str(output_root),
+            "--experiment-name",
+            "case_lora",
+            "--early-stopping-metric",
+            "macro_f1",
+        ],
+        env=_env(),
+        check=True,
+    )
+
+    cfg = yaml.safe_load((output_root / "train.resolved.yaml").read_text(encoding="utf-8"))
+    assert cfg["sft_train"]["label_token_ce"]["early_stopping_metric"] == "macro_f1"
+
+
 def test_prepare_lora_config_syncs_learning_rate_for_existing_config(tmp_path: Path) -> None:
     output_root = tmp_path / "case_lora"
     output_root.mkdir()

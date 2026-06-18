@@ -31,6 +31,7 @@ DEFAULT_BASE_PATH = "/evidence-map"
 
 @dataclass
 class SplitIndex:
+    source: str
     split: str
     candidate_features_path: Path
     left_trace_path: Path
@@ -49,27 +50,40 @@ class SplitIndex:
 
 
 class ComparisonStore:
-    def __init__(self, root: Path, split_indexes: dict[str, SplitIndex], max_candidates: int) -> None:
+    def __init__(self, root: Path, source_indexes: dict[str, dict[str, SplitIndex]], max_candidates: int) -> None:
         self.root = root
-        self.split_indexes = split_indexes
+        self.source_indexes = source_indexes
+        self.split_indexes = source_indexes.get(comparison.DEFAULT_SOURCE, {})
         self.max_candidates = int(max_candidates)
 
     @classmethod
-    def load(cls, root: str | Path, splits: list[str], max_candidates: int) -> "ComparisonStore":
+    def load(
+        cls,
+        root: str | Path,
+        splits: list[str],
+        max_candidates: int,
+        sources: list[str] | None = None,
+    ) -> "ComparisonStore":
         root_path = Path(root).resolve()
-        indexes: dict[str, SplitIndex] = {}
-        for split in splits:
-            index = load_split_index(root_path, split)
-            if index is not None:
-                indexes[split] = index
-        return cls(root=root_path, split_indexes=indexes, max_candidates=max_candidates)
+        source_keys = [comparison.source_key(source) for source in (sources or [comparison.DEFAULT_SOURCE])]
+        indexes: dict[str, dict[str, SplitIndex]] = {}
+        for source in source_keys:
+            split_indexes: dict[str, SplitIndex] = {}
+            for split in splits:
+                index = load_split_index(root_path, split, source=source)
+                if index is not None:
+                    split_indexes[split] = index
+            if split_indexes:
+                indexes[source] = split_indexes
+        return cls(root=root_path, source_indexes=indexes, max_candidates=max_candidates)
 
-    def search_cases(self, query: str = "", split: str = "", limit: int = 50) -> list[dict[str, Any]]:
+    def search_cases(self, query: str = "", source: str = "", split: str = "", limit: int = 50) -> list[dict[str, Any]]:
         needle = str(query or "").strip().lower()
+        source_name = comparison.source_key(source)
         wanted_split = str(split or "").strip()
         max_rows = max(int(limit or 50), 1)
         results: list[dict[str, Any]] = []
-        for split_name, index in self.split_indexes.items():
+        for split_name, index in self.source_indexes.get(source_name, {}).items():
             if wanted_split and split_name != wanted_split:
                 continue
             for event_key in sorted(index.rows):
@@ -93,6 +107,8 @@ class ComparisonStore:
                 results.append(
                     {
                         "split": split_name,
+                        "source": source_name,
+                        "source_label": comparison.source_profile(source_name).label,
                         "event_id": str(row.get("event_id") or event_key),
                         "claim": str(row.get("claim") or ""),
                         "gold_label": _gold_label(row, raw_row),
@@ -110,6 +126,7 @@ class ComparisonStore:
         left_label: str,
         right_label: str,
         *,
+        source: str = "",
         translate_zh: bool = False,
         force_translate: bool = False,
         web_translation_enabled: bool = False,
@@ -117,6 +134,7 @@ class ComparisonStore:
         web_token: str = "",
     ) -> str:
         index, event_key, row, args, output_path = self._render_context(
+            source=source,
             split=split,
             event_id=event_id,
             left_label=left_label,
@@ -157,12 +175,14 @@ class ComparisonStore:
         left_label: str,
         right_label: str,
         *,
+        source: str = "",
         enabled: bool,
         force_translate: bool = False,
     ) -> dict[str, Any]:
         if not enabled:
             raise PermissionError("Live translation is disabled for this server.")
         index, event_key, row, args, output_path = self._render_context(
+            source=source,
             split=split,
             event_id=event_id,
             left_label=left_label,
@@ -194,6 +214,7 @@ class ComparisonStore:
     def _render_context(
         self,
         *,
+        source: str,
         split: str,
         event_id: str,
         left_label: str,
@@ -204,13 +225,16 @@ class ComparisonStore:
         web_base_path: str = "",
         web_token: str = "",
     ) -> tuple[SplitIndex, str, dict[str, Any], argparse.Namespace, Path]:
+        source_name = comparison.source_key(source)
         split_name = str(split or "").strip()
-        if split_name not in self.split_indexes:
-            raise KeyError(f"Unknown split: {split}")
-        index = self.split_indexes[split_name]
+        source_splits = self.source_indexes.get(source_name, {})
+        if split_name not in source_splits:
+            raise KeyError(f"Unknown source/split: {source_name}/{split}")
+        index = source_splits[split_name]
         event_key = map_html.canonical_event_id(event_id)
         row = index.rows[event_key]
         args = argparse.Namespace(
+            source=source_name,
             candidate_features=str(index.candidate_features_path),
             left_trace=str(index.left_trace_path),
             right_trace=str(index.right_trace_path),
@@ -218,10 +242,11 @@ class ComparisonStore:
             right_chain_graph=str(index.right_chain_graph_path),
             raw_data=str(index.raw_data_path),
             coverage_diff=str(index.coverage_diff_path),
+            resolved_source=source_name,
             resolved_split=split_name,
             output_dir=str(self.root / comparison.DEFAULT_OUTPUT_DIR),
-            left_label=str(left_label or comparison.DEFAULT_LEFT_LABEL),
-            right_label=str(right_label or comparison.DEFAULT_RIGHT_LABEL),
+            left_label=str(left_label or comparison.default_left_label(source_name)),
+            right_label=str(right_label or comparison.default_right_label(source_name)),
             max_candidates=self.max_candidates,
             translation_cache="",
             force_translate=bool(force_translate),
@@ -247,6 +272,7 @@ class ComparisonStore:
             web_translation_enabled=bool(web_translation_enabled),
             web_base_path=str(web_base_path or ""),
             web_token=str(web_token or ""),
+            web_source=source_name,
             web_split=split_name,
             web_event_id=str(row.get("event_id") or event_id),
         )
@@ -255,18 +281,20 @@ class ComparisonStore:
         return index, event_key, row, args, output_path
 
 
-def load_split_index(root: Path, split: str) -> SplitIndex | None:
-    candidate_features_path = root / comparison.default_candidate_features_path(split)
+def load_split_index(root: Path, split: str, *, source: str = comparison.DEFAULT_SOURCE) -> SplitIndex | None:
+    source_name = comparison.source_key(source)
+    candidate_features_path = root / comparison.default_candidate_features_path(split, source=source_name)
     if not candidate_features_path.exists():
         return None
-    left_trace_path = root / comparison.default_left_trace_path(split)
-    right_trace_path = root / comparison.default_right_trace_path(split)
-    left_chain_graph_path = root / comparison.default_left_chain_graph_path(split)
-    right_chain_graph_path = root / comparison.default_right_chain_graph_path(split)
-    raw_data_path = root / comparison.default_raw_data_path(split)
-    coverage_diff_path = root / comparison.default_coverage_diff_path(split)
+    left_trace_path = root / comparison.default_left_trace_path(split, source=source_name)
+    right_trace_path = root / comparison.default_right_trace_path(split, source=source_name)
+    left_chain_graph_path = root / comparison.default_left_chain_graph_path(split, source=source_name)
+    right_chain_graph_path = root / comparison.default_right_chain_graph_path(split, source=source_name)
+    raw_data_path = root / comparison.default_raw_data_path(split, source=source_name)
+    coverage_diff_path = root / comparison.default_coverage_diff_path(split, source=source_name)
     rows = _index_rows(comparison.read_jsonl(candidate_features_path))
     return SplitIndex(
+        source=source_name,
         split=split,
         candidate_features_path=candidate_features_path,
         left_trace_path=left_trace_path,
@@ -342,6 +370,7 @@ def make_handler(
                     self._send_json(
                         store.search_cases(
                             query=_first(query, "q") or _first(query, "query"),
+                            source=_first(query, "source"),
                             split=_first(query, "split"),
                             limit=int(_first(query, "limit") or "50"),
                         )
@@ -349,17 +378,24 @@ def make_handler(
                 elif route == "/render":
                     self._send_html(
                         store.render_case(
+                            source=_first(query, "source"),
                             split=_first(query, "split"),
                             event_id=_first(query, "event_id"),
-                            left_label=_first(query, "left_label") or comparison.DEFAULT_LEFT_LABEL,
-                            right_label=_first(query, "right_label") or comparison.DEFAULT_RIGHT_LABEL,
+                            left_label=_first(query, "left_label"),
+                            right_label=_first(query, "right_label"),
                             web_translation_enabled=translation_enabled,
                             web_base_path=base_path,
                             web_token=_first(query, "token"),
                         )
                     )
                 elif route == "/healthz":
-                    self._send_json({"status": "ok", "splits": sorted(store.split_indexes)})
+                    self._send_json(
+                        {
+                            "status": "ok",
+                            "sources": sorted(store.source_indexes),
+                            "splits": sorted({split for indexes in store.source_indexes.values() for split in indexes}),
+                        }
+                    )
                 else:
                     self._send_json({"error": "not found"}, status=404)
             except (KeyError, ValueError) as exc:
@@ -378,10 +414,11 @@ def make_handler(
             try:
                 payload = self._read_json_body()
                 result = store.translate_case(
+                    source=str(payload.get("source") or ""),
                     split=str(payload.get("split") or ""),
                     event_id=str(payload.get("event_id") or ""),
-                    left_label=str(payload.get("left_label") or comparison.DEFAULT_LEFT_LABEL),
-                    right_label=str(payload.get("right_label") or comparison.DEFAULT_RIGHT_LABEL),
+                    left_label=str(payload.get("left_label") or ""),
+                    right_label=str(payload.get("right_label") or ""),
                     enabled=translation_enabled,
                     force_translate=bool(payload.get("force_translate")),
                 )
@@ -429,8 +466,15 @@ def index_html(
     translation_enabled: bool,
 ) -> str:
     token = _first(query, "token")
+    active_source = comparison.source_key(_first(query, "source") or comparison.DEFAULT_SOURCE)
+    source_options = "\n".join(
+        f'<option value="{html.escape(profile.key)}"{" selected" if profile.key == active_source else ""}>{html.escape(profile.label)}</option>'
+        for profile in comparison.source_options()
+        if profile.key in store.source_indexes
+    )
     split_options = "\n".join(
-        f'<option value="{html.escape(split)}">{html.escape(split)}</option>' for split in sorted(store.split_indexes)
+        f'<option value="{html.escape(split)}">{html.escape(split)}</option>'
+        for split in sorted(store.source_indexes.get(active_source, store.split_indexes))
     )
     return f"""<!doctype html>
 <html lang="en">
@@ -472,6 +516,7 @@ def index_html(
 <body data-sidebar-state="expanded">
   <header>
     <button id="sidebarToggle" type="button" data-sidebar-toggle aria-label="Toggle case browser">Cases</button>
+    <select id="source" aria-label="Dataset source">{source_options}</select>
     <select id="split">{split_options}</select>
     <input id="q" placeholder="Search claims" autocomplete="off">
     <button id="prev" type="button">Prev</button>
@@ -503,7 +548,7 @@ def index_html(
     }}
 
     async function loadCases() {{
-      const params = withToken(new URLSearchParams({{split: split.value, q: q.value, limit: "100"}}));
+      const params = withToken(new URLSearchParams({{source: source.value, split: split.value, q: q.value, limit: "100"}}));
       const response = await fetch(`${{basePath}}/api/cases?${{params}}`);
       cases = await response.json();
       activeIndex = cases.length ? 0 : -1;
@@ -525,7 +570,7 @@ def index_html(
         return;
       }}
       const item = cases[activeIndex];
-      const params = withToken(new URLSearchParams({{split: item.split, event_id: item.event_id}}));
+      const params = withToken(new URLSearchParams({{source: item.source || source.value, split: item.split, event_id: item.event_id}}));
       frame.src = `${{basePath}}/render?${{params}}`;
       renderList();
     }}
@@ -540,6 +585,7 @@ def index_html(
       return String(value).replace(/[&<>"']/g, ch => ({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}}[ch]));
     }}
 
+    const source = document.getElementById("source");
     const split = document.getElementById("split");
     const q = document.getElementById("q");
     const casesEl = document.getElementById("cases");
@@ -547,6 +593,7 @@ def index_html(
     const frame = document.getElementById("frame");
     document.getElementById("prev").addEventListener("click", () => {{ if (activeIndex > 0) {{ activeIndex--; renderActive(); }} }});
     document.getElementById("next").addEventListener("click", () => {{ if (activeIndex + 1 < cases.length) {{ activeIndex++; renderActive(); }} }});
+    source.addEventListener("change", loadCases);
     split.addEventListener("change", loadCases);
     q.addEventListener("input", () => {{
       clearTimeout(loadTimer);
@@ -574,6 +621,7 @@ def index_html(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Serve evidence-map selector comparison HTML locally.")
     parser.add_argument("--root", default=str(PROJECT_ROOT))
+    parser.add_argument("--sources", default=",".join(sorted(comparison.SOURCE_PROFILES)))
     parser.add_argument("--splits", default=",".join(comparison.DEFAULT_SPLITS))
     parser.add_argument("--max-candidates", type=int, default=20)
     parser.add_argument("--host", default=DEFAULT_HOST)
@@ -586,8 +634,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    sources = [item.strip() for item in str(args.sources or "").split(",") if item.strip()]
     splits = [item.strip() for item in str(args.splits or "").split(",") if item.strip()]
-    store = ComparisonStore.load(args.root, splits=splits, max_candidates=args.max_candidates)
+    store = ComparisonStore.load(args.root, sources=sources, splits=splits, max_candidates=args.max_candidates)
     handler = make_handler(
         store,
         base_path=args.base_path,

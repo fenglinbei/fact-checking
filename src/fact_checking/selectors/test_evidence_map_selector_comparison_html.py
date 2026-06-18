@@ -41,32 +41,68 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         self.assertEqual(args.output_dir, DEFAULT_OUTPUT_DIR)
         self.assertTrue(args.translate_zh)
 
-    def test_default_paths_use_sentence_qd_union_mainline(self) -> None:
+    def test_default_paths_use_rawfc_atom_facts_abc_left_source(self) -> None:
         self.assertEqual(
             default_candidate_features_path("val"),
-            "outputs/selectors/evidence_map_selector/v0_7_atom_facts_val/candidate_evidence_map_features_val.jsonl",
+            "outputs/selectors/evidence_map_selector/rawfc_v0_7_atom_facts_abc_val/candidate_evidence_map_features_val.jsonl",
         )
         self.assertEqual(
             default_left_trace_path("val"),
-            "outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_val/selection_trace_val.jsonl",
+            "outputs/selectors/evidence_chain_graph/rawfc_v0_7_atom_facts_abc_budgeted_marginal_adaptive5_10_val/selection_trace_val.jsonl",
         )
         self.assertEqual(
             default_right_trace_path("val"),
-            "outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_val/selection_trace_val.jsonl",
+            "outputs/selectors/evidence_chain_graph/rawfc_v0_7_atom_facts_budgeted_marginal_adaptive5_10_val/selection_trace_val.jsonl",
         )
         self.assertEqual(
             default_left_chain_graph_path("val"),
-            "outputs/selectors/evidence_chain_graph/v0_6c_adaptive5_10_val/chain_graph_val.jsonl",
+            "outputs/selectors/evidence_chain_graph/rawfc_v0_7_atom_facts_abc_budgeted_marginal_adaptive5_10_val/chain_graph_val.jsonl",
         )
         self.assertEqual(
             default_right_chain_graph_path("val"),
-            "outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_val/chain_graph_val.jsonl",
+            "outputs/selectors/evidence_chain_graph/rawfc_v0_7_atom_facts_budgeted_marginal_adaptive5_10_val/chain_graph_val.jsonl",
+        )
+        self.assertEqual(
+            default_raw_data_path("val"),
+            "data/raw/RAWFC/val.json",
+        )
+        self.assertEqual(
+            default_coverage_diff_path("val"),
+            "outputs/data_quality/source_coverage_flash/rawfc/original_diff/case_coverage_diff_val.jsonl",
         )
         self.assertNotIn("liar_raw_dense", default_candidate_features_path("val"))
         self.assertNotIn("liar_raw_dense", default_left_trace_path("val"))
         self.assertNotIn("liar_raw_dense", default_right_trace_path("val"))
         self.assertNotIn("liar_raw_dense", default_left_chain_graph_path("val"))
         self.assertNotIn("liar_raw_dense", default_right_chain_graph_path("val"))
+        self.assertNotIn("LIAR-RAW", default_raw_data_path("val"))
+
+    def test_default_paths_support_liar_raw_source_option(self) -> None:
+        self.assertEqual(
+            default_candidate_features_path("val", source="liar_raw"),
+            "outputs/selectors/evidence_map_selector/v0_7_atom_facts_val/candidate_evidence_map_features_val.jsonl",
+        )
+        self.assertEqual(
+            default_left_trace_path("val", source="liar_raw"),
+            "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_val/selection_trace_val.jsonl",
+        )
+        self.assertEqual(
+            default_right_trace_path("val", source="liar_raw"),
+            "outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_val/selection_trace_val.jsonl",
+        )
+        self.assertEqual(
+            default_left_chain_graph_path("val", source="liar_raw"),
+            "outputs/selectors/evidence_chain_graph/v0_7_budgeted_marginal_adaptive5_10_val/chain_graph_val.jsonl",
+        )
+        self.assertEqual(
+            default_right_chain_graph_path("val", source="liar_raw"),
+            "outputs/selectors/evidence_chain_graph/v0_7_atom_facts_budgeted_marginal_adaptive5_10_val/chain_graph_val.jsonl",
+        )
+        self.assertEqual(default_raw_data_path("val", source="liar_raw"), "data/raw/LIAR-RAW/val.json")
+        self.assertEqual(
+            default_coverage_diff_path("val", source="liar_raw"),
+            "outputs/data_quality/source_coverage_flash/liar_raw/original_diff/case_coverage_diff_val.jsonl",
+        )
 
     def test_resolve_inputs_scans_train_val_test_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -152,6 +188,16 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         self.assertIn("graph-panel-hidden", html)
         self.assertNotIn("map-graph-grid", html)
 
+    def test_renderer_uses_collapsible_header_and_fluid_workspace(self) -> None:
+        html = render_html(_row(), left_trace=_left_trace(), right_trace=_right_trace(), args=_args(), translations={})
+
+        self.assertIn("data-header-collapse", html)
+        self.assertIn("<summary", html)
+        self.assertIn("header-summary", html)
+        self.assertIn('main class="workspace-main"', html)
+        self.assertIn("width: min(100%, calc(100vw - 20px));", html)
+        self.assertIn("max-width: none;", html)
+
     def test_renderer_includes_graph_controls_and_overflow_safe_text_classes(self) -> None:
         row = _row()
         row["claim"] = "A very long claim " + ("with repeated text " * 30)
@@ -162,6 +208,16 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         self.assertIn("data-graph-relation-filter", html)
         self.assertIn("data-graph-selected-only", html)
         self.assertIn("data-graph-fit-toggle", html)
+        self.assertIn("data-graph-zoom-out", html)
+        self.assertIn("data-graph-zoom-reset", html)
+        self.assertIn("data-graph-zoom-in", html)
+        self.assertIn("data-graph-zoom-level", html)
+        self.assertIn("applyGraphZoom", html)
+        self.assertIn("const graphZoomStep = 0.05;", html)
+        self.assertIn("svg.setAttribute(\"viewBox\"", html)
+        self.assertIn("graphZoomBaseViewBox", html)
+        self.assertNotIn("svg.style.width =", html)
+        self.assertNotIn("document.body.style.zoom", html)
         self.assertIn("text-wrap-safe", html)
         self.assertIn("metric-value", html)
         self.assertIn("path-value", html)
@@ -337,7 +393,10 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
         self.assertIn("Top source evidence mentions 1979.", html)
 
     def test_renderer_tolerates_v06c_trace_without_objective_fields(self) -> None:
-        html = render_html(_row(), left_trace=_left_trace(), right_trace=_left_trace(), args=_args(), translations={})
+        v06c_trace = _left_trace()
+        v06c_trace["selector_name"] = "v0_6c_rule_step_adaptive5_10"
+
+        html = render_html(_row(), left_trace=v06c_trace, right_trace=v06c_trace, args=_args(), translations={})
 
         self.assertIn("No objective components on this trace.", html)
         self.assertIn("v0_6c_rule_step_adaptive5_10", html)
@@ -396,7 +455,7 @@ class EvidenceMapSelectorComparisonHtmlTest(unittest.TestCase):
 
         self.assertIn("Missing right trace file", message)
         self.assertIn("run_evidence_chain_graph_v0_7_atom_facts.sh", message)
-        self.assertIn("v0_7_atom_facts_val", message)
+        self.assertIn("rawfc_v0_7_atom_facts_val", message)
         self.assertNotIn("liar_raw_dense", message)
 
 
@@ -409,8 +468,8 @@ def _args() -> Namespace:
         coverage_diff="coverage_diff.jsonl",
         splits="train,val,test",
         output_dir=DEFAULT_OUTPUT_DIR,
-        left_label="v0.6c RuleStep",
-        right_label="v0.7 AtomFacts BudgetedMarginal",
+        left_label="v0.7 AtomFacts ABC BudgetedMarginal",
+        right_label="v0.7 AtomFacts BudgetedMarginal baseline",
         max_candidates=20,
     )
 
@@ -505,7 +564,7 @@ def _coverage_diff() -> dict:
 def _left_trace() -> dict:
     return {
         "event_id": "case.json",
-        "selector_name": "v0_6c_rule_step_adaptive5_10",
+        "selector_name": "v0_7_budgeted_marginal_chain_adaptive5_10",
         "selected_evidence_ids": ["E01", "E02"],
         "precision@5": 0.5,
         "recall@5": 0.5,

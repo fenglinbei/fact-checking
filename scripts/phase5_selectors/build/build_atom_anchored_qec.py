@@ -14,9 +14,9 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from fact_checking.selectors.atom_anchored_qec import (
-    ADAPTIVE_POLICY,
     GRAPH_VERSION,
     AtomAnchoredQECParams,
+    atom_anchored_qec_adaptive_policy,
     atom_anchored_qec_selector_name,
     build_atom_anchored_qec_trace_row,
     summarize_atom_anchored_qec_traces,
@@ -24,7 +24,7 @@ from fact_checking.selectors.atom_anchored_qec import (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build AA-QEC Stage 1 trace artifacts.")
+    parser = argparse.ArgumentParser(description="Build AA-QEC trace artifacts.")
     parser.add_argument("--input", required=True, help="Input v0.7 selection_trace_*.jsonl.")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--split", default="val")
@@ -106,7 +106,7 @@ def _manifest(
 ) -> dict[str, Any]:
     return {
         "graph_version": GRAPH_VERSION,
-        "adaptive_policy": ADAPTIVE_POLICY,
+        "adaptive_policy": atom_anchored_qec_adaptive_policy(params),
         "selector_name": atom_anchored_qec_selector_name(params),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "input": str(input_path),

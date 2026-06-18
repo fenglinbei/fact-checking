@@ -28,19 +28,33 @@ SOURCE_SELECTOR_NAME="${SOURCE_SELECTOR_NAME:-v0_7_budgeted_marginal_chain_adapt
 SOURCE_GRAPH_VERSION="${SOURCE_GRAPH_VERSION:-evidence_chain_graph_v0_7}"
 SOURCE_ADAPTIVE_POLICY="${SOURCE_ADAPTIVE_POLICY:-budgeted_marginal_v0_7}"
 RANDOM_SEED="${RANDOM_SEED:-0}"
+EXPECTED_CHUNK_MMR_FINGERPRINT="${EXPECTED_CHUNK_MMR_FINGERPRINT:-}"
+ALLOW_MULTI_SENTENCE_CANDIDATES="${ALLOW_MULTI_SENTENCE_CANDIDATES:-false}"
 
 default_selector_name() {
   case "$SELECTION_POLICY" in
-    keep_all_reorder) printf '%s\n' "aa_qec_view_keep_all_qd_prefer_selected_min5_10" ;;
-    primary_secondary_order) printf '%s\n' "aa_qec_view_primary_secondary_order_qd_prefer_selected_min5_10" ;;
-    shuffled) printf '%s\n' "aa_qec_view_shuffled_qd_prefer_selected_min5_10" ;;
+    keep_all_reorder) printf 'aa_qec_view_keep_all_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS" ;;
+    primary_secondary_order) printf 'aa_qec_view_primary_secondary_order_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS" ;;
+    shuffled) printf 'aa_qec_view_shuffled_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS" ;;
+    primary_only) printf 'aa_qec_constrained_atom_facts_abc_primary_only_%s_%s_max%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MAX_CHAIN_STEPS" ;;
+    primary_secondary) printf 'aa_qec_constrained_atom_facts_abc_primary_secondary_%s_%s_max%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MAX_CHAIN_STEPS" ;;
+    primary_secondary_fallback_min5) printf 'aa_qec_constrained_atom_facts_abc_primary_secondary_fallback_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS" ;;
+    primary_fallback_min5_no_secondary) printf 'aa_qec_constrained_atom_facts_abc_primary_fallback_no_secondary_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS" ;;
+    *) printf 'Unsupported SELECTION_POLICY=%s\n' "$SELECTION_POLICY" >&2; exit 2 ;;
+  esac
+}
+
+default_selector_adaptive_policy() {
+  case "$SELECTION_POLICY" in
+    keep_all_reorder|primary_secondary_order|shuffled) printf '%s\n' "aa_qec_view" ;;
+    primary_only|primary_secondary|primary_secondary_fallback_min5|primary_fallback_min5_no_secondary) printf '%s\n' "aa_qec_constrained_atom_facts_abc" ;;
     *) printf 'Unsupported SELECTION_POLICY=%s\n' "$SELECTION_POLICY" >&2; exit 2 ;;
   esac
 }
 
 SELECTOR_NAME="${SELECTOR_NAME:-$(default_selector_name)}"
 SELECTOR_GRAPH_VERSION="${SELECTOR_GRAPH_VERSION:-atom_anchored_qec_v1}"
-SELECTOR_ADAPTIVE_POLICY="${SELECTOR_ADAPTIVE_POLICY:-aa_qec_view}"
+SELECTOR_ADAPTIVE_POLICY="${SELECTOR_ADAPTIVE_POLICY:-$(default_selector_adaptive_policy)}"
 
 normalize_dataset() {
   case "${1//-/_}" in
@@ -75,6 +89,14 @@ graph_root_for() {
 stage_force_args=()
 if [[ "$FORCE_STAGE" == "true" ]]; then
   stage_force_args=(--force)
+fi
+
+stage_source_args=()
+if [[ -n "$EXPECTED_CHUNK_MMR_FINGERPRINT" ]]; then
+  stage_source_args+=(--expected-fingerprint "$EXPECTED_CHUNK_MMR_FINGERPRINT")
+fi
+if [[ "$ALLOW_MULTI_SENTENCE_CANDIDATES" == "true" || "$ALLOW_MULTI_SENTENCE_CANDIDATES" == "1" ]]; then
+  stage_source_args+=(--allow-multi-sentence-candidates)
 fi
 
 IFS=',' read -r -a dataset_array <<< "$DATASETS"
@@ -120,5 +142,6 @@ for raw_dataset in "${dataset_array[@]}"; do
     --adaptive-policy "$SELECTOR_ADAPTIVE_POLICY" \
     --sample-limit "$SAMPLE_LIMIT" \
     --splits "$SPLITS" \
+    "${stage_source_args[@]}" \
     "${stage_force_args[@]}"
 done

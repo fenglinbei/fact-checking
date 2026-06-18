@@ -205,6 +205,44 @@ def test_qec_min_prefers_trace_chain_steps_when_present(tmp_path: Path) -> None:
     assert row["qec_steps"][0]["cue_type"] == "chain_step"
 
 
+def test_qec_min_anchor_only_uses_anchor_text_before_chain_step_evidence(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_qec_anchor_only_chain_step_inputs(tmp_path)
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="qec_min",
+        evidence_text_mode="anchor_only",
+        expected_selector_name="test_selector",
+        top_k=1,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+    )
+
+    row = rows[0]
+    prompt = row["prompt"]
+    candidate = row["candidates"][0]
+    assert report["evidence_text_mode"] == "anchor_only"
+    assert row["evidence_text_mode"] == "anchor_only"
+    assert "Check: Atom-step cue" in prompt
+    assert "Anchor-only winning sentence." in prompt
+    assert "Full chunk first sentence. Full chunk second sentence." not in prompt
+    assert "Chain-step evidence override." not in prompt
+    assert candidate["text"] == "Check: Atom-step cue\nAnchor-only winning sentence."
+    assert candidate["full_chunk_text"] == "Full chunk first sentence. Full chunk second sentence."
+    assert candidate["evidence_text_mode"] == "anchor_only"
+    assert candidate["evidence_text_source"] == "anchor_text"
+
+
 def test_qec_map_prompt_adds_compact_map_tags(tmp_path: Path) -> None:
     raw_path, trace_path = _write_qec_inputs(tmp_path)
 
@@ -506,5 +544,14 @@ def _write_qec_chain_step_inputs(tmp_path: Path) -> tuple[Path, Path]:
         ],
     }
     trace_path = tmp_path / "trace.jsonl"
+    trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
+    return raw_path, trace_path
+
+
+def _write_qec_anchor_only_chain_step_inputs(tmp_path: Path) -> tuple[Path, Path]:
+    raw_path, trace_path = _write_qec_chain_step_inputs(tmp_path)
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace["candidate_pool"][0]["text"] = "Full chunk first sentence. Full chunk second sentence."
+    trace["candidate_pool"][0]["anchor_text"] = "Anchor-only winning sentence."
     trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
     return raw_path, trace_path
