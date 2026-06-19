@@ -18,8 +18,7 @@ MODE="${MODE:-build}"
 EVAL_SPLITS="${EVAL_SPLITS:-val}"
 CHECKPOINTS="${CHECKPOINTS:-best}"
 RUN_LIAR_RAW="${RUN_LIAR_RAW:-true}"
-AA_QEC_STAGE2_CASES="${AA_QEC_STAGE2_CASES:-C1,C2,C3,C4}"
-AA_QEC_STAGE2_CASE_SUFFIX_EXTRA="${AA_QEC_STAGE2_CASE_SUFFIX_EXTRA:-}"
+AA_QEC_STAGE3_CASES="${AA_QEC_STAGE3_CASES:-F1,F2,F3}"
 PREPARE_LIAR_RAW_ATOM_FACTS_ABC_SOURCES="${PREPARE_LIAR_RAW_ATOM_FACTS_ABC_SOURCES:-true}"
 PREPARE_AA_QEC_SOURCES="${PREPARE_AA_QEC_SOURCES:-true}"
 FORCE_ATOM_FACTS_ABC_STAGE="${FORCE_ATOM_FACTS_ABC_STAGE:-false}"
@@ -35,7 +34,11 @@ ATOM_FACTS_ABC_SOURCE_ROOT="${ATOM_FACTS_ABC_SOURCE_ROOT:-outputs/selectors/evid
 EXPECTED_CHUNK_MMR_FINGERPRINT="${EXPECTED_CHUNK_MMR_FINGERPRINT:-d4cbf7c18126}"
 ALLOW_MULTI_SENTENCE_CANDIDATES="${ALLOW_MULTI_SENTENCE_CANDIDATES:-true}"
 SELECTOR_GRAPH_VERSION="${SELECTOR_GRAPH_VERSION:-atom_anchored_qec_v1}"
-SELECTOR_ADAPTIVE_POLICY="${SELECTOR_ADAPTIVE_POLICY:-aa_qec_constrained_atom_facts_abc}"
+SELECTOR_ADAPTIVE_POLICY="${SELECTOR_ADAPTIVE_POLICY:-aa_qec_full_atom_facts_abc}"
+CANDIDATE_SCOPE="${CANDIDATE_SCOPE:-top20}"
+CANDIDATE_TOP_N="${CANDIDATE_TOP_N:-20}"
+RUN_STAGE3_BUILD_GATE="${RUN_STAGE3_BUILD_GATE:-auto}"
+STAGE3_BUILD_GATE_REPORT_PATH="${STAGE3_BUILD_GATE_REPORT_PATH:-${OUTPUT_ROOT}/aa_qec_stage3_build_gate_report.json}"
 
 LORA_SUFFIX="${LORA_SUFFIX:-_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw}"
 LORA_R="${LORA_R:-16}"
@@ -50,7 +53,7 @@ SFT_SAVE_STEPS="${SFT_SAVE_STEPS:-$SFT_EVAL_STEPS}"
 SFT_EARLY_STOPPING_PATIENCE="${SFT_EARLY_STOPPING_PATIENCE:-8}"
 REQUIRE_PROMPT_INPUT_IDS="${REQUIRE_PROMPT_INPUT_IDS:-true}"
 LIAR_CLASS_WEIGHTS="${LIAR_CLASS_WEIGHTS:-pants-fire=1.2,false=1.0,barely-true=1.5,half-true=1.0,mostly-true=1.0,true=1.8}"
-SWANLAB_PROJECT="${SWANLAB_PROJECT:-fact-checking-sentence-trace-method-aa-qec-stage2}"
+SWANLAB_PROJECT="${SWANLAB_PROJECT:-fact-checking-sentence-trace-method-aa-qec-stage3}"
 
 RUN_TAU_EVAL="${RUN_TAU_EVAL:-auto}"
 TAU_SPLITS="${TAU_SPLITS:-$EVAL_SPLITS}"
@@ -88,9 +91,36 @@ should_run_tau_eval() {
   esac
 }
 
+should_run_build_gate() {
+  case "$RUN_STAGE3_BUILD_GATE" in
+    true) return 0 ;;
+    false) return 1 ;;
+    auto)
+      case "$MODE" in
+        build) return 0 ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) printf 'Unsupported RUN_STAGE3_BUILD_GATE=%s. Use true, false, or auto.\n' "$RUN_STAGE3_BUILD_GATE" >&2; exit 2 ;;
+  esac
+}
+
+run_build_gate() {
+  run_cmd "$PYTHON_BIN" scripts/sentence_trace_method/check_aa_qec_stage3_build_gate.py \
+    --output-root "$OUTPUT_ROOT" \
+    --graph-root outputs/selectors/atom_anchored_qec/liar_raw \
+    --source-selector-name "$SOURCE_SELECTOR_NAME" \
+    --model ministral3_8b \
+    --lora-suffix "$LORA_SUFFIX" \
+    --cases "$AA_QEC_STAGE3_CASES" \
+    --splits train,val,test \
+    --prompt-splits train,val,test \
+    --report-path "$STAGE3_BUILD_GATE_REPORT_PATH"
+}
+
 case_enabled() {
   local case_id="$1"
-  local normalized_cases=",${AA_QEC_STAGE2_CASES^^},"
+  local normalized_cases=",${AA_QEC_STAGE3_CASES^^},"
   normalized_cases="${normalized_cases// /}"
   [[ "$normalized_cases" == *,ALL,* || "$normalized_cases" == *,"$case_id",* ]]
 }
@@ -136,7 +166,8 @@ prepare_source() {
     SOURCE_GRAPH_VERSION="$SOURCE_GRAPH_VERSION" \
     SOURCE_ADAPTIVE_POLICY="$SOURCE_ADAPTIVE_POLICY" \
     SELECTION_POLICY="$selection_policy" \
-    CANDIDATE_SCOPE=selected \
+    CANDIDATE_SCOPE="$CANDIDATE_SCOPE" \
+    CANDIDATE_TOP_N="$CANDIDATE_TOP_N" \
     MIN_CHAIN_STEPS="$min_chain_steps" \
     MAX_CHAIN_STEPS="$max_chain_steps" \
     EXPECTED_CHUNK_MMR_FINGERPRINT="$EXPECTED_CHUNK_MMR_FINGERPRINT" \
@@ -166,10 +197,9 @@ run_liar_raw_case() {
   local case_suffix="$4"
   local min_chain_steps="$5"
   local max_chain_steps="$6"
-  case_suffix="${case_suffix}${AA_QEC_STAGE2_CASE_SUFFIX_EXTRA}"
 
-  printf '\n[aa-qec-stage2-liar-raw-atom-facts-abc] ID=%s DATASETS=liar_raw MODELS=ministral3_8b SELECTOR_NAME=%s SOURCE_SELECTOR_NAME=%s SOURCE_ROOT=%s EXPECTED_CHUNK_MMR_FINGERPRINT=%s ALLOW_MULTI_SENTENCE_CANDIDATES=%s FORCE_AA_QEC_BUILD=%s FORCE_STAGE=%s SELECTION_POLICY=%s TRACE_PROMPT_STYLE=%s CASE_SUFFIX=%s LORA_SUFFIX=%s EBS=16 DEEPSPEED_CONFIG=%s SFT_GRADIENT_ACCUMULATION_STEPS=%s SFT_LEARNING_RATE=%s SFT_NUM_TRAIN_EPOCHS=%s SFT_EVAL_STEPS=%s SFT_SAVE_STEPS=%s SFT_EARLY_STOPPING_PATIENCE=%s REQUIRE_PROMPT_INPUT_IDS=%s LIAR_CLASS_WEIGHTS=%s TAU_POLICY=label_token_logit_adjust_tau%s\n' \
-    "$case_id" "$selector_name" "$SOURCE_SELECTOR_NAME" "$ATOM_FACTS_ABC_SOURCE_ROOT" "$EXPECTED_CHUNK_MMR_FINGERPRINT" "$ALLOW_MULTI_SENTENCE_CANDIDATES" "$FORCE_AA_QEC_BUILD" "$FORCE_STAGE" "$selection_policy" "$TRACE_PROMPT_STYLE" "$case_suffix" "$LORA_SUFFIX" "$DEEPSPEED_CONFIG" "$SFT_GRADIENT_ACCUMULATION_STEPS" "$SFT_LEARNING_RATE" "$SFT_NUM_TRAIN_EPOCHS" "$SFT_EVAL_STEPS" "$SFT_SAVE_STEPS" "$SFT_EARLY_STOPPING_PATIENCE" "$REQUIRE_PROMPT_INPUT_IDS" "$LIAR_CLASS_WEIGHTS" "$TAUS"
+  printf '\n[aa-qec-stage3-liar-raw-atom-facts-abc] ID=%s DATASETS=liar_raw MODELS=ministral3_8b MODE=%s EVAL_SPLITS=%s SELECTOR_NAME=%s SELECTOR_ADAPTIVE_POLICY=%s SOURCE_SELECTOR_NAME=%s SOURCE_ROOT=%s EXPECTED_CHUNK_MMR_FINGERPRINT=%s ALLOW_MULTI_SENTENCE_CANDIDATES=%s FORCE_AA_QEC_BUILD=%s FORCE_STAGE=%s CANDIDATE_SCOPE=%s CANDIDATE_TOP_N=%s SELECTION_POLICY=%s MIN_CHAIN_STEPS=%s MAX_CHAIN_STEPS=%s TRACE_PROMPT_STYLE=%s CASE_SUFFIX=%s LORA_SUFFIX=%s EBS=16 DEEPSPEED_CONFIG=%s SFT_GRADIENT_ACCUMULATION_STEPS=%s SFT_LEARNING_RATE=%s SFT_NUM_TRAIN_EPOCHS=%s SFT_EVAL_STEPS=%s SFT_SAVE_STEPS=%s SFT_EARLY_STOPPING_PATIENCE=%s REQUIRE_PROMPT_INPUT_IDS=%s LIAR_CLASS_WEIGHTS=%s TAU_POLICY=label_token_logit_adjust_tau%s\n' \
+    "$case_id" "$MODE" "$EVAL_SPLITS" "$selector_name" "$SELECTOR_ADAPTIVE_POLICY" "$SOURCE_SELECTOR_NAME" "$ATOM_FACTS_ABC_SOURCE_ROOT" "$EXPECTED_CHUNK_MMR_FINGERPRINT" "$ALLOW_MULTI_SENTENCE_CANDIDATES" "$FORCE_AA_QEC_BUILD" "$FORCE_STAGE" "$CANDIDATE_SCOPE" "$CANDIDATE_TOP_N" "$selection_policy" "$min_chain_steps" "$max_chain_steps" "$TRACE_PROMPT_STYLE" "$case_suffix" "$LORA_SUFFIX" "$DEEPSPEED_CONFIG" "$SFT_GRADIENT_ACCUMULATION_STEPS" "$SFT_LEARNING_RATE" "$SFT_NUM_TRAIN_EPOCHS" "$SFT_EVAL_STEPS" "$SFT_SAVE_STEPS" "$SFT_EARLY_STOPPING_PATIENCE" "$REQUIRE_PROMPT_INPUT_IDS" "$LIAR_CLASS_WEIGHTS" "$TAUS"
 
   prepare_source "$selector_name" "$selection_policy" "$min_chain_steps" "$max_chain_steps"
 
@@ -215,40 +245,35 @@ run_liar_raw_case() {
 stage_liar_raw_atom_facts_abc_sources
 
 if truthy "$RUN_LIAR_RAW"; then
-  if case_enabled C1; then
+  if case_enabled F1; then
     run_liar_raw_case \
-      C1 \
-      aa_qec_constrained_atom_facts_abc_primary_only_qd_prefer_selected_max10 \
-      primary_only \
-      __aa_qec_c1_atom_facts_abc_primary \
-      0 \
-      10
-  fi
-  if case_enabled C2; then
-    run_liar_raw_case \
-      C2 \
-      aa_qec_constrained_atom_facts_abc_primary_secondary_qd_prefer_selected_max10 \
-      primary_secondary \
-      __aa_qec_c2_atom_facts_abc_primary_secondary \
-      0 \
-      10
-  fi
-  if case_enabled C3; then
-    run_liar_raw_case \
-      C3 \
-      aa_qec_constrained_atom_facts_abc_primary_secondary_fallback_qd_prefer_selected_min5_10 \
-      primary_secondary_fallback_min5 \
-      __aa_qec_c3_atom_facts_abc_primary_secondary_fallback \
-      5 \
-      10
-  fi
-  if case_enabled C4; then
-    run_liar_raw_case \
-      C4 \
-      aa_qec_constrained_atom_facts_abc_primary_fallback_no_secondary_qd_prefer_selected_min5_10 \
+      F1 \
+      aa_qec_full_atom_facts_abc_primary_fallback_no_secondary_qd_prefer_top20_min5_10 \
       primary_fallback_min5_no_secondary \
-      __aa_qec_c4_atom_facts_abc_primary_fallback_no_secondary \
+      __aa_qec_f1_atom_facts_abc_primary_fallback_no_secondary \
       5 \
       10
   fi
+  if case_enabled F2; then
+    run_liar_raw_case \
+      F2 \
+      aa_qec_full_atom_facts_abc_primary_secondary_fallback_qd_prefer_top20_min5_10 \
+      primary_secondary_fallback_min5 \
+      __aa_qec_f2_atom_facts_abc_primary_secondary_fallback \
+      5 \
+      10
+  fi
+  if case_enabled F3; then
+    run_liar_raw_case \
+      F3 \
+      aa_qec_full_atom_facts_abc_primary_secondary_dynamic_qd_prefer_top20 \
+      primary_secondary \
+      __aa_qec_f3_atom_facts_abc_primary_secondary_dynamic \
+      0 \
+      0
+  fi
+fi
+
+if should_run_build_gate; then
+  run_build_gate
 fi

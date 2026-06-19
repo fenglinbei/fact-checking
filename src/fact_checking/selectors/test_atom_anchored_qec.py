@@ -165,6 +165,96 @@ def test_constrained_primary_modes_keep_one_fallback_when_no_selected_candidate_
         assert set(trace["selector_ordered_indices"]).issubset(set(row["selected_indices"]))
 
 
+def test_full_top20_scope_can_select_candidates_outside_source_selected_set() -> None:
+    row = _stage2_trace_row(selected_indices=[0, 5])
+
+    trace = build_atom_anchored_qec_trace_row(
+        row,
+        params=AtomAnchoredQECParams(
+            candidate_scope="top20",
+            selection_policy="primary_fallback_min5_no_secondary",
+            source_selector_name="v0_7_atom_facts_abc_budgeted_marginal_chain_adaptive5_10",
+        ),
+    )
+
+    assert trace["selector_name"] == (
+        "aa_qec_full_atom_facts_abc_primary_fallback_no_secondary_qd_prefer_top20_min5_10"
+    )
+    assert trace["candidate_pool_metadata"]["adaptive_policy"] == "aa_qec_full_atom_facts_abc"
+    assert trace["selector_ordered_indices"] == [1, 3, 6, 0, 2]
+    assert 6 in trace["selector_ordered_indices"]
+    assert not set(trace["selector_ordered_indices"]).issubset(set(row["selected_indices"]))
+    assert [step["role"] for step in trace["chain_steps"]] == [
+        "primary",
+        "primary",
+        "primary",
+        "fallback",
+        "fallback",
+    ]
+    assert trace["chain_diagnostics"]["candidate_scope"] == "top20"
+    assert trace["chain_diagnostics"]["source_selected_count"] == 2
+    assert trace["chain_diagnostics"]["secondary_step_count"] == 0
+
+
+def test_full_top20_primary_secondary_fallback_min5_uses_secondary_and_caps_max10() -> None:
+    row = _stage2_trace_row(selected_indices=[0, 5])
+
+    trace = build_atom_anchored_qec_trace_row(
+        row,
+        params=AtomAnchoredQECParams(
+            candidate_scope="top20",
+            selection_policy="primary_secondary_fallback_min5",
+        ),
+    )
+
+    assert trace["selector_name"] == (
+        "aa_qec_full_atom_facts_abc_primary_secondary_fallback_qd_prefer_top20_min5_10"
+    )
+    assert trace["selector_ordered_indices"] == [1, 2, 3, 4, 6]
+    assert [step["role"] for step in trace["chain_steps"]] == [
+        "primary",
+        "secondary",
+        "primary",
+        "secondary",
+        "primary",
+    ]
+    assert trace["chain_diagnostics"]["secondary_step_count"] == 2
+    assert trace["chain_diagnostics"]["fallback_step_count"] == 0
+
+    long_row = _stage2_trace_row(selected_indices=[0, 5])
+    _add_secondary_pairs(long_row, atom_start=4, n_atoms=8)
+    capped_trace = build_atom_anchored_qec_trace_row(
+        long_row,
+        params=AtomAnchoredQECParams(
+            candidate_scope="top20",
+            selection_policy="primary_secondary_fallback_min5",
+        ),
+    )
+
+    assert len(capped_trace["selector_ordered_indices"]) == 10
+
+
+def test_full_top20_primary_secondary_dynamic_has_no_min_fill_or_max_cap() -> None:
+    row = _stage2_trace_row(selected_indices=[0, 5])
+    _add_secondary_pairs(row, atom_start=4, n_atoms=8)
+
+    trace = build_atom_anchored_qec_trace_row(
+        row,
+        params=AtomAnchoredQECParams(
+            candidate_scope="top20",
+            selection_policy="primary_secondary",
+            min_chain_steps=0,
+            max_chain_steps=0,
+        ),
+    )
+
+    assert trace["selector_name"] == "aa_qec_full_atom_facts_abc_primary_secondary_dynamic_qd_prefer_top20"
+    assert len(trace["selector_ordered_indices"]) > 10
+    assert trace["chain_diagnostics"]["fallback_step_count"] == 0
+    assert trace["chain_diagnostics"]["source_selected_count"] == 2
+    assert not set(trace["selector_ordered_indices"]).issubset(set(row["selected_indices"]))
+
+
 def _trace_row(*, selected_indices: list[int]) -> dict:
     return {
         "event_id": "event-1",
@@ -288,6 +378,46 @@ def _stage2_trace_row(*, selected_indices: list[int]) -> dict:
         for candidate in row["candidate_pool"]
     ]
     return row
+
+
+def _add_secondary_pairs(row: dict, *, atom_start: int, n_atoms: int) -> None:
+    start_idx = len(row["candidate_pool"])
+    for offset in range(n_atoms):
+        atom_num = atom_start + offset
+        atom_id = f"A{atom_num}"
+        row["claim_atoms"].append({"atom_id": atom_id, "text": f"Atom {atom_num}", "importance": 1.0})
+        primary_idx = start_idx + offset * 2
+        secondary_idx = primary_idx + 1
+        row["candidate_pool"].append(
+            _candidate(
+                primary_idx,
+                f"E{primary_idx + 1:02d}",
+                atoms=[atom_id],
+                question=f"Did atom {atom_num} happen?",
+                relation="support",
+                directness="direct",
+                confidence=0.90,
+                quality=0.90,
+                base_score=0.80,
+            )
+        )
+        row["candidate_pool"].append(
+            _candidate(
+                secondary_idx,
+                f"E{secondary_idx + 1:02d}",
+                atoms=[atom_id],
+                question=f"Could atom {atom_num} be contradicted?",
+                relation="refute",
+                directness="partial",
+                confidence=0.80,
+                quality=0.70,
+                base_score=0.70,
+            )
+        )
+    row["candidate_scores"] = [
+        {"candidate_idx": candidate["candidate_idx"], "hybrid_score": candidate["hybrid_score"]}
+        for candidate in row["candidate_pool"]
+    ]
 
 
 def _candidate(

@@ -9,6 +9,7 @@ from typing import Any
 GRAPH_VERSION = "atom_anchored_qec_v1"
 ADAPTIVE_POLICY = "aa_qec_view"
 CONSTRAINED_ADAPTIVE_POLICY = "aa_qec_constrained_atom_facts_abc"
+FULL_ADAPTIVE_POLICY = "aa_qec_full_atom_facts_abc"
 DEFAULT_SOURCE_SELECTOR_NAME = "v0_7_budgeted_marginal_chain_adaptive5_10"
 FALLBACK_CUE = "Verify the main factual claim."
 STAGE1_SELECTION_POLICIES = {"keep_all_reorder", "primary_secondary_order", "shuffled"}
@@ -35,9 +36,12 @@ class AtomAnchoredQECParams:
 
 
 def atom_anchored_qec_selector_name(params: AtomAnchoredQECParams) -> str:
-    if params.candidate_scope != "selected":
-        raise ValueError(f"AA-QEC only supports candidate_scope=selected, got {params.candidate_scope!r}")
+    candidate_scope = str(params.candidate_scope)
     policy = str(params.selection_policy)
+    if candidate_scope == "top20":
+        return _full_atom_facts_abc_selector_name(params)
+    if candidate_scope != "selected":
+        raise ValueError(f"unsupported AA-QEC candidate_scope={candidate_scope!r}")
     if policy == "keep_all_reorder":
         policy_slug = "keep_all"
     elif policy == "primary_secondary_order":
@@ -53,11 +57,18 @@ def atom_anchored_qec_selector_name(params: AtomAnchoredQECParams) -> str:
 
 
 def atom_anchored_qec_adaptive_policy(params: AtomAnchoredQECParams) -> str:
+    candidate_scope = str(params.candidate_scope)
     policy = str(params.selection_policy)
     if policy in STAGE1_SELECTION_POLICIES:
+        if candidate_scope != "selected":
+            raise ValueError(f"AA-QEC view only supports candidate_scope=selected, got {candidate_scope!r}")
         return ADAPTIVE_POLICY
     if policy in CONSTRAINED_SELECTION_POLICIES:
-        return CONSTRAINED_ADAPTIVE_POLICY
+        if candidate_scope == "selected":
+            return CONSTRAINED_ADAPTIVE_POLICY
+        if candidate_scope == "top20":
+            return FULL_ADAPTIVE_POLICY
+        raise ValueError(f"unsupported AA-QEC candidate_scope={candidate_scope!r}")
     raise ValueError(f"unsupported AA-QEC selection_policy={policy!r}")
 
 
@@ -67,15 +78,18 @@ def build_atom_anchored_qec_trace_row(
     params: AtomAnchoredQECParams | None = None,
 ) -> dict[str, Any]:
     params = params or AtomAnchoredQECParams()
-    if params.candidate_scope != "selected":
-        raise ValueError("AA-QEC only supports candidate_scope=selected.")
 
     candidate_pool = [dict(candidate) for candidate in row.get("candidate_pool") or []]
     if not candidate_pool:
         raise ValueError("AA-QEC input trace has no candidate_pool.")
 
-    selected_indices = _dedupe_in_range(_ordered_trace_indices(row), len(candidate_pool))
-    if not selected_indices:
+    source_selected_indices = _dedupe_in_range(_ordered_trace_indices(row), len(candidate_pool))
+    candidate_indices = _candidate_scope_indices(
+        source_selected_indices,
+        candidate_pool_len=len(candidate_pool),
+        params=params,
+    )
+    if not candidate_indices:
         raise ValueError("AA-QEC input trace has no valid selected indices.")
 
     claim_atoms = _claim_atoms(row)
@@ -83,19 +97,19 @@ def build_atom_anchored_qec_trace_row(
     atom_order = {_atom_id(atom): idx for idx, atom in enumerate(claim_atoms) if _atom_id(atom)}
     if str(params.selection_policy) in CONSTRAINED_SELECTION_POLICIES:
         ordered_indices, role_by_idx, anchor_atom_by_idx = _stage2_order_and_roles(
-            selected_indices,
+            candidate_indices,
             candidate_pool=candidate_pool,
             atom_order=atom_order,
             params=params,
         )
     else:
         role_by_idx, anchor_atom_by_idx = _assign_stage1_roles(
-            selected_indices,
+            candidate_indices,
             candidate_pool=candidate_pool,
             atom_order=atom_order,
         )
         ordered_indices = _stage1_order(
-            selected_indices,
+            candidate_indices,
             candidate_pool=candidate_pool,
             role_by_idx=role_by_idx,
             anchor_atom_by_idx=anchor_atom_by_idx,
@@ -130,6 +144,9 @@ def build_atom_anchored_qec_trace_row(
             "graph_version": GRAPH_VERSION,
             "adaptive_policy": adaptive_policy,
             "source_selector_name": str(row.get("selector_name") or params.source_selector_name),
+            "candidate_scope": str(params.candidate_scope),
+            "input_candidate_count": len(candidate_indices),
+            "source_selected_count": len(source_selected_indices),
         }
     )
 
@@ -153,7 +170,9 @@ def build_atom_anchored_qec_trace_row(
         "chain_steps": chain_steps,
         "chain_diagnostics": _chain_diagnostics(
             chain_steps,
-            selected_indices=selected_indices,
+            selected_indices=candidate_indices,
+            source_selected_indices=source_selected_indices,
+            candidate_scope=str(params.candidate_scope),
             claim_atoms=claim_atoms,
         ),
         "params": asdict(params),
@@ -230,6 +249,43 @@ def _constrained_atom_facts_abc_selector_name(params: AtomAnchoredQECParams) -> 
     if policy == "primary_fallback_min5_no_secondary":
         return f"{prefix}_primary_fallback_no_secondary_{cue_scope}_min{min_steps}_{max_steps}"
     raise ValueError(f"unsupported AA-QEC selection_policy={policy!r}")
+
+
+def _full_atom_facts_abc_selector_name(params: AtomAnchoredQECParams) -> str:
+    policy = str(params.selection_policy)
+    if str(params.candidate_scope) != "top20":
+        raise ValueError(f"AA-QEC full scope requires candidate_scope=top20, got {params.candidate_scope!r}")
+    prefix = "aa_qec_full_atom_facts_abc"
+    cue_scope = f"{params.cue_policy}_{params.candidate_scope}"
+    max_steps = int(params.max_chain_steps)
+    min_steps = int(params.min_chain_steps)
+    if policy == "primary_only":
+        return f"{prefix}_primary_only_{cue_scope}_max{max_steps}"
+    if policy == "primary_secondary":
+        if min_steps == 0 and max_steps == 0:
+            return f"{prefix}_primary_secondary_dynamic_{cue_scope}"
+        return f"{prefix}_primary_secondary_{cue_scope}_max{max_steps}"
+    if policy == "primary_secondary_fallback_min5":
+        return f"{prefix}_primary_secondary_fallback_{cue_scope}_min{min_steps}_{max_steps}"
+    if policy == "primary_fallback_min5_no_secondary":
+        return f"{prefix}_primary_fallback_no_secondary_{cue_scope}_min{min_steps}_{max_steps}"
+    raise ValueError(f"unsupported AA-QEC selection_policy={policy!r} for candidate_scope=top20")
+
+
+def _candidate_scope_indices(
+    source_selected_indices: list[int],
+    *,
+    candidate_pool_len: int,
+    params: AtomAnchoredQECParams,
+) -> list[int]:
+    candidate_scope = str(params.candidate_scope)
+    if candidate_scope == "selected":
+        return list(source_selected_indices)
+    if candidate_scope == "top20":
+        top_n = int(params.candidate_top_n)
+        limit = candidate_pool_len if top_n <= 0 else min(candidate_pool_len, top_n)
+        return list(range(limit))
+    raise ValueError(f"unsupported AA-QEC candidate_scope={candidate_scope!r}")
 
 
 def _stage2_order_and_roles(
@@ -506,6 +562,8 @@ def _chain_diagnostics(
     chain_steps: list[dict[str, Any]],
     *,
     selected_indices: list[int],
+    source_selected_indices: list[int] | None = None,
+    candidate_scope: str = "selected",
     claim_atoms: list[dict[str, Any]],
 ) -> dict[str, Any]:
     role_counts = Counter(str(step.get("role") or "") for step in chain_steps)
@@ -528,6 +586,9 @@ def _chain_diagnostics(
     return {
         "chain_steps": len(chain_steps),
         "input_selected_count": len(selected_indices),
+        "input_candidate_count": len(selected_indices),
+        "source_selected_count": len(source_selected_indices or selected_indices),
+        "candidate_scope": str(candidate_scope),
         "role_counts": dict(role_counts),
         "cue_source_counts": dict(cue_counts),
         "qd_cue_rate": float(cue_counts.get("qd_question", 0) / total),

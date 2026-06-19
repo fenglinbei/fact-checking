@@ -36,10 +36,36 @@ default_selector_name() {
     keep_all_reorder) printf 'aa_qec_view_keep_all_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS" ;;
     primary_secondary_order) printf 'aa_qec_view_primary_secondary_order_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS" ;;
     shuffled) printf 'aa_qec_view_shuffled_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS" ;;
-    primary_only) printf 'aa_qec_constrained_atom_facts_abc_primary_only_%s_%s_max%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MAX_CHAIN_STEPS" ;;
-    primary_secondary) printf 'aa_qec_constrained_atom_facts_abc_primary_secondary_%s_%s_max%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MAX_CHAIN_STEPS" ;;
-    primary_secondary_fallback_min5) printf 'aa_qec_constrained_atom_facts_abc_primary_secondary_fallback_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS" ;;
-    primary_fallback_min5_no_secondary) printf 'aa_qec_constrained_atom_facts_abc_primary_fallback_no_secondary_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS" ;;
+    primary_only)
+      if [[ "$CANDIDATE_SCOPE" == "top20" ]]; then
+        printf 'aa_qec_full_atom_facts_abc_primary_only_%s_%s_max%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MAX_CHAIN_STEPS"
+      else
+        printf 'aa_qec_constrained_atom_facts_abc_primary_only_%s_%s_max%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MAX_CHAIN_STEPS"
+      fi
+      ;;
+    primary_secondary)
+      if [[ "$CANDIDATE_SCOPE" == "top20" && "$MIN_CHAIN_STEPS" == "0" && "$MAX_CHAIN_STEPS" == "0" ]]; then
+        printf 'aa_qec_full_atom_facts_abc_primary_secondary_dynamic_%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE"
+      elif [[ "$CANDIDATE_SCOPE" == "top20" ]]; then
+        printf 'aa_qec_full_atom_facts_abc_primary_secondary_%s_%s_max%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MAX_CHAIN_STEPS"
+      else
+        printf 'aa_qec_constrained_atom_facts_abc_primary_secondary_%s_%s_max%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MAX_CHAIN_STEPS"
+      fi
+      ;;
+    primary_secondary_fallback_min5)
+      if [[ "$CANDIDATE_SCOPE" == "top20" ]]; then
+        printf 'aa_qec_full_atom_facts_abc_primary_secondary_fallback_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS"
+      else
+        printf 'aa_qec_constrained_atom_facts_abc_primary_secondary_fallback_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS"
+      fi
+      ;;
+    primary_fallback_min5_no_secondary)
+      if [[ "$CANDIDATE_SCOPE" == "top20" ]]; then
+        printf 'aa_qec_full_atom_facts_abc_primary_fallback_no_secondary_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS"
+      else
+        printf 'aa_qec_constrained_atom_facts_abc_primary_fallback_no_secondary_%s_%s_min%s_%s\n' "$CUE_POLICY" "$CANDIDATE_SCOPE" "$MIN_CHAIN_STEPS" "$MAX_CHAIN_STEPS"
+      fi
+      ;;
     *) printf 'Unsupported SELECTION_POLICY=%s\n' "$SELECTION_POLICY" >&2; exit 2 ;;
   esac
 }
@@ -47,7 +73,13 @@ default_selector_name() {
 default_selector_adaptive_policy() {
   case "$SELECTION_POLICY" in
     keep_all_reorder|primary_secondary_order|shuffled) printf '%s\n' "aa_qec_view" ;;
-    primary_only|primary_secondary|primary_secondary_fallback_min5|primary_fallback_min5_no_secondary) printf '%s\n' "aa_qec_constrained_atom_facts_abc" ;;
+    primary_only|primary_secondary|primary_secondary_fallback_min5|primary_fallback_min5_no_secondary)
+      if [[ "$CANDIDATE_SCOPE" == "top20" ]]; then
+        printf '%s\n' "aa_qec_full_atom_facts_abc"
+      else
+        printf '%s\n' "aa_qec_constrained_atom_facts_abc"
+      fi
+      ;;
     *) printf 'Unsupported SELECTION_POLICY=%s\n' "$SELECTION_POLICY" >&2; exit 2 ;;
   esac
 }

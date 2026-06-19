@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _run_script(path: str, extra_env: dict[str, str] | None = None) -> str:
@@ -150,8 +160,11 @@ def test_aa_qec_stage2_liar_raw_atom_facts_abc_dry_run_expands_constrained_cases
     assert "_rawfc" not in output
 
 
-def test_aa_qec_stage2_liar_raw_atom_facts_abc_c3_c4_full_wrapper_targets_only_c3_c4() -> None:
-    output = _run_script("scripts/sentence_trace_method/run_aa_qec_stage2_liar_raw_atom_facts_abc_c3_c4_full_ministral3.sh")
+def test_aa_qec_stage2_liar_raw_atom_facts_abc_c3_c4_full_wrapper_targets_only_c3_c4(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_aa_qec_stage2_liar_raw_atom_facts_abc_c3_c4_full_ministral3.sh",
+        {"OUTPUT_ROOT": str(tmp_path / "outputs")},
+    )
 
     assert "AA_QEC_STAGE2_CASES=C3,C4" in output
     assert "MODE=full" in output
@@ -169,6 +182,327 @@ def test_aa_qec_stage2_liar_raw_atom_facts_abc_c3_c4_full_wrapper_targets_only_c
     assert "SFT_NUM_TRAIN_EPOCHS=12" in output
     assert "SFT_EVAL_STEPS=100" in output
     assert "REQUIRE_PROMPT_INPUT_IDS=true" in output
+
+
+def test_aa_qec_stage2_c3_c4_qec_map_full_wrapper_targets_only_c3_c4(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_aa_qec_stage2_c3_c4_qec_map_full_ministral3.sh",
+        {"OUTPUT_ROOT": str(tmp_path / "outputs")},
+    )
+
+    assert "AA_QEC_STAGE2_CASES=C3,C4" in output
+    assert "MODE=full" in output
+    assert "EVAL_SPLITS=val,test" in output
+    assert "RUN_TAU_EVAL=auto" in output
+    assert "FORCE_AA_QEC_BUILD=false" in output
+    assert "FORCE_STAGE=false" in output
+    assert "TRACE_PROMPT_STYLE=qec_map" in output
+    assert "AA_QEC_STAGE2_CASE_SUFFIX_EXTRA=__qec_map" in output
+    assert "liar_raw__ministral3_8b__aa_qec_c3_atom_facts_abc_primary_secondary_fallback__qec_map" in output
+    assert "liar_raw__ministral3_8b__aa_qec_c4_atom_facts_abc_primary_fallback_no_secondary__qec_map" in output
+    assert "liar_raw__ministral3_8b__aa_qec_c1_atom_facts_abc_primary" not in output
+    assert "liar_raw__ministral3_8b__aa_qec_c2_atom_facts_abc_primary_secondary" not in output
+    assert "-m sft.label_token_trainer" in output
+    assert "-m sft.label_token_infer" in output
+    assert "--split val" in output
+    assert "--split test" in output
+    assert "SFT_LEARNING_RATE=2e-5" in output
+    assert "SFT_NUM_TRAIN_EPOCHS=12" in output
+    assert "SFT_EVAL_STEPS=100" in output
+    assert "REQUIRE_PROMPT_INPUT_IDS=true" in output
+    assert "rawfc__ministral3_8b" not in output
+    assert "_rawfc" not in output
+
+
+def test_aa_qec_stage2_c3_c4_macro_f1_top3_checkpoint_eval_wrapper(tmp_path: Path) -> None:
+    output_root = tmp_path / "outputs"
+    c3_run = (
+        "liar_raw__ministral3_8b__aa_qec_c3_atom_facts_abc_primary_secondary_fallback"
+        "_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw"
+    )
+    c4_run = (
+        "liar_raw__ministral3_8b__aa_qec_c4_atom_facts_abc_primary_fallback_no_secondary"
+        "_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw"
+    )
+
+    def write_step(run_name: str, step: int, macro_f1: float) -> None:
+        metrics_dir = output_root / run_name / "eval" / f"step-{step}"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        (metrics_dir / "metrics.json").write_text(
+            json.dumps({"macro_f1": macro_f1, "selection_score": macro_f1 + 0.1}),
+            encoding="utf-8",
+        )
+
+    for step, macro_f1 in ((100, 0.1), (200, 0.4), (300, 0.3), (400, 0.2)):
+        write_step(c3_run, step, macro_f1)
+    for step, macro_f1 in ((110, 0.25), (220, 0.55), (330, 0.45), (440, 0.35)):
+        write_step(c4_run, step, macro_f1)
+
+    output = _run_script(
+        "scripts/sentence_trace_method/run_aa_qec_stage2_c3_c4_macro_f1_top3_checkpoint_test_eval_ministral3.sh",
+        {
+            "OUTPUT_ROOT": str(output_root),
+            "PYTHON_SELECT_BIN": sys.executable,
+        },
+    )
+
+    assert "METRIC=macro_f1" in output
+    assert "TOP_K=3" in output
+    assert "SPLITS=test" in output
+    assert "LOGIT_ADJUST=off" in output
+    assert c3_run in output
+    assert c4_run in output
+    assert "CHECKPOINTS=checkpoint-200,checkpoint-300,checkpoint-400" in output
+    assert "CHECKPOINTS=checkpoint-220,checkpoint-330,checkpoint-440" in output
+    assert "--split test" in output
+    assert "--logit-adjust off" in output
+    assert "-m sft.label_token_infer" in output
+    assert "-m sft.label_token_trainer" not in output
+    assert "label_token_logit_adjust" not in output
+    assert "checkpoint-100/label_token" not in output
+    assert "checkpoint-110/label_token" not in output
+
+
+def test_aa_qec_stage2_c3_c4_macro_f1_top3_checkpoint_eval_wrapper_supports_distributed_dry_run(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "outputs"
+    c3_run = (
+        "liar_raw__ministral3_8b__aa_qec_c3_atom_facts_abc_primary_secondary_fallback"
+        "_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw"
+    )
+    c4_run = (
+        "liar_raw__ministral3_8b__aa_qec_c4_atom_facts_abc_primary_fallback_no_secondary"
+        "_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw"
+    )
+    for run_name, step, macro_f1 in ((c3_run, 200, 0.4), (c4_run, 220, 0.5)):
+        metrics_dir = output_root / run_name / "eval" / f"step-{step}"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        (metrics_dir / "metrics.json").write_text(json.dumps({"macro_f1": macro_f1}), encoding="utf-8")
+
+    output = _run_script(
+        "scripts/sentence_trace_method/run_aa_qec_stage2_c3_c4_macro_f1_top3_checkpoint_test_eval_ministral3.sh",
+        {
+            "OUTPUT_ROOT": str(output_root),
+            "PYTHON_SELECT_BIN": sys.executable,
+            "ACCELERATE_BIN": "/opt/accelerate",
+            "EVAL_NPROC_PER_NODE": "4",
+            "TOP_K": "1",
+        },
+    )
+
+    assert "EVAL_NPROC_PER_NODE=4" in output
+    assert "+ /opt/accelerate launch" in output
+    assert "--num_processes 4" in output
+    assert "--num_machines 1" in output
+    assert "--mixed_precision bf16" in output
+    assert "-m sft.label_token_infer" in output
+    assert "--split test" in output
+    assert "--logit-adjust off" in output
+    assert "+ /data/liaozijie/conda/accelerate-fc-gemma4/bin/python -m sft.label_token_infer" not in output
+    assert "-m sft.label_token_trainer" not in output
+
+
+def test_aa_qec_stage3_liar_raw_atom_facts_abc_dry_run_expands_full_top20_cases() -> None:
+    output = _run_script("scripts/sentence_trace_method/run_aa_qec_stage3_liar_raw_atom_facts_abc_ministral3.sh")
+
+    assert "liar_raw__ministral3_8b__aa_qec_f1_atom_facts_abc_primary_fallback_no_secondary" in output
+    assert "liar_raw__ministral3_8b__aa_qec_f2_atom_facts_abc_primary_secondary_fallback" in output
+    assert "liar_raw__ministral3_8b__aa_qec_f3_atom_facts_abc_primary_secondary_dynamic" in output
+    assert "aa_qec_full_atom_facts_abc_primary_fallback_no_secondary_qd_prefer_top20_min5_10" in output
+    assert "aa_qec_full_atom_facts_abc_primary_secondary_fallback_qd_prefer_top20_min5_10" in output
+    assert "aa_qec_full_atom_facts_abc_primary_secondary_dynamic_qd_prefer_top20" in output
+    assert "CANDIDATE_SCOPE=top20" in output
+    assert "SELECTOR_ADAPTIVE_POLICY=aa_qec_full_atom_facts_abc" in output
+    assert "FORCE_AA_QEC_BUILD=true" in output
+    assert "FORCE_STAGE=true" in output
+    assert "MODE=build" in output
+    assert "check_aa_qec_stage3_build_gate.py" in output
+    assert "MIN_CHAIN_STEPS=0" in output
+    assert "MAX_CHAIN_STEPS=0" in output
+    assert "v0_7_atom_facts_abc_budgeted_marginal_chain_adaptive5_10" in output
+    assert "outputs/selectors/evidence_chain_graph/liar_raw_v0_7_atom_facts_abc_budgeted_marginal_adaptive5_10" in output
+    assert "--expected-fingerprint d4cbf7c18126" in output
+    assert "EXPECTED_CHUNK_MMR_FINGERPRINT=d4cbf7c18126" in output
+    assert "--allow-multi-sentence-candidates" in output
+    assert "TRACE_PROMPT_STYLE=qec_min" in output
+    assert "SFT_LEARNING_RATE=2e-5" in output
+    assert "SFT_NUM_TRAIN_EPOCHS=12" in output
+    assert "SFT_EVAL_STEPS=100" in output
+    assert "SFT_SAVE_STEPS=100" in output
+    assert "SFT_EARLY_STOPPING_PATIENCE=8" in output
+    assert "REQUIRE_PROMPT_INPUT_IDS=true" in output
+    assert "LIAR_CLASS_WEIGHTS=pants-fire=1.2,false=1.0,barely-true=1.5,half-true=1.0,mostly-true=1.0,true=1.8" in output
+    assert "rawfc__ministral3_8b" not in output
+    assert "_rawfc" not in output
+    assert "aa_qec_constrained_atom_facts_abc_primary_only_qd_prefer_selected_max10" not in output
+    assert "aa_qec_constrained_atom_facts_abc_primary_secondary_qd_prefer_selected_max10" not in output
+    assert "aa_qec_constrained_atom_facts_abc_primary_secondary_fallback_qd_prefer_selected_min5_10" not in output
+    assert "aa_qec_constrained_atom_facts_abc_primary_fallback_no_secondary_qd_prefer_selected_min5_10" not in output
+
+
+def test_aa_qec_stage3_liar_raw_atom_facts_abc_f1_f3_full_wrapper_defaults_to_val_test(
+    tmp_path: Path,
+) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_aa_qec_stage3_liar_raw_atom_facts_abc_f1_f3_full_ministral3.sh",
+        {"OUTPUT_ROOT": str(tmp_path / "outputs")},
+    )
+
+    assert "AA_QEC_STAGE3_CASES=F1,F2,F3" in output
+    assert "MODE=full" in output
+    assert "EVAL_SPLITS=val,test" in output
+    assert "RUN_TAU_EVAL=auto" in output
+    assert "RUN_STAGE3_BUILD_GATE=true" in output
+    assert "check_aa_qec_stage3_build_gate.py" in output
+    assert "FORCE_AA_QEC_BUILD=false" in output
+    assert "FORCE_STAGE=false" in output
+    assert "liar_raw__ministral3_8b__aa_qec_f1_atom_facts_abc_primary_fallback_no_secondary" in output
+    assert "liar_raw__ministral3_8b__aa_qec_f2_atom_facts_abc_primary_secondary_fallback" in output
+    assert "liar_raw__ministral3_8b__aa_qec_f3_atom_facts_abc_primary_secondary_dynamic" in output
+    assert "CANDIDATE_SCOPE=top20" in output
+    assert "SELECTOR_ADAPTIVE_POLICY=aa_qec_full_atom_facts_abc" in output
+    assert "-m sft.label_token_trainer" in output
+    assert "-m sft.label_token_infer" in output
+    assert "--split val" in output
+    assert "--split test" in output
+    assert "TRACE_PROMPT_STYLE=qec_min" in output
+    assert "SFT_LEARNING_RATE=2e-5" in output
+    assert "SFT_NUM_TRAIN_EPOCHS=12" in output
+    assert "SFT_EVAL_STEPS=100" in output
+    assert "REQUIRE_PROMPT_INPUT_IDS=true" in output
+
+
+def test_aa_qec_stage3_build_gate_uses_baseline_floors_build_rows_and_test_qd_warnings(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "outputs"
+    graph_root = tmp_path / "graphs"
+    source_selector = "source_selector"
+    case_id = "F2"
+    selector_name = "aa_qec_full_atom_facts_abc_primary_secondary_fallback_qd_prefer_top20_min5_10"
+    baseline_selector = "aa_qec_constrained_atom_facts_abc_primary_secondary_fallback_qd_prefer_selected_min5_10"
+    case_root = output_root / "liar_raw__ministral3_8b__aa_qec_f2_atom_facts_abc_primary_secondary_fallback"
+
+    metrics_by_split = {
+        "train": (0.790, 0.960),
+        "val": (0.840, 0.960),
+        "test": (0.850, 0.940),
+    }
+    for split, (atom_coverage, qd_cue) in metrics_by_split.items():
+        source_rows = [
+            {"id": f"{split}-0", "selector_ordered_indices": [0]},
+            {"id": f"{split}-1", "selector_ordered_indices": [0]},
+        ]
+        graph_rows = [
+            {
+                "id": f"{split}-0",
+                "selector_ordered_indices": [1],
+                "chain_diagnostics": {
+                    "duplicate_evidence_rate": 0.0,
+                    "atom_coverage_rate": atom_coverage,
+                    "qd_cue_rate": qd_cue,
+                },
+            },
+            {
+                "id": f"{split}-1",
+                "selector_ordered_indices": [1],
+                "chain_diagnostics": {
+                    "duplicate_evidence_rate": 0.0,
+                    "atom_coverage_rate": atom_coverage,
+                    "qd_cue_rate": qd_cue,
+                },
+            },
+        ]
+        baseline_rows = [
+            {
+                "id": f"{split}-0",
+                "selector_ordered_indices": [0],
+                "chain_diagnostics": {
+                    "duplicate_evidence_rate": 0.0,
+                    "atom_coverage_rate": atom_coverage,
+                    "qd_cue_rate": 0.960,
+                },
+            },
+            {
+                "id": f"{split}-1",
+                "selector_ordered_indices": [0],
+                "chain_diagnostics": {
+                    "duplicate_evidence_rate": 0.0,
+                    "atom_coverage_rate": atom_coverage,
+                    "qd_cue_rate": 0.960,
+                },
+            },
+        ]
+        build_rows = [
+            {
+                "id": f"{split}-0",
+                "was_truncated": False,
+                "evidence_text_truncated": False,
+                "prompt_token_count": 512,
+                "evidence_count": 5,
+            },
+            {
+                "id": f"{split}-1",
+                "was_truncated": False,
+                "evidence_text_truncated": False,
+                "prompt_token_count": 768,
+                "evidence_count": 6,
+            },
+        ]
+
+        _write_jsonl(
+            output_root / "_sources" / "liar_raw" / source_selector / split / f"selection_trace_{split}.jsonl",
+            source_rows,
+        )
+        _write_jsonl(
+            output_root / "_sources" / "liar_raw" / selector_name / split / f"selection_trace_{split}.jsonl",
+            graph_rows,
+        )
+        _write_jsonl(
+            graph_root / f"{selector_name}_{split}" / f"selection_trace_{split}.jsonl",
+            graph_rows,
+        )
+        _write_jsonl(
+            graph_root / f"{baseline_selector}_{split}" / f"selection_trace_{split}.jsonl",
+            baseline_rows,
+        )
+        _write_jsonl(case_root / "build" / f"build_{split}.jsonl", build_rows)
+
+    report_path = tmp_path / "gate_report.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/sentence_trace_method/check_aa_qec_stage3_build_gate.py"),
+            "--output-root",
+            str(output_root),
+            "--graph-root",
+            str(graph_root),
+            "--source-selector-name",
+            source_selector,
+            "--cases",
+            case_id,
+            "--splits",
+            "train,val,test",
+            "--prompt-splits",
+            "train,val,test",
+            "--report-path",
+            str(report_path),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert "[aa-qec-stage3-build-gate] PASSED" in result.stdout
+    assert "[aa-qec-stage3-build-gate] WARNINGS" in result.stdout
+    assert "F2/test: qd_cue_rate.mean=0.940000 < 0.950000" in result.stdout
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["warnings"]
+    assert report["cases"][case_id]["splits"]["train"]["atom_coverage_floor_source"] == baseline_selector
+    assert report["cases"][case_id]["prompt_splits"]["train"]["source"] == "build_rows"
+    assert report["cases"][case_id]["prompt_splits"]["test"]["truncation_rate"] == 0.0
 
 
 def test_run_one_dry_run_uses_trace_prompt_style(tmp_path: Path) -> None:
