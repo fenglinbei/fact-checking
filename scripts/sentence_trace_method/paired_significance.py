@@ -13,7 +13,7 @@ import numpy as np
 
 
 DEFAULT_TRUE_SIDE_LABEL_IDS = [4, 5]
-METRIC_NAMES = ("accuracy", "macro_f1", "true_side_macro_f1", "selection_score")
+METRIC_NAMES = ("accuracy", "macro_f1", "true_side_macro_f1", "checkpoint_selection_score")
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -95,16 +95,8 @@ def compute_metrics(
         ordinal_mae = float("nan")
         ordinal_mae_norm = float("nan")
 
-    metric = str(early_stopping_metric).strip().lower()
-    selection_score = _selection_score(
-        metric=metric,
-        accuracy=float(np.mean(pred_arr == gold_arr)),
-        macro_f1=macro_f1,
-        true_side_macro_f1=true_side_macro_f1,
-        ordinal_mae_norm=ordinal_mae_norm,
-        true_side_weight=true_side_weight,
-        mae_metric_weight=mae_metric_weight,
-    )
+    _ = (early_stopping_metric, true_side_weight, mae_metric_weight)
+    checkpoint_selection_score = macro_f1
 
     return {
         "accuracy": float(np.mean(pred_arr == gold_arr)),
@@ -112,7 +104,7 @@ def compute_metrics(
         "true_side_macro_f1": true_side_macro_f1,
         "ordinal_mae": ordinal_mae,
         "ordinal_mae_norm": ordinal_mae_norm,
-        "selection_score": selection_score,
+        "checkpoint_selection_score": checkpoint_selection_score,
     }
 
 
@@ -411,7 +403,7 @@ def _rows_by_sample_idx(rows: Sequence[dict[str, Any]], *, label: str) -> dict[i
     return by_idx
 
 
-def _selection_score(
+def _checkpoint_selection_score(
     *,
     metric: str,
     accuracy: float,
@@ -421,17 +413,8 @@ def _selection_score(
     true_side_weight: float,
     mae_metric_weight: float,
 ) -> float:
-    if metric in {"macro_f1", "f1"}:
-        return macro_f1
-    if metric in {"true_side_macro_f1", "true_side"}:
-        return true_side_macro_f1
-    if metric in {"accuracy", "acc"}:
-        return accuracy
-    if metric in {"macro_f1_plus_true_side", "macro_f1+true_side"}:
-        return macro_f1 + float(true_side_weight) * true_side_macro_f1
-    if metric in {"macro_f1_plus_true_side_plus_mae", "macro_f1+true_side+mae", "calibrated"}:
-        return macro_f1 + float(true_side_weight) * true_side_macro_f1 + float(mae_metric_weight) * (1.0 - ordinal_mae_norm)
-    raise ValueError(f"Unsupported early_stopping_metric={metric!r}")
+    _ = (metric, accuracy, true_side_macro_f1, ordinal_mae_norm, true_side_weight, mae_metric_weight)
+    return macro_f1
 
 
 if __name__ == "__main__":

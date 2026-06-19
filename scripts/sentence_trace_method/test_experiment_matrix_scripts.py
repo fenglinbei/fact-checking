@@ -112,6 +112,34 @@ def test_qec_v1_ministral3_prompt_matrix_dry_run_expands_only_new_qec_cases() ->
     assert "_lora_ebs16_lr1em5_ep12_eval100_pat8_rawfc" not in output
 
 
+def test_mrec_ministral3_main_dry_run_builds_mrec_sources_and_lora_cases(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_mrec_ministral3_main.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "FORCE_MREC_BUILD": "true",
+        },
+    )
+
+    assert "liar_raw__ministral3_8b__mrec_min" in output
+    assert "rawfc__ministral3_8b__mrec_min_anchor_only" in output
+    assert "TRACE_PROMPT_STYLE=mrec_min" in output
+    assert "EVIDENCE_TEXT_MODE=anchor_only" in output
+    assert "mrec_greedy_transition_v0_1" in output
+    assert "minimal_resolving_chain_v0_1" in output
+    assert "scripts/phase5_selectors/run/run_mrec_traces.sh" in output
+    assert "outputs/selectors/mrec/liar_raw/mrec_greedy_transition_v0_1" in output
+    assert "outputs/selectors/mrec/rawfc/mrec_greedy_transition_v0_1" in output
+    assert "v0_7_atom_facts_abc_budgeted_marginal_chain_adaptive5_10" in output
+    assert "v0_7_atom_facts_abc_tight_budgeted_marginal_chain_adaptive5_10" in output
+    assert "SFT_EARLY_STOPPING_METRIC=macro_f1" in output
+    assert "--early-stopping-metric macro_f1" in output
+    assert "check_mrec_diagnostics.py" in output
+    assert "mrec_diagnostics_report.json" in output
+    assert "--class-weight barely-true=1.5" in output
+    assert "--class-weight true=1.8" in output
+
+
 def test_aa_qec_stage1_ministral3_dry_run_expands_rawfc_view_cases() -> None:
     output = _run_script("scripts/sentence_trace_method/run_aa_qec_stage1_ministral3.sh")
 
@@ -258,9 +286,100 @@ def test_aa_qec_stage2_c3_c4_macro_f1_top3_checkpoint_eval_wrapper(tmp_path: Pat
     assert "--logit-adjust off" in output
     assert "-m sft.label_token_infer" in output
     assert "-m sft.label_token_trainer" not in output
+
+
+def test_checkpoint_selection_gap_matrix_wrapper_expands_e0_to_e6_with_four_card_eval(tmp_path: Path) -> None:
+    case_root = tmp_path / "outputs" / "liar_raw__ministral3_8b__mrec_min_lora"
+    (case_root / "train" / "best").mkdir(parents=True)
+    for step, macro_f1 in ((100, 0.610), (200, 0.625), (300, 0.630)):
+        step_dir = case_root / "eval" / f"step-{step}"
+        step_dir.mkdir(parents=True)
+        (case_root / "train" / f"checkpoint-{step}").mkdir(parents=True)
+        (step_dir / "metrics.json").write_text(
+            json.dumps(
+                {
+                    "macro_f1": macro_f1,
+                    "macro_f1_se": 0.020,
+                    "checkpoint_selection_score": macro_f1 + 0.1,
+                }
+            ),
+            encoding="utf-8",
+        )
+    (case_root / "train.resolved.yaml").write_text("sft_train: {}\n", encoding="utf-8")
+
+    output = _run_script(
+        "scripts/sentence_trace_method/run_checkpoint_selection_gap_matrix.sh",
+        {
+            "CASE_ROOT": str(case_root),
+            "PYTHON_SELECT_BIN": sys.executable,
+            "PYTHON_BIN": sys.executable,
+            "EVAL_NPROC_PER_NODE": "4",
+            "TAU_GRID": "0,1",
+        },
+    )
+
+    for experiment in ("E0", "E1", "E2", "E3", "E4", "E5", "E6"):
+        assert f"[checkpoint-gap-matrix] EXPERIMENT={experiment}" in output
+    assert "E0_current_macro_f1_tau1" in output
+    assert "E1_val_macro_f1_tau1" in output
+    assert "E2_val_macro_f1_tau0" in output
+    assert "E3_val_macro_f1_val_selected_tau" in output
+    assert "E4_one_se_tau1" in output
+    assert "E5_one_se_tau0" in output
+    assert "E6_one_se_val_selected_tau" in output
+    assert "CHECKPOINT=checkpoint-300" in output
+    assert "CHECKPOINT=checkpoint-100" in output
+    assert "--num_processes 4" in output
+    assert "LOGIT_ADJUST=on" in output
+    assert "TAU=1.0" in output
+    assert "TAU=0.0" in output
+    assert "logit_adjust" in output
+    assert "logit_adjust_tau" in output
+    assert output.count("-m sft.label_token_multi_infer") == 2
+    assert "--plan-json" in output
+    assert "checkpoint_gap_E3_val_macro_f1_val_selected_tau_tau" in output
+    assert "checkpoint_gap_E6_one_se_val_selected_tau_tau" in output
+    assert "-m sft.label_token_infer" not in output
+    assert "-m sft.label_token_trainer" not in output
     assert "label_token_logit_adjust" not in output
     assert "checkpoint-100/label_token" not in output
     assert "checkpoint-110/label_token" not in output
+
+
+def test_checkpoint_selection_gap_matrix_wrapper_merges_same_selected_checkpoint(tmp_path: Path) -> None:
+    case_root = tmp_path / "outputs" / "liar_raw__ministral3_8b__mrec_min_lora"
+    (case_root / "train" / "best").mkdir(parents=True)
+    for step, macro_f1, macro_f1_se in ((100, 0.610, 0.001), (200, 0.625, 0.001), (300, 0.630, 0.001)):
+        step_dir = case_root / "eval" / f"step-{step}"
+        step_dir.mkdir(parents=True)
+        (case_root / "train" / f"checkpoint-{step}").mkdir(parents=True)
+        (step_dir / "metrics.json").write_text(
+            json.dumps(
+                {
+                    "macro_f1": macro_f1,
+                    "macro_f1_se": macro_f1_se,
+                    "checkpoint_selection_score": macro_f1 + 0.1,
+                }
+            ),
+            encoding="utf-8",
+        )
+    (case_root / "train.resolved.yaml").write_text("sft_train: {}\n", encoding="utf-8")
+
+    output = _run_script(
+        "scripts/sentence_trace_method/run_checkpoint_selection_gap_matrix.sh",
+        {
+            "CASE_ROOT": str(case_root),
+            "PYTHON_SELECT_BIN": sys.executable,
+            "PYTHON_BIN": sys.executable,
+            "EVAL_NPROC_PER_NODE": "4",
+            "TAU_GRID": "0,1",
+        },
+    )
+
+    assert output.count("-m sft.label_token_multi_infer") == 1
+    assert "CHECKPOINT=checkpoint-300" in output
+    assert "E1_val_macro_f1_tau1" in output
+    assert "E6_one_se_val_selected_tau" in output
 
 
 def test_aa_qec_stage2_c3_c4_macro_f1_top3_checkpoint_eval_wrapper_supports_distributed_dry_run(

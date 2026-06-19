@@ -30,6 +30,12 @@ from sft.data.io import _save_eval_artifacts, load_prebuilt_samples, save_model
 from sft.data.sampling import select_mini_val_rows
 from sft.dataset.loaders import build_dataloader
 from sft.eval import build_eval_metrics, deduplicate_by_sample_idx
+from sft.checkpoint_selection import (
+    checkpoint_selection_score as _checkpoint_selection_score,
+    macro_f1_bootstrap_se_from_records,
+    select_one_standard_error_checkpoint,
+    true_side_macro_f1 as _true_side_macro_f1,
+)
 from sft.logit_adjust import build_logit_adjust_cfg_from_samples
 from sft.label_token_dataset import LabelTokenCollator, LabelTokenDataset
 from sft.prompting.stats import (
@@ -266,56 +272,43 @@ def _coverage_label_name(label_id: int) -> str:
     return "parse_error"
 
 
-def _true_side_macro_f1(metrics: dict[str, Any]) -> float:
-    per_class = metrics.get("per_class", {}) or {}
-    values: list[float] = []
-    for label in ("mostly-true", "true"):
-        label_metrics = per_class.get(label, {}) if isinstance(per_class, dict) else {}
-        if isinstance(label_metrics, dict):
-            values.append(float(label_metrics.get("f1", 0.0)))
-    return float(np.mean(values)) if values else 0.0
-
-
-def _selection_score(metrics: dict[str, Any], train_cfg: dict[str, Any]) -> float:
+def _best_checkpoint_policy(train_cfg: dict[str, Any]) -> str:
     label_cfg = train_cfg.get("label_token_ce", {}) or {}
-    metric = str(label_cfg.get("early_stopping_metric", "macro_f1_plus_true_side")).strip().lower()
-    macro_f1 = float(metrics["macro_f1"])
-    true_side = _true_side_macro_f1(metrics)
-    if metric in {"macro_f1", "f1"}:
-        return macro_f1
-    if metric in {"true_side_macro_f1", "true_side"}:
-        return true_side
-    if metric in {"accuracy", "acc"}:
-        return float(metrics["accuracy"])
-    if metric in {"macro_f1_plus_true_side", "macro_f1+true_side"}:
-        return macro_f1 + float(label_cfg.get("true_side_metric_weight", 0.5)) * true_side
-    if metric in {"macro_f1_plus_true_side_plus_mae", "macro_f1+true_side+mae", "calibrated"}:
-        mae_norm = float(metrics.get("ordinal_mae_norm", 0.5))
-        mae_weight = float(label_cfg.get("mae_metric_weight", 0.3))
-        return (
-            macro_f1
-            + float(label_cfg.get("true_side_metric_weight", 0.5)) * true_side
-            + mae_weight * (1.0 - mae_norm)
-        )
-    if metric in {"macro_f1_plus_focus_label", "macro_f1+focus_label", "macro_f1_plus_label"}:
-        focus_label = str(label_cfg.get("focus_label", "") or "").strip()
-        if not focus_label:
-            raise ValueError(
-                "sft_train.label_token_ce.focus_label is required when "
-                "early_stopping_metric=macro_f1_plus_focus_label."
-            )
-        per_class = metrics.get("per_class", {}) or {}
-        focus_metrics = per_class.get(focus_label, {}) if isinstance(per_class, dict) else {}
-        if not isinstance(focus_metrics, dict):
-            focus_metrics = {}
-        focus_f1 = float(focus_metrics.get("f1", 0.0))
-        return macro_f1 + float(label_cfg.get("focus_metric_weight", 0.3)) * focus_f1
-    raise ValueError(
-        "Unsupported sft_train.label_token_ce.early_stopping_metric="
-        f"{metric!r}. Use macro_f1, true_side_macro_f1, accuracy, "
-        "macro_f1_plus_true_side, macro_f1_plus_true_side_plus_mae, "
-        "or macro_f1_plus_focus_label."
-    )
+    policy = label_cfg.get("best_checkpoint_policy")
+    if policy is None:
+        best_selection = label_cfg.get("best_selection", {}) or {}
+        if isinstance(best_selection, dict):
+            policy = best_selection.get("policy")
+    return str(policy or "checkpoint_selection_score").strip().lower().replace("-", "_")
+
+
+def _macro_f1_bootstrap_cfg(train_cfg: dict[str, Any]) -> tuple[int, int]:
+    label_cfg = train_cfg.get("label_token_ce", {}) or {}
+    n_bootstrap = int(label_cfg.get("bootstrap_samples", label_cfg.get("macro_f1_bootstrap_samples", 1000)))
+    seed = int(label_cfg.get("bootstrap_seed", label_cfg.get("macro_f1_bootstrap_seed", 20260620)))
+    return n_bootstrap, seed
+
+
+def _copy_checkpoint_to_best(
+    *,
+    accelerator: Accelerator,
+    source_dir: Path,
+    best_dir: Path,
+    active_logger,
+) -> None:
+    accelerator.wait_for_everyone()
+    if accelerator.is_main_process:
+        if not source_dir.exists():
+            raise FileNotFoundError(f"one-SE selected checkpoint does not exist: {source_dir}")
+        tmp_dir = best_dir.with_name(f"{best_dir.name}.tmp")
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+        shutil.copytree(source_dir, tmp_dir)
+        if best_dir.exists():
+            shutil.rmtree(best_dir)
+        tmp_dir.rename(best_dir)
+        active_logger.info("[best] copied selected checkpoint %s to %s", source_dir, best_dir)
+    accelerator.wait_for_everyone()
 
 
 def _is_distributed_teardown_oom(exc: Exception) -> bool:
@@ -875,7 +868,8 @@ def main() -> None:
             "labels": labels,
             "class_weights": {label: float(weight) for label, weight in zip(labels, class_weights.tolist())},
             "ordinal_loss": _ordinal_loss_meta(train_cfg),
-            "early_stopping_metric": str(label_cfg.get("early_stopping_metric", "macro_f1_plus_true_side")),
+            "early_stopping_metric": "macro_f1",
+            "configured_early_stopping_metric": str(label_cfg.get("early_stopping_metric", "macro_f1")),
             "true_side_metric_weight": float(label_cfg.get("true_side_metric_weight", 0.5)),
             "mae_metric_weight": float(label_cfg.get("mae_metric_weight", 0.3)),
             "focus_label": str(label_cfg.get("focus_label", "") or ""),
@@ -1070,9 +1064,14 @@ def main() -> None:
     empty_cache_on_eval = bool(train_cfg.get("empty_cache_on_eval", False))
     empty_cache_on_save = bool(train_cfg.get("empty_cache_on_save", False))
     patience = int(train_cfg.get("early_stopping_patience", 0))
+    best_checkpoint_policy = _best_checkpoint_policy(train_cfg)
+    one_se_policy = best_checkpoint_policy in {"one_standard_error_macro_f1", "one_standard_error", "one_se_macro_f1"}
+    bootstrap_samples, bootstrap_seed = _macro_f1_bootstrap_cfg(train_cfg)
 
     global_step = 0
     best_score = float("-inf")
+    best_step: int | None = None
+    eval_history: list[dict[str, Any]] = []
     no_improve_count = 0
     should_stop = False
     interrupted = False
@@ -1109,7 +1108,7 @@ def main() -> None:
     stop_request = _install_stop_signal_handlers(active_logger)
 
     def run_eval_and_maybe_save_best(step: int) -> None:
-        nonlocal best_score, no_improve_count, should_stop
+        nonlocal best_score, best_step, no_improve_count, should_stop
         eval_metrics = _evaluate_label_token(
             model=model,
             dataloader=val_dl,
@@ -1128,15 +1127,24 @@ def main() -> None:
             global_step=step,
             max_train_steps=max_train_steps,
         )
-        score = _selection_score(eval_metrics, train_cfg)
+        score = _checkpoint_selection_score(eval_metrics, train_cfg)
         macro_f1 = float(eval_metrics["macro_f1"])
         true_side = _true_side_macro_f1(eval_metrics)
         per_class = eval_metrics.get("per_class", {})
+        macro_f1_se = 0.0
+        if one_se_policy:
+            macro_f1_se = macro_f1_bootstrap_se_from_records(
+                eval_metrics.get("prediction_records", []),
+                labels=labels,
+                n_bootstrap=bootstrap_samples,
+                seed=bootstrap_seed + int(step),
+            )
 
         if accelerator.is_main_process:
             active_logger.info(
                 "[eval] step=%d loss=%.4f ce_loss=%.4f ordinal_loss=%.4f "
-                "accuracy=%.4f macro_f1=%.4f true_side_macro_f1=%.4f selection_score=%.4f "
+                "accuracy=%.4f macro_f1=%.4f macro_f1_se=%.4f true_side_macro_f1=%.4f "
+                "checkpoint_selection_score=%.4f "
                 "mae=%.4f mae_norm=%.4f extreme_err=%.4f",
                 step,
                 float(eval_metrics.get("eval_loss", float("nan"))),
@@ -1144,6 +1152,7 @@ def main() -> None:
                 float(eval_metrics.get("eval_ordinal_loss", float("nan"))),
                 float(eval_metrics["accuracy"]),
                 macro_f1,
+                macro_f1_se,
                 true_side,
                 score,
                 float(eval_metrics.get("ordinal_mae", float("nan"))),
@@ -1173,8 +1182,9 @@ def main() -> None:
                 "eval/macro_precision": float(eval_metrics["macro_precision"]),
                 "eval/macro_recall": float(eval_metrics["macro_recall"]),
                 "eval/macro_f1": macro_f1,
+                "eval/macro_f1_se": macro_f1_se,
                 "eval/true_side_macro_f1": true_side,
-                "eval/selection_score": score,
+                "eval/checkpoint_selection_score": score,
                 "eval/parse_error_rate": float(eval_metrics["parse_error_rate"]),
                 "eval/ordinal_mae": float(eval_metrics.get("ordinal_mae", float("nan"))),
                 "eval/ordinal_mae_norm": float(eval_metrics.get("ordinal_mae_norm", float("nan"))),
@@ -1208,8 +1218,9 @@ def main() -> None:
                 "macro_precision": float(eval_metrics["macro_precision"]),
                 "macro_recall": float(eval_metrics["macro_recall"]),
                 "macro_f1": macro_f1,
+                "macro_f1_se": macro_f1_se,
                 "true_side_macro_f1": true_side,
-                "selection_score": score,
+                "checkpoint_selection_score": score,
                 "parse_error_rate": float(eval_metrics["parse_error_rate"]),
                 "ordinal_mae": float(eval_metrics.get("ordinal_mae", float("nan"))),
                 "ordinal_mae_norm": float(eval_metrics.get("ordinal_mae_norm", float("nan"))),
@@ -1235,8 +1246,65 @@ def main() -> None:
                 artifacts["confusion_png_path"],
             )
 
-        if score > best_score:
+        if one_se_policy:
+            eval_history.append(
+                {
+                    "checkpoint": f"checkpoint-{int(step)}",
+                    "step": int(step),
+                    "macro_f1": macro_f1,
+                    "macro_f1_se": macro_f1_se,
+                    "checkpoint_selection_score": score,
+                }
+            )
+            selected = select_one_standard_error_checkpoint(eval_history)
+            selected_step = int(selected["step"])
+            fmax = float(selected["one_se_best_macro_f1"])
+            if selected_step != best_step:
+                if selected_step == int(step):
+                    save_model(accelerator, model, tokenizer, output_dir / "best")
+                else:
+                    _copy_checkpoint_to_best(
+                        accelerator=accelerator,
+                        source_dir=output_dir / f"checkpoint-{selected_step}",
+                        best_dir=output_dir / "best",
+                        active_logger=active_logger,
+                    )
+                if accelerator.is_main_process:
+                    (output_dir / "best_checkpoint_selection.json").write_text(
+                        json.dumps(
+                            {
+                                "policy": best_checkpoint_policy,
+                                "selected_step": selected_step,
+                                "selected_checkpoint": str(selected["checkpoint"]),
+                                "selected_macro_f1": float(selected["macro_f1"]),
+                                "selected_macro_f1_se": float(selected.get("macro_f1_se", 0.0)),
+                                "fmax_checkpoint": str(selected["one_se_best_checkpoint"]),
+                                "fmax_macro_f1": fmax,
+                                "fmax_macro_f1_se": float(selected["one_se_best_macro_f1_se"]),
+                                "threshold": float(selected["one_se_threshold"]),
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
+                        encoding="utf-8",
+                    )
+                best_step = selected_step
+            if fmax > best_score:
+                best_score = fmax
+                no_improve_count = 0
+            elif patience > 0:
+                no_improve_count += 1
+                if no_improve_count >= patience:
+                    if accelerator.is_main_process:
+                        active_logger.info(
+                            "[early-stop] no val one-SE macro-F1 envelope improvement for %d evals, stopping at step=%d",
+                            patience,
+                            step,
+                        )
+                    should_stop = True
+        elif score > best_score:
             best_score = score
+            best_step = int(step)
             save_model(accelerator, model, tokenizer, output_dir / "best")
             no_improve_count = 0
         elif patience > 0:
@@ -1244,7 +1312,7 @@ def main() -> None:
             if no_improve_count >= patience:
                 if accelerator.is_main_process:
                     active_logger.info(
-                        "[early-stop] no val selection-score improvement for %d evals, stopping at step=%d",
+                        "[early-stop] no val checkpoint-selection-score improvement for %d evals, stopping at step=%d",
                         patience,
                         step,
                     )

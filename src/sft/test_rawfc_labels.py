@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from sft.eval import build_eval_metrics
 from sft.eval import deduplicate_by_sample_idx
-from sft.label_token_trainer import _apply_label_logit_adjust, _compute_label_token_losses, _selection_score
+from sft.label_token_trainer import _apply_label_logit_adjust, _checkpoint_selection_score, _compute_label_token_losses
 from sft.metrics import _build_confusion_matrix
 from sft.parser import _parse_label_id
 
@@ -49,7 +49,7 @@ def test_eval_deduplicates_gathered_sample_indices_before_metrics() -> None:
     assert dedup_gold.tolist() == [0, 1, 2]
 
 
-def test_focus_label_selection_score_adds_focus_f1_weight() -> None:
+def test_focus_label_checkpoint_selection_score_is_fixed_to_macro_f1() -> None:
     metrics = {
         "macro_f1": 0.50,
         "per_class": {
@@ -66,7 +66,7 @@ def test_focus_label_selection_score_adds_focus_f1_weight() -> None:
         }
     }
 
-    assert abs(_selection_score(metrics, train_cfg) - 0.68) < 1e-12
+    assert _checkpoint_selection_score(metrics, train_cfg) == 0.50
 
 
 def test_ordinal_loss_disabled_matches_weighted_cross_entropy() -> None:

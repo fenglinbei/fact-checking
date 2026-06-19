@@ -17,7 +17,7 @@ def test_mcnemar_exact_uses_discordant_paired_counts() -> None:
     assert result["p_value_two_sided"] == pytest.approx(0.25)
 
 
-def test_compute_metrics_recomputes_macro_true_side_and_selection() -> None:
+def test_compute_metrics_recomputes_macro_true_side_and_checkpoint_selection() -> None:
     gold = [0, 1, 0, 1]
     pred = [0, 1, 1, 1]
 
@@ -32,10 +32,11 @@ def test_compute_metrics_recomputes_macro_true_side_and_selection() -> None:
     assert metrics["accuracy"] == pytest.approx(0.75)
     assert metrics["macro_f1"] == pytest.approx((2 / 3 + 0.8) / 2)
     assert metrics["true_side_macro_f1"] == pytest.approx(0.8)
-    assert metrics["selection_score"] == pytest.approx(((2 / 3 + 0.8) / 2) + 0.5 * 0.8)
+    assert metrics["checkpoint_selection_score"] == pytest.approx((2 / 3 + 0.8) / 2)
+    assert "selection_score" not in metrics
 
 
-def test_compute_metrics_supports_calibrated_selection_with_ordinal_mae() -> None:
+def test_compute_metrics_supports_calibrated_checkpoint_selection_with_ordinal_mae() -> None:
     gold = [0, 1, 0, 1]
     pred = [0, 1, 1, 1]
 
@@ -50,7 +51,7 @@ def test_compute_metrics_supports_calibrated_selection_with_ordinal_mae() -> Non
     )
 
     assert metrics["ordinal_mae_norm"] == pytest.approx(0.25)
-    assert metrics["selection_score"] == pytest.approx(((2 / 3 + 0.8) / 2) + 0.5 * 0.8 + 0.3 * 0.75)
+    assert metrics["checkpoint_selection_score"] == pytest.approx((2 / 3 + 0.8) / 2)
 
 
 def test_align_predictions_rejects_mismatched_gold_ids() -> None:

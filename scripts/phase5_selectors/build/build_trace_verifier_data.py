@@ -40,7 +40,7 @@ SELECTION_MODES = (
     "same_set_candidate_pool_order",
     "same_set_random_order",
 )
-TRACE_PROMPT_STYLES = ("plain", "trace_lite", "rawfc_boundaries", "qec_min", "qec_map")
+TRACE_PROMPT_STYLES = ("plain", "trace_lite", "rawfc_boundaries", "qec_min", "qec_map", "mrec_min")
 EVIDENCE_TEXT_MODES = ("full", "anchor_only")
 
 RAWFC_BOUNDARIES_SYSTEM_PROMPT = (
@@ -308,6 +308,7 @@ def _build_split(
         candidates = _apply_evidence_text_mode(candidates, evidence_text_mode)
 
         qec_payload: dict[str, Any] | None = None
+        mrec_payload: dict[str, Any] | None = None
         if trace_prompt_style == "trace_lite":
             claim, candidates = _apply_trace_lite_prompt_fields(
                 claim=sample.claim,
@@ -321,6 +322,12 @@ def _build_split(
                 claim_atoms=trace.get("claim_atoms") or [],
                 chain_steps=trace.get("chain_steps") or [],
                 style=trace_prompt_style,
+            )
+        elif trace_prompt_style == "mrec_min":
+            claim, candidates, mrec_payload = _apply_mrec_prompt_fields(
+                claim=sample.claim,
+                candidates=candidates,
+                trace=trace,
             )
         else:
             claim = sample.claim
@@ -348,6 +355,19 @@ def _build_split(
         if qec_payload is not None:
             training_row["qec_steps"] = qec_payload["steps"]
             training_row["qec_diagnostics"] = qec_payload["diagnostics"]
+        if mrec_payload is not None:
+            training_row["mrec_prompt_steps"] = mrec_payload["steps"]
+            training_row["mrec_prompt_diagnostics"] = mrec_payload["diagnostics"]
+            for key in (
+                "mrec_trace_version",
+                "mrec_selector_name",
+                "mrec_steps",
+                "mrec_diagnostics",
+                "atom_states_initial",
+                "atom_states_final",
+            ):
+                if key in trace:
+                    training_row[key] = trace[key]
         training_row["selector_trace"] = {
             "source_type": source_type,
             "source_path": str(source_path),
@@ -452,16 +472,7 @@ def _apply_qec_prompt_fields(
     if style not in {"qec_min", "qec_map"}:
         raise ValueError(f"unsupported QEC prompt style: {style}")
 
-    atom_by_id: dict[str, dict[str, Any]] = {}
-    atom_order: dict[str, int] = {}
-    for idx, atom in enumerate(claim_atoms):
-        if not isinstance(atom, dict):
-            continue
-        atom_id = _compact_whitespace(atom.get("atom_id") or atom.get("node_id") or "")
-        if not atom_id:
-            continue
-        atom_by_id[atom_id] = atom
-        atom_order[atom_id] = idx
+    atom_by_id, atom_order = _claim_atom_lookup(claim_atoms)
 
     rendered_candidates: list[dict[str, Any]] = []
     steps: list[dict[str, Any]] = []
@@ -542,6 +553,124 @@ def _apply_qec_prompt_fields(
         "mean_check_token_count": float(np.mean(check_token_counts)) if check_token_counts else 0.0,
     }
     return str(claim), rendered_candidates, {"steps": steps, "diagnostics": diagnostics}
+
+
+def _apply_mrec_prompt_fields(
+    *,
+    claim: str,
+    candidates: list[dict[str, Any]],
+    trace: dict[str, Any],
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    source_name, source_steps = _mrec_prompt_source_steps(trace)
+    aligned_steps = _align_qec_chain_steps(source_steps, candidates)
+    atom_by_id, atom_order = _claim_atom_lookup(trace.get("claim_atoms") or [])
+
+    rendered_candidates: list[dict[str, Any]] = []
+    steps: list[dict[str, Any]] = []
+    cue_type_counts: Counter[str] = Counter()
+    operation_counts: Counter[str] = Counter()
+    state_after_counts: Counter[str] = Counter()
+    check_token_counts: list[int] = []
+    token_costs: list[int] = []
+
+    for step_idx, candidate in enumerate(candidates, start=1):
+        copied = dict(candidate)
+        mrec_step = aligned_steps[step_idx - 1] if step_idx - 1 < len(aligned_steps) else None
+        original_text = _qec_step_evidence_text(mrec_step, copied)
+        cue = _select_mrec_cue(mrec_step, source_name=source_name)
+        if cue is None:
+            cue = _select_qec_cue(copied, atom_by_id=atom_by_id, atom_order=atom_order)
+
+        copied["text"] = f"Check: {cue['check']}\n{original_text}"
+        rendered_candidates.append(copied)
+
+        cue_type = str(cue["cue_type"])
+        operation = str(mrec_step.get("operation") or "").upper() if isinstance(mrec_step, dict) else ""
+        state_after = str(mrec_step.get("state_after") or "").upper() if isinstance(mrec_step, dict) else ""
+        token_cost = _int_or_none(mrec_step.get("token_cost")) if isinstance(mrec_step, dict) else None
+        cue_type_counts[cue_type] += 1
+        if operation:
+            operation_counts[operation] += 1
+        if state_after:
+            state_after_counts[state_after] += 1
+        if token_cost is not None:
+            token_costs.append(token_cost)
+        check_token_counts.append(len(str(cue["check"]).split()))
+
+        steps.append(
+            {
+                "step": int(step_idx),
+                "source": source_name,
+                "candidate_idx": int(copied.get("candidate_idx", copied.get("selector_candidate_idx", step_idx - 1))),
+                "evidence_id": str(copied.get("evidence_id") or copied.get("selector_pool_evidence_id") or ""),
+                "selector_rank": int(copied.get("selector_trace_rank", step_idx - 1)) + 1,
+                "cue_type": cue_type,
+                "check": str(cue["check"]),
+                "operation": operation,
+                "atom_id": str(mrec_step.get("atom_id") or "") if isinstance(mrec_step, dict) else "",
+                "state_before": str(mrec_step.get("state_before") or "") if isinstance(mrec_step, dict) else "",
+                "state_after": str(mrec_step.get("state_after") or "") if isinstance(mrec_step, dict) else "",
+                "covered_atom_ids": _covered_atom_ids(
+                    mrec_step.get("covered_atom_ids") if isinstance(mrec_step, dict) else copied.get("covered_atom_ids")
+                ),
+                "token_cost": token_cost,
+            }
+        )
+
+    total = max(len(rendered_candidates), 1)
+    diagnostics = {
+        "source": source_name,
+        "cue_type_counts": dict(cue_type_counts),
+        "operation_counts": dict(operation_counts),
+        "state_after_counts": dict(state_after_counts),
+        "mrec_step_cue_rate": float(cue_type_counts.get("mrec_step", 0) / total),
+        "compat_chain_step_cue_rate": float(cue_type_counts.get("compat_chain_step", 0) / total),
+        "fallback_rate": float(cue_type_counts.get("fallback", 0) / total),
+        "mean_check_token_count": float(np.mean(check_token_counts)) if check_token_counts else 0.0,
+        "total_token_cost": int(sum(token_costs)) if token_costs else 0,
+        "mean_token_cost": float(np.mean(token_costs)) if token_costs else 0.0,
+    }
+    return str(claim), rendered_candidates, {"steps": steps, "diagnostics": diagnostics}
+
+
+def _claim_atom_lookup(claim_atoms: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
+    atom_by_id: dict[str, dict[str, Any]] = {}
+    atom_order: dict[str, int] = {}
+    for idx, atom in enumerate(claim_atoms):
+        if not isinstance(atom, dict):
+            continue
+        atom_id = _compact_whitespace(atom.get("atom_id") or atom.get("node_id") or "")
+        if not atom_id:
+            continue
+        atom_by_id[atom_id] = atom
+        atom_order[atom_id] = idx
+    return atom_by_id, atom_order
+
+
+def _mrec_prompt_source_steps(trace: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    for source_name in ("mrec_steps", "compat_chain_steps", "chain_steps"):
+        steps = [dict(step) for step in trace.get(source_name) or [] if isinstance(step, dict)]
+        if steps:
+            return source_name, steps
+    return "none", []
+
+
+def _select_mrec_cue(step: dict[str, Any] | None, *, source_name: str) -> dict[str, Any] | None:
+    if not isinstance(step, dict):
+        return None
+    cue_text = _compact_whitespace(step.get("cue_text") or "")
+    if not cue_text:
+        return None
+    if source_name == "mrec_steps":
+        cue_type = "mrec_step"
+    elif source_name in {"compat_chain_steps", "chain_steps"}:
+        cue_type = "compat_chain_step"
+    else:
+        cue_type = "fallback"
+    return {
+        "cue_type": cue_type,
+        "check": cue_text,
+    }
 
 
 def _align_qec_chain_steps(

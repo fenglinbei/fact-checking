@@ -282,6 +282,127 @@ def test_qec_map_prompt_adds_compact_map_tags(tmp_path: Path) -> None:
     )
 
 
+def test_mrec_min_prompt_uses_mrec_steps_without_visible_transition_metadata(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_mrec_inputs(tmp_path)
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="mrec_min",
+        expected_selector_name="test_selector",
+        top_k=2,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+    )
+
+    row = rows[0]
+    prompt = row["prompt"]
+    assert report["trace_prompt_style"] == "mrec_min"
+    assert row["trace_prompt_style"] == "mrec_min"
+    assert "Check: MREC atom cue" in prompt
+    assert "Check: MREC contrast cue" in prompt
+    assert "MREC evidence override." in prompt
+    assert "MREC contrast evidence override." in prompt
+    assert "Did route question win?" not in prompt
+    for forbidden in (
+        "state_before",
+        "state_after",
+        "OPEN",
+        "CONTRAST",
+        "relation=",
+        "directness=",
+        "covers=",
+    ):
+        assert forbidden not in prompt
+
+    assert row["mrec_trace_version"] == "mrec_trace_v0_1"
+    assert row["mrec_selector_name"] == "mrec_greedy_transition_v0_1"
+    assert row["atom_states_final"] == {"A1": "C"}
+    assert row["mrec_steps"][0]["operation"] == "OPEN"
+    assert row["mrec_diagnostics"]["stop_reason"] == "target_resolution_reached"
+    assert [step["cue_type"] for step in row["mrec_prompt_steps"]] == ["mrec_step", "mrec_step"]
+    assert row["mrec_prompt_steps"][0]["operation"] == "OPEN"
+    assert row["mrec_prompt_steps"][1]["state_after"] == "C"
+    assert row["mrec_prompt_diagnostics"]["operation_counts"] == {"OPEN": 1, "CONTRAST": 1}
+    assert "qec_steps" not in row
+
+
+def test_mrec_min_anchor_only_uses_anchor_text_before_mrec_step_evidence(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_mrec_inputs(tmp_path, with_anchor=True)
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="mrec_min",
+        evidence_text_mode="anchor_only",
+        expected_selector_name="test_selector",
+        top_k=1,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+    )
+
+    row = rows[0]
+    prompt = row["prompt"]
+    candidate = row["candidates"][0]
+    assert report["evidence_text_mode"] == "anchor_only"
+    assert "Check: MREC atom cue" in prompt
+    assert "MREC anchor text." in prompt
+    assert "MREC evidence override." not in prompt
+    assert "Full MREC chunk text." not in prompt
+    assert candidate["text"] == "Check: MREC atom cue\nMREC anchor text."
+    assert candidate["full_chunk_text"] == "Full MREC chunk text."
+    assert candidate["evidence_text_source"] == "anchor_text"
+
+
+def test_mrec_min_falls_back_to_compat_chain_steps_when_mrec_steps_are_absent(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_mrec_inputs(tmp_path, use_compat_only=True)
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="mrec_min",
+        expected_selector_name="test_selector",
+        top_k=1,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+    )
+
+    row = rows[0]
+    prompt = row["prompt"]
+    assert report["trace_prompt_style"] == "mrec_min"
+    assert "Check: Compat cue" in prompt
+    assert "Compat evidence override." in prompt
+    assert row["mrec_prompt_steps"][0]["source"] == "compat_chain_steps"
+    assert row["mrec_prompt_steps"][0]["cue_type"] == "compat_chain_step"
+
+
 def test_rawfc_boundaries_prompt_style_uses_rawfc_three_label_boundaries() -> None:
     prompt_cfg = build_trace_verifier_data._prompt_cfg_for_trace_style(
         {"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
@@ -553,5 +674,135 @@ def _write_qec_anchor_only_chain_step_inputs(tmp_path: Path) -> tuple[Path, Path
     trace = json.loads(trace_path.read_text(encoding="utf-8"))
     trace["candidate_pool"][0]["text"] = "Full chunk first sentence. Full chunk second sentence."
     trace["candidate_pool"][0]["anchor_text"] = "Anchor-only winning sentence."
+    trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
+    return raw_path, trace_path
+
+
+def _write_mrec_inputs(
+    tmp_path: Path,
+    *,
+    with_anchor: bool = False,
+    use_compat_only: bool = False,
+) -> tuple[Path, Path]:
+    raw_row = {
+        "event_id": "event-mrec",
+        "claim": "Original claim",
+        "label": "true",
+        "explain": "",
+        "reports": [],
+    }
+    raw_path = tmp_path / "val.json"
+    raw_path.write_text(json.dumps([raw_row]), encoding="utf-8")
+
+    first_text = "Full MREC chunk text." if with_anchor else "Evidence with route question."
+    first_candidate = {
+        "text": first_text,
+        "candidate_idx": 0,
+        "evidence_id": "E30",
+        "covered_atom_ids": ["A1"],
+        "map_relation": "support",
+        "map_directness": "direct",
+        "qd_question_routes": [
+            {
+                "question_id": "q-route",
+                "question": "Did route question win?",
+                "focus": "quantity",
+                "rank": 1,
+                "hybrid_score": 0.99,
+            }
+        ],
+    }
+    if with_anchor:
+        first_candidate["anchor_text"] = "MREC anchor text."
+
+    trace = {
+        "event_id": "event-mrec",
+        "selector_name": "test_selector",
+        "fingerprint": "fp",
+        "candidate_pool": [
+            first_candidate,
+            {
+                "text": "Second MREC candidate evidence.",
+                "candidate_idx": 1,
+                "evidence_id": "E31",
+                "covered_atom_ids": ["A1"],
+                "map_relation": "refute",
+                "map_directness": "partial",
+            },
+        ],
+        "candidate_scores": [
+            {"candidate_idx": 0},
+            {"candidate_idx": 1},
+        ],
+        "selector_ordered_indices": [0, 1],
+        "oracle_ordered_indices": [0],
+        "claim_atoms": [
+            {"atom_id": "A1", "text": "First atom", "importance": 1.0},
+        ],
+        "mrec_trace_version": "mrec_trace_v0_1",
+        "mrec_selector_name": "mrec_greedy_transition_v0_1",
+        "atom_states_initial": {"A1": "U"},
+        "atom_states_final": {"A1": "C"},
+        "mrec_diagnostics": {
+            "stop_reason": "target_resolution_reached",
+            "resolved_atom_rate": 1.0,
+        },
+        "mrec_steps": [
+            {
+                "step": 1,
+                "operation": "OPEN",
+                "atom_id": "A1",
+                "atom_text": "First atom",
+                "state_before": "U",
+                "state_after": "S",
+                "cue_text": "MREC atom cue",
+                "cue_source": "claim_atom",
+                "candidate_idx": 0,
+                "selector_candidate_idx": 0,
+                "evidence_id": "E30",
+                "evidence_text": "MREC evidence override.",
+                "covered_atom_ids": ["A1"],
+                "relation": "support",
+                "directness": "direct",
+                "token_cost": 4,
+                "transition_reason": "A1 changes from unresolved to S",
+            },
+            {
+                "step": 2,
+                "operation": "CONTRAST",
+                "atom_id": "A1",
+                "atom_text": "First atom",
+                "state_before": "S",
+                "state_after": "C",
+                "cue_text": "MREC contrast cue",
+                "cue_source": "claim_atom",
+                "candidate_idx": 1,
+                "selector_candidate_idx": 1,
+                "evidence_id": "E31",
+                "evidence_text": "MREC contrast evidence override.",
+                "covered_atom_ids": ["A1"],
+                "relation": "refute",
+                "directness": "partial",
+                "token_cost": 5,
+                "transition_reason": "A1 changes from S to C",
+            },
+        ],
+        "compat_chain_steps": [
+            {
+                "step": 1,
+                "candidate_idx": 0,
+                "selector_candidate_idx": 0,
+                "evidence_id": "E30",
+                "cue_text": "Compat cue",
+                "cue_source": "claim_atom",
+                "evidence_text": "Compat evidence override.",
+                "role": "open",
+                "covered_atom_ids": ["A1"],
+            }
+        ],
+    }
+    if use_compat_only:
+        trace.pop("mrec_steps")
+    trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
     return raw_path, trace_path

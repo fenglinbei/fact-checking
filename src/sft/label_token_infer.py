@@ -21,7 +21,7 @@ from sft.label_token_trainer import (
     _build_label_token_ids,
     _class_weight_tensor,
     _evaluate_label_token,
-    _selection_score,
+    _checkpoint_selection_score,
     _true_side_macro_f1,
 )
 from sft.logit_adjust import build_logit_adjust_cfg_from_train_config, load_logit_adjust_cfg
@@ -218,7 +218,7 @@ def main() -> None:
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         true_side = _true_side_macro_f1(eval_metrics)
-        selection_score = _selection_score(eval_metrics, train_cfg)
+        checkpoint_selection_score = _checkpoint_selection_score(eval_metrics, train_cfg)
         log_eval_summary(
             eval_metrics,
             eval_logger=logger,
@@ -226,7 +226,7 @@ def main() -> None:
             checkpoint=context.checkpoint_name,
             extra_metrics={
                 "true_side_macro_f1": true_side,
-                "selection_score": selection_score,
+                "checkpoint_selection_score": checkpoint_selection_score,
             },
         )
         metrics = build_serializable_metrics(eval_metrics)
@@ -240,7 +240,7 @@ def main() -> None:
                 "eval_ce_loss": float(eval_metrics.get("eval_ce_loss", float("nan"))),
                 "eval_ordinal_loss": float(eval_metrics.get("eval_ordinal_loss", float("nan"))),
                 "true_side_macro_f1": true_side,
-                "selection_score": selection_score,
+                "checkpoint_selection_score": checkpoint_selection_score,
                 "logit_adjust": logit_adjust_cfg or {"enabled": False},
             }
         )
