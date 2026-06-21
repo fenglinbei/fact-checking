@@ -18,7 +18,7 @@ METRIC_COLUMNS = [
     "accuracy",
     "macro_f1",
     "true_side_macro_f1",
-    "selection_score",
+    "checkpoint_selection_score",
     "parse_error_rate",
     "eval_loss",
     "ordinal_mae",
@@ -223,7 +223,10 @@ def _metric_values(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return values
     for column in METRIC_COLUMNS:
-        value = payload.get(column)
+        if column == "checkpoint_selection_score":
+            value = payload.get("checkpoint_selection_score", payload.get("selection_score"))
+        else:
+            value = payload.get(column)
         if isinstance(value, bool):
             values[column] = int(value)
         elif isinstance(value, int):

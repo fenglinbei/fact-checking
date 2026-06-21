@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -292,3 +293,62 @@ def test_liar_raw_atom_facts_abc_all_splits_wrapper_defaults() -> None:
     assert "run_evidence_map_selector_v0_7_atom_facts_abc.sh" in text
     assert "run_evidence_chain_graph_v0_7_atom_facts_abc.sh" in text
     assert "run_liar_raw_v0_7_atom_facts_abc_stage_sources.sh" in text
+
+
+def test_liar_raw_map_selector_ablation_s0_s2_wrapper_defaults_and_dry_run() -> None:
+    path = ROOT / "scripts/phase5_selectors/run/run_liar_raw_map_selector_ablation_s0_s2.sh"
+
+    subprocess.run(["bash", "-n", str(path)], cwd=ROOT, check=True)
+    text = path.read_text(encoding="utf-8")
+
+    assert "SPLITS=\"${SPLITS:-train val test}\"" in text
+    assert "SELECTORS=\"${SELECTORS:-map_selector_s0_retrieval_top5 map_selector_s1_mmr_pool_top5 map_selector_s2_map_quality_top5}\"" in text
+    assert "outputs/selectors/evidence_map_selector/liar_raw_v0_7_atom_facts_abc_${split}/candidate_evidence_map_features_${split}.jsonl" in text
+    assert "outputs/selectors/evidence_chain_graph/liar_raw_${selector}_${split}" in text
+    assert "build_map_selector_ablation_traces.py" in text
+    assert "--top-k \"${TOP_K}\"" in text
+    assert "--chunk-mmr-fingerprint \"${CHUNK_MMR_FINGERPRINT}\"" in text
+
+    result = subprocess.run(
+        ["bash", str(path)],
+        cwd=ROOT,
+        env={**os.environ, "DRY_RUN": "true"},
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    output = result.stdout
+    assert "map_selector_s0_retrieval_top5" in output
+    assert "map_selector_s1_mmr_pool_top5" in output
+    assert "map_selector_s2_map_quality_top5" in output
+    assert "qec_min" not in output
+    assert "qec_map" not in output
+
+
+def test_liar_raw_map_selector_ablation_s3_s5_wrapper_defaults_and_dry_run() -> None:
+    path = ROOT / "scripts/phase5_selectors/run/run_liar_raw_map_selector_ablation_s3_s5.sh"
+
+    subprocess.run(["bash", "-n", str(path)], cwd=ROOT, check=True)
+    text = path.read_text(encoding="utf-8")
+
+    assert "SPLITS=\"${SPLITS:-train val test}\"" in text
+    assert "SELECTORS=\"${SELECTORS:-map_selector_s3_weighted_set_cover_top5 map_selector_s4_minimal_evidence_group_top5 map_selector_s5_fixed_budget_marginal_greedy_top5}\"" in text
+    assert "outputs/selectors/evidence_map_selector/liar_raw_v0_7_atom_facts_abc_${split}/candidate_evidence_map_features_${split}.jsonl" in text
+    assert "outputs/selectors/evidence_chain_graph/liar_raw_${selector}_${split}" in text
+    assert "build_map_selector_ablation_traces.py" in text
+
+    result = subprocess.run(
+        ["bash", str(path)],
+        cwd=ROOT,
+        env={**os.environ, "DRY_RUN": "true"},
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    output = result.stdout
+    assert "map_selector_s3_weighted_set_cover_top5" in output
+    assert "map_selector_s4_minimal_evidence_group_top5" in output
+    assert "map_selector_s5_fixed_budget_marginal_greedy_top5" in output
+    assert "adaptive5_10" not in output
+    assert "qec_min" not in output
+    assert "qec_map" not in output

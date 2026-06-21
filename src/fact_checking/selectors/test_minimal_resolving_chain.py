@@ -61,6 +61,43 @@ def test_build_mrec_trace_row_can_continue_for_contrast_after_resolution() -> No
     assert trace["mrec_diagnostics"]["conflicted_atom_ids"] == ["A1"]
 
 
+def test_build_mrec_trace_row_can_fill_post_target_support_steps_until_min_steps() -> None:
+    row = _row(
+        claim_atoms=[{"atom_id": "A1", "text": "The bill passed.", "importance": 1.0}],
+        candidates=[
+            _candidate("E1", relation="support", atoms=["A1"], text="The bill passed the House."),
+            _candidate("E2", relation="support", atoms=["A1"], text="The bill also passed the Senate."),
+            _candidate(
+                "E3",
+                relation="unknown",
+                directness="context",
+                atoms=["A1"],
+                text="The bill was discussed during the legislative session.",
+            ),
+        ],
+    )
+
+    trace = build_mrec_trace_row(
+        row,
+        params=MRECSelectorParams(
+            max_steps=5,
+            min_steps=3,
+            target_resolved_rate=1.0,
+            continue_after_target_for_contrast=True,
+            post_target_fill_policy="contrast_then_support",
+        ),
+    )
+
+    assert [step["evidence_id"] for step in trace["mrec_steps"]] == ["E1", "E2", "E3"]
+    assert [step["operation"] for step in trace["mrec_steps"]] == ["OPEN", "CORROBORATE", "BRIDGE"]
+    assert [step.get("post_target_fill") for step in trace["mrec_steps"]] == [False, True, True]
+    assert trace["mrec_diagnostics"]["stop_reason"] == "min_steps_satisfied"
+    assert trace["mrec_diagnostics"]["post_target_fill_policy"] == "contrast_then_support"
+    assert trace["mrec_diagnostics"]["min_steps"] == 3
+    assert trace["mrec_diagnostics"]["post_target_fill_step_count"] == 2
+    assert trace["mrec_diagnostics"]["post_target_operation_counts"] == {"BRIDGE": 1, "CORROBORATE": 1}
+
+
 def test_build_mrec_trace_row_respects_token_budget() -> None:
     row = _row(
         claim_atoms=[

@@ -140,6 +140,144 @@ def test_mrec_ministral3_main_dry_run_builds_mrec_sources_and_lora_cases(tmp_pat
     assert "--class-weight true=1.8" in output
 
 
+def test_mrec_quick_ablation_build_wrappers_set_capacity_knobs(tmp_path: Path) -> None:
+    cases = [
+        (
+            "scripts/sentence_trace_method/run_liar_raw_ministral3_mrec_t1p0_build.sh",
+            "__mrec_t1p0",
+            "mrec_greedy_transition_v0_1_t1p0",
+            "TARGET_RESOLVED_RATE=1.0",
+            "CONTINUE_AFTER_TARGET_FOR_CONTRAST=false",
+            "CANDIDATE_TOP_N=20",
+            "POST_TARGET_FILL_POLICY=contrast_only",
+            "MIN_STEPS=0",
+        ),
+        (
+            "scripts/sentence_trace_method/run_liar_raw_ministral3_mrec_t08_contrast_build.sh",
+            "__mrec_t08_contrast",
+            "mrec_greedy_transition_v0_1_t08_contrast",
+            "TARGET_RESOLVED_RATE=0.80",
+            "CONTINUE_AFTER_TARGET_FOR_CONTRAST=true",
+            "CANDIDATE_TOP_N=20",
+            "POST_TARGET_FILL_POLICY=contrast_only",
+            "MIN_STEPS=0",
+        ),
+        (
+            "scripts/sentence_trace_method/run_liar_raw_ministral3_mrec_t1p0_contrast_build.sh",
+            "__mrec_t1p0_contrast",
+            "mrec_greedy_transition_v0_1_t1p0_contrast",
+            "TARGET_RESOLVED_RATE=1.0",
+            "CONTINUE_AFTER_TARGET_FOR_CONTRAST=true",
+            "CANDIDATE_TOP_N=20",
+            "POST_TARGET_FILL_POLICY=contrast_only",
+            "MIN_STEPS=0",
+        ),
+        (
+            "scripts/sentence_trace_method/run_liar_raw_ministral3_mrec_t08_contrast_top50_build.sh",
+            "__mrec_t08_contrast_top50",
+            "mrec_greedy_transition_v0_1_t08_contrast_top50",
+            "TARGET_RESOLVED_RATE=0.80",
+            "CONTINUE_AFTER_TARGET_FOR_CONTRAST=true",
+            "CANDIDATE_TOP_N=50",
+            "POST_TARGET_FILL_POLICY=contrast_only",
+            "MIN_STEPS=0",
+        ),
+        (
+            "scripts/sentence_trace_method/run_liar_raw_ministral3_mrec_t08_contrast_top100_build.sh",
+            "__mrec_t08_contrast_top100",
+            "mrec_greedy_transition_v0_1_t08_contrast_top100",
+            "TARGET_RESOLVED_RATE=0.80",
+            "CONTINUE_AFTER_TARGET_FOR_CONTRAST=true",
+            "CANDIDATE_TOP_N=100",
+            "POST_TARGET_FILL_POLICY=contrast_only",
+            "MIN_STEPS=0",
+        ),
+        (
+            "scripts/sentence_trace_method/run_liar_raw_ministral3_mrec_t08_fill_min3_build.sh",
+            "__mrec_t08_fill_min3",
+            "mrec_greedy_transition_v0_1_t08_fill_min3",
+            "TARGET_RESOLVED_RATE=0.80",
+            "CONTINUE_AFTER_TARGET_FOR_CONTRAST=true",
+            "CANDIDATE_TOP_N=20",
+            "POST_TARGET_FILL_POLICY=contrast_then_support",
+            "MIN_STEPS=3",
+        ),
+        (
+            "scripts/sentence_trace_method/run_liar_raw_ministral3_mrec_t08_fill_min5_build.sh",
+            "__mrec_t08_fill_min5",
+            "mrec_greedy_transition_v0_1_t08_fill_min5",
+            "TARGET_RESOLVED_RATE=0.80",
+            "CONTINUE_AFTER_TARGET_FOR_CONTRAST=true",
+            "CANDIDATE_TOP_N=20",
+            "POST_TARGET_FILL_POLICY=contrast_then_support",
+            "MIN_STEPS=5",
+        ),
+    ]
+
+    for script, case_suffix, selector_name, target_rate, contrast_policy, top_n, fill_policy, min_steps in cases:
+        output = _run_script(script, {"OUTPUT_ROOT": str(tmp_path / Path(script).stem)})
+
+        assert "DATASETS=liar_raw" in output
+        assert "rawfc__ministral3_8b" not in output
+        assert "MODE=build" in output
+        assert "TRACE_PROMPT_STYLE=mrec_min" in output
+        assert "RUN_MREC_DIAGNOSTICS=false" in output
+        assert f"CASE_SUFFIX={case_suffix}" in output
+        assert selector_name in output
+        assert target_rate in output
+        assert contrast_policy in output
+        assert top_n in output
+        assert fill_policy in output
+        assert min_steps in output
+        assert "-m sft.label_token_trainer" not in output
+
+
+def test_mrec_final_full_wrappers_select_contrast_only_and_fill_min5(tmp_path: Path) -> None:
+    cases = [
+        (
+            "scripts/sentence_trace_method/run_liar_raw_ministral3_mrec_contrast_only_min0_full.sh",
+            "__mrec_contrast_only_min0",
+            "mrec_greedy_transition_v0_1_contrast_only_min0",
+            "POST_TARGET_FILL_POLICY=contrast_only",
+            "MIN_STEPS=0",
+        ),
+        (
+            "scripts/sentence_trace_method/run_liar_raw_ministral3_mrec_contrast_then_support_min5_full.sh",
+            "__mrec_contrast_then_support_min5",
+            "mrec_greedy_transition_v0_1_contrast_then_support_min5",
+            "POST_TARGET_FILL_POLICY=contrast_then_support",
+            "MIN_STEPS=5",
+        ),
+    ]
+
+    for script, case_suffix, selector_name, fill_policy, min_steps in cases:
+        output = _run_script(
+            script,
+            {
+                "MODE": "",
+                "OUTPUT_ROOT": str(tmp_path / Path(script).stem),
+            },
+        )
+
+        assert "RUN_LIAR_RAW=true" in output
+        assert "RUN_RAWFC=false" in output
+        assert "MODE=full" in output
+        assert "TRACE_PROMPT_STYLE=mrec_min" in output
+        assert "RUN_MREC_DIAGNOSTICS=false" in output
+        assert "FORCE_MREC_BUILD=false" in output
+        assert f"CASE_SUFFIX={case_suffix}" in output
+        assert selector_name in output
+        assert "TARGET_RESOLVED_RATE=0.80" in output
+        assert "CONTINUE_AFTER_TARGET_FOR_CONTRAST=true" in output
+        assert "CANDIDATE_TOP_N=20" in output
+        assert fill_policy in output
+        assert min_steps in output
+        assert "liar_raw__ministral3_8b" in output
+        assert "rawfc__ministral3_8b" not in output
+        assert "-m sft.label_token_trainer" in output
+        assert "-m sft.label_token_infer" in output
+
+
 def test_aa_qec_stage1_ministral3_dry_run_expands_rawfc_view_cases() -> None:
     output = _run_script("scripts/sentence_trace_method/run_aa_qec_stage1_ministral3.sh")
 
@@ -1125,3 +1263,58 @@ def test_liar_raw_ministral3_fullft_aligned_wrapper_matches_best_lora_recipe() -
     assert "REQUIRE_PROMPT_INPUT_IDS=true" in output
     assert "LIAR_CLASS_WEIGHTS=pants-fire=1.2,false=1.0,barely-true=1.5,half-true=1.0,mostly-true=1.0,true=1.8" in output
     assert "_lora_" not in output
+
+
+def test_liar_raw_ministral3_map_selector_s0_s2_plain_wrapper_dry_run(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_liar_raw_ministral3_map_selector_s0_s2_plain_lora_ebs16_lr2e5_ep12_eval100.sh",
+        {"OUTPUT_ROOT": str(tmp_path / "outputs")},
+    )
+
+    assert "DATASETS=liar_raw" in output
+    assert "MODELS=ministral3_8b" in output
+    assert "TRACE_PROMPT_STYLE=plain" in output
+    assert "EVAL_SPLITS=val,test" in output
+    assert "RUN_TAU_EVAL=auto" in output
+    assert "FORCE_STAGE=true" in output
+    assert "map_selector_s0_retrieval_top5" in output
+    assert "map_selector_s1_mmr_pool_top5" in output
+    assert "map_selector_s2_map_quality_top5" in output
+    assert "outputs/selectors/evidence_chain_graph/liar_raw_map_selector_s0_retrieval_top5" in output
+    assert "outputs/selectors/evidence_chain_graph/liar_raw_map_selector_s1_mmr_pool_top5" in output
+    assert "outputs/selectors/evidence_chain_graph/liar_raw_map_selector_s2_map_quality_top5" in output
+    assert "liar_raw__ministral3_8b__map_selector_s0_retrieval_top5_plain" in output
+    assert "liar_raw__ministral3_8b__map_selector_s1_mmr_pool_top5_plain" in output
+    assert "liar_raw__ministral3_8b__map_selector_s2_map_quality_top5_plain" in output
+    assert "TRACE_PROMPT_STYLE=qec_min" not in output
+    assert "TRACE_PROMPT_STYLE=qec_map" not in output
+    assert "rawfc__ministral3_8b" not in output
+
+
+def test_liar_raw_ministral3_map_selector_s3_s5_plain_wrapper_dry_run(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_liar_raw_ministral3_map_selector_s3_s5_plain_lora_ebs16_lr2e5_ep12_eval100.sh",
+        {"OUTPUT_ROOT": str(tmp_path / "outputs")},
+    )
+
+    assert "DATASETS=liar_raw" in output
+    assert "MODELS=ministral3_8b" in output
+    assert "TRACE_PROMPT_STYLE=plain" in output
+    assert "EVAL_SPLITS=val,test" in output
+    assert "RUN_TAU_EVAL=auto" in output
+    assert "FORCE_STAGE=true" in output
+    assert "map_selector_s3_weighted_set_cover_top5" in output
+    assert "map_selector_s4_minimal_evidence_group_top5" in output
+    assert "map_selector_s5_fixed_budget_marginal_greedy_top5" in output
+    assert output.count("SELECTOR_ADAPTIVE_POLICY=fixed_top5") >= 2
+    assert "SELECTOR_ADAPTIVE_POLICY=fixed_budget_marginal_greedy" in output
+    assert "outputs/selectors/evidence_chain_graph/liar_raw_map_selector_s3_weighted_set_cover_top5" in output
+    assert "outputs/selectors/evidence_chain_graph/liar_raw_map_selector_s4_minimal_evidence_group_top5" in output
+    assert "outputs/selectors/evidence_chain_graph/liar_raw_map_selector_s5_fixed_budget_marginal_greedy_top5" in output
+    assert "liar_raw__ministral3_8b__map_selector_s3_weighted_set_cover_top5_plain" in output
+    assert "liar_raw__ministral3_8b__map_selector_s4_minimal_evidence_group_top5_plain" in output
+    assert "liar_raw__ministral3_8b__map_selector_s5_fixed_budget_marginal_greedy_top5_plain" in output
+    assert "TRACE_PROMPT_STYLE=qec_min" not in output
+    assert "TRACE_PROMPT_STYLE=qec_map" not in output
+    assert "adaptive5_10" not in output
+    assert "rawfc__ministral3_8b" not in output

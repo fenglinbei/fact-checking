@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT_DIR"
+
+if [[ -n "${PYTHONPATH:-}" ]]; then
+  export PYTHONPATH="src:${PYTHONPATH}"
+else
+  export PYTHONPATH="src"
+fi
+
+SCRIPT_DIR="${ROOT_DIR}/scripts/sentence_trace_method"
+
+export PYTHON_BIN="${PYTHON_BIN:-/data/liaozijie/conda/accelerate-fc-gemma4/bin/python}"
+export OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/sentence_trace_method}"
+export MODE="${MAP_SELECTOR_MODE:-full}"
+export EVAL_SPLITS="${MAP_SELECTOR_EVAL_SPLITS:-val,test}"
+export CHECKPOINTS="${CHECKPOINTS:-best}"
+export DATASETS="liar_raw"
+export MODELS="ministral3_8b"
+export TRACE_PROMPT_STYLE="plain"
+export SELECTOR_GRAPH_VERSION="map_selector_ablation_v0"
+export EXPECTED_CHUNK_MMR_FINGERPRINT="${EXPECTED_CHUNK_MMR_FINGERPRINT:-d4cbf7c18126}"
+export ALLOW_MULTI_SENTENCE_CANDIDATES="${ALLOW_MULTI_SENTENCE_CANDIDATES:-true}"
+export FORCE_STAGE="${MAP_SELECTOR_FORCE_STAGE:-true}"
+
+export LORA_SUFFIX="${LORA_SUFFIX:-_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw}"
+export LORA_R="${LORA_R:-16}"
+export LORA_ALPHA="${LORA_ALPHA:-32}"
+export LORA_DROPOUT="${LORA_DROPOUT:-0.05}"
+export DEEPSPEED_CONFIG="${DEEPSPEED_CONFIG:-configs/deepspeed_zero2_bsz1_ga4.json}"
+export SFT_GRADIENT_ACCUMULATION_STEPS="${SFT_GRADIENT_ACCUMULATION_STEPS:-4}"
+export SFT_LEARNING_RATE="${SFT_LEARNING_RATE:-2e-5}"
+export SFT_NUM_TRAIN_EPOCHS="${SFT_NUM_TRAIN_EPOCHS:-12}"
+export SFT_EVAL_STEPS="${SFT_EVAL_STEPS:-100}"
+export SFT_SAVE_STEPS="${SFT_SAVE_STEPS:-$SFT_EVAL_STEPS}"
+export SFT_EARLY_STOPPING_PATIENCE="${SFT_EARLY_STOPPING_PATIENCE:-8}"
+export REQUIRE_PROMPT_INPUT_IDS="${REQUIRE_PROMPT_INPUT_IDS:-true}"
+export LIAR_CLASS_WEIGHTS="${LIAR_CLASS_WEIGHTS:-pants-fire=1.2,false=1.0,barely-true=1.5,half-true=1.0,mostly-true=1.0,true=1.8}"
+export SWANLAB_PROJECT="${SWANLAB_PROJECT:-fact-checking-sentence-trace-method-map-selector}"
+
+SELECTORS="${MAP_SELECTOR_CASES:-map_selector_s3_weighted_set_cover_top5 map_selector_s4_minimal_evidence_group_top5 map_selector_s5_fixed_budget_marginal_greedy_top5}"
+SOURCE_BASE_ROOT="${SOURCE_BASE_ROOT:-outputs/selectors/evidence_chain_graph}"
+CASE_SUFFIX_EXTRA="${CASE_SUFFIX_EXTRA:-}"
+PREPARE_MAP_SELECTOR_TRACES="${PREPARE_MAP_SELECTOR_TRACES:-true}"
+RUN_TAU_EVAL="${MAP_SELECTOR_RUN_TAU_EVAL:-auto}"
+TAU_SPLITS="${TAU_SPLITS:-$EVAL_SPLITS}"
+TAUS="${TAUS:-0.75}"
+
+should_run_tau_eval() {
+  case "$RUN_TAU_EVAL" in
+    true) return 0 ;;
+    false) return 1 ;;
+    auto)
+      case "$MODE" in
+        full|eval) return 0 ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) printf 'Unsupported RUN_TAU_EVAL=%s. Use true, false, or auto.\n' "$RUN_TAU_EVAL" >&2; exit 2 ;;
+  esac
+}
+
+run_tau_eval() {
+  local case_root="${OUTPUT_ROOT}/liar_raw__ministral3_8b${CASE_SUFFIX}${LORA_SUFFIX}"
+  PYTHON_BIN="$PYTHON_BIN" \
+    CASE_ROOT="$case_root" \
+    SPLITS="$TAU_SPLITS" \
+    CHECKPOINTS=best \
+    TAUS="$TAUS" \
+    LOGIT_ADJUST_MODE=on \
+    bash "${SCRIPT_DIR}/run_lora_label_token_logit_adjust_eval_only.sh"
+}
+
+selector_adaptive_policy() {
+  case "$1" in
+    map_selector_s5_fixed_budget_marginal_greedy_top5) printf 'fixed_budget_marginal_greedy' ;;
+    *) printf 'fixed_top5' ;;
+  esac
+}
+
+if [[ "$PREPARE_MAP_SELECTOR_TRACES" == "true" || "$PREPARE_MAP_SELECTOR_TRACES" == "1" ]]; then
+  PYTHON_BIN="$PYTHON_BIN" \
+    SPLITS="train val test" \
+    SELECTORS="$SELECTORS" \
+    CHUNK_MMR_FINGERPRINT="$EXPECTED_CHUNK_MMR_FINGERPRINT" \
+    bash "${ROOT_DIR}/scripts/phase5_selectors/run/run_liar_raw_map_selector_ablation_s3_s5.sh"
+fi
+
+printf '[liar-raw-ministral3-map-selector-s3-s5-plain] DATASETS=%s MODELS=%s MODE=%s EVAL_SPLITS=%s RUN_TAU_EVAL=%s TRACE_PROMPT_STYLE=%s FORCE_STAGE=%s SELECTORS=%s LORA_SUFFIX=%s EXPECTED_CHUNK_MMR_FINGERPRINT=%s\n' \
+  "$DATASETS" "$MODELS" "$MODE" "$EVAL_SPLITS" "$RUN_TAU_EVAL" "$TRACE_PROMPT_STYLE" "$FORCE_STAGE" "$SELECTORS" "$LORA_SUFFIX" "$EXPECTED_CHUNK_MMR_FINGERPRINT"
+
+for selector in ${SELECTORS}; do
+  export SELECTOR_NAME="$selector"
+  export EXPECTED_SELECTOR_NAME="$selector"
+  export SELECTOR_ADAPTIVE_POLICY="$(selector_adaptive_policy "$selector")"
+  export SOURCE_ROOT="${SOURCE_BASE_ROOT}/liar_raw_${selector}"
+  export CASE_SUFFIX="__${selector}_plain${CASE_SUFFIX_EXTRA}"
+
+  printf '\n[liar-raw-ministral3-map-selector-plain] SELECTOR_NAME=%s SELECTOR_ADAPTIVE_POLICY=%s SOURCE_ROOT=%s CASE_SUFFIX=%s TRACE_PROMPT_STYLE=%s EVAL_SPLITS=%s RUN_TAU_EVAL=%s FORCE_STAGE=%s SFT_LEARNING_RATE=%s SFT_NUM_TRAIN_EPOCHS=%s SFT_EVAL_STEPS=%s REQUIRE_PROMPT_INPUT_IDS=%s LIAR_CLASS_WEIGHTS=%s\n' \
+    "$SELECTOR_NAME" "$SELECTOR_ADAPTIVE_POLICY" "$SOURCE_ROOT" "$CASE_SUFFIX" "$TRACE_PROMPT_STYLE" "$EVAL_SPLITS" "$RUN_TAU_EVAL" "$FORCE_STAGE" "$SFT_LEARNING_RATE" "$SFT_NUM_TRAIN_EPOCHS" "$SFT_EVAL_STEPS" "$REQUIRE_PROMPT_INPUT_IDS" "$LIAR_CLASS_WEIGHTS"
+
+  bash "${SCRIPT_DIR}/run_lora_matrix.sh"
+
+  if [[ "${DRY_RUN:-false}" != "true" ]] && should_run_tau_eval; then
+    run_tau_eval
+  fi
+done

@@ -88,7 +88,7 @@ class CollectResultIndexTest(unittest.TestCase):
             self.assertEqual(final_row["training_status"], "complete")
             self.assertEqual(final_row["num_samples"], 2)
             self.assertEqual(final_row["accuracy"], 0.5)
-            self.assertEqual(final_row["selection_score"], 0.7)
+            self.assertEqual(final_row["checkpoint_selection_score"], 0.7)
 
             step_row = next(row for row in rows if row["relative_path"].endswith("step-100/metrics.json"))
             self.assertEqual(step_row["metric_scope"], "step_curve")

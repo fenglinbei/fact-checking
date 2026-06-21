@@ -104,7 +104,7 @@ def _metric_payload(metrics: dict[str, Any], *, num_samples: int) -> dict[str, A
         "parse_error_rate",
         "eval_loss",
         "true_side_macro_f1",
-        "selection_score",
+        "checkpoint_selection_score",
         "per_class",
     ]
     payload: dict[str, Any] = {"num_samples": int(num_samples)}
@@ -183,7 +183,7 @@ def _true_side_macro_f1(metrics: dict[str, Any]) -> float:
     return float(np.mean(values)) if values else 0.0
 
 
-def _selection_score(metrics: dict[str, Any], train_cfg: dict[str, Any]) -> float:
+def _checkpoint_selection_score(metrics: dict[str, Any], train_cfg: dict[str, Any]) -> float:
     label_cfg = train_cfg.get("label_token_ce", {}) or {}
     metric = str(label_cfg.get("early_stopping_metric", "macro_f1_plus_true_side")).strip().lower()
     macro_f1 = float(metrics["macro_f1"])
@@ -206,7 +206,7 @@ def _augment_metrics(metrics: dict[str, Any], train_cfg: dict[str, Any], *, eval
     if eval_loss is not None:
         metrics["eval_loss"] = float(eval_loss)
     metrics["true_side_macro_f1"] = _true_side_macro_f1(metrics)
-    metrics["selection_score"] = _selection_score(metrics, train_cfg)
+    metrics["checkpoint_selection_score"] = _checkpoint_selection_score(metrics, train_cfg)
 
 
 def _resolve_torch_dtype(name: str, train_cfg: dict[str, Any]):

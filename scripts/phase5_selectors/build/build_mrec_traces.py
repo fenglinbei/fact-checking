@@ -36,9 +36,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-limit", type=int, default=0)
     parser.add_argument("--candidate-top-n", type=int, default=20)
     parser.add_argument("--max-steps", type=int, default=10)
+    parser.add_argument("--min-steps", type=int, default=0)
     parser.add_argument("--token-budget", type=int, default=0)
     parser.add_argument("--target-resolved-rate", type=float, default=0.80)
     parser.add_argument("--continue-after-target-for-contrast", action="store_true")
+    parser.add_argument("--post-target-fill-policy", default="contrast_only")
     parser.add_argument("--disable-fallback", action="store_true")
     parser.add_argument("--selector-name", default=MREC_SELECTOR_NAME)
     parser.add_argument("--source-selector-name", default="v0_7_atom_facts_abc_budgeted_marginal_chain_adaptive5_10")
@@ -54,9 +56,11 @@ def main() -> int:
     params = MRECSelectorParams(
         candidate_top_n=int(args.candidate_top_n),
         max_steps=int(args.max_steps),
+        min_steps=int(args.min_steps),
         token_budget=int(args.token_budget) if int(args.token_budget) > 0 else None,
         target_resolved_rate=float(args.target_resolved_rate),
         continue_after_target_for_contrast=bool(args.continue_after_target_for_contrast),
+        post_target_fill_policy=str(args.post_target_fill_policy),
         allow_fallback=not bool(args.disable_fallback),
         selector_name=str(args.selector_name),
     )
@@ -163,9 +167,11 @@ def _manifest(
         "params": {
             "candidate_top_n": int(params.candidate_top_n),
             "max_steps": int(params.max_steps),
+            "min_steps": int(params.min_steps),
             "token_budget": params.token_budget,
             "target_resolved_rate": float(params.target_resolved_rate),
             "continue_after_target_for_contrast": bool(params.continue_after_target_for_contrast),
+            "post_target_fill_policy": str(params.post_target_fill_policy),
             "allow_fallback": bool(params.allow_fallback),
         },
         "source_selector_name": str(args.source_selector_name),

@@ -28,15 +28,18 @@ _TRANSITION_PRIORITY = {
     "BRIDGE": 10.0,
     "FALLBACK": 0.0,
 }
+_POST_TARGET_FILL_POLICIES = {"none", "contrast_only", "contrast_then_support"}
 
 
 @dataclass(frozen=True)
 class MRECSelectorParams:
     candidate_top_n: int = 20
     max_steps: int = 10
+    min_steps: int = 0
     token_budget: int | None = None
     target_resolved_rate: float = 0.80
     continue_after_target_for_contrast: bool = False
+    post_target_fill_policy: str = "contrast_only"
     allow_fallback: bool = True
     selector_name: str = MREC_SELECTOR_NAME
 
@@ -96,9 +99,11 @@ def build_mrec_trace_row(
         "params": {
             "candidate_top_n": int(params.candidate_top_n),
             "max_steps": int(params.max_steps),
+            "min_steps": int(params.min_steps),
             "token_budget": params.token_budget,
             "target_resolved_rate": float(params.target_resolved_rate),
             "continue_after_target_for_contrast": bool(params.continue_after_target_for_contrast),
+            "post_target_fill_policy": _normalize_post_target_fill_policy(params.post_target_fill_policy),
             "allow_fallback": bool(params.allow_fallback),
         },
     }
@@ -127,12 +132,25 @@ def _select_mrec_steps(
     steps: list[dict[str, Any]] = []
     total_token_cost = 0
     stop_reason = ""
+    min_steps = max(int(params.min_steps), 0)
+    fill_policy = _normalize_post_target_fill_policy(params.post_target_fill_policy)
 
     while len(steps) < max(int(params.max_steps), 0):
         target_met = _resolved_rate(atom_states) >= float(params.target_resolved_rate)
-        if target_met and not params.continue_after_target_for_contrast:
-            stop_reason = "target_resolution_reached"
-            break
+        if target_met:
+            fill_required = len(steps) < min_steps
+            if fill_policy == "none":
+                stop_reason = "target_resolution_reached"
+                break
+            if fill_policy != "contrast_only" and not fill_required:
+                stop_reason = "min_steps_satisfied" if min_steps > 0 else "target_resolution_reached"
+                break
+            if not params.continue_after_target_for_contrast and not fill_required:
+                stop_reason = "target_resolution_reached"
+                break
+            allowed_post_target_operations = _post_target_allowed_operations(fill_policy)
+        else:
+            allowed_post_target_operations = None
 
         ranked: list[dict[str, Any]] = []
         skipped_by_budget = False
@@ -144,7 +162,7 @@ def _select_mrec_steps(
             evaluation = _evaluate_candidate_transition(candidate, atom_states=atom_states, atom_by_id=atom_by_id)
             if not evaluation:
                 continue
-            if target_met and params.continue_after_target_for_contrast and evaluation["operation"] != "CONTRAST":
+            if allowed_post_target_operations is not None and evaluation["operation"] not in allowed_post_target_operations:
                 continue
             token_cost = int(candidate.get("mrec_token_cost") or 0)
             if params.token_budget is not None and total_token_cost + token_cost > int(params.token_budget):
@@ -158,7 +176,7 @@ def _select_mrec_steps(
             if skipped_by_budget:
                 stop_reason = "token_budget_exhausted"
             elif target_met:
-                stop_reason = "target_resolution_reached"
+                stop_reason = "no_post_target_transition" if len(steps) < min_steps and fill_policy != "contrast_only" else "target_resolution_reached"
             elif steps:
                 stop_reason = "no_valid_transition"
             else:
@@ -188,6 +206,7 @@ def _select_mrec_steps(
             transition_reason=str(pick["transition_reason"]),
             token_cost=int(pick["token_cost"]),
         )
+        step["post_target_fill"] = bool(target_met)
         steps.append(step)
         selected_indices.add(idx)
         total_token_cost += int(pick["token_cost"])
@@ -289,6 +308,12 @@ def _mrec_diagnostics(
     conflicted = sorted(atom_id for atom_id, state in final_states.items() if state == "C")
     resolved_count = sum(1 for state in final_states.values() if state in _RESOLVING_STATES)
     total_atoms = max(len(final_states), 1)
+    params = trace.get("params") or {}
+    post_target_steps = [
+        step for step in trace.get("mrec_steps") or []
+        if isinstance(step, Mapping) and bool(step.get("post_target_fill"))
+    ]
+    post_target_operation_counts = Counter(str(step.get("operation") or "") for step in post_target_steps)
     summary.update(
         {
             "stop_reason": stop_reason,
@@ -299,6 +324,14 @@ def _mrec_diagnostics(
             "duplicate_rejected_count": int(rejected.get("duplicate", 0)),
             "background_rejected_count": int(rejected.get("background", 0)),
             "no_transition_rejected_count": int(rejected.get("no_transition", 0)),
+            "min_steps": int(params.get("min_steps") or 0),
+            "post_target_fill_policy": _normalize_post_target_fill_policy(
+                params.get("post_target_fill_policy") or "contrast_only"
+            ),
+            "post_target_fill_step_count": len(post_target_steps),
+            "post_target_operation_counts": {
+                key: value for key, value in dict(post_target_operation_counts).items() if key
+            },
         }
     )
     return summary
@@ -435,6 +468,22 @@ def _transition_sort_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
         int(row.get("token_cost", 0)),
         str((row.get("candidate_idx"))),
     )
+
+
+def _normalize_post_target_fill_policy(value: Any) -> str:
+    policy = _compact(value or "contrast_only").lower()
+    if policy not in _POST_TARGET_FILL_POLICIES:
+        raise ValueError(f"unsupported post_target_fill_policy: {value!r}")
+    return policy
+
+
+def _post_target_allowed_operations(policy: str) -> set[str]:
+    normalized = _normalize_post_target_fill_policy(policy)
+    if normalized == "contrast_only":
+        return {"CONTRAST"}
+    if normalized == "contrast_then_support":
+        return {"CONTRAST", "CORROBORATE", "BRIDGE"}
+    return set()
 
 
 def _resolved_rate(atom_states: Mapping[str, str]) -> float:
