@@ -4,6 +4,14 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
+from fact_checking.selectors.mrec_learned_marginal import (
+    extract_marginal_features,
+    hard_state_to_soft_state,
+    learned_marginal_weight_fingerprint,
+    load_learned_marginal_weights,
+    score_marginal_features,
+    update_soft_state_from_relation,
+)
 from fact_checking.selectors.mrec_schema import (
     MREC_TRACE_VERSION,
     build_initial_atom_states,
@@ -16,6 +24,9 @@ from fact_checking.selectors.mrec_schema import (
 TokenCostFn = Callable[[Mapping[str, Any]], int]
 
 MREC_SELECTOR_NAME = "mrec_greedy_transition_v0_1"
+MREC_SELECTOR_NAME_V0_2_LEARNED_MARGINAL_PROXY = "mrec_greedy_transition_v0_2_learned_marginal_proxy"
+MREC_SELECTION_POLICY_TRANSITION_V0_1 = "transition_v0_1"
+MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY = "learned_marginal_proxy"
 FALLBACK_CUE = "Verify the main factual claim."
 
 _RESOLVING_STATES = {"S", "R", "Q", "C"}
@@ -29,6 +40,10 @@ _TRANSITION_PRIORITY = {
     "FALLBACK": 0.0,
 }
 _POST_TARGET_FILL_POLICIES = {"none", "contrast_only", "contrast_then_support"}
+_SELECTION_POLICIES = {
+    MREC_SELECTION_POLICY_TRANSITION_V0_1,
+    MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
+}
 
 
 @dataclass(frozen=True)
@@ -41,7 +56,11 @@ class MRECSelectorParams:
     continue_after_target_for_contrast: bool = False
     post_target_fill_policy: str = "contrast_only"
     allow_fallback: bool = True
+    cue_policy: str = "atom_proposition"
     selector_name: str = MREC_SELECTOR_NAME
+    selection_policy: str = MREC_SELECTION_POLICY_TRANSITION_V0_1
+    weight_file: str = ""
+    stop_threshold: float = 0.0
 
 
 def build_mrec_trace_row(
@@ -105,6 +124,11 @@ def build_mrec_trace_row(
             "continue_after_target_for_contrast": bool(params.continue_after_target_for_contrast),
             "post_target_fill_policy": _normalize_post_target_fill_policy(params.post_target_fill_policy),
             "allow_fallback": bool(params.allow_fallback),
+            "cue_policy": str(params.cue_policy),
+            "selection_policy": _normalize_selection_policy(params.selection_policy),
+            "weight_file": str(params.weight_file or ""),
+            "weight_fingerprint": str(selection.get("weight_fingerprint") or ""),
+            "stop_threshold": float(params.stop_threshold),
         },
     }
     diagnostics = _mrec_diagnostics(
@@ -118,6 +142,32 @@ def build_mrec_trace_row(
 
 
 def _select_mrec_steps(
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    claim_atoms: list[dict[str, Any]],
+    atom_by_id: dict[str, dict[str, Any]],
+    initial_atom_states: dict[str, str],
+    params: MRECSelectorParams,
+) -> dict[str, Any]:
+    policy = _normalize_selection_policy(params.selection_policy)
+    if policy == MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY:
+        return _select_learned_marginal_steps(
+            candidates,
+            claim_atoms=claim_atoms,
+            atom_by_id=atom_by_id,
+            initial_atom_states=initial_atom_states,
+            params=params,
+        )
+    return _select_transition_v0_1_steps(
+        candidates,
+        claim_atoms=claim_atoms,
+        atom_by_id=atom_by_id,
+        initial_atom_states=initial_atom_states,
+        params=params,
+    )
+
+
+def _select_transition_v0_1_steps(
     candidates: Sequence[Mapping[str, Any]],
     *,
     claim_atoms: list[dict[str, Any]],
@@ -159,7 +209,12 @@ def _select_mrec_steps(
                 continue
             if _is_duplicate_candidate(candidate, selected_duplicate_groups, selected_texts):
                 continue
-            evaluation = _evaluate_candidate_transition(candidate, atom_states=atom_states, atom_by_id=atom_by_id)
+            evaluation = _evaluate_candidate_transition(
+                candidate,
+                atom_states=atom_states,
+                atom_by_id=atom_by_id,
+                cue_policy=str(params.cue_policy),
+            )
             if not evaluation:
                 continue
             if allowed_post_target_operations is not None and evaluation["operation"] not in allowed_post_target_operations:
@@ -193,9 +248,12 @@ def _select_mrec_steps(
         pick = ranked[0]
         idx = int(pick["candidate_idx"])
         candidate = candidates[idx]
+        step_candidate = pick.get("step_candidate")
+        if not isinstance(step_candidate, Mapping):
+            step_candidate = candidate
         step = build_mrec_step(
             step=len(steps) + 1,
-            candidate=candidate,
+            candidate=step_candidate,
             atom_id=str(pick["atom_id"]),
             atom_text=str(pick["atom_text"]),
             state_before=str(pick["state_before"]),
@@ -229,40 +287,186 @@ def _select_mrec_steps(
     }
 
 
+def _select_learned_marginal_steps(
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    claim_atoms: list[dict[str, Any]],
+    atom_by_id: dict[str, dict[str, Any]],
+    initial_atom_states: dict[str, str],
+    params: MRECSelectorParams,
+) -> dict[str, Any]:
+    weights = load_learned_marginal_weights(params.weight_file, allow_default=True)
+    weight_fingerprint = learned_marginal_weight_fingerprint(weights)
+    atom_states = dict(initial_atom_states)
+    soft_state = hard_state_to_soft_state(atom_states)
+    selected_indices: set[int] = set()
+    selected_duplicate_groups: set[str] = set()
+    selected_texts: set[str] = set()
+    steps: list[dict[str, Any]] = []
+    total_token_cost = 0
+    stop_reason = ""
+    min_steps = max(int(params.min_steps), 0)
+    max_steps = max(int(params.max_steps), 0)
+    pool_max_token_cost = max([int(candidate.get("mrec_token_cost") or 0) for candidate in candidates] or [1])
+
+    while len(steps) < max_steps:
+        target_met = _resolved_rate(atom_states) >= float(params.target_resolved_rate)
+        ranked: list[dict[str, Any]] = []
+        skipped_by_budget = False
+        for idx, candidate in enumerate(candidates):
+            if idx in selected_indices:
+                continue
+            if _is_duplicate_candidate(candidate, selected_duplicate_groups, selected_texts):
+                continue
+            token_cost = int(candidate.get("mrec_token_cost") or 0)
+            if params.token_budget is not None and total_token_cost + token_cost > int(params.token_budget):
+                skipped_by_budget = True
+                continue
+            features = extract_marginal_features(
+                candidate,
+                selected_steps=steps,
+                soft_state=soft_state,
+                token_budget=params.token_budget,
+                pool_max_token_cost=pool_max_token_cost,
+            )
+            score = score_marginal_features(features, weights)
+            evaluation = _evaluate_candidate_transition(
+                candidate,
+                atom_states=atom_states,
+                atom_by_id=atom_by_id,
+                cue_policy=str(params.cue_policy),
+            )
+            if not evaluation:
+                evaluation = _fallback_candidate_evaluation(
+                    candidate,
+                    claim_atoms=claim_atoms,
+                    atom_states=atom_states,
+                    cue_policy=str(params.cue_policy),
+                )
+            evaluation["candidate_idx"] = idx
+            evaluation["token_cost"] = token_cost
+            evaluation["utility_score"] = float(score)
+            evaluation["utility_features"] = features
+            ranked.append(evaluation)
+
+        if not ranked:
+            if skipped_by_budget:
+                stop_reason = "token_budget_exhausted"
+            elif target_met and len(steps) >= min_steps:
+                stop_reason = "min_steps_satisfied" if min_steps > 0 else "target_resolution_reached"
+            elif steps:
+                stop_reason = "no_valid_transition"
+            else:
+                stop_reason = "fallback_only" if params.allow_fallback else "no_valid_transition"
+                if params.allow_fallback:
+                    fallback = _fallback_step(candidates, claim_atoms=claim_atoms, token_budget=params.token_budget)
+                    if fallback is not None:
+                        steps.append(fallback["step"])
+                        selected_indices.add(int(fallback["candidate_idx"]))
+                        total_token_cost += int(fallback["token_cost"])
+            break
+
+        ranked.sort(key=_learned_marginal_sort_key)
+        pick = ranked[0]
+        if len(steps) >= min_steps and float(pick.get("utility_score") or 0.0) <= float(params.stop_threshold):
+            stop_reason = "utility_below_threshold"
+            break
+
+        idx = int(pick["candidate_idx"])
+        candidate = candidates[idx]
+        step_candidate = pick.get("step_candidate")
+        if not isinstance(step_candidate, Mapping):
+            step_candidate = candidate
+        step = build_mrec_step(
+            step=len(steps) + 1,
+            candidate=step_candidate,
+            atom_id=str(pick["atom_id"]),
+            atom_text=str(pick["atom_text"]),
+            state_before=str(pick["state_before"]),
+            state_after=str(pick["state_after"]),
+            operation=str(pick["operation"]),
+            cue_text=str(pick["cue_text"]),
+            cue_source=str(pick["cue_source"]),
+            transition_reason=str(pick["transition_reason"]),
+            token_cost=int(pick["token_cost"]),
+        )
+        step["post_target_fill"] = bool(target_met)
+        step["utility_score"] = float(pick.get("utility_score") or 0.0)
+        step["utility_features"] = dict(pick.get("utility_features") or {})
+        step["selection_policy"] = MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY
+        _copy_step_metadata(step, candidate)
+        steps.append(step)
+        selected_indices.add(idx)
+        total_token_cost += int(pick["token_cost"])
+        if step.get("atom_id"):
+            atom_states[str(step["atom_id"])] = str(step["state_after"])
+            soft_state = update_soft_state_from_relation(
+                soft_state,
+                atom_id=str(step["atom_id"]),
+                relation=str(step.get("relation") or ""),
+            )
+        duplicate_group = _compact(candidate.get("duplicate_group") or "")
+        if duplicate_group:
+            selected_duplicate_groups.add(duplicate_group)
+        selected_texts.add(_normalize_text(candidate.get("text") or candidate.get("evidence_text") or ""))
+
+    if not stop_reason:
+        stop_reason = "reached_max_steps" if len(steps) >= max_steps else "no_valid_transition"
+
+    rejected = _rejection_counts(candidates, selected_indices=selected_indices, selected_steps=steps)
+    return {
+        "steps": steps,
+        "atom_states_final": atom_states,
+        "stop_reason": stop_reason,
+        "rejected": rejected,
+        "weight_fingerprint": weight_fingerprint,
+    }
+
+
 def _evaluate_candidate_transition(
     candidate: Mapping[str, Any],
     *,
     atom_states: dict[str, str],
     atom_by_id: dict[str, dict[str, Any]],
+    cue_policy: str,
 ) -> dict[str, Any] | None:
-    covered_atoms = [atom_id for atom_id in _string_list(candidate.get("covered_atom_ids")) if atom_id in atom_states]
-    relation_state = _state_for_relation(candidate.get("map_relation") or candidate.get("relation") or "")
-    directness = _compact(candidate.get("map_directness") or candidate.get("directness") or "").lower()
-    if not covered_atoms:
+    atom_pairs = _candidate_atom_transition_pairs(candidate, atom_states=atom_states)
+    if not atom_pairs:
         return None
 
     rows = []
-    for atom_id in covered_atoms:
+    for pair in atom_pairs:
+        atom_id = str(pair.get("atom_id") or "")
+        relation = str(pair.get("relation") or "")
+        directness = str(pair.get("directness") or "").lower()
+        relation_state = _state_for_relation(relation)
         before = atom_states.get(atom_id, "U")
         operation = _operation_for_transition(before, relation_state, directness)
         if operation == "FALLBACK":
             continue
         after = _state_after(before, relation_state, operation)
         atom = atom_by_id.get(atom_id, {})
-        cue = _choose_cue(candidate, atom=atom)
+        cue = _choose_cue(candidate, atom=atom, cue_policy=cue_policy)
+        step_candidate = dict(candidate)
+        step_candidate["covered_atom_ids"] = [atom_id]
+        step_candidate["map_relation"] = relation
+        step_candidate["map_directness"] = directness
+        step_candidate["map_confidence"] = pair.get("confidence", candidate.get("map_confidence"))
         rows.append(
             {
                 "operation": operation,
                 "atom_id": atom_id,
-                "atom_text": _compact(atom.get("text") or ""),
+                "atom_text": _compact(atom.get("proposition") or atom.get("text") or ""),
                 "state_before": before,
                 "state_after": after,
                 "cue_text": cue["cue_text"],
                 "cue_source": cue["cue_source"],
                 "transition_reason": _transition_reason(operation, before, after, atom_id),
                 "utility": _transition_utility(operation, atom, candidate),
+                "relation_priority": _relation_priority(relation),
                 "base_score": _float_or_default(candidate.get("base_score"), 0.0),
                 "map_quality": _float_or_default(candidate.get("evidence_map_quality_score"), 0.0),
+                "step_candidate": step_candidate,
             }
         )
     if not rows:
@@ -280,19 +484,87 @@ def _fallback_step(
         token_cost = int(candidate.get("mrec_token_cost") or 0)
         if token_budget is not None and token_cost > int(token_budget):
             continue
+        atom = _fallback_atom(candidate, claim_atoms=claim_atoms)
+        atom_id = _compact(atom.get("atom_id") or "")
+        atom_text = _atom_proposition_text(atom)
+        step_candidate = dict(candidate)
+        if atom_id and not step_candidate.get("covered_atom_ids"):
+            step_candidate["covered_atom_ids"] = [atom_id]
         step = build_mrec_step(
             step=1,
-            candidate=candidate,
+            candidate=step_candidate,
+            atom_id=atom_id,
+            atom_text=atom_text,
             state_before="U",
             state_after="U",
             operation="FALLBACK",
-            cue_text=FALLBACK_CUE,
-            cue_source="fallback",
+            cue_text=atom_text or FALLBACK_CUE,
+            cue_source="claim_atom" if atom_text else "fallback",
             transition_reason="no resolving atom transition was available",
             token_cost=token_cost,
         )
         return {"step": step, "candidate_idx": idx, "token_cost": token_cost}
     return None
+
+
+def _fallback_atom(candidate: Mapping[str, Any], *, claim_atoms: list[dict[str, Any]]) -> dict[str, Any]:
+    atom_by_id = {_compact(atom.get("atom_id") or ""): atom for atom in claim_atoms if _compact(atom.get("atom_id") or "")}
+    for atom_id in candidate.get("covered_atom_ids") or []:
+        atom = atom_by_id.get(_compact(atom_id))
+        if atom is not None:
+            return atom
+    return claim_atoms[0] if claim_atoms else {}
+
+
+def _fallback_candidate_evaluation(
+    candidate: Mapping[str, Any],
+    *,
+    claim_atoms: list[dict[str, Any]],
+    atom_states: dict[str, str],
+    cue_policy: str,
+) -> dict[str, Any]:
+    atom = _fallback_atom(candidate, claim_atoms=claim_atoms)
+    atom_id = _compact(atom.get("atom_id") or "")
+    before = atom_states.get(atom_id, "U") if atom_id else "U"
+    atom_text = _atom_proposition_text(atom)
+    cue = _choose_cue(candidate, atom=atom, cue_policy=cue_policy)
+    step_candidate = dict(candidate)
+    if atom_id and not step_candidate.get("covered_atom_ids"):
+        step_candidate["covered_atom_ids"] = [atom_id]
+    step_candidate.setdefault("map_relation", _compact(candidate.get("map_relation") or candidate.get("relation") or "unknown"))
+    step_candidate.setdefault("map_directness", _compact(candidate.get("map_directness") or candidate.get("directness") or "unknown"))
+    return {
+        "operation": "FALLBACK",
+        "atom_id": atom_id,
+        "atom_text": atom_text,
+        "state_before": before,
+        "state_after": before,
+        "cue_text": cue["cue_text"],
+        "cue_source": cue["cue_source"],
+        "transition_reason": "selected by learned marginal utility without resolving transition",
+        "utility": 0.0,
+        "relation_priority": _relation_priority(str(step_candidate.get("map_relation") or "")),
+        "base_score": _float_or_default(candidate.get("base_score"), 0.0),
+        "map_quality": _float_or_default(candidate.get("evidence_map_quality_score"), 0.0),
+        "step_candidate": step_candidate,
+    }
+
+
+def _copy_step_metadata(step: dict[str, Any], candidate: Mapping[str, Any]) -> None:
+    for key in (
+        "candidate_key",
+        "candidate_uid",
+        "duplicate_group",
+        "source_group",
+        "source_report",
+        "report_id",
+        "source_id",
+        "hybrid_score",
+        "baseline_hybrid_score",
+        "base_score",
+    ):
+        if key in candidate:
+            step[key] = candidate[key]
 
 
 def _mrec_diagnostics(
@@ -328,6 +600,9 @@ def _mrec_diagnostics(
             "post_target_fill_policy": _normalize_post_target_fill_policy(
                 params.get("post_target_fill_policy") or "contrast_only"
             ),
+            "selection_policy": _normalize_selection_policy(params.get("selection_policy") or MREC_SELECTION_POLICY_TRANSITION_V0_1),
+            "weight_fingerprint": str(params.get("weight_fingerprint") or ""),
+            "learned_marginal_score_summary": _utility_score_summary(trace.get("mrec_steps") or []),
             "post_target_fill_step_count": len(post_target_steps),
             "post_target_operation_counts": {
                 key: value for key, value in dict(post_target_operation_counts).items() if key
@@ -373,6 +648,8 @@ def _claim_atoms(row: Mapping[str, Any]) -> list[dict[str, Any]]:
             continue
         atom = dict(raw_atom)
         atom.setdefault("atom_id", str(atom.get("node_id") or f"A{idx}"))
+        if not _compact(atom.get("text") or "") and _compact(atom.get("proposition") or ""):
+            atom["text"] = _compact(atom.get("proposition") or "")
         atoms.append(atom)
     if not atoms:
         atoms.append({"atom_id": "A1", "text": "Full claim", "importance": 1.0})
@@ -421,17 +698,106 @@ def _state_for_relation(value: Any) -> str:
     return "U"
 
 
-def _choose_cue(candidate: Mapping[str, Any], *, atom: Mapping[str, Any]) -> dict[str, str]:
+def _candidate_atom_transition_pairs(
+    candidate: Mapping[str, Any],
+    *,
+    atom_states: Mapping[str, str],
+) -> list[dict[str, Any]]:
+    pair_rows = candidate.get("candidate_atom_alignments") or []
+    if isinstance(pair_rows, (list, tuple)):
+        candidate_eid = _compact(candidate.get("evidence_id") or candidate.get("candidate_uid") or "")
+        out: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for raw in pair_rows:
+            if not isinstance(raw, Mapping):
+                continue
+            evidence_id = _compact(raw.get("evidence_id") or "")
+            if evidence_id and candidate_eid and evidence_id != candidate_eid:
+                continue
+            atom_id = _compact(raw.get("atom_id") or "")
+            if atom_id not in atom_states:
+                continue
+            relation = _compact(raw.get("relation") or "irrelevant").lower()
+            directness = _compact(raw.get("directness") or "none").lower()
+            key = (atom_id, relation, directness)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(
+                {
+                    "atom_id": atom_id,
+                    "relation": relation,
+                    "directness": directness,
+                    "confidence": raw.get("confidence"),
+                }
+            )
+        if out:
+            return out
+
+    covered_atoms = [atom_id for atom_id in _string_list(candidate.get("covered_atom_ids")) if atom_id in atom_states]
+    relation = _compact(candidate.get("map_relation") or candidate.get("relation") or "").lower()
+    directness = _compact(candidate.get("map_directness") or candidate.get("directness") or "").lower()
+    return [
+        {
+            "atom_id": atom_id,
+            "relation": relation,
+            "directness": directness,
+            "confidence": candidate.get("map_confidence"),
+        }
+        for atom_id in covered_atoms
+    ]
+
+
+def _choose_cue(candidate: Mapping[str, Any], *, atom: Mapping[str, Any], cue_policy: str) -> dict[str, str]:
+    policy = _compact(cue_policy or "legacy_route_prefer").lower()
+    if policy == "atom_proposition":
+        atom_text = _atom_proposition_text(atom)
+        if atom_text:
+            return {"cue_text": atom_text, "cue_source": "claim_atom"}
+        return {"cue_text": FALLBACK_CUE, "cue_source": "fallback"}
+    if policy == "atom_query":
+        atom_query = _best_atom_query(candidate, atom_id=_compact(atom.get("atom_id") or ""))
+        if atom_query:
+            return {"cue_text": atom_query, "cue_source": "atom_query"}
+        atom_text = _atom_proposition_text(atom)
+        if atom_text:
+            return {"cue_text": atom_text, "cue_source": "claim_atom"}
+        return {"cue_text": FALLBACK_CUE, "cue_source": "fallback"}
+
     for route in candidate.get("qd_question_routes") or candidate.get("question_routes") or []:
         if not isinstance(route, Mapping):
             continue
         question = _compact(route.get("question") or "")
         if question and question.lower() not in {"is this claim true?", "is the claim true?"}:
             return {"cue_text": question, "cue_source": "qd_question"}
-    atom_text = _compact(atom.get("text") or "")
+    atom_query = _best_atom_query(candidate, atom_id=_compact(atom.get("atom_id") or ""))
+    if atom_query:
+        return {"cue_text": atom_query, "cue_source": "atom_query"}
+    atom_text = _atom_proposition_text(atom)
     if atom_text:
         return {"cue_text": atom_text, "cue_source": "claim_atom"}
     return {"cue_text": FALLBACK_CUE, "cue_source": "fallback"}
+
+
+def _atom_proposition_text(atom: Mapping[str, Any]) -> str:
+    return _compact(atom.get("proposition") or atom.get("text") or "")
+
+
+def _best_atom_query(candidate: Mapping[str, Any], *, atom_id: str) -> str:
+    routes = []
+    for route in candidate.get("atom_routes") or []:
+        if not isinstance(route, Mapping):
+            continue
+        if atom_id and _compact(route.get("atom_id") or "") != atom_id:
+            continue
+        query = _compact(route.get("query_rendering") or "")
+        if not query:
+            continue
+        routes.append((int(route.get("rank") or 10**9), query))
+    if not routes:
+        return ""
+    routes.sort(key=lambda row: row[0])
+    return routes[0][1]
 
 
 def _transition_reason(operation: str, before: str, after: str, atom_id: str) -> str:
@@ -456,10 +822,21 @@ def _transition_utility(operation: str, atom: Mapping[str, Any], candidate: Mapp
 def _transition_row_sort_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
     return (
         -_float_or_default(row.get("utility"), 0.0),
+        -_float_or_default(row.get("relation_priority"), 0.0),
         -_float_or_default(row.get("map_quality"), 0.0),
         -_float_or_default(row.get("base_score"), 0.0),
         str(row.get("atom_id") or ""),
     )
+
+
+def _relation_priority(relation: str) -> float:
+    return {
+        "refute": 4.0,
+        "qualify": 3.0,
+        "mixed": 3.0,
+        "support": 2.0,
+        "insufficient": 1.0,
+    }.get(str(relation), 0.0)
 
 
 def _transition_sort_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -468,6 +845,46 @@ def _transition_sort_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
         int(row.get("token_cost", 0)),
         str((row.get("candidate_idx"))),
     )
+
+
+def _learned_marginal_sort_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
+    features = row.get("utility_features") or {}
+    if not isinstance(features, Mapping):
+        features = {}
+    return (
+        -_float_or_default(row.get("utility_score"), 0.0),
+        -_float_or_default(features.get("resolution_delta"), 0.0),
+        -_float_or_default(features.get("entropy_reduction"), 0.0),
+        -_float_or_default(features.get("stance_tension"), 0.0),
+        -_float_or_default(features.get("new_atom_coverage"), 0.0),
+        -_float_or_default(features.get("new_relation_for_atom"), 0.0),
+        -_float_or_default(features.get("map_confidence"), 0.0),
+        int(row.get("token_cost", 0)),
+        int(row.get("candidate_idx", 0)),
+    )
+
+
+def _utility_score_summary(steps: Sequence[Mapping[str, Any]]) -> dict[str, float]:
+    values = [
+        _float_or_default(step.get("utility_score"), 0.0)
+        for step in steps
+        if isinstance(step, Mapping) and step.get("utility_score") is not None
+    ]
+    if not values:
+        return {"count": 0.0}
+    return {
+        "count": float(len(values)),
+        "min": float(min(values)),
+        "max": float(max(values)),
+        "mean": float(sum(values) / len(values)),
+    }
+
+
+def _normalize_selection_policy(value: Any) -> str:
+    policy = _compact(value or MREC_SELECTION_POLICY_TRANSITION_V0_1).lower()
+    if policy not in _SELECTION_POLICIES:
+        raise ValueError(f"unsupported selection_policy: {value!r}")
+    return policy
 
 
 def _normalize_post_target_fill_policy(value: Any) -> str:

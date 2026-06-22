@@ -132,8 +132,131 @@ def test_build_mrec_trace_row_uses_single_fallback_when_no_resolving_evidence_ex
     assert validate_mrec_trace(trace) == []
     assert len(trace["mrec_steps"]) == 1
     assert trace["mrec_steps"][0]["operation"] == "FALLBACK"
+    assert trace["mrec_steps"][0]["cue_source"] == "claim_atom"
+    assert trace["mrec_steps"][0]["cue_text"] == "The bill passed."
     assert trace["mrec_diagnostics"]["stop_reason"] == "fallback_only"
     assert trace["atom_states_final"] == {"A1": "U"}
+
+
+def test_build_mrec_trace_row_atom_proposition_cue_ignores_qd_routes() -> None:
+    row = _row(
+        claim_atoms=[{"atom_id": "A1", "text": "The city approved the project.", "importance": 1.0}],
+        candidates=[
+            {
+                **_candidate("E1", relation="support", atoms=["A1"], text="The city council approved the project."),
+                "qd_question_routes": [{"question": "Did the old question win?", "rank": 1}],
+                "atom_routes": [{"atom_id": "A1", "query_rendering": "What did the city approve?", "rank": 1}],
+            }
+        ],
+    )
+
+    trace = build_mrec_trace_row(
+        row,
+        params=MRECSelectorParams(max_steps=3, cue_policy="atom_proposition"),
+    )
+
+    assert trace["mrec_steps"][0]["cue_source"] == "claim_atom"
+    assert trace["mrec_steps"][0]["cue_text"] == "The city approved the project."
+    assert "old question" not in trace["mrec_steps"][0]["cue_text"]
+
+
+def test_build_mrec_trace_row_uses_pair_level_alignment_for_atom_transition() -> None:
+    row = _row(
+        claim_atoms=[
+            {"atom_id": "A1", "text": "The bill passed.", "importance": 1.0},
+            {"atom_id": "A2", "text": "The bill passed in 2024.", "importance": 1.0},
+        ],
+        candidates=[
+            {
+                **_candidate("E1", relation="support", atoms=["A1", "A2"], text="The bill passed, but in 2023."),
+                "candidate_atom_alignments": [
+                    {
+                        "evidence_id": "E1",
+                        "atom_id": "A1",
+                        "relation": "support",
+                        "directness": "direct",
+                        "confidence": 0.9,
+                    },
+                    {
+                        "evidence_id": "E1",
+                        "atom_id": "A2",
+                        "relation": "refute",
+                        "directness": "direct",
+                        "confidence": 0.9,
+                    },
+                ],
+            }
+        ],
+    )
+
+    trace = build_mrec_trace_row(
+        row,
+        params=MRECSelectorParams(max_steps=1, target_resolved_rate=1.0, cue_policy="atom_proposition"),
+    )
+
+    assert trace["mrec_steps"][0]["atom_id"] == "A2"
+    assert trace["mrec_steps"][0]["relation"] == "refute"
+    assert trace["atom_states_final"] == {"A1": "U", "A2": "R"}
+
+
+def test_learned_marginal_proxy_fills_single_atom_to_min_steps_with_diverse_evidence() -> None:
+    row = _row(
+        claim_atoms=[{"atom_id": "A1", "text": "The city approved the project.", "importance": 1.0}],
+        candidates=[
+            _candidate("E-support-1", relation="support", atoms=["A1"], text="The city approved the project.", source_group="report-a"),
+            _candidate("E-refute", relation="refute", atoms=["A1"], text="The project was rejected in committee.", source_group="report-b"),
+            _candidate("E-qualify", relation="qualify", atoms=["A1"], text="The approval applied only to the first phase.", source_group="report-c"),
+            _candidate("E-support-2", relation="support", atoms=["A1"], text="Minutes show the project received approval.", source_group="report-d"),
+            _candidate("E-support-3", relation="support", atoms=["A1"], text="A separate report confirms the approval.", source_group="report-e"),
+            _candidate("E-noise", relation="irrelevant", atoms=[], text="The city held a budget hearing.", source_group="report-f"),
+        ],
+    )
+
+    trace = build_mrec_trace_row(
+        row,
+        params=MRECSelectorParams(
+            selection_policy="learned_marginal_proxy",
+            selector_name="mrec_greedy_transition_v0_2_learned_marginal_proxy",
+            max_steps=10,
+            min_steps=5,
+            target_resolved_rate=1.0,
+        ),
+    )
+
+    evidence_ids = [step["evidence_id"] for step in trace["mrec_steps"]]
+    assert len(trace["mrec_steps"]) >= 5
+    assert "E-refute" in evidence_ids
+    assert "E-qualify" in evidence_ids
+    assert len({step.get("source_group") for step in trace["mrec_steps"] if step.get("source_group")}) >= 5
+    assert all("utility_score" in step for step in trace["mrec_steps"])
+    assert trace["mrec_diagnostics"]["selection_policy"] == "learned_marginal_proxy"
+
+
+def test_learned_marginal_proxy_continues_to_unresolved_atom_after_target_rate() -> None:
+    row = _row(
+        claim_atoms=[
+            {"atom_id": "A1", "text": "The bill passed.", "importance": 1.0},
+            {"atom_id": "A2", "text": "The bill passed in 2024.", "importance": 1.0},
+        ],
+        candidates=[
+            _candidate("E1", relation="support", atoms=["A1"], text="The bill passed."),
+            _candidate("E2", relation="refute", atoms=["A2"], text="The bill passed in 2023 instead."),
+        ],
+    )
+
+    trace = build_mrec_trace_row(
+        row,
+        params=MRECSelectorParams(
+            selection_policy="learned_marginal_proxy",
+            max_steps=5,
+            min_steps=2,
+            target_resolved_rate=0.5,
+        ),
+    )
+
+    assert [step["evidence_id"] for step in trace["mrec_steps"]] == ["E1", "E2"]
+    assert trace["atom_states_final"] == {"A1": "S", "A2": "R"}
+    assert trace["mrec_diagnostics"]["stop_reason"] == "min_steps_satisfied"
 
 
 def test_build_mrec_trace_row_rejects_empty_candidate_pool() -> None:
@@ -164,6 +287,7 @@ def _candidate(
     text: str,
     directness: str = "direct",
     duplicate_group: str = "",
+    source_group: str = "report-a",
 ) -> dict[str, object]:
     return {
         "evidence_id": evidence_id,
@@ -176,5 +300,6 @@ def _candidate(
         "map_confidence": 0.8,
         "evidence_map_quality_score": 0.7,
         "duplicate_group": duplicate_group,
+        "source_group": source_group,
         "base_score": 0.5,
     }

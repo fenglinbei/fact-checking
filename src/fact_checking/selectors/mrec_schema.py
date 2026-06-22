@@ -12,7 +12,7 @@ MRECOperation = Literal["OPEN", "CORROBORATE", "CONTRAST", "BRIDGE", "FALLBACK"]
 
 VALID_ATOM_STATES = {"U", "S", "R", "Q", "C"}
 VALID_OPERATIONS = {"OPEN", "CORROBORATE", "CONTRAST", "BRIDGE", "FALLBACK"}
-VALID_CUE_SOURCES = {"qd_question", "claim_atom", "fallback"}
+VALID_CUE_SOURCES = {"qd_question", "claim_atom", "atom_query", "fallback"}
 
 
 class MRECStep(TypedDict):

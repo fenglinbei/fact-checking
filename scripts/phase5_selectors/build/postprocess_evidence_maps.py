@@ -38,9 +38,11 @@ def main() -> None:
     features = attach_evidence_map_annotations(rows, annotations)
     output_path = out_dir / f"candidate_evidence_map_features_{args.split}.jsonl"
     atom_quality_path = out_dir / "atom_quality_summary.json"
+    atom_quality_split_path = out_dir / f"atom_quality_summary_{args.split}.json"
     atom_quality_summary = summarize_atom_quality_rows(features)
     write_jsonl(features, output_path)
     save_json(atom_quality_summary, atom_quality_path)
+    save_json(atom_quality_summary, atom_quality_split_path)
     manifest: dict[str, Any] = {
         "status": "completed",
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -60,10 +62,15 @@ def main() -> None:
             "rows_with_fragment_atoms": int(atom_quality_summary.get("rows_with_fragment_atoms") or 0),
             "row_fragment_rate": float(atom_quality_summary.get("row_fragment_rate") or 0.0),
         },
-        "outputs": {"candidate_features": str(output_path), "atom_quality_summary": str(atom_quality_path)},
+        "outputs": {
+            "candidate_features": str(output_path),
+            "atom_quality_summary": str(atom_quality_path),
+            "atom_quality_summary_split": str(atom_quality_split_path),
+        },
         "elapsed_seconds": round(time.time() - started_at, 3),
     }
     save_json(manifest, out_dir / "postprocess_manifest.json")
+    save_json(manifest, out_dir / f"postprocess_manifest_{args.split}.json")
     print(f"Wrote evidence-map candidate features: {output_path}")
 
 

@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--input-candidate-file", default=None)
     p.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     p.add_argument("--split", default="val", choices=["train", "val", "test"])
-    p.add_argument("--candidate-source", default="fusion", choices=["fusion", "qd_union"])
+    p.add_argument("--candidate-source", default="fusion", choices=["fusion", "qd_union", "atom_union"])
     p.add_argument("--candidate-top-n", type=int, default=20)
     p.add_argument("--oracle-results", default=None, help="Optional oracle_results JSONL used only for eval/trace metadata.")
     p.add_argument("--sample-limit", type=int, default=None)
@@ -70,6 +70,7 @@ def main() -> None:
         "elapsed_seconds": round(time.time() - started_at, 3),
     }
     save_json(manifest, out_dir / "prepare_manifest.json")
+    save_json(manifest, out_dir / f"prepare_manifest_{args.split}.json")
     print(f"Wrote evidence-map candidate pool: {output_path}")
 
 

@@ -140,6 +140,36 @@ def test_mrec_ministral3_main_dry_run_builds_mrec_sources_and_lora_cases(tmp_pat
     assert "--class-weight true=1.8" in output
 
 
+def test_atom_anchor_v0_1_full_wrapper_uses_existing_mrec_traces_for_ministral3_lora(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_liar_raw_ministral3_atom_anchor_v0_1_mrec_min_lora_ebs16_lr2e5_ep12_eval100.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "FORCE_BUILD": "true",
+            "MODE": "full",
+            "RUN_TAU_EVAL": "auto",
+        },
+    )
+
+    assert "liar_raw__ministral3_8b__atom_anchor_v0_1_mrec_min" in output
+    assert "ATOM_ANCHOR_ROOT=outputs/selectors/atom_anchor/liar_raw_abc_v0_1" in output
+    assert "TRACE_PROMPT_STYLE=mrec_min" in output
+    assert "EVIDENCE_TEXT_MODE=full" in output
+    assert "scripts/phase5_selectors/build/build_trace_verifier_data.py" in output
+    assert "--train-trace outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec/selection_trace_train.jsonl" in output
+    assert "--config scripts/sentence_trace_method/configs/liar_raw__ministral3_8b.yaml" in output
+    assert "--top-k 10" in output
+    assert "scripts/sentence_trace_method/prepare_lora_config.py" in output
+    assert "--source-config" in output
+    assert "sft.label_token_trainer" in output
+    assert "sft.label_token_infer" in output
+    assert "run_lora_label_token_logit_adjust_eval_only.sh" in output
+    assert "SFT_LEARNING_RATE=2e-5" in output
+    assert "SFT_NUM_TRAIN_EPOCHS=12" in output
+    assert "SFT_EVAL_STEPS=100" in output
+    assert "--early-stopping-metric macro_f1" in output
+
+
 def test_mrec_quick_ablation_build_wrappers_set_capacity_knobs(tmp_path: Path) -> None:
     cases = [
         (

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import socket
@@ -19,6 +20,7 @@ from typing import Any
 from tqdm.auto import tqdm
 
 from fact_checking.selectors.evidence_map_selector import (
+    ATOM_EVIDENCE_PROMPT_VERSION,
     ATOM_FACTS_ABC_PROMPT_VERSION,
     COMPACT_PROMPT_VERSION,
     DEFAULT_MAX_EVIDENCE_CHARS,
@@ -63,10 +65,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--model", default=os.environ.get("TEACHER_MODEL", DEFAULT_MODEL))
     p.add_argument("--api-key-env", default=os.environ.get("TEACHER_API_KEY_ENV", "DEEPSEEK_API_KEY"))
     p.add_argument("--timeout", type=float, default=120.0)
-    p.add_argument("--max-tokens", type=int, default=2048)
+    p.add_argument("--max-tokens", type=int, default=int(os.environ.get("TEACHER_MAX_TOKENS", "2048")))
+    p.add_argument("--top-p", type=float, default=float(os.environ.get("TEACHER_TOP_P", "1.0")))
     p.add_argument("--thinking-type", default=os.environ.get("THINKING_TYPE", "disabled"), choices=["disabled", "enabled", "none"])
-    p.add_argument("--concurrency", type=int, default=4)
-    p.add_argument("--requests-per-minute", type=int, default=60)
+    p.add_argument("--concurrency", type=int, default=int(os.environ.get("TEACHER_CONCURRENCY", "128")))
+    p.add_argument("--requests-per-minute", type=int, default=int(os.environ.get("TEACHER_REQUESTS_PER_MINUTE", "2048")))
     p.add_argument("--max-retries", type=int, default=4)
     p.add_argument("--retry-base-sleep", type=float, default=2.0)
     p.add_argument("--retry-max-sleep", type=float, default=60.0)
@@ -131,6 +134,9 @@ def main() -> None:
         "api_key_env": str(args.api_key_env),
         "prompt_version": str(args.prompt_version),
         "max_evidence_chars": args.max_evidence_chars,
+        "timeout": float(args.timeout),
+        "max_tokens": int(args.max_tokens),
+        "top_p": float(args.top_p),
         "mock_maps": bool(args.mock_maps),
         "thinking_type": str(args.thinking_type),
         "concurrency": max(int(args.concurrency), 1),
@@ -151,7 +157,9 @@ def main() -> None:
         "elapsed_seconds": round(time.time() - started_at, 3),
     }
     save_json(manifest, out_dir / "evidence_map_teacher_manifest.json")
+    save_json(manifest, out_dir / f"evidence_map_teacher_manifest_{args.split}.json")
     save_json(usage_totals, out_dir / "evidence_map_teacher_usage_summary.json")
+    save_json(usage_totals, out_dir / f"evidence_map_teacher_usage_summary_{args.split}.json")
     _write_progress(progress_path, manifest)
     print(f"Wrote evidence-map annotations: {annotations_path}")
     print(f"new={n_written} errors={n_errors} skipped_resume={len(completed)} total_jobs={len(jobs)}")
@@ -168,17 +176,35 @@ def _build_jobs(rows: list[dict[str, Any]], *, model: str, prompt_version: str) 
             event_id=event_id,
             prompt_version=prompt_version,
             model=model,
-            evidence_fingerprint=(
-                evidence_items_fingerprint(row.get("evidence_items") or [])
-                if prompt_version in {COMPACT_PROMPT_VERSION, ATOM_FACTS_ABC_PROMPT_VERSION}
-                else ""
-            ),
+            evidence_fingerprint=_annotation_fingerprint(row, prompt_version=prompt_version),
         )
         if key in seen:
             continue
         seen.add(key)
         jobs.append(EvidenceMapJob(event_id=event_id, annotation_key=key, row=dict(row)))
     return jobs
+
+
+def _annotation_fingerprint(row: dict[str, Any], *, prompt_version: str) -> str:
+    if prompt_version not in {COMPACT_PROMPT_VERSION, ATOM_FACTS_ABC_PROMPT_VERSION, ATOM_EVIDENCE_PROMPT_VERSION}:
+        return ""
+    evidence_fp = evidence_items_fingerprint(row.get("evidence_items") or [])
+    if prompt_version != ATOM_EVIDENCE_PROMPT_VERSION:
+        return evidence_fp
+    atom_fp = _claim_atoms_fingerprint(row.get("claim_atoms") or [])
+    return f"{evidence_fp}:{atom_fp}"
+
+
+def _claim_atoms_fingerprint(atoms: list[dict[str, Any]]) -> str:
+    payload = [
+        [
+            str(atom.get("atom_id") or ""),
+            str(atom.get("proposition") or atom.get("text") or ""),
+        ]
+        for atom in atoms
+    ]
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
 def _write_mock_maps(
@@ -314,7 +340,11 @@ def _run_job(job: EvidenceMapJob, *, args: argparse.Namespace, api_key: str | No
             raw = _raw_row(job, args=args, system_prompt=system_prompt, user_prompt=user_prompt, response=data, content=content, created_at=created_at)
             last_raw = raw
             try:
-                evidence_map = parse_evidence_map_content(content, valid_evidence_ids=valid_ids)
+                evidence_map = parse_evidence_map_content(
+                    content,
+                    valid_evidence_ids=valid_ids,
+                    claim_atoms=job.row.get("claim_atoms") or None,
+                )
             except EvidenceMapSchemaError as exc:
                 raw["parse_status"] = "schema_validation_failed"
                 raw["parse_error"] = str(exc)
@@ -350,6 +380,7 @@ def _chat_completion(*, args: argparse.Namespace, api_key: str | None, system_pr
         ],
         "response_format": {"type": "json_object"},
         "temperature": 0,
+        "top_p": float(args.top_p),
         "max_tokens": int(args.max_tokens),
         "user": str(args.prompt_version),
         "stream": False,
@@ -398,7 +429,7 @@ class RateLimiter:
 
 
 def _annotation_row(job: EvidenceMapJob, *, args: argparse.Namespace, evidence_map: dict[str, Any], created_at: str, usage: dict[str, Any]) -> dict[str, Any]:
-    return {
+    row = {
         "annotation_key": job.annotation_key,
         "event_id": job.event_id,
         "prompt_version": str(args.prompt_version),
@@ -414,6 +445,11 @@ def _annotation_row(job: EvidenceMapJob, *, args: argparse.Namespace, evidence_m
         "mock_maps": bool(args.mock_maps),
         "created_at": created_at,
     }
+    if "candidate_atom_alignments" in evidence_map:
+        row["candidate_atom_alignments"] = evidence_map.get("candidate_atom_alignments") or []
+    if "candidate_alignments" in evidence_map:
+        row["candidate_alignments"] = evidence_map.get("candidate_alignments") or []
+    return row
 
 
 def _raw_row(job: EvidenceMapJob, *, args: argparse.Namespace, system_prompt: str, user_prompt: str, response: dict[str, Any], content: str, created_at: str) -> dict[str, Any]:

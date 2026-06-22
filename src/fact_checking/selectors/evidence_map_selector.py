@@ -33,9 +33,10 @@ PROMPT_VERSION = "evidence_map_v0_5a"
 COMPACT_PROMPT_VERSION = "evidence_map_v0_6b"
 ATOM_FACTS_PROMPT_VERSION = "evidence_map_v0_7_atom_facts"
 ATOM_FACTS_ABC_PROMPT_VERSION = "evidence_map_v0_7_atom_facts_abc"
+ATOM_EVIDENCE_PROMPT_VERSION = "atom_evidence_map_v0_1"
 DEFAULT_MAX_EVIDENCE_CHARS = 700
 
-ALLOWED_RELATIONS = {"support", "refute", "qualify", "mixed", "background", "irrelevant"}
+ALLOWED_RELATIONS = {"support", "refute", "qualify", "mixed", "insufficient", "background", "irrelevant"}
 ALLOWED_DIRECTNESS = {"direct", "partial", "context", "none"}
 ALLOWED_ROLES = {
     "primary_support",
@@ -146,6 +147,7 @@ def prepare_evidence_map_candidate_rows(
                 "oracle_selected_count": int(row.get("oracle_selected_count") or len(row.get("oracle_ordered_keys") or [])),
                 "candidate_top_n": int(candidate_top_n),
                 "evidence_map_candidate_source": source,
+                "claim_atoms": list(row.get("claim_atoms") or []),
                 "evidence_items_fingerprint": evidence_items_fingerprint(evidence_items),
                 "evidence_items": evidence_items,
                 "candidates": trimmed_candidates,
@@ -172,6 +174,13 @@ def build_teacher_messages(
         return system_prompt, user_prompt
     if prompt_version in {ATOM_FACTS_PROMPT_VERSION, ATOM_FACTS_ABC_PROMPT_VERSION}:
         system_prompt, user_prompt = _build_atom_facts_teacher_messages(
+            row,
+            max_evidence_chars=max_evidence_chars,
+        )
+        audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
+        return system_prompt, user_prompt
+    if prompt_version == ATOM_EVIDENCE_PROMPT_VERSION:
+        system_prompt, user_prompt = _build_atom_evidence_teacher_messages(
             row,
             max_evidence_chars=max_evidence_chars,
         )
@@ -319,6 +328,60 @@ def _build_atom_facts_teacher_messages(
     return system_prompt, "\n".join(lines)
 
 
+def _build_atom_evidence_teacher_messages(
+    row: dict[str, Any],
+    *,
+    max_evidence_chars: int | None,
+) -> tuple[str, str]:
+    system_prompt = (
+        "You are a fact-checking evidence analyst. Use only the claim, fixed atomic "
+        "verification units, and evidence passages supplied by the user. "
+        "Do not create, remove, merge, split, or rename atoms. Return valid JSON only."
+    )
+    schema = (
+        '{"candidate_atom_alignments":[{"evidence_id":"E01","atom_id":"A1",'
+        '"relation":"support|refute|qualify|mixed|insufficient|background|irrelevant",'
+        '"directness":"direct|partial|context|none","evidence_role":"primary_support|primary_refute|partial_support|partial_refute|qualifying_context|background_context|duplicate|irrelevant",'
+        '"key_spans":["short quote"],"duplicate_group":"G1","confidence":0.0}]}'
+    )
+    fixed_atoms = _fixed_atoms_from_row(row)
+    lines = [
+        "Task: map each evidence passage to the fixed atomic verification units.",
+        "Do not create, remove, merge, split, or rename atoms.",
+        "Return one JSON object. Use this schema and do not add other fields:",
+        schema,
+        "",
+        "Field guide:",
+        "- candidate_atom_alignments.evidence_id: one of the evidence IDs below.",
+        "- candidate_atom_alignments.atom_id: one of the fixed atom IDs below.",
+        "- candidate_atom_alignments.relation: support, refute, qualify, mixed, insufficient, background, or irrelevant.",
+        "- candidate_atom_alignments.directness: direct, partial, context, or none.",
+        "- candidate_atom_alignments.evidence_role: primary_support, primary_refute, partial_support, partial_refute, qualifying_context, background_context, duplicate, or irrelevant.",
+        "- candidate_atom_alignments.key_spans: short substrings copied from the passage.",
+        "- candidate_atom_alignments.duplicate_group: same group ID for near-duplicate passages; use an empty string if none.",
+        "- candidate_atom_alignments.confidence: 0.0 to 1.0 for how certain the pair-level alignment is.",
+        "",
+        "Output policy:",
+        "- Omit irrelevant evidence-atom pairs instead of listing them.",
+        "- If an evidence passage has no useful relation to any atom, output no row for that passage.",
+        "- Return at most one row for each evidence_id and atom_id pair.",
+        "- If no informative pairs exist, return {\"candidate_atom_alignments\":[]}.",
+        "",
+        "Claim:",
+        str(row.get("claim") or "").strip(),
+        "",
+        "Fixed atomic verification units:",
+    ]
+    for atom in fixed_atoms:
+        lines.append(f"{atom['atom_id']}: {atom['text']}")
+    lines.extend(["", "Evidence passages:"])
+    for item in row.get("evidence_items") or []:
+        evidence_id = str(item.get("evidence_id") or "")
+        text = _compact_evidence_text(str(item.get("text") or ""), max_evidence_chars=max_evidence_chars)
+        lines.append(f"{evidence_id}: {text}")
+    return system_prompt, "\n".join(lines)
+
+
 def audit_teacher_prompt(row: dict[str, Any], *, system_prompt: str, user_prompt: str) -> None:
     prompt = f"{system_prompt}\n{user_prompt}"
     lowered = prompt.lower()
@@ -333,12 +396,86 @@ def audit_teacher_prompt(row: dict[str, Any], *, system_prompt: str, user_prompt
         raise ValueError(f"Teacher prompt contains forbidden metadata values: {leaked_values[:5]}")
 
 
-def parse_evidence_map_content(content: str, *, valid_evidence_ids: Iterable[str]) -> dict[str, Any]:
+def _fixed_atoms_from_row(row: dict[str, Any]) -> list[dict[str, str]]:
+    raw_atoms = list(row.get("claim_atoms") or (row.get("evidence_map") or {}).get("claim_atoms") or [])
+    atoms: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for idx, raw in enumerate(raw_atoms, start=1):
+        if not isinstance(raw, dict):
+            continue
+        atom_id = _safe_id(str(raw.get("atom_id") or f"A{idx}"), prefix="A", fallback_idx=idx)
+        if atom_id in seen:
+            atom_id = f"A{idx}"
+        seen.add(atom_id)
+        text = str(raw.get("proposition") or raw.get("text") or "").strip()
+        if not text:
+            continue
+        atoms.append({"atom_id": atom_id, "text": text[:500]})
+    if atoms:
+        return atoms
+    claim = str(row.get("claim") or "").strip() or "Full claim"
+    return [{"atom_id": "A1", "text": claim[:500]}]
+
+
+def parse_evidence_map_content(
+    content: str,
+    *,
+    valid_evidence_ids: Iterable[str],
+    claim_atoms: Sequence[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    stripped_content = _strip_json_fence(content)
     try:
-        payload = json.loads(_strip_json_fence(content))
+        payload = json.loads(stripped_content)
     except json.JSONDecodeError as exc:
-        raise EvidenceMapSchemaError(f"invalid JSON: {exc}") from exc
+        repaired_content = _repair_key_spans_json(stripped_content)
+        if repaired_content != stripped_content:
+            try:
+                payload = json.loads(repaired_content)
+            except json.JSONDecodeError:
+                raise EvidenceMapSchemaError(f"invalid JSON: {exc}") from exc
+        else:
+            raise EvidenceMapSchemaError(f"invalid JSON: {exc}") from exc
+    if claim_atoms is not None and isinstance(payload, dict) and "claim_atoms" not in payload:
+        payload = dict(payload)
+        payload["claim_atoms"] = list(claim_atoms)
     return validate_evidence_map_payload(payload, valid_evidence_ids=valid_evidence_ids)
+
+
+def _repair_key_spans_json(content: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        prefix = match.group(1)
+        inner = match.group(2).strip()
+        try:
+            spans = json.loads(f"[{inner}]")
+            if isinstance(spans, list):
+                return prefix + json.dumps([str(span) for span in spans], ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
+        return prefix + json.dumps(_coerce_malformed_key_spans(inner), ensure_ascii=False)
+
+    return re.sub(r'("key_spans"\s*:\s*)\[(.*?)\]', replace, content, flags=re.DOTALL)
+
+
+def _coerce_malformed_key_spans(inner: str) -> list[str]:
+    raw = str(inner or "").strip()
+    if not raw or raw in {"null", "None"}:
+        return []
+    if raw.startswith('"'):
+        raw = raw[1:]
+    if raw.endswith('"'):
+        raw = raw[:-1]
+    spans: list[str] = []
+    for part in re.split(r'"\s*,\s*"', raw):
+        span = part.strip()
+        if span.startswith('"'):
+            span = span[1:]
+        if span.endswith('"'):
+            span = span[:-1]
+        span = span.replace('\\"', '"').replace('"', "'")
+        span = re.sub(r"\s+", " ", span).strip()
+        if span:
+            spans.append(span[:240])
+    return spans[:3]
 
 
 def validate_evidence_map_payload(payload: Any, *, valid_evidence_ids: Iterable[str]) -> dict[str, Any]:
@@ -347,6 +484,21 @@ def validate_evidence_map_payload(payload: Any, *, valid_evidence_ids: Iterable[
     valid_evidence = {str(item) for item in valid_evidence_ids}
     atoms = _validate_atoms(payload.get("claim_atoms"))
     atom_ids = {atom["atom_id"] for atom in atoms}
+    if "candidate_atom_alignments" in payload:
+        pair_alignments = _validate_pair_alignments(
+            payload.get("candidate_atom_alignments"),
+            valid_evidence_ids=valid_evidence,
+            valid_atom_ids=atom_ids,
+        )
+        alignments = _collapse_pair_alignments(
+            pair_alignments,
+            valid_evidence_ids=valid_evidence,
+        )
+        return {
+            "claim_atoms": atoms,
+            "candidate_atom_alignments": pair_alignments,
+            "candidate_alignments": alignments,
+        }
     alignments = _validate_alignments(
         payload.get("candidate_alignments"),
         valid_evidence_ids=valid_evidence,
@@ -498,11 +650,17 @@ def attach_evidence_map_annotations(
             str(align.get("evidence_id") or ""): align
             for align in evidence_map.get("candidate_alignments") or []
         }
+        pair_align_by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for pair in evidence_map.get("candidate_atom_alignments") or []:
+            pair_align_by_id[str(pair.get("evidence_id") or "")].append(dict(pair))
         candidates: list[dict[str, Any]] = []
         for candidate in row.get("candidates") or []:
             c = dict(candidate)
             align = align_by_id.get(str(c.get("evidence_id") or ""), _fallback_alignment(str(c.get("evidence_id") or "")))
             c.update(candidate_evidence_map_features(align, atom_weights=atom_weights))
+            pair_alignments = pair_align_by_id.get(str(c.get("evidence_id") or ""))
+            if pair_alignments:
+                c["candidate_atom_alignments"] = pair_alignments
             candidates.append(c)
         item["evidence_map"] = evidence_map
         item["evidence_map_parse_status"] = parse_status
@@ -576,6 +734,11 @@ def attach_event_base_scores(rows: Sequence[dict[str, Any]]) -> None:
             for candidate in candidates:
                 candidate["evidence_map_base_score"] = _qd_union_rank_prior(candidate)
                 candidate["evidence_map_base_score_source"] = "qd_union_rank"
+            continue
+        if source == "atom_union":
+            for candidate in candidates:
+                candidate["evidence_map_base_score"] = _atom_union_rank_prior(candidate)
+                candidate["evidence_map_base_score_source"] = "atom_union_rank"
             continue
         fusion = _event_minmax([_safe_float(c.get("fusion_refit_score"), 0.0) for c in candidates])
         oracle = _event_minmax([_safe_float(c.get("oracle_likelihood_score"), 0.0) for c in candidates])
@@ -929,16 +1092,21 @@ def _normalize_candidate_for_map(
     candidate_source: str,
 ) -> dict[str, Any]:
     item = dict(candidate)
-    if candidate_source == "qd_union":
+    if candidate_source in {"qd_union", "atom_union"}:
         key = str(item.get("candidate_key") or item.get("canonical_text") or item.get("text") or "").strip()
         if not key:
             key = f"candidate-{fallback_idx}"
         item["candidate_key"] = key
         item["candidate_uid"] = str(item.get("candidate_uid") or hashlib.sha1(f"{event_id}|{key}".encode("utf-8")).hexdigest()[:12])
         item.setdefault("source_group", f"report:{item.get('report_id')}" if item.get("report_id") is not None else "")
-        item.setdefault("evidence_map_base_score", _qd_union_rank_prior(item))
-        item.setdefault("evidence_map_base_score_source", "qd_union_rank")
-        item["evidence_map_candidate_source"] = "qd_union"
+        if candidate_source == "atom_union":
+            item.setdefault("evidence_map_base_score", _atom_union_rank_prior(item))
+            item.setdefault("evidence_map_base_score_source", "atom_union_rank")
+            item["evidence_map_candidate_source"] = "atom_union"
+        else:
+            item.setdefault("evidence_map_base_score", _qd_union_rank_prior(item))
+            item.setdefault("evidence_map_base_score_source", "qd_union_rank")
+            item["evidence_map_candidate_source"] = "qd_union"
     return item
 
 
@@ -949,10 +1117,13 @@ def _top_annotation_candidates(
     candidate_source: str = "fusion",
 ) -> list[dict[str, Any]]:
     rows = [dict(candidate) for candidate in candidates]
-    if str(candidate_source or "fusion") == "qd_union":
+    source = str(candidate_source or "fusion")
+    if source in {"qd_union", "atom_union"}:
         rows.sort(
             key=lambda row: (
                 int(row.get("union_pool_rank") or 10**9),
+                int(row.get("atom_pool_rank") or row.get("qd_pool_rank") or 10**9),
+                int(row.get("baseline_rank") or 10**9),
                 str(row.get("candidate_key") or row.get("text") or ""),
             )
         )
@@ -981,14 +1152,16 @@ def _validate_atoms(raw_atoms: Any) -> list[dict[str, Any]]:
         if atom_id in seen:
             atom_id = f"A{idx}"
         seen.add(atom_id)
-        text = str(raw.get("text") or "").strip()
+        text = str(raw.get("text") or raw.get("proposition") or "").strip()
         if not text:
             text = f"Claim atom {idx}"
         importance = _importance_to_unit(raw.get("importance", 1.0))
+        proposition = str(raw.get("proposition") or text).strip()[:500]
         atoms.append(
             {
                 "atom_id": atom_id,
                 "text": text[:500],
+                "proposition": proposition,
                 "type": str(raw.get("type") or "other")[:64],
                 "importance": importance,
             }
@@ -1034,6 +1207,115 @@ def _validate_alignments(raw_alignments: Any, *, valid_evidence_ids: set[str], v
             "confidence": _clamp01(_safe_float(raw.get("confidence"), 0.0)),
         }
     return [align_by_eid.get(evidence_id, _fallback_alignment(evidence_id)) for evidence_id in sorted(valid_evidence_ids)]
+
+
+def _validate_pair_alignments(raw_alignments: Any, *, valid_evidence_ids: set[str], valid_atom_ids: set[str]) -> list[dict[str, Any]]:
+    if not isinstance(raw_alignments, list):
+        raise EvidenceMapSchemaError("candidate_atom_alignments must be a list")
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for raw in raw_alignments:
+        if not isinstance(raw, dict):
+            continue
+        evidence_id = str(raw.get("evidence_id") or "").strip()
+        atom_id = str(raw.get("atom_id") or "").strip()
+        if evidence_id not in valid_evidence_ids or atom_id not in valid_atom_ids:
+            continue
+        relation = str(raw.get("relation") or "irrelevant").strip().lower()
+        if relation not in ALLOWED_RELATIONS:
+            relation = "irrelevant"
+        directness = str(raw.get("directness") or "none").strip().lower()
+        if directness not in ALLOWED_DIRECTNESS:
+            directness = "none"
+        role = str(raw.get("evidence_role") or "irrelevant").strip().lower()
+        if role not in ALLOWED_ROLES:
+            role = _role_from_relation(relation, directness)
+        spans = [str(span).strip()[:240] for span in raw.get("key_spans") or [] if str(span).strip()][:3]
+        key = (evidence_id, atom_id, relation, directness)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "evidence_id": evidence_id,
+                "atom_id": atom_id,
+                "relation": relation,
+                "directness": directness,
+                "evidence_role": role,
+                "key_spans": spans,
+                "duplicate_group": str(raw.get("duplicate_group") or "").strip()[:64],
+                "confidence": _clamp01(_safe_float(raw.get("confidence"), 0.0)),
+            }
+        )
+    out.sort(key=lambda row: (str(row.get("evidence_id") or ""), str(row.get("atom_id") or "")))
+    return out
+
+
+def _collapse_pair_alignments(
+    pair_alignments: Sequence[dict[str, Any]],
+    *,
+    valid_evidence_ids: set[str],
+) -> list[dict[str, Any]]:
+    by_evidence: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in pair_alignments:
+        by_evidence[str(row.get("evidence_id") or "")].append(dict(row))
+    collapsed: list[dict[str, Any]] = []
+    for evidence_id in sorted(valid_evidence_ids):
+        pairs = by_evidence.get(evidence_id) or []
+        if not pairs:
+            collapsed.append(_fallback_alignment(evidence_id))
+            continue
+        covered = _ordered_unique(
+            str(pair.get("atom_id") or "")
+            for pair in pairs
+            if str(pair.get("relation") or "") not in {"background", "irrelevant"}
+        )
+        relation = _summary_relation(pairs)
+        directness = _summary_directness(pairs)
+        spans = _ordered_unique(
+            str(span).strip()
+            for pair in pairs
+            for span in (pair.get("key_spans") or [])
+            if str(span).strip()
+        )[:3]
+        duplicate_group = next((str(pair.get("duplicate_group") or "") for pair in pairs if pair.get("duplicate_group")), "")
+        confidence = max((_clamp01(_safe_float(pair.get("confidence"), 0.0)) for pair in pairs), default=0.0)
+        collapsed.append(
+            {
+                "evidence_id": evidence_id,
+                "covered_atom_ids": covered,
+                "relation": relation,
+                "directness": directness,
+                "evidence_role": _role_from_relation(relation, directness),
+                "key_spans": spans,
+                "duplicate_group": duplicate_group,
+                "confidence": confidence,
+                "candidate_atom_alignments": pairs,
+            }
+        )
+    return collapsed
+
+
+def _summary_relation(pairs: Sequence[dict[str, Any]]) -> str:
+    relations = [str(pair.get("relation") or "irrelevant") for pair in pairs]
+    if "support" in relations and "refute" in relations:
+        return "mixed"
+    priority = {
+        "refute": 60,
+        "qualify": 50,
+        "mixed": 45,
+        "support": 40,
+        "insufficient": 30,
+        "background": 20,
+        "irrelevant": 10,
+    }
+    return max(relations or ["irrelevant"], key=lambda rel: priority.get(rel, 0))
+
+
+def _summary_directness(pairs: Sequence[dict[str, Any]]) -> str:
+    priority = {"direct": 40, "partial": 30, "context": 20, "none": 10}
+    values = [str(pair.get("directness") or "none") for pair in pairs]
+    return max(values or ["none"], key=lambda value: priority.get(value, 0))
 
 
 def _candidate_output(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -1173,6 +1455,8 @@ def _role_from_relation(relation: str, directness: str) -> str:
         return "primary_refute" if directness == "direct" else "partial_refute"
     if relation in {"qualify", "mixed"}:
         return "qualifying_context"
+    if relation == "insufficient":
+        return "background_context"
     if relation == "background":
         return "background_context"
     return "irrelevant"
@@ -1205,6 +1489,17 @@ def _qd_union_rank_prior(candidate: dict[str, Any]) -> float:
     rank = _safe_int(candidate.get("union_pool_rank"))
     if rank is None or rank <= 0:
         rank = _safe_int(candidate.get("qd_pool_rank"))
+    if rank is None or rank <= 0:
+        rank = _safe_int(candidate.get("baseline_rank"))
+    if rank is None or rank <= 0:
+        return 0.0
+    return float(1.0 / float(rank))
+
+
+def _atom_union_rank_prior(candidate: dict[str, Any]) -> float:
+    rank = _safe_int(candidate.get("union_pool_rank"))
+    if rank is None or rank <= 0:
+        rank = _safe_int(candidate.get("atom_pool_rank"))
     if rank is None or rank <= 0:
         rank = _safe_int(candidate.get("baseline_rank"))
     if rank is None or rank <= 0:
@@ -1426,6 +1721,18 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     if math.isnan(parsed) or math.isinf(parsed):
         return float(default)
     return float(parsed)
+
+
+def _ordered_unique(values: Iterable[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = str(value)
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
 
 
 def _mean(values: Iterable[float]) -> float:

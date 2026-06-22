@@ -14,9 +14,14 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from fact_checking.selectors.minimal_resolving_chain import (  # noqa: E402
+    MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
+    MREC_SELECTION_POLICY_TRANSITION_V0_1,
     MREC_SELECTOR_NAME,
     MRECSelectorParams,
     build_mrec_trace_row,
+)
+from fact_checking.selectors.mrec_learned_marginal import (  # noqa: E402
+    learned_marginal_weight_fingerprint,
 )
 from fact_checking.selectors.mrec_schema import (  # noqa: E402
     MREC_TRACE_VERSION,
@@ -26,6 +31,7 @@ from fact_checking.selectors.mrec_schema import (  # noqa: E402
 
 
 MREC_ADAPTIVE_POLICY = "minimal_resolving_chain_v0_1"
+MREC_LEARNED_MARGINAL_ADAPTIVE_POLICY = "learned_marginal_proxy_v0_2"
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,7 +48,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--continue-after-target-for-contrast", action="store_true")
     parser.add_argument("--post-target-fill-policy", default="contrast_only")
     parser.add_argument("--disable-fallback", action="store_true")
+    parser.add_argument("--cue-policy", default="atom_proposition", choices=["atom_proposition", "atom_query", "legacy_route_prefer"])
     parser.add_argument("--selector-name", default=MREC_SELECTOR_NAME)
+    parser.add_argument(
+        "--selection-policy",
+        default=MREC_SELECTION_POLICY_TRANSITION_V0_1,
+        choices=[MREC_SELECTION_POLICY_TRANSITION_V0_1, MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY],
+    )
+    parser.add_argument("--weight-file", default="")
+    parser.add_argument("--stop-threshold", type=float, default=0.0)
     parser.add_argument("--source-selector-name", default="v0_7_atom_facts_abc_budgeted_marginal_chain_adaptive5_10")
     return parser.parse_args()
 
@@ -52,6 +66,8 @@ def main() -> int:
     input_path = Path(args.input)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if str(args.selection_policy) == MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY and not str(args.weight_file or ""):
+        raise SystemExit("--weight-file is required when --selection-policy learned_marginal_proxy is used.")
 
     params = MRECSelectorParams(
         candidate_top_n=int(args.candidate_top_n),
@@ -62,7 +78,11 @@ def main() -> int:
         continue_after_target_for_contrast=bool(args.continue_after_target_for_contrast),
         post_target_fill_policy=str(args.post_target_fill_policy),
         allow_fallback=not bool(args.disable_fallback),
+        cue_policy=str(args.cue_policy),
         selector_name=str(args.selector_name),
+        selection_policy=str(args.selection_policy),
+        weight_file=str(args.weight_file or ""),
+        stop_threshold=float(args.stop_threshold),
     )
     rows = _read_jsonl(input_path, sample_limit=int(args.sample_limit))
     traces = [_build_trace(row, params=params, source_selector_name=str(args.source_selector_name)) for row in rows]
@@ -78,7 +98,9 @@ def main() -> int:
     _write_jsonl(output_dir / f"mrec_trace_{args.split}.jsonl", traces)
     _write_jsonl(output_dir / f"selection_trace_{args.split}.jsonl", traces)
     _write_json(output_dir / "mrec_diagnostics.json", diagnostics)
+    _write_json(output_dir / f"mrec_diagnostics_{args.split}.json", diagnostics)
     _write_json(output_dir / "manifest.json", manifest)
+    _write_json(output_dir / f"manifest_{args.split}.json", manifest)
 
     print(f"Wrote {len(traces)} MREC traces to {output_dir}")
     print(f"Selector: {params.selector_name}")
@@ -96,11 +118,12 @@ def _build_trace(
     source_selector = str(row.get("selector_name") or source_selector_name)
     fingerprint = _row_fingerprint(row)
     metadata = dict(row.get("candidate_pool_metadata") or {})
+    adaptive_policy = _adaptive_policy_for_params(params)
     metadata.update(
         {
             "selector_name": str(params.selector_name),
             "graph_version": MREC_TRACE_VERSION,
-            "adaptive_policy": MREC_ADAPTIVE_POLICY,
+            "adaptive_policy": adaptive_policy,
             "source_selector_name": source_selector,
         }
     )
@@ -109,7 +132,7 @@ def _build_trace(
         trace["fingerprint"] = fingerprint
 
     trace["candidate_pool_metadata"] = metadata
-    trace["adaptive_policy"] = MREC_ADAPTIVE_POLICY
+    trace["adaptive_policy"] = adaptive_policy
     trace["source_selector_name"] = source_selector
     for key in ("candidate_scores", "oracle_ordered_indices", "evidence_map"):
         if key in row and key not in trace:
@@ -155,9 +178,10 @@ def _manifest(
     n_input_rows: int,
     n_trace_rows: int,
 ) -> dict[str, Any]:
+    weight_fingerprint = _weight_fingerprint_for_params(params)
     return {
         "graph_version": MREC_TRACE_VERSION,
-        "adaptive_policy": MREC_ADAPTIVE_POLICY,
+        "adaptive_policy": _adaptive_policy_for_params(params),
         "selector_name": str(params.selector_name),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "input": str(input_path),
@@ -173,7 +197,12 @@ def _manifest(
             "continue_after_target_for_contrast": bool(params.continue_after_target_for_contrast),
             "post_target_fill_policy": str(params.post_target_fill_policy),
             "allow_fallback": bool(params.allow_fallback),
+            "cue_policy": str(params.cue_policy),
+            "selection_policy": str(params.selection_policy),
+            "weight_file": str(params.weight_file or ""),
+            "stop_threshold": float(params.stop_threshold),
         },
+        "weight_fingerprint": weight_fingerprint,
         "source_selector_name": str(args.source_selector_name),
         "n_input_rows": int(n_input_rows),
         "n_trace_rows": int(n_trace_rows),
@@ -191,12 +220,25 @@ def _summarize_traces(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "n_rows": len(rows),
         "mrec_trace_version": MREC_TRACE_VERSION,
         "selector_names": _counts(str(row.get("selector_name") or "") for row in rows),
+        "selection_policies": _counts(str((row.get("mrec_diagnostics") or {}).get("selection_policy") or "") for row in rows),
         "step_count": _numeric_summary(step_counts),
         "resolved_atom_rate": _numeric_summary(resolved_rates),
         "operation_counts": _sum_counter(summary.get("operation_counts") for summary in summaries),
         "state_after_counts": _sum_counter(summary.get("state_after_counts") for summary in summaries),
         "cue_source_counts": _sum_counter(summary.get("cue_source_counts") for summary in summaries),
     }
+
+
+def _adaptive_policy_for_params(params: MRECSelectorParams) -> str:
+    if str(params.selection_policy) == MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY:
+        return MREC_LEARNED_MARGINAL_ADAPTIVE_POLICY
+    return MREC_ADAPTIVE_POLICY
+
+
+def _weight_fingerprint_for_params(params: MRECSelectorParams) -> str:
+    if str(params.selection_policy) != MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY:
+        return ""
+    return learned_marginal_weight_fingerprint(params.weight_file or None)
 
 
 def _row_fingerprint(row: Mapping[str, Any]) -> str:

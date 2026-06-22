@@ -153,6 +153,7 @@ def main() -> None:
         split_paths[split] = str(out_path)
         reports[split] = report
 
+    built_split_paths = dict(split_paths)
     if "train" not in split_paths:
         split_paths["train"] = split_paths["val"]
     if "test" not in split_paths:
@@ -181,6 +182,8 @@ def main() -> None:
         "random_seed": int(args.random_seed),
         "expected_chunk_mmr_fingerprint": args.expected_chunk_mmr_fingerprint,
         "val_only": bool(args.val_only),
+        "built_splits": sorted(built_split_paths),
+        "built_split_paths": built_split_paths,
         "prompt_model_name_or_path": str(prompt_cfg["model_name_or_path"]),
         "label_schema": label_schema,
         "split_paths": split_paths,
@@ -579,7 +582,7 @@ def _apply_mrec_prompt_fields(
         original_text = _qec_step_evidence_text(mrec_step, copied)
         cue = _select_mrec_cue(mrec_step, source_name=source_name)
         if cue is None:
-            cue = _select_qec_cue(copied, atom_by_id=atom_by_id, atom_order=atom_order)
+            cue = _select_mrec_fallback_cue(copied, atom_by_id=atom_by_id, atom_order=atom_order)
 
         copied["text"] = f"Check: {cue['check']}\n{original_text}"
         rendered_candidates.append(copied)
@@ -762,9 +765,29 @@ def _select_qec_cue(
     if atom is not None:
         return {
             "cue_type": "claim_atom",
-            "check": _compact_whitespace(atom.get("text") or ""),
+            "check": _compact_whitespace(atom.get("proposition") or atom.get("text") or ""),
         }
 
+    return {
+        "cue_type": "fallback",
+        "check": "Verify the main factual claim.",
+    }
+
+
+def _select_mrec_fallback_cue(
+    candidate: dict[str, Any],
+    *,
+    atom_by_id: dict[str, dict[str, Any]],
+    atom_order: dict[str, int],
+) -> dict[str, Any]:
+    atom = _best_covered_atom(candidate.get("covered_atom_ids"), atom_by_id=atom_by_id, atom_order=atom_order)
+    if atom is not None:
+        check = _compact_whitespace(atom.get("proposition") or atom.get("text") or "")
+        if check:
+            return {
+                "cue_type": "claim_atom",
+                "check": check,
+            }
     return {
         "cue_type": "fallback",
         "check": "Verify the main factual claim.",

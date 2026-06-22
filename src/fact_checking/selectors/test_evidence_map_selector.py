@@ -5,6 +5,7 @@ import sys
 from unittest.mock import patch
 
 from fact_checking.selectors.evidence_map_selector import (
+    ATOM_EVIDENCE_PROMPT_VERSION,
     ATOM_FACTS_ABC_PROMPT_VERSION,
     ATOM_FACTS_PROMPT_VERSION,
     COMPACT_PROMPT_VERSION,
@@ -16,7 +17,9 @@ from fact_checking.selectors.evidence_map_selector import (
     audit_teacher_prompt,
     build_all_evidence_map_traces,
     build_teacher_messages,
+    candidate_evidence_map_features,
     evidence_items_fingerprint,
+    parse_evidence_map_content,
     prepare_evidence_map_candidate_rows,
     select_evidence_map_topk,
     summarize_atom_quality_rows,
@@ -233,6 +236,115 @@ class EvidenceMapSelectorTest(unittest.TestCase):
         self.assertNotIn("fusion_refit_score", row["candidates"][0])
         self.assertNotIn("direct_ce_score", row["candidates"][0])
         self.assertNotIn("oracle_likelihood_score", row["candidates"][0])
+
+    def test_atom_union_candidate_pool_uses_atom_rank_prior_without_qd_fields(self) -> None:
+        row = prepare_evidence_map_candidate_rows(
+            [
+                {
+                    "event_id": "event-a",
+                    "claim": "The budget increased.",
+                    "candidates": [
+                        {"text": "Rank two text.", "canonical_text": "rank two", "atom_pool_rank": 2, "report_id": 2},
+                        {"text": "Rank one text.", "canonical_text": "rank one", "atom_pool_rank": 1, "report_id": 1},
+                    ],
+                }
+            ],
+            candidate_top_n=2,
+            candidate_source="atom_union",
+        )[0]
+        attach_event_base_scores([row])
+
+        self.assertEqual(row["evidence_map_candidate_source"], "atom_union")
+        self.assertEqual([candidate["candidate_key"] for candidate in row["candidates"]], ["rank one", "rank two"])
+        self.assertGreater(row["candidates"][0]["evidence_map_base_score"], row["candidates"][1]["evidence_map_base_score"])
+        self.assertEqual(row["candidates"][0]["evidence_map_base_score_source"], "atom_union_rank")
+        self.assertNotIn("qd_pool_rank", row["candidates"][0])
+
+    def test_atom_evidence_prompt_uses_fixed_atoms_and_does_not_request_decomposition(self) -> None:
+        row = prepare_evidence_map_candidate_rows([_event()], candidate_top_n=1)[0]
+        row["claim_atoms"] = [
+            {
+                "atom_id": "A1",
+                "proposition": "The budget increased by 10 percent.",
+                "text": "The budget increased by 10 percent.",
+                "importance": 1.0,
+            }
+        ]
+
+        system_prompt, user_prompt = build_teacher_messages(row, prompt_version=ATOM_EVIDENCE_PROMPT_VERSION)
+        prompt = f"{system_prompt}\n{user_prompt}"
+
+        self.assertIn("Fixed atomic verification units:", prompt)
+        self.assertIn("A1: The budget increased by 10 percent.", prompt)
+        self.assertIn("candidate_atom_alignments", prompt)
+        self.assertIn("Do not create, remove, merge, split, or rename atoms.", prompt)
+        self.assertIn("Omit irrelevant evidence-atom pairs", prompt)
+        self.assertNotIn("decompose the claim", prompt.lower())
+        audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
+
+    def test_pair_level_atom_alignments_validate_and_derive_candidate_features(self) -> None:
+        payload = validate_evidence_map_payload(
+            {
+                "claim_atoms": [
+                    {"atom_id": "A1", "text": "The budget increased.", "importance": 1.0},
+                    {"atom_id": "A2", "text": "The increase was 10 percent.", "importance": 1.0},
+                ],
+                "candidate_atom_alignments": [
+                    {
+                        "evidence_id": "E01",
+                        "atom_id": "A1",
+                        "relation": "support",
+                        "directness": "direct",
+                        "confidence": 0.9,
+                        "key_spans": ["budget increased"],
+                    },
+                    {
+                        "evidence_id": "E01",
+                        "atom_id": "A2",
+                        "relation": "qualify",
+                        "directness": "partial",
+                        "confidence": 0.7,
+                        "key_spans": ["about 10 percent"],
+                    },
+                ],
+            },
+            valid_evidence_ids=["E01"],
+        )
+        features = candidate_evidence_map_features(
+            payload["candidate_alignments"][0],
+            atom_weights={"A1": 1.0, "A2": 1.0},
+        )
+
+        self.assertEqual(payload["candidate_alignments"][0]["covered_atom_ids"], ["A1", "A2"])
+        self.assertEqual(features["covered_atom_ids"], ["A1", "A2"])
+        self.assertEqual(features["map_relation"], "qualify")
+        self.assertEqual(features["map_directness"], "direct")
+
+    def test_atom_evidence_parser_repairs_unescaped_quotes_in_key_spans(self) -> None:
+        payload = parse_evidence_map_content(
+            """
+            {
+              "candidate_atom_alignments": [
+                {
+                  "evidence_id": "E17",
+                  "atom_id": "A1",
+                  "relation": "qualify",
+                  "directness": "partial",
+                  "evidence_role": "qualifying_context",
+                  "key_spans": ["Trump refuse to respond" to whether internment violate American values],
+                  "duplicate_group": "",
+                  "confidence": 0.9
+                }
+              ]
+            }
+            """,
+            valid_evidence_ids=["E17"],
+            claim_atoms=[{"atom_id": "A1", "text": "Trump addressed internment."}],
+        )
+
+        self.assertEqual(payload["candidate_atom_alignments"][0]["evidence_id"], "E17")
+        self.assertEqual(payload["candidate_atom_alignments"][0]["atom_id"], "A1")
+        self.assertIn("Trump refuse to respond", payload["candidate_atom_alignments"][0]["key_spans"][0])
 
     def test_greedy_rewards_new_atoms_and_penalizes_background_duplicates(self) -> None:
         candidates = [
