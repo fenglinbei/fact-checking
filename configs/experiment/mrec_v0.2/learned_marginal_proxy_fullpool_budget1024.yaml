@@ -1,0 +1,20 @@
+extends: learned_marginal_proxy_fullpool_policy.yaml
+
+experiment:
+  name: liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_budget1024
+  case_suffix: __atom_anchor_v0_2_learned_marginal_proxy_fullpool_budget1024
+  run_label: atom-anchor-v0.2-learned-proxy-fullpool-budget1024
+  run_header_label: atom-anchor-v0.2-learned-proxy-fullpool-budget1024-full
+
+prompt_evidence:
+  policy: budget
+  min_evidence_count: 1
+  max_evidence_count: 100
+  evidence_token_budget: 1024
+
+swanlab:
+  experiment_name: liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_budget1024
+
+sentence_trace_method:
+  top_k: 100
+

@@ -3,7 +3,7 @@
 # evidence, without learning or applying a selector.
 
 defaults:
-  - b3_label_token_ce_1024
+  - /experiment/baselines/b3_label_token_ce_1024
   - _self_
 
 experiment:

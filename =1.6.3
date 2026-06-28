@@ -1,28 +1,43 @@
 Looking in indexes: https://mirrors4.tuna.tsinghua.edu.cn/pypi/web/simple
 Collecting mistral-common[opencv]
-  Downloading https://mirrors4.tuna.tsinghua.edu.cn/pypi/web/packages/7b/76/dbfdf9c59e2a4b0116587626a3768c2a3b2ba1758b5756743918c2337fdc/mistral_common-1.11.3-py3-none-any.whl (6.5 MB)
-     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.5/6.5 MB 30.0 MB/s  0:00:00
-Requirement already satisfied: pydantic<3.0,>=2.7 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from mistral-common[opencv]) (2.13.2)
-Requirement already satisfied: jsonschema>=4.21.1 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from mistral-common[opencv]) (4.26.0)
-Requirement already satisfied: typing-extensions>=4.11.0 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from mistral-common[opencv]) (4.15.0)
-Requirement already satisfied: tiktoken>=0.7.0 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from mistral-common[opencv]) (0.12.0)
-Requirement already satisfied: pillow>=10.3.0 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from mistral-common[opencv]) (12.2.0)
-Requirement already satisfied: requests>=2.0.0 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from mistral-common[opencv]) (2.33.1)
-Requirement already satisfied: numpy<2.4,>=1.25 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from mistral-common[opencv]) (1.26.4)
-Requirement already satisfied: pydantic-extra-types>=2.10.5 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from pydantic-extra-types[pycountry]>=2.10.5->mistral-common[opencv]) (2.11.1)
-Requirement already satisfied: opencv-python-headless>=4.0.0 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from mistral-common[opencv]) (4.11.0.86)
-Requirement already satisfied: annotated-types>=0.6.0 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from pydantic<3.0,>=2.7->mistral-common[opencv]) (0.7.0)
-Requirement already satisfied: pydantic-core==2.46.2 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from pydantic<3.0,>=2.7->mistral-common[opencv]) (2.46.2)
-Requirement already satisfied: typing-inspection>=0.4.2 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from pydantic<3.0,>=2.7->mistral-common[opencv]) (0.4.2)
-Requirement already satisfied: attrs>=22.2.0 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from jsonschema>=4.21.1->mistral-common[opencv]) (26.1.0)
-Requirement already satisfied: jsonschema-specifications>=2023.03.6 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from jsonschema>=4.21.1->mistral-common[opencv]) (2025.9.1)
-Requirement already satisfied: referencing>=0.28.4 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from jsonschema>=4.21.1->mistral-common[opencv]) (0.37.0)
-Requirement already satisfied: rpds-py>=0.25.0 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from jsonschema>=4.21.1->mistral-common[opencv]) (0.30.0)
-Requirement already satisfied: pycountry>=23 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from pydantic-extra-types[pycountry]>=2.10.5->mistral-common[opencv]) (26.2.16)
-Requirement already satisfied: charset_normalizer<4,>=2 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from requests>=2.0.0->mistral-common[opencv]) (3.4.7)
-Requirement already satisfied: idna<4,>=2.5 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from requests>=2.0.0->mistral-common[opencv]) (3.11)
-Requirement already satisfied: urllib3<3,>=1.26 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from requests>=2.0.0->mistral-common[opencv]) (2.6.3)
-Requirement already satisfied: certifi>=2023.5.7 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from requests>=2.0.0->mistral-common[opencv]) (2026.2.25)
-Requirement already satisfied: regex>=2022.1.18 in /data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages (from tiktoken>=0.7.0->mistral-common[opencv]) (2026.4.4)
-Installing collected packages: mistral-common
-Successfully installed mistral-common-1.11.3
+  Downloading mistral_common-1.11.4-py3-none-any.whl (6.6 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.6/6.6 MB 18.2 MB/s  0:00:00
+Requirement already satisfied: pydantic<3.0,>=2.7 in /data/liaozijie/conda/accelerate-fc-mrec-clean/lib/python3.11/site-packages (from mistral-common[opencv]) (2.13.4)
+Collecting jsonschema>=4.21.1 (from mistral-common[opencv])
+  Using cached jsonschema-4.26.0-py3-none-any.whl (90 kB)
+Requirement already satisfied: typing-extensions>=4.11.0 in /data/liaozijie/conda/accelerate-fc-mrec-clean/lib/python3.11/site-packages (from mistral-common[opencv]) (4.15.0)
+Collecting tiktoken>=0.7.0 (from mistral-common[opencv])
+  Using cached tiktoken-0.13.0-cp311-cp311-manylinux_2_28_x86_64.whl (1.1 MB)
+Requirement already satisfied: pillow>=10.3.0 in /data/liaozijie/conda/accelerate-fc-mrec-clean/lib/python3.11/site-packages (from mistral-common[opencv]) (12.2.0)
+Requirement already satisfied: requests>=2.0.0 in /data/liaozijie/conda/accelerate-fc-mrec-clean/lib/python3.11/site-packages (from mistral-common[opencv]) (2.34.2)
+Collecting numpy<2.4,>=1.25 (from mistral-common[opencv])
+  Using cached numpy-2.3.5-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.9 MB)
+Collecting pydantic-extra-types>=2.10.5 (from pydantic-extra-types[pycountry]>=2.10.5->mistral-common[opencv])
+  Using cached pydantic_extra_types-2.11.1-py3-none-any.whl (79 kB)
+Collecting opencv-python-headless>=4.0.0 (from mistral-common[opencv])
+  Using cached opencv_python_headless-4.13.0.92-cp37-abi3-manylinux_2_28_x86_64.whl (60.4 MB)
+Requirement already satisfied: annotated-types>=0.6.0 in /data/liaozijie/conda/accelerate-fc-mrec-clean/lib/python3.11/site-packages (from pydantic<3.0,>=2.7->mistral-common[opencv]) (0.7.0)
+Requirement already satisfied: pydantic-core==2.46.4 in /data/liaozijie/conda/accelerate-fc-mrec-clean/lib/python3.11/site-packages (from pydantic<3.0,>=2.7->mistral-common[opencv]) (2.46.4)
+Requirement already satisfied: typing-inspection>=0.4.2 in /data/liaozijie/conda/accelerate-fc-mrec-clean/lib/python3.11/site-packages (from pydantic<3.0,>=2.7->mistral-common[opencv]) (0.4.2)
+Collecting attrs>=22.2.0 (from jsonschema>=4.21.1->mistral-common[opencv])
+  Using cached attrs-26.1.0-py3-none-any.whl (67 kB)
+Collecting jsonschema-specifications>=2023.03.6 (from jsonschema>=4.21.1->mistral-common[opencv])
+  Using cached jsonschema_specifications-2025.9.1-py3-none-any.whl (18 kB)
+Collecting referencing>=0.28.4 (from jsonschema>=4.21.1->mistral-common[opencv])
+  Using cached referencing-0.37.0-py3-none-any.whl (26 kB)
+Collecting rpds-py>=0.25.0 (from jsonschema>=4.21.1->mistral-common[opencv])
+  Using cached rpds_py-2026.5.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (378 kB)
+Collecting pycountry>=23 (from pydantic-extra-types[pycountry]>=2.10.5->mistral-common[opencv])
+  Using cached pycountry-26.2.16-py3-none-any.whl (8.0 MB)
+Requirement already satisfied: charset_normalizer<4,>=2 in /data/liaozijie/conda/accelerate-fc-mrec-clean/lib/python3.11/site-packages (from requests>=2.0.0->mistral-common[opencv]) (3.4.7)
+Requirement already satisfied: idna<4,>=2.5 in /data/liaozijie/conda/accelerate-fc-mrec-clean/lib/python3.11/site-packages (from requests>=2.0.0->mistral-common[opencv]) (3.18)
+Requirement already satisfied: urllib3<3,>=1.26 in /data/liaozijie/conda/accelerate-fc-mrec-clean/lib/python3.11/site-packages (from requests>=2.0.0->mistral-common[opencv]) (2.7.0)
+Requirement already satisfied: certifi>=2023.5.7 in /data/liaozijie/conda/accelerate-fc-mrec-clean/lib/python3.11/site-packages (from requests>=2.0.0->mistral-common[opencv]) (2026.6.17)
+Requirement already satisfied: regex in /data/liaozijie/conda/accelerate-fc-mrec-clean/lib/python3.11/site-packages (from tiktoken>=0.7.0->mistral-common[opencv]) (2026.5.9)
+Installing collected packages: rpds-py, pycountry, numpy, attrs, tiktoken, referencing, opencv-python-headless, pydantic-extra-types, jsonschema-specifications, jsonschema, mistral-common
+  Attempting uninstall: numpy
+    Found existing installation: numpy 2.4.6
+    Uninstalling numpy-2.4.6:
+      Successfully uninstalled numpy-2.4.6
+
+Successfully installed attrs-26.1.0 jsonschema-4.26.0 jsonschema-specifications-2025.9.1 mistral-common-1.11.4 numpy-2.3.5 opencv-python-headless-4.13.0.92 pycountry-26.2.16 pydantic-extra-types-2.11.1 referencing-0.37.0 rpds-py-2026.5.1 tiktoken-0.13.0

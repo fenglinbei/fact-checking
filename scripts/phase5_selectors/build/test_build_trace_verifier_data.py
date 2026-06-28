@@ -120,6 +120,42 @@ def test_plain_prompt_style_preserves_existing_prompt_shape(tmp_path: Path) -> N
     assert rows[0]["candidates"][0]["text"] == "Evidence one."
 
 
+def test_allow_empty_evidence_builds_claim_only_prompt(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_minimal_inputs(tmp_path)
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace["selector_name"] = "selector_mech_s0_no_evidence"
+    trace["candidate_pool"] = []
+    trace["candidate_scores"] = []
+    trace["selector_ordered_indices"] = []
+    trace["selected_indices"] = []
+    trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="plain",
+        expected_selector_name="selector_mech_s0_no_evidence",
+        top_k=5,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+        allow_empty_evidence=True,
+    )
+
+    assert report["evidence_count"]["mean"] == 0.0
+    assert rows[0]["evidence_count"] == 0
+    assert rows[0]["candidates"] == []
+    assert "(no evidence available)" in rows[0]["prompt"]
+
+
 def test_qec_min_prompt_uses_question_then_atom_then_fallback_cues(tmp_path: Path) -> None:
     raw_path, trace_path = _write_qec_inputs(tmp_path)
 
@@ -401,6 +437,94 @@ def test_mrec_min_falls_back_to_compat_chain_steps_when_mrec_steps_are_absent(tm
     assert "Compat evidence override." in prompt
     assert row["mrec_prompt_steps"][0]["source"] == "compat_chain_steps"
     assert row["mrec_prompt_steps"][0]["cue_type"] == "compat_chain_step"
+
+
+def test_mrec_prompt_evidence_minmax_policy_stops_after_target_state(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_mrec_policy_inputs(tmp_path)
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="mrec_min",
+        expected_selector_name="test_selector",
+        top_k=99,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+        prompt_evidence_config={
+            "policy": "minmax",
+            "min_evidence_count": 2,
+            "max_evidence_count": 4,
+        },
+    )
+
+    row = rows[0]
+    assert row["selector_trace"]["selected_indices"] == [0, 1]
+    assert [step["evidence_id"] for step in row["mrec_prompt_steps"]] == ["E40", "E41"]
+    assert row["prompt_evidence_policy"] == "minmax"
+    assert row["prompt_evidence_min_count"] == 2
+    assert row["prompt_evidence_max_count"] == 4
+    assert row["prompt_evidence_selected_count_before_prompt_truncation"] == 2
+    assert row["prompt_evidence_stop_reason"] == "target_resolved"
+    assert report["prompt_evidence"]["policy"] == "minmax"
+    assert report["prompt_evidence"]["stop_reasons"] == {"target_resolved": 1}
+
+
+def test_mrec_prompt_evidence_budget_policy_records_max_length_guard(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_mrec_policy_inputs(tmp_path)
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="mrec_min",
+        expected_selector_name="test_selector",
+        top_k=99,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+        prompt_evidence_config={
+            "policy": "budget",
+            "min_evidence_count": 1,
+            "max_evidence_count": 4,
+            "evidence_token_budget": 9,
+            "max_length_guard": {
+                "enabled": True,
+                "build_prompt_max_length": 50,
+                "sft_train_max_length": 10,
+                "reserve_tokens": 0,
+                "on_violation": "warn",
+            },
+        },
+    )
+
+    row = rows[0]
+    assert row["selector_trace"]["selected_indices"] == [0, 1]
+    assert row["prompt_evidence_policy"] == "budget"
+    assert row["prompt_evidence_token_budget"] == 9
+    assert row["prompt_evidence_selected_count_before_prompt_truncation"] == 2
+    assert row["prompt_evidence_stop_reason"] == "token_budget_exhausted"
+    assert report["prompt_evidence"]["policy"] == "budget"
+    assert report["prompt_evidence"]["stop_reasons"] == {"token_budget_exhausted": 1}
+    assert report["max_length_guard"]["enabled"] is True
+    assert report["max_length_guard"]["on_violation"] == "warn"
+    assert report["max_length_guard"]["config_conflict"] is True
+    assert report["max_length_guard"]["violation_count"] == 1
 
 
 def test_rawfc_boundaries_prompt_style_uses_rawfc_three_label_boundaries() -> None:
@@ -803,6 +927,91 @@ def _write_mrec_inputs(
     }
     if use_compat_only:
         trace.pop("mrec_steps")
+    trace_path = tmp_path / "trace.jsonl"
+    trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
+    return raw_path, trace_path
+
+
+def _write_mrec_policy_inputs(tmp_path: Path) -> tuple[Path, Path]:
+    raw_row = {
+        "event_id": "event-mrec-policy",
+        "claim": "Original claim",
+        "label": "true",
+        "explain": "",
+        "reports": [],
+    }
+    raw_path = tmp_path / "val.json"
+    raw_path.write_text(json.dumps([raw_row]), encoding="utf-8")
+
+    candidate_pool = []
+    mrec_steps = []
+    for idx, (evidence_id, cue, token_cost, target_resolved) in enumerate(
+        (
+            ("E40", "First cue", 4, False),
+            ("E41", "Second cue", 5, True),
+            ("E42", "Third cue", 7, True),
+            ("E43", "Fourth cue", 3, True),
+        )
+    ):
+        candidate_pool.append(
+            {
+                "text": f"Candidate {idx} evidence text.",
+                "candidate_idx": idx,
+                "evidence_id": evidence_id,
+                "covered_atom_ids": ["A1"],
+                "map_relation": "support",
+                "map_directness": "direct",
+            }
+        )
+        mrec_steps.append(
+            {
+                "step": idx + 1,
+                "operation": "OPEN" if idx == 0 else "CORROBORATE",
+                "atom_id": "A1",
+                "atom_text": "First atom",
+                "state_before": "U" if idx == 0 else "S",
+                "state_after": "S",
+                "cue_text": cue,
+                "cue_source": "claim_atom",
+                "candidate_idx": idx,
+                "selector_candidate_idx": idx,
+                "evidence_id": evidence_id,
+                "evidence_text": f"{evidence_id} evidence override.",
+                "covered_atom_ids": ["A1"],
+                "relation": "support",
+                "directness": "direct",
+                "token_cost": token_cost,
+                "trace_state": {
+                    "selected_count": idx + 1,
+                    "cumulative_token_cost": sum(step["token_cost"] for step in mrec_steps) + token_cost,
+                    "resolved_atom_rate": 1.0 if target_resolved else 0.0,
+                    "target_resolved": target_resolved,
+                    "unresolved_atom_ids": [] if target_resolved else ["A1"],
+                    "conflicted_atom_ids": [],
+                    "atom_states_after": {"A1": "S" if target_resolved else "U"},
+                },
+            }
+        )
+
+    trace = {
+        "event_id": "event-mrec-policy",
+        "selector_name": "test_selector",
+        "fingerprint": "fp",
+        "candidate_pool": candidate_pool,
+        "candidate_scores": [{"candidate_idx": idx} for idx in range(len(candidate_pool))],
+        "selector_ordered_indices": list(range(len(candidate_pool))),
+        "oracle_ordered_indices": [0],
+        "claim_atoms": [{"atom_id": "A1", "text": "First atom", "importance": 1.0}],
+        "mrec_trace_version": "mrec_trace_v0_1",
+        "mrec_selector_name": "mrec_greedy_transition_v0_1",
+        "atom_states_initial": {"A1": "U"},
+        "atom_states_final": {"A1": "S"},
+        "mrec_diagnostics": {
+            "stop_reason": "reached_max_steps",
+            "resolved_atom_rate": 1.0,
+        },
+        "mrec_steps": mrec_steps,
+    }
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
     return raw_path, trace_path

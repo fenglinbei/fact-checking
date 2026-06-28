@@ -172,6 +172,44 @@ def test_rawfc_atom_facts_abc_all_splits_wrapper_defaults() -> None:
     assert "run_evidence_chain_graph_v0_7_atom_facts_abc.sh" in text
 
 
+def test_rawfc_atom_anchor_abc_all_splits_wrapper_uses_liar_raw_atom_union_shape() -> None:
+    path = ROOT / "scripts/phase5_selectors/run/run_rawfc_atom_anchor_abc_v0_1_all_splits.sh"
+
+    subprocess.run(["bash", "-n", str(path)], cwd=ROOT, check=True)
+    text = path.read_text(encoding="utf-8")
+
+    assert "ATOM_ANCHOR_ROOT=\"${ATOM_ANCHOR_ROOT:-outputs/selectors/atom_anchor/rawfc_abc_v0_1}\"" in text
+    assert "CONFIG=\"${CONFIG:-configs/experiment/v0.6/v0_6c_rawfc3_rule_step_adaptive5_10_abc_chunking.yaml}\"" in text
+    assert "RAW_DATASET=\"${RAW_DATASET:-rawfc}\"" in text
+    assert "LABEL_SCHEMA=\"${LABEL_SCHEMA:-rawfc3}\"" in text
+    assert "PROMPT_VERSION=\"${PROMPT_VERSION:-atom_evidence_map_v0_1}\"" in text
+    assert "BASELINE_TOP_K=\"${BASELINE_TOP_K:-$SELECTOR_TOP_K}\"" in text
+    assert "generate_claim_atom_cache.py" in text
+    assert "build_atom_conditioned_retrieval.py" in text
+    assert "--baseline-top-k \"$BASELINE_TOP_K\"" in text
+    assert "build_atom_retrieval_union.py" in text
+    assert "prepare_evidence_map_candidate_pool.py" in text
+    assert "annotate_evidence_maps_deepseek.py" in text
+    assert "postprocess_evidence_maps.py" in text
+    assert "audit_atom_anchor_outputs.py" in text
+    assert "--candidate-source" in text
+    assert "atom_union" in text
+    assert "build_question_decomp_retrieval.py" not in text
+    assert "build_question_decomp_union.py" not in text
+
+
+def test_rawfc_atom_anchor_abc_baseline20_wrapper_sets_separate_baseline_pool() -> None:
+    path = ROOT / "scripts/phase5_selectors/run/run_rawfc_atom_anchor_abc_v0_1_baseline20_all_splits.sh"
+
+    subprocess.run(["bash", "-n", str(path)], cwd=ROOT, check=True)
+    text = path.read_text(encoding="utf-8")
+
+    assert "ATOM_ANCHOR_ROOT=\"${ATOM_ANCHOR_ROOT:-outputs/selectors/atom_anchor/rawfc_abc_v0_1_baseline20}\"" in text
+    assert "BASELINE_TOP_K=\"${BASELINE_TOP_K:-20}\"" in text
+    assert "SELECTOR_TOP_K=\"${SELECTOR_TOP_K:-5}\"" in text
+    assert "run_rawfc_atom_anchor_abc_v0_1_all_splits.sh" in text
+
+
 def test_rawfc_atom_facts_abc_tight_all_splits_wrapper_defaults() -> None:
     path = ROOT / "scripts/phase5_selectors/run/run_rawfc_v0_7_atom_facts_abc_tight_all_splits.sh"
 

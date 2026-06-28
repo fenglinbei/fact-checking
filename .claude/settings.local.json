@@ -54,7 +54,8 @@
       "Read(//etc/**)",
       "Bash(systemctl status *)",
       "Bash(netstat -tlnp)",
-      "Bash(tar czf *)"
+      "Bash(tar czf *)",
+      "Bash(ps *)"
     ]
   }
 }

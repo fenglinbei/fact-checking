@@ -4,7 +4,13 @@ import importlib.util
 
 
 def flash_attn2_available() -> bool:
-    return importlib.util.find_spec("flash_attn") is not None
+    if importlib.util.find_spec("flash_attn") is None:
+        return False
+    try:
+        importlib.import_module("flash_attn")
+    except Exception:
+        return False
+    return True
 
 
 def fla_fast_path_available() -> bool:

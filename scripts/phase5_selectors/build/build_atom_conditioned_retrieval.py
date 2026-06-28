@@ -17,8 +17,8 @@ from fact_checking.retrieval.embedder import EmbedderConfig, TextEmbedder
 from fact_checking.selectors.atom_conditioned_retrieval import (
     AtomRetrievalParams,
     align_atoms_and_chunks,
+    build_atom_baseline_claim_mmr_row,
     build_atom_conditioned_retrieval_row,
-    build_baseline_claim_mmr_row,
     compute_retrieval_metrics,
     oracle_selected_texts_by_event,
 )
@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--per-atom-keep", type=int, default=20)
     p.add_argument("--merged-pool-size", type=int, default=15)
     p.add_argument("--selector-top-k", type=int, default=5)
+    p.add_argument("--baseline-top-k", type=int, default=None)
     p.add_argument("--rrf-k", type=float, default=60.0)
     p.add_argument("--atom-weight", type=float, default=1.0)
     p.add_argument("--merge-mmr-lambda", type=float, default=0.70)
@@ -87,6 +88,7 @@ def main() -> None:
         per_atom_keep=int(args.per_atom_keep),
         merged_pool_size=int(args.merged_pool_size),
         selector_top_k=int(args.selector_top_k),
+        baseline_top_k=int(args.baseline_top_k) if args.baseline_top_k is not None else None,
         rrf_k=float(args.rrf_k),
         atom_weight=float(args.atom_weight),
         merge_mmr_lambda=float(args.merge_mmr_lambda),
@@ -108,7 +110,7 @@ def main() -> None:
             atom_embeddings=atom_embeddings,
             params=params,
         )
-        baseline_row = build_baseline_claim_mmr_row(sample, params=params)
+        baseline_row = build_atom_baseline_claim_mmr_row(sample, params=params)
         _add_baseline_overlap(retrieval_row, baseline_row)
         atom_retrieval_rows.append(retrieval_row)
         baseline_rows.append(baseline_row)

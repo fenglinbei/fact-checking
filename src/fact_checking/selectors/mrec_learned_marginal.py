@@ -10,6 +10,8 @@ from typing import Any, Mapping, Sequence
 
 
 WEIGHT_SCHEMA_VERSION = "mrec_learned_marginal_proxy_weights_v0_2"
+REWARD_WEIGHT_SCHEMA_VERSION = "mrec_learned_marginal_reward_weights_v0_2"
+SUPPORTED_WEIGHT_SCHEMA_VERSIONS = {WEIGHT_SCHEMA_VERSION, REWARD_WEIGHT_SCHEMA_VERSION}
 FEATURE_NAMES = (
     "resolution_delta",
     "entropy_reduction",
@@ -70,6 +72,7 @@ class LearnedMarginalWeights:
     feature_weights: dict[str, float]
     cost_weight: float
     schema_version: str = WEIGHT_SCHEMA_VERSION
+    bias: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def normalized(self) -> "LearnedMarginalWeights":
@@ -81,6 +84,7 @@ class LearnedMarginalWeights:
             feature_weights=feature_weights,
             cost_weight=max(0.0, _float_or_default(self.cost_weight, 0.0)),
             schema_version=str(self.schema_version or WEIGHT_SCHEMA_VERSION),
+            bias=_float_or_default(self.bias, 0.0),
             metadata=dict(self.metadata),
         )
 
@@ -94,6 +98,7 @@ class LearnedMarginalWeights:
                 for name in POSITIVE_FEATURE_NAMES
             },
             "cost_weight": float(normalized.cost_weight),
+            "bias": float(normalized.bias),
             "metadata": dict(normalized.metadata),
         }
 
@@ -118,6 +123,17 @@ def initial_learned_marginal_weights() -> LearnedMarginalWeights:
     )
 
 
+def initial_learned_marginal_reward_weights() -> LearnedMarginalWeights:
+    seed = initial_learned_marginal_weights().normalized()
+    return LearnedMarginalWeights(
+        feature_weights=dict(seed.feature_weights),
+        cost_weight=float(seed.cost_weight),
+        schema_version=REWARD_WEIGHT_SCHEMA_VERSION,
+        bias=0.0,
+        metadata={"initialized_from": "proxy_hand_seed_v0_2"},
+    )
+
+
 def load_learned_marginal_weights(path: str | Path | None, *, allow_default: bool = True) -> LearnedMarginalWeights:
     if path is None or not str(path):
         if allow_default:
@@ -129,7 +145,8 @@ def load_learned_marginal_weights(path: str | Path | None, *, allow_default: boo
 @lru_cache(maxsize=16)
 def _load_learned_marginal_weights_cached(path: str) -> LearnedMarginalWeights:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if str(payload.get("schema_version") or "") != WEIGHT_SCHEMA_VERSION:
+    schema_version = str(payload.get("schema_version") or "")
+    if schema_version not in SUPPORTED_WEIGHT_SCHEMA_VERSIONS:
         raise ValueError(f"unsupported learned marginal weight schema: {payload.get('schema_version')!r}")
     feature_weights = payload.get("feature_weights") or {}
     if not isinstance(feature_weights, Mapping):
@@ -137,7 +154,8 @@ def _load_learned_marginal_weights_cached(path: str) -> LearnedMarginalWeights:
     return LearnedMarginalWeights(
         feature_weights={name: _float_or_default(feature_weights.get(name), 0.0) for name in POSITIVE_FEATURE_NAMES},
         cost_weight=_float_or_default(payload.get("cost_weight"), 0.0),
-        schema_version=str(payload.get("schema_version") or WEIGHT_SCHEMA_VERSION),
+        schema_version=schema_version,
+        bias=_float_or_default(payload.get("bias"), 0.0),
         metadata=dict(payload.get("metadata") or {}),
     )
 
@@ -277,7 +295,7 @@ def extract_marginal_features(
 
 def score_marginal_features(features: Mapping[str, Any], weights: LearnedMarginalWeights | Mapping[str, Any]) -> float:
     learned = _coerce_weights(weights)
-    score = 0.0
+    score = float(learned.bias)
     for name in POSITIVE_FEATURE_NAMES:
         score += float(learned.feature_weights.get(name, 0.0)) * _clip01(_float_or_default(features.get(name), 0.0))
     score -= float(learned.cost_weight) * _clip01(_float_or_default(features.get("cost_ratio"), 0.0))
@@ -456,6 +474,204 @@ def train_learned_marginal_proxy_weights(
     return learned, {"pair_count": int(pair_count), "final_loss": final_loss, "epochs": int(epochs)}
 
 
+def train_learned_marginal_reward_weights(
+    reward_rows: Sequence[Mapping[str, Any]],
+    *,
+    epochs: int = 30,
+    learning_rate: float = 0.03,
+    pairwise_weight: float = 1.0,
+    listwise_weight: float = 0.2,
+    huber_weight: float = 0.2,
+    prior_weight: float = 0.02,
+    soft_tau: float = 0.3,
+    pairwise_eps: float = 1.0e-6,
+    max_pairs_per_group: int = 64,
+    prior_weights: LearnedMarginalWeights | Mapping[str, Any] | None = None,
+) -> tuple[LearnedMarginalWeights, dict[str, Any]]:
+    import torch
+    import torch.nn.functional as F
+
+    groups = _reward_training_groups(reward_rows)
+    pair_pos: list[list[float]] = []
+    pair_neg: list[list[float]] = []
+    group_features: list[list[list[float]]] = []
+    group_deltas: list[list[float]] = []
+    all_deltas: list[float] = []
+
+    for rows in groups.values():
+        if len(rows) < 2:
+            continue
+        features = [_feature_vector(_reward_row_features(row)) for row in rows]
+        deltas = [_float_or_default(row.get("delta_margin"), 0.0) for row in rows]
+        group_features.append(features)
+        group_deltas.append(deltas)
+        all_deltas.extend(deltas)
+
+        ordered = sorted(range(len(rows)), key=lambda idx: (deltas[idx], -idx), reverse=True)
+        added = 0
+        for pos_rank, pos_idx in enumerate(ordered):
+            for neg_idx in ordered[pos_rank + 1 :]:
+                if deltas[pos_idx] <= deltas[neg_idx] + float(pairwise_eps):
+                    continue
+                pair_pos.append(features[pos_idx])
+                pair_neg.append(features[neg_idx])
+                added += 1
+                if int(max_pairs_per_group) > 0 and added >= int(max_pairs_per_group):
+                    break
+            if int(max_pairs_per_group) > 0 and added >= int(max_pairs_per_group):
+                break
+
+    if not group_features or not all_deltas:
+        weights = initial_learned_marginal_reward_weights()
+        return weights, {
+            "row_count": int(len(reward_rows)),
+            "group_count": 0,
+            "pair_count": 0,
+            "final_loss": 0.0,
+            "epochs": 0,
+        }
+
+    delta_scale = _robust_delta_scale(all_deltas)
+    initial = _coerce_weights(prior_weights) if prior_weights is not None else initial_learned_marginal_reward_weights()
+    theta = torch.nn.Parameter(torch.tensor([
+        _inverse_softplus(float(initial.feature_weights.get(name, 0.0)))
+        for name in POSITIVE_FEATURE_NAMES
+    ], dtype=torch.float32))
+    theta_cost = torch.nn.Parameter(torch.tensor(_inverse_softplus(initial.cost_weight), dtype=torch.float32))
+    bias = torch.nn.Parameter(torch.tensor(float(getattr(initial, "bias", 0.0)), dtype=torch.float32))
+    optimizer = torch.optim.Adam([theta, theta_cost, bias], lr=float(learning_rate))
+
+    pos_tensor = torch.tensor(pair_pos, dtype=torch.float32) if pair_pos else None
+    neg_tensor = torch.tensor(pair_neg, dtype=torch.float32) if pair_neg else None
+    feature_tensors = [torch.tensor(group, dtype=torch.float32) for group in group_features]
+    delta_tensors = [torch.tensor(deltas, dtype=torch.float32) for deltas in group_deltas]
+    target_tensors = [
+        torch.clamp(delta_tensor / float(delta_scale), min=-5.0, max=5.0)
+        for delta_tensor in delta_tensors
+    ]
+    prior = initial.normalized()
+    prior_feature_weights = torch.tensor([
+        float(prior.feature_weights.get(name, 0.0)) for name in POSITIVE_FEATURE_NAMES
+    ], dtype=torch.float32)
+    prior_cost_weight = torch.tensor(float(prior.cost_weight), dtype=torch.float32)
+
+    final_loss = 0.0
+    for _ in range(max(1, int(epochs))):
+        optimizer.zero_grad()
+        positive_weights = F.softplus(theta)
+        cost_weight = F.softplus(theta_cost)
+        loss = torch.tensor(0.0, dtype=torch.float32)
+
+        if pos_tensor is not None and neg_tensor is not None and pos_tensor.numel() > 0:
+            pos_score = _score_feature_tensor(pos_tensor, positive_weights, cost_weight, bias)
+            neg_score = _score_feature_tensor(neg_tensor, positive_weights, cost_weight, bias)
+            loss = loss + float(pairwise_weight) * F.softplus(-(pos_score - neg_score)).mean()
+
+        if float(listwise_weight) > 0.0 or float(huber_weight) > 0.0:
+            listwise_losses: list[torch.Tensor] = []
+            huber_losses: list[torch.Tensor] = []
+            for feature_tensor, delta_tensor, target_tensor in zip(feature_tensors, delta_tensors, target_tensors):
+                scores = _score_feature_tensor(feature_tensor, positive_weights, cost_weight, bias)
+                if float(listwise_weight) > 0.0:
+                    targets = torch.softmax(delta_tensor / max(float(soft_tau), 1.0e-6), dim=0)
+                    log_probs = torch.log_softmax(scores, dim=0)
+                    listwise_losses.append(-(targets * log_probs).sum())
+                if float(huber_weight) > 0.0:
+                    huber_losses.append(F.smooth_l1_loss(scores, target_tensor))
+            if listwise_losses:
+                loss = loss + float(listwise_weight) * torch.stack(listwise_losses).mean()
+            if huber_losses:
+                loss = loss + float(huber_weight) * torch.stack(huber_losses).mean()
+
+        if float(prior_weight) > 0.0:
+            prior_loss = F.mse_loss(positive_weights, prior_feature_weights) + F.mse_loss(cost_weight, prior_cost_weight)
+            loss = loss + float(prior_weight) * prior_loss
+
+        loss.backward()
+        optimizer.step()
+        final_loss = float(loss.detach().cpu().item())
+
+    learned = LearnedMarginalWeights(
+        feature_weights={
+            name: float(F.softplus(theta).detach().cpu()[idx].item())
+            for idx, name in enumerate(POSITIVE_FEATURE_NAMES)
+        },
+        cost_weight=float(F.softplus(theta_cost).detach().cpu().item()),
+        schema_version=REWARD_WEIGHT_SCHEMA_VERSION,
+        bias=float(bias.detach().cpu().item()),
+        metadata={
+            "trained_from": "verifier_delta_margin_reward",
+            "row_count": int(len(reward_rows)),
+            "group_count": int(len(group_features)),
+            "pair_count": int(len(pair_pos)),
+            "epochs": int(epochs),
+            "learning_rate": float(learning_rate),
+            "delta_scale": float(delta_scale),
+            "loss_weights": {
+                "pairwise": float(pairwise_weight),
+                "listwise": float(listwise_weight),
+                "huber": float(huber_weight),
+                "prior": float(prior_weight),
+            },
+            "soft_tau": float(soft_tau),
+        },
+    )
+    return learned, {
+        "row_count": int(len(reward_rows)),
+        "group_count": int(len(group_features)),
+        "pair_count": int(len(pair_pos)),
+        "final_loss": final_loss,
+        "epochs": int(epochs),
+        "delta_scale": float(delta_scale),
+    }
+
+
+def evaluate_learned_marginal_reward_weights(
+    reward_rows: Sequence[Mapping[str, Any]],
+    weights: LearnedMarginalWeights | Mapping[str, Any],
+) -> dict[str, Any]:
+    groups = _reward_training_groups(reward_rows)
+    total_pairs = 0
+    correct_pairs = 0
+    total_groups = 0
+    top1_matches = 0
+    scored_rows = 0
+    for rows in groups.values():
+        if len(rows) < 2:
+            continue
+        scored = [
+            (
+                score_marginal_features(_reward_row_features(row), weights),
+                _float_or_default(row.get("delta_margin"), 0.0),
+                idx,
+            )
+            for idx, row in enumerate(rows)
+        ]
+        scored_rows += len(scored)
+        best_score_idx = max(range(len(scored)), key=lambda idx: (scored[idx][0], -idx))
+        best_delta_idx = max(range(len(scored)), key=lambda idx: (scored[idx][1], -idx))
+        top1_matches += int(best_score_idx == best_delta_idx)
+        total_groups += 1
+        for i in range(len(scored)):
+            for j in range(i + 1, len(scored)):
+                delta_i = scored[i][1]
+                delta_j = scored[j][1]
+                if abs(delta_i - delta_j) <= 1.0e-6:
+                    continue
+                total_pairs += 1
+                score_i = scored[i][0]
+                score_j = scored[j][0]
+                correct_pairs += int((delta_i > delta_j and score_i > score_j) or (delta_j > delta_i and score_j > score_i))
+    return {
+        "row_count": int(len(reward_rows)),
+        "scored_row_count": int(scored_rows),
+        "group_count": int(total_groups),
+        "pair_count": int(total_pairs),
+        "pair_accuracy": float(correct_pairs / total_pairs) if total_pairs else 0.0,
+        "step_top1_match": float(top1_matches / total_groups) if total_groups else 0.0,
+    }
+
+
 def _coerce_weights(weights: LearnedMarginalWeights | Mapping[str, Any]) -> LearnedMarginalWeights:
     if isinstance(weights, LearnedMarginalWeights):
         return weights.normalized()
@@ -463,7 +679,58 @@ def _coerce_weights(weights: LearnedMarginalWeights | Mapping[str, Any]) -> Lear
     return LearnedMarginalWeights(
         feature_weights=dict(feature_weights or {}),
         cost_weight=_float_or_default(weights.get("cost_weight") if isinstance(weights, Mapping) else 0.0, 0.0),
+        schema_version=str(weights.get("schema_version") or WEIGHT_SCHEMA_VERSION) if isinstance(weights, Mapping) else WEIGHT_SCHEMA_VERSION,
+        bias=_float_or_default(weights.get("bias") if isinstance(weights, Mapping) else 0.0, 0.0),
     ).normalized()
+
+
+def _score_feature_tensor(features: Any, positive_weights: Any, cost_weight: Any, bias: Any) -> Any:
+    return (features[:, :-1] * positive_weights).sum(dim=1) - features[:, -1] * cost_weight + bias
+
+
+def _reward_training_groups(rows: Sequence[Mapping[str, Any]]) -> dict[tuple[str, int], list[Mapping[str, Any]]]:
+    groups: dict[tuple[str, int], list[Mapping[str, Any]]] = {}
+    for row in rows:
+        event_id = _compact(row.get("event_id") or "")
+        if not event_id:
+            continue
+        try:
+            step = int(row.get("step", 0))
+        except (TypeError, ValueError):
+            continue
+        features = _reward_row_features(row)
+        if not features:
+            continue
+        if row.get("delta_margin") is None:
+            continue
+        groups.setdefault((event_id, step), []).append(row)
+    return groups
+
+
+def _reward_row_features(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    for key in ("mrec_features", "utility_features", "features"):
+        value = row.get(key)
+        if isinstance(value, Mapping):
+            return value
+    return {
+        name: row.get(name)
+        for name in FEATURE_NAMES
+        if row.get(name) is not None
+    }
+
+
+def _robust_delta_scale(values: Sequence[float]) -> float:
+    ordered = sorted(float(value) for value in values if math.isfinite(float(value)))
+    if not ordered:
+        return 1.0
+    median = ordered[len(ordered) // 2]
+    abs_devs = sorted(abs(value - median) for value in ordered)
+    mad = abs_devs[len(abs_devs) // 2] if abs_devs else 0.0
+    if mad > 1.0e-6:
+        return max(1.4826 * mad, 1.0e-3)
+    mean = sum(ordered) / len(ordered)
+    variance = sum((value - mean) ** 2 for value in ordered) / max(len(ordered), 1)
+    return max(math.sqrt(variance), 1.0e-3)
 
 
 def _feature_vector(features: Mapping[str, Any]) -> list[float]:

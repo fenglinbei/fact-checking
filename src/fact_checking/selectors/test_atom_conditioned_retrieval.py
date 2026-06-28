@@ -5,6 +5,7 @@ import unittest
 import numpy as np
 
 from fact_checking.build.candidates import ChunkMMRSample
+from fact_checking.selectors import atom_conditioned_retrieval as acr
 from fact_checking.selectors.atom_conditioned_retrieval import (
     AtomRetrievalParams,
     align_atoms_and_chunks,
@@ -94,6 +95,45 @@ class AtomConditionedRetrievalTest(unittest.TestCase):
         self.assertEqual(row["claim_atoms"][0]["atom_id"], "A1")
         self.assertEqual(row["selected_evidence"][0]["text"], "target evidence")
         self.assertEqual(row["merged_candidate_pool"][0]["atom_pool_rank"], 1)
+
+    def test_baseline_top_k_can_exceed_atom_selector_top_k(self) -> None:
+        texts = [f"target evidence {idx}" for idx in range(8)]
+        sample = self._sample(
+            "event0",
+            texts=texts,
+            embeddings=[[1.0, float(idx) / 10.0] for idx in range(8)],
+        )
+        params = AtomRetrievalParams(
+            per_atom_keep=8,
+            merged_pool_size=8,
+            selector_top_k=3,
+            baseline_top_k=8,
+            alpha_dense=1.0,
+            alpha_lexical=0.0,
+            alpha_bm25=0.0,
+        )
+        atom_row = {
+            "event_id": "event0",
+            "claim": "target claim",
+            "claim_atoms": [
+                {
+                    "atom_id": "A1",
+                    "proposition": "target claim",
+                    "query_rendering": "target evidence?",
+                }
+            ],
+        }
+
+        baseline = acr.build_atom_baseline_claim_mmr_row(sample, params=params)
+        atom_row_out = build_atom_conditioned_retrieval_row(
+            atom_row,
+            sample,
+            atom_embeddings={("event0", "A1"): np.asarray([1.0, 0.0], dtype=np.float32)},
+            params=params,
+        )
+
+        self.assertEqual(len(baseline["candidates"]), 8)
+        self.assertEqual(len(atom_row_out["selected_evidence"]), 3)
 
     @staticmethod
     def _sample(

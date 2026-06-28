@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Sequence
 
 import numpy as np
@@ -20,6 +20,7 @@ class AtomRetrievalParams:
     per_atom_keep: int = 20
     merged_pool_size: int = 15
     selector_top_k: int = 5
+    baseline_top_k: int | None = None
     rrf_k: float = 60.0
     atom_weight: float = 1.0
     merge_mmr_lambda: float = 0.70
@@ -125,6 +126,16 @@ def build_atom_conditioned_retrieval_row(
         "merged_candidate_pool": pool,
         "selected_evidence": selected,
     }
+
+
+def build_atom_baseline_claim_mmr_row(
+    sample: ChunkMMRSample,
+    *,
+    params: AtomRetrievalParams,
+) -> dict[str, Any]:
+    baseline_top_k = int(params.baseline_top_k) if params.baseline_top_k is not None else int(params.selector_top_k)
+    baseline_params = replace(params, selector_top_k=baseline_top_k)
+    return build_baseline_claim_mmr_row(sample, params=baseline_params)
 
 
 def merge_atom_routes(
@@ -297,6 +308,7 @@ def _metric_delta(left: dict[str, Any], right: dict[str, Any]) -> dict[str, floa
 __all__ = [
     "AtomRetrievalParams",
     "align_atoms_and_chunks",
+    "build_atom_baseline_claim_mmr_row",
     "build_atom_conditioned_retrieval_row",
     "build_baseline_claim_mmr_row",
     "compute_retrieval_metrics",

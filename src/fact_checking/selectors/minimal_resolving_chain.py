@@ -25,8 +25,10 @@ TokenCostFn = Callable[[Mapping[str, Any]], int]
 
 MREC_SELECTOR_NAME = "mrec_greedy_transition_v0_1"
 MREC_SELECTOR_NAME_V0_2_LEARNED_MARGINAL_PROXY = "mrec_greedy_transition_v0_2_learned_marginal_proxy"
+MREC_SELECTOR_NAME_V0_2_LEARNED_MARGINAL_REWARD = "mrec_greedy_transition_v0_2_learned_marginal_reward"
 MREC_SELECTION_POLICY_TRANSITION_V0_1 = "transition_v0_1"
 MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY = "learned_marginal_proxy"
+MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD = "learned_marginal_reward"
 FALLBACK_CUE = "Verify the main factual claim."
 
 _RESOLVING_STATES = {"S", "R", "Q", "C"}
@@ -43,6 +45,7 @@ _POST_TARGET_FILL_POLICIES = {"none", "contrast_only", "contrast_then_support"}
 _SELECTION_POLICIES = {
     MREC_SELECTION_POLICY_TRANSITION_V0_1,
     MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
+    MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD,
 }
 
 
@@ -150,7 +153,7 @@ def _select_mrec_steps(
     params: MRECSelectorParams,
 ) -> dict[str, Any]:
     policy = _normalize_selection_policy(params.selection_policy)
-    if policy == MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY:
+    if policy in {MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY, MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD}:
         return _select_learned_marginal_steps(
             candidates,
             claim_atoms=claim_atoms,
@@ -183,9 +186,10 @@ def _select_transition_v0_1_steps(
     total_token_cost = 0
     stop_reason = ""
     min_steps = max(int(params.min_steps), 0)
+    max_steps = _effective_max_steps(params.max_steps, len(candidates))
     fill_policy = _normalize_post_target_fill_policy(params.post_target_fill_policy)
 
-    while len(steps) < max(int(params.max_steps), 0):
+    while len(steps) < max_steps:
         target_met = _resolved_rate(atom_states) >= float(params.target_resolved_rate)
         if target_met:
             fill_required = len(steps) < min_steps
@@ -242,6 +246,12 @@ def _select_transition_v0_1_steps(
                         steps.append(fallback["step"])
                         selected_indices.add(int(fallback["candidate_idx"]))
                         total_token_cost += int(fallback["token_cost"])
+                        _attach_trace_state(
+                            steps[-1],
+                            atom_states=atom_states,
+                            total_token_cost=total_token_cost,
+                            target_resolved_rate=float(params.target_resolved_rate),
+                        )
             break
 
         ranked.sort(key=_transition_sort_key)
@@ -270,13 +280,19 @@ def _select_transition_v0_1_steps(
         total_token_cost += int(pick["token_cost"])
         if step.get("atom_id"):
             atom_states[str(step["atom_id"])] = str(step["state_after"])
+        _attach_trace_state(
+            step,
+            atom_states=atom_states,
+            total_token_cost=total_token_cost,
+            target_resolved_rate=float(params.target_resolved_rate),
+        )
         duplicate_group = _compact(candidate.get("duplicate_group") or "")
         if duplicate_group:
             selected_duplicate_groups.add(duplicate_group)
         selected_texts.add(_normalize_text(candidate.get("text") or candidate.get("evidence_text") or ""))
 
     if not stop_reason:
-        stop_reason = "reached_max_steps" if len(steps) >= int(params.max_steps) else "no_valid_transition"
+        stop_reason = "reached_max_steps" if len(steps) >= max_steps else "no_valid_transition"
 
     rejected = _rejection_counts(candidates, selected_indices=selected_indices, selected_steps=steps)
     return {
@@ -295,6 +311,7 @@ def _select_learned_marginal_steps(
     initial_atom_states: dict[str, str],
     params: MRECSelectorParams,
 ) -> dict[str, Any]:
+    policy = _normalize_selection_policy(params.selection_policy)
     weights = load_learned_marginal_weights(params.weight_file, allow_default=True)
     weight_fingerprint = learned_marginal_weight_fingerprint(weights)
     atom_states = dict(initial_atom_states)
@@ -306,7 +323,7 @@ def _select_learned_marginal_steps(
     total_token_cost = 0
     stop_reason = ""
     min_steps = max(int(params.min_steps), 0)
-    max_steps = max(int(params.max_steps), 0)
+    max_steps = _effective_max_steps(params.max_steps, len(candidates))
     pool_max_token_cost = max([int(candidate.get("mrec_token_cost") or 0) for candidate in candidates] or [1])
 
     while len(steps) < max_steps:
@@ -364,6 +381,12 @@ def _select_learned_marginal_steps(
                         steps.append(fallback["step"])
                         selected_indices.add(int(fallback["candidate_idx"]))
                         total_token_cost += int(fallback["token_cost"])
+                        _attach_trace_state(
+                            steps[-1],
+                            atom_states=atom_states,
+                            total_token_cost=total_token_cost,
+                            target_resolved_rate=float(params.target_resolved_rate),
+                        )
             break
 
         ranked.sort(key=_learned_marginal_sort_key)
@@ -393,7 +416,7 @@ def _select_learned_marginal_steps(
         step["post_target_fill"] = bool(target_met)
         step["utility_score"] = float(pick.get("utility_score") or 0.0)
         step["utility_features"] = dict(pick.get("utility_features") or {})
-        step["selection_policy"] = MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY
+        step["selection_policy"] = policy
         _copy_step_metadata(step, candidate)
         steps.append(step)
         selected_indices.add(idx)
@@ -405,6 +428,12 @@ def _select_learned_marginal_steps(
                 atom_id=str(step["atom_id"]),
                 relation=str(step.get("relation") or ""),
             )
+        _attach_trace_state(
+            step,
+            atom_states=atom_states,
+            total_token_cost=total_token_cost,
+            target_resolved_rate=float(params.target_resolved_rate),
+        )
         duplicate_group = _compact(candidate.get("duplicate_group") or "")
         if duplicate_group:
             selected_duplicate_groups.add(duplicate_group)
@@ -610,6 +639,35 @@ def _mrec_diagnostics(
         }
     )
     return summary
+
+
+def _effective_max_steps(max_steps: Any, candidate_count: int) -> int:
+    parsed = _int_or_default(max_steps, 0)
+    if parsed <= 0:
+        return max(int(candidate_count), 0)
+    return parsed
+
+
+def _attach_trace_state(
+    step: dict[str, Any],
+    *,
+    atom_states: Mapping[str, str],
+    total_token_cost: int,
+    target_resolved_rate: float,
+) -> None:
+    states = {str(key): str(value) for key, value in atom_states.items()}
+    unresolved = sorted(atom_id for atom_id, state in states.items() if state == "U")
+    conflicted = sorted(atom_id for atom_id, state in states.items() if state == "C")
+    resolved_rate = _resolved_rate(states)
+    step["trace_state"] = {
+        "selected_count": int(step.get("step") or 0),
+        "cumulative_token_cost": int(total_token_cost),
+        "resolved_atom_rate": float(resolved_rate),
+        "target_resolved": bool(resolved_rate >= float(target_resolved_rate)),
+        "unresolved_atom_ids": unresolved,
+        "conflicted_atom_ids": conflicted,
+        "atom_states_after": dict(states),
+    }
 
 
 def _candidate_pool(

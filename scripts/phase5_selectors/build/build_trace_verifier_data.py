@@ -42,6 +42,7 @@ SELECTION_MODES = (
 )
 TRACE_PROMPT_STYLES = ("plain", "trace_lite", "rawfc_boundaries", "qec_min", "qec_map", "mrec_min")
 EVIDENCE_TEXT_MODES = ("full", "anchor_only")
+PROMPT_EVIDENCE_POLICIES = ("prefix_topk", "resolve_stop", "fixed_topk", "minmax", "budget")
 
 RAWFC_BOUNDARIES_SYSTEM_PROMPT = (
     "You are a careful fact-checking assistant for RAWFC claims. "
@@ -78,6 +79,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--prompt-output-mode", default=None)
     p.add_argument("--expected-selector-name", default="")
     p.add_argument("--top-k", type=int, default=DEFAULT_SELECTOR_TOP_K)
+    p.add_argument("--prompt-evidence-policy", default=None, choices=PROMPT_EVIDENCE_POLICIES)
+    p.add_argument("--prompt-evidence-min-count", type=int, default=None)
+    p.add_argument("--prompt-evidence-max-count", type=int, default=None)
+    p.add_argument("--prompt-evidence-token-budget", type=int, default=None)
+    p.add_argument("--prompt-evidence-max-length-guard", default=None, choices=("off", "warn", "error"))
+    p.add_argument("--allow-empty-evidence", action="store_true")
     p.add_argument("--random-seed", type=int, default=0)
     p.add_argument("--expected-chunk-mmr-fingerprint", default=EXPECTED_STAGE2_CHUNK_MMR_FINGERPRINT)
     p.add_argument("--prompt-model-name-or-path", default=None)
@@ -115,6 +122,7 @@ def main() -> None:
             args.model_base_path,
         )
     tokenizer = load_prompt_tokenizer(str(prompt_cfg["model_name_or_path"]))
+    prompt_evidence_config = _resolve_prompt_evidence_config(cfg, args=args, prompt_cfg=prompt_cfg)
 
     split_specs = []
     if not args.val_only:
@@ -147,6 +155,8 @@ def main() -> None:
             expected_chunk_mmr_fingerprint=str(args.expected_chunk_mmr_fingerprint or ""),
             sample_limit=args.sample_limit,
             show_progress=not args.no_progress,
+            prompt_evidence_config=prompt_evidence_config,
+            allow_empty_evidence=bool(args.allow_empty_evidence),
         )
         out_path = build_dir / f"build_{split}.jsonl"
         write_jsonl(out_path, rows)
@@ -181,6 +191,8 @@ def main() -> None:
         "top_k": int(args.top_k),
         "random_seed": int(args.random_seed),
         "expected_chunk_mmr_fingerprint": args.expected_chunk_mmr_fingerprint,
+        "prompt_evidence": _public_prompt_evidence_config(prompt_evidence_config),
+        "allow_empty_evidence": bool(args.allow_empty_evidence),
         "val_only": bool(args.val_only),
         "built_splits": sorted(built_split_paths),
         "built_split_paths": built_split_paths,
@@ -231,6 +243,8 @@ def _build_split(
     expected_chunk_mmr_fingerprint: str,
     sample_limit: int | None,
     show_progress: bool,
+    prompt_evidence_config: dict[str, Any] | None = None,
+    allow_empty_evidence: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if evidence_text_mode not in EVIDENCE_TEXT_MODES:
         raise ValueError(f"unsupported evidence_text_mode: {evidence_text_mode}")
@@ -247,6 +261,12 @@ def _build_split(
         trace_prompt_style=trace_prompt_style,
         label_schema=label_schema,
     )
+    prompt_evidence = _normalize_prompt_evidence_config(
+        prompt_evidence_config,
+        fallback_top_k=int(top_k),
+        prompt_cfg=prompt_cfg_for_style,
+    )
+    max_length_guard = dict(prompt_evidence.get("max_length_guard") or {})
 
     out_rows: list[dict[str, Any]] = []
     metric_traces: list[dict[str, Any]] = []
@@ -259,6 +279,10 @@ def _build_split(
     prompt_tokens: list[int] = []
     evidence_counts: list[int] = []
     evidence_counts_before: list[int] = []
+    prompt_policy_counter: Counter[str] = Counter()
+    prompt_policy_stop_counter: Counter[str] = Counter()
+    prompt_policy_selected_counts: list[int] = []
+    max_length_guard_violations: Counter[str] = Counter()
 
     iterator = tqdm(
         source_rows,
@@ -296,16 +320,37 @@ def _build_split(
             )
 
         try:
-            selected_indices = _select_indices(
-                trace,
-                mode=selection_mode,
-                top_k=top_k,
-                random_seed=random_seed,
-            )
-            candidates = _selected_candidates(trace, selected_indices, selection_mode=selection_mode)
+            pool = trace.get("candidate_pool") or []
+            if allow_empty_evidence and not pool:
+                selected_indices = []
+                prompt_evidence_decision = _prompt_evidence_decision(
+                    [],
+                    policy=str(prompt_evidence["policy"]),
+                    min_count=int(prompt_evidence.get("min_evidence_count") or 0),
+                    max_count=int(prompt_evidence.get("max_evidence_count") or 0),
+                    token_budget=prompt_evidence.get("evidence_token_budget"),
+                    total_token_cost=0,
+                    stop_reason="no_evidence",
+                )
+                candidates = []
+            else:
+                selector_top_k = int(top_k) if str(prompt_evidence["policy"]) == "prefix_topk" else 0
+                selected_indices = _select_indices(
+                    trace,
+                    mode=selection_mode,
+                    top_k=selector_top_k,
+                    random_seed=random_seed,
+                )
+                prompt_evidence_decision = _select_prompt_evidence_indices(
+                    trace,
+                    ordered_indices=selected_indices,
+                    config=prompt_evidence,
+                )
+                selected_indices = list(prompt_evidence_decision["selected_indices"])
+                candidates = _selected_candidates(trace, selected_indices, selection_mode=selection_mode)
         except ValueError as exc:
             raise ValueError(f"{split}:{event_id}: {exc}") from exc
-        if not candidates:
+        if not candidates and not allow_empty_evidence:
             skipped["no_selected_evidence"] += 1
             continue
         candidates = _apply_evidence_text_mode(candidates, evidence_text_mode)
@@ -355,6 +400,21 @@ def _build_split(
         training_row = build_training_row(retrieval_row, tokenizer, prompt_cfg_for_style)
         training_row["trace_prompt_style"] = trace_prompt_style
         training_row["evidence_text_mode"] = evidence_text_mode
+        training_row.update(_prompt_evidence_row_fields(prompt_evidence, prompt_evidence_decision))
+        guard_result = _max_length_guard_result(
+            training_row,
+            prompt_evidence=prompt_evidence,
+            max_length_guard=max_length_guard,
+        )
+        if guard_result["enabled"]:
+            training_row["prompt_evidence_max_length_guard"] = guard_result
+            for reason in guard_result["violation_reasons"]:
+                max_length_guard_violations[str(reason)] += 1
+            if guard_result["violation_reasons"] and guard_result["on_violation"] == "error":
+                raise ValueError(
+                    f"{split}:{event_id}: prompt evidence max length guard failed: "
+                    f"{guard_result['violation_reasons']}"
+                )
         if qec_payload is not None:
             training_row["qec_steps"] = qec_payload["steps"]
             training_row["qec_diagnostics"] = qec_payload["diagnostics"]
@@ -402,6 +462,11 @@ def _build_split(
         coverage_label = str(training_row.get("coverage_label") or "")
         if coverage_label:
             coverage_label_counter[coverage_label] += 1
+        prompt_policy_counter[str(prompt_evidence["policy"])] += 1
+        prompt_policy_stop_counter[str(prompt_evidence_decision["stop_reason"])] += 1
+        prompt_policy_selected_counts.append(
+            int(prompt_evidence_decision["selected_count_before_prompt_truncation"])
+        )
         prompt_tokens.append(int(training_row.get("prompt_token_count", 0)))
         evidence_counts.append(int(training_row.get("evidence_count", 0)))
         evidence_counts_before.append(
@@ -417,6 +482,18 @@ def _build_split(
         "trace_prompt_style": trace_prompt_style,
         "evidence_text_mode": evidence_text_mode,
         "top_k": int(top_k),
+        "allow_empty_evidence": bool(allow_empty_evidence),
+        "prompt_evidence": {
+            **_public_prompt_evidence_config(prompt_evidence),
+            "policy_counts": dict(prompt_policy_counter),
+            "stop_reasons": dict(prompt_policy_stop_counter),
+            "selected_count_before_prompt_truncation": _summary(prompt_policy_selected_counts),
+        },
+        "max_length_guard": _max_length_guard_report(
+            max_length_guard,
+            violations=max_length_guard_violations,
+            row_count=len(out_rows),
+        ),
         "random_seed": int(random_seed),
         "n_source_rows": len(source_rows),
         "n_rows": len(out_rows),
@@ -462,6 +539,321 @@ def _apply_evidence_text_mode(
             copied["evidence_text_source"] = "text_fallback"
         rendered.append(copied)
     return rendered
+
+
+def _resolve_prompt_evidence_config(
+    cfg: dict[str, Any],
+    *,
+    args: argparse.Namespace,
+    prompt_cfg: dict[str, Any],
+) -> dict[str, Any]:
+    raw = dict(cfg.get("prompt_evidence") or {})
+    if args.prompt_evidence_policy is not None:
+        raw["policy"] = str(args.prompt_evidence_policy)
+    if args.prompt_evidence_min_count is not None:
+        raw["min_evidence_count"] = int(args.prompt_evidence_min_count)
+    if args.prompt_evidence_max_count is not None:
+        raw["max_evidence_count"] = int(args.prompt_evidence_max_count)
+    if args.prompt_evidence_token_budget is not None:
+        raw["evidence_token_budget"] = int(args.prompt_evidence_token_budget)
+
+    guard = dict(raw.get("max_length_guard") or {})
+    if args.prompt_evidence_max_length_guard is not None:
+        if args.prompt_evidence_max_length_guard == "off":
+            guard["enabled"] = False
+        else:
+            guard["enabled"] = True
+            guard["on_violation"] = str(args.prompt_evidence_max_length_guard)
+    build_prompt_max_length = int(prompt_cfg.get("max_length", 0) or 0)
+    sft_train = dict(cfg.get("sft_train") or {})
+    sft_train_max_length = int(sft_train.get("max_length", build_prompt_max_length) or build_prompt_max_length)
+    guard.setdefault("build_prompt_max_length", build_prompt_max_length)
+    guard.setdefault("sft_train_max_length", sft_train_max_length)
+    raw["max_length_guard"] = guard
+    return raw
+
+
+def _normalize_prompt_evidence_config(
+    config: dict[str, Any] | None,
+    *,
+    fallback_top_k: int,
+    prompt_cfg: dict[str, Any],
+) -> dict[str, Any]:
+    raw = dict(config or {})
+    policy = str(raw.get("policy") or "prefix_topk").strip().lower()
+    if policy not in PROMPT_EVIDENCE_POLICIES:
+        raise ValueError(f"unsupported prompt_evidence.policy: {policy!r}")
+
+    fallback_top_k = max(0, int(fallback_top_k))
+    default_max = fallback_top_k if policy in {"prefix_topk", "fixed_topk"} else 0
+    min_count = max(0, _int_or_default(raw.get("min_evidence_count"), 0))
+    max_count = max(0, _int_or_default(raw.get("max_evidence_count"), default_max))
+    if policy == "fixed_topk":
+        if max_count <= 0:
+            max_count = fallback_top_k
+        if min_count <= 0:
+            min_count = max_count
+    if policy == "prefix_topk":
+        max_count = max_count or fallback_top_k
+    if max_count > 0 and min_count > max_count:
+        raise ValueError(
+            f"prompt_evidence min_evidence_count={min_count} exceeds max_evidence_count={max_count}."
+        )
+
+    token_budget = _int_or_none(raw.get("evidence_token_budget"))
+    if token_budget is not None and token_budget <= 0:
+        token_budget = None
+
+    guard = _normalize_max_length_guard(
+        dict(raw.get("max_length_guard") or {}),
+        prompt_cfg=prompt_cfg,
+        evidence_token_budget=token_budget,
+    )
+    return {
+        "policy": policy,
+        "min_evidence_count": int(min_count),
+        "max_evidence_count": int(max_count),
+        "evidence_token_budget": token_budget,
+        "max_length_guard": guard,
+    }
+
+
+def _normalize_max_length_guard(
+    raw: dict[str, Any],
+    *,
+    prompt_cfg: dict[str, Any],
+    evidence_token_budget: int | None,
+) -> dict[str, Any]:
+    enabled = bool(raw.get("enabled", False))
+    build_prompt_max_length = int(
+        raw.get("build_prompt_max_length")
+        or prompt_cfg.get("max_length")
+        or 0
+    )
+    sft_train_max_length = int(raw.get("sft_train_max_length") or build_prompt_max_length)
+    positive_lengths = [value for value in (build_prompt_max_length, sft_train_max_length) if value > 0]
+    effective_max_length = min(positive_lengths) if positive_lengths else 0
+    reserve_tokens = max(0, _int_or_default(raw.get("reserve_tokens"), 0))
+    effective_prompt_budget = max(0, int(effective_max_length) - reserve_tokens) if effective_max_length > 0 else 0
+    on_violation = str(raw.get("on_violation") or "warn").strip().lower()
+    if on_violation not in {"warn", "error"}:
+        raise ValueError(f"unsupported prompt_evidence.max_length_guard.on_violation: {on_violation!r}")
+    return {
+        "enabled": enabled,
+        "on_violation": on_violation,
+        "build_prompt_max_length": int(build_prompt_max_length),
+        "sft_train_max_length": int(sft_train_max_length),
+        "effective_max_length": int(effective_max_length),
+        "reserve_tokens": int(reserve_tokens),
+        "effective_prompt_budget": int(effective_prompt_budget),
+        "config_conflict": bool(
+            build_prompt_max_length > 0
+            and sft_train_max_length > 0
+            and build_prompt_max_length != sft_train_max_length
+        ),
+        "config_budget_conflict": bool(
+            evidence_token_budget is not None
+            and effective_prompt_budget > 0
+            and int(evidence_token_budget) > effective_prompt_budget
+        ),
+    }
+
+
+def _public_prompt_evidence_config(config: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "policy": str(config.get("policy") or "prefix_topk"),
+        "min_evidence_count": int(config.get("min_evidence_count") or 0),
+        "max_evidence_count": int(config.get("max_evidence_count") or 0),
+        "evidence_token_budget": config.get("evidence_token_budget"),
+        "max_length_guard": dict(config.get("max_length_guard") or {}),
+    }
+
+
+def _select_prompt_evidence_indices(
+    trace: dict[str, Any],
+    *,
+    ordered_indices: list[int],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    policy = str(config.get("policy") or "prefix_topk")
+    min_count = max(0, int(config.get("min_evidence_count") or 0))
+    max_count = max(0, int(config.get("max_evidence_count") or 0))
+    token_budget = config.get("evidence_token_budget")
+    token_budget = int(token_budget) if token_budget is not None else None
+
+    selected: list[int] = []
+    total_token_cost = 0
+    stop_reason = "end_of_trace"
+
+    if policy in {"prefix_topk", "fixed_topk"}:
+        limit = max_count if max_count > 0 else len(ordered_indices)
+        selected = list(ordered_indices[:limit])
+        stop_reason = "top_k" if policy == "prefix_topk" else "max_evidence_count"
+        return _prompt_evidence_decision(
+            selected,
+            policy=policy,
+            min_count=min_count,
+            max_count=max_count,
+            token_budget=token_budget,
+            total_token_cost=_prompt_evidence_total_token_cost(trace, selected),
+            stop_reason=stop_reason,
+        )
+
+    for idx in ordered_indices:
+        token_cost = _prompt_evidence_token_cost(trace, idx)
+        if max_count > 0 and len(selected) >= max_count:
+            stop_reason = "max_evidence_count"
+            break
+        if (
+            policy == "budget"
+            and token_budget is not None
+            and len(selected) >= min_count
+            and total_token_cost + token_cost > token_budget
+        ):
+            stop_reason = "token_budget_exhausted"
+            break
+        selected.append(int(idx))
+        total_token_cost += token_cost
+        if (
+            policy in {"resolve_stop", "minmax"}
+            and len(selected) >= min_count
+            and _prompt_evidence_target_resolved(trace, idx)
+        ):
+            stop_reason = "target_resolved"
+            break
+
+    if max_count > 0 and len(selected) >= max_count and stop_reason == "end_of_trace":
+        stop_reason = "max_evidence_count"
+    if not selected:
+        raise ValueError("prompt evidence policy selected no indices")
+    return _prompt_evidence_decision(
+        selected,
+        policy=policy,
+        min_count=min_count,
+        max_count=max_count,
+        token_budget=token_budget,
+        total_token_cost=total_token_cost,
+        stop_reason=stop_reason,
+    )
+
+
+def _prompt_evidence_decision(
+    selected: list[int],
+    *,
+    policy: str,
+    min_count: int,
+    max_count: int,
+    token_budget: int | None,
+    total_token_cost: int,
+    stop_reason: str,
+) -> dict[str, Any]:
+    return {
+        "selected_indices": [int(idx) for idx in selected],
+        "policy": policy,
+        "min_evidence_count": int(min_count),
+        "max_evidence_count": int(max_count),
+        "evidence_token_budget": token_budget,
+        "selected_count_before_prompt_truncation": int(len(selected)),
+        "selected_token_cost": int(total_token_cost),
+        "stop_reason": stop_reason,
+    }
+
+
+def _prompt_evidence_row_fields(config: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:
+    del config
+    return {
+        "prompt_evidence_policy": str(decision["policy"]),
+        "prompt_evidence_min_count": int(decision["min_evidence_count"]),
+        "prompt_evidence_max_count": int(decision["max_evidence_count"]),
+        "prompt_evidence_token_budget": decision["evidence_token_budget"],
+        "prompt_evidence_selected_count_before_prompt_truncation": int(
+            decision["selected_count_before_prompt_truncation"]
+        ),
+        "prompt_evidence_selected_token_cost": int(decision["selected_token_cost"]),
+        "prompt_evidence_stop_reason": str(decision["stop_reason"]),
+    }
+
+
+def _max_length_guard_result(
+    row: dict[str, Any],
+    *,
+    prompt_evidence: dict[str, Any],
+    max_length_guard: dict[str, Any],
+) -> dict[str, Any]:
+    del prompt_evidence
+    enabled = bool(max_length_guard.get("enabled", False))
+    reasons: list[str] = []
+    prompt_token_count = int(row.get("prompt_token_count") or 0)
+    effective_prompt_budget = int(max_length_guard.get("effective_prompt_budget") or 0)
+    if enabled and effective_prompt_budget > 0 and prompt_token_count > effective_prompt_budget:
+        reasons.append("prompt_token_count_exceeds_guard")
+    return {
+        **dict(max_length_guard),
+        "enabled": enabled,
+        "prompt_token_count": prompt_token_count,
+        "violation_reasons": reasons,
+    }
+
+
+def _max_length_guard_report(
+    max_length_guard: dict[str, Any],
+    *,
+    violations: Counter[str],
+    row_count: int,
+) -> dict[str, Any]:
+    violation_count = int(sum(violations.values()))
+    return {
+        **dict(max_length_guard),
+        "violation_count": violation_count,
+        "violation_rate": float(violation_count / max(row_count, 1)),
+        "violations_by_reason": dict(violations),
+    }
+
+
+def _prompt_evidence_total_token_cost(trace: dict[str, Any], selected: list[int]) -> int:
+    return int(sum(_prompt_evidence_token_cost(trace, idx) for idx in selected))
+
+
+def _prompt_evidence_token_cost(trace: dict[str, Any], idx: int) -> int:
+    step = _mrec_step_by_selector_idx(trace).get(int(idx))
+    if step is not None:
+        parsed = _int_or_none(step.get("token_cost"))
+        if parsed is not None:
+            return max(0, parsed)
+    pool = trace.get("candidate_pool") or []
+    candidate = pool[idx] if 0 <= int(idx) < len(pool) and isinstance(pool[idx], dict) else {}
+    for key in ("mrec_token_cost", "token_cost", "evidence_token_count", "prompt_token_count"):
+        parsed = _int_or_none(candidate.get(key))
+        if parsed is not None:
+            return max(0, parsed)
+    text = str(candidate.get("text") or candidate.get("evidence_text") or "")
+    return max(1, len(text.split())) if text.strip() else 0
+
+
+def _prompt_evidence_target_resolved(trace: dict[str, Any], idx: int) -> bool:
+    step = _mrec_step_by_selector_idx(trace).get(int(idx))
+    if not isinstance(step, dict):
+        return False
+    trace_state = step.get("trace_state")
+    if isinstance(trace_state, dict) and "target_resolved" in trace_state:
+        return bool(trace_state.get("target_resolved"))
+    if "target_resolved" in step:
+        return bool(step.get("target_resolved"))
+    return False
+
+
+def _mrec_step_by_selector_idx(trace: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
+    for fallback_idx, step in enumerate(trace.get("mrec_steps") or []):
+        if not isinstance(step, dict):
+            continue
+        selector_idx = _int_or_none(step.get("selector_candidate_idx"))
+        if selector_idx is None:
+            selector_idx = _int_or_none(step.get("candidate_idx"))
+        if selector_idx is None:
+            selector_idx = fallback_idx
+        out[int(selector_idx)] = step
+    return out
 
 
 def _apply_qec_prompt_fields(
@@ -925,6 +1317,11 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
+def _int_or_default(value: Any, default: int) -> int:
+    parsed = _int_or_none(value)
+    return int(default) if parsed is None else int(parsed)
+
+
 def _float_or_none(value: Any) -> float | None:
     try:
         return float(value)
@@ -995,6 +1392,7 @@ def _select_indices(
     if not isinstance(pool, list) or not pool:
         raise ValueError("trace has no candidate_pool")
     n = len(pool)
+    limit = int(top_k) if int(top_k) > 0 else n
     if mode == "trace":
         selected = _ordered_trace_indices(trace)
     elif mode == "hybrid_score_topk":
@@ -1003,7 +1401,7 @@ def _select_indices(
         selected = list(range(n))
     elif mode in {"same_set_hybrid_order", "same_set_candidate_pool_order", "same_set_random_order"}:
         selected = _ordered_trace_indices(trace)
-        selected = _dedupe_in_range(selected, n)[:top_k]
+        selected = _dedupe_in_range(selected, n)[:limit]
         selected_set = set(selected)
         if mode == "same_set_hybrid_order":
             selected = [
@@ -1020,7 +1418,7 @@ def _select_indices(
     else:
         raise ValueError(f"unknown selection mode: {mode}")
 
-    selected = _dedupe_in_range(selected, n)[:top_k]
+    selected = _dedupe_in_range(selected, n)[:limit]
     if not selected:
         raise ValueError("selection produced no indices")
     return selected
@@ -1126,15 +1524,38 @@ def _load_experiment_config(config_path: str) -> dict[str, Any]:
         rel = path.resolve().relative_to(experiment_dir.resolve())
     except ValueError:
         cfg = OmegaConf.load(path)
-        return dict(OmegaConf.to_container(cfg, resolve=True) or {})
+        payload = dict(OmegaConf.to_container(cfg, resolve=True) or {})
+        return _resolve_config_extends(path, payload)
     if len(rel.parts) != 1:
         cfg = OmegaConf.load(path)
-        return dict(OmegaConf.to_container(cfg, resolve=True) or {})
+        payload = dict(OmegaConf.to_container(cfg, resolve=True) or {})
+        return _resolve_config_extends(path, payload)
     if GlobalHydra.instance().is_initialized():
         GlobalHydra.instance().clear()
     with initialize_config_dir(version_base=None, config_dir=str(project_root / "configs")):
         cfg = compose(config_name="pipeline/default", overrides=[f"experiment={rel.stem}"])
     return dict(OmegaConf.to_container(cfg, resolve=True) or {})
+
+
+def _resolve_config_extends(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    parent = payload.pop("extends", None)
+    if not parent:
+        return payload
+    parent_path = Path(str(parent))
+    if not parent_path.is_absolute():
+        parent_path = path.parent / parent_path
+    base = _load_experiment_config(str(parent_path))
+    return _deep_merge_dicts(base, payload)
+
+
+def _deep_merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dicts(dict(merged[key]), value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _build_train_config(

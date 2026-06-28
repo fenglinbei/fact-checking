@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from fact_checking.selectors.mrec_learned_marginal import (
+    LearnedMarginalWeights,
+    REWARD_WEIGHT_SCHEMA_VERSION,
+    evaluate_learned_marginal_reward_weights,
     extract_marginal_features,
     initial_learned_marginal_weights,
     rank_candidates_by_proxy,
     score_marginal_features,
     train_learned_marginal_proxy_weights,
+    train_learned_marginal_reward_weights,
 )
 
 
@@ -145,6 +149,56 @@ def test_initial_learned_marginal_weights_are_interpretable_positive_weights() -
 
     assert weights.feature_weights["resolution_delta"] > weights.feature_weights["retrieval_score"]
     assert weights.cost_weight > 0.0
+
+
+def test_reward_weights_include_signed_bias_in_score() -> None:
+    weights = LearnedMarginalWeights(
+        feature_weights={},
+        cost_weight=0.0,
+        schema_version=REWARD_WEIGHT_SCHEMA_VERSION,
+        bias=-0.75,
+    )
+
+    assert score_marginal_features({}, weights) == -0.75
+
+
+def test_train_learned_marginal_reward_weights_scores_positive_delta_above_negative() -> None:
+    rows = [
+        {
+            "event_id": "case-1",
+            "step": 0,
+            "candidate_idx": 0,
+            "delta_margin": -0.4,
+            "mrec_features": {
+                "resolution_delta": 0.0,
+                "entropy_reduction": 0.0,
+                "new_atom_coverage": 0.0,
+                "retrieval_score": 0.9,
+                "cost_ratio": 0.1,
+            },
+        },
+        {
+            "event_id": "case-1",
+            "step": 0,
+            "candidate_idx": 1,
+            "delta_margin": 0.8,
+            "mrec_features": {
+                "resolution_delta": 1.0,
+                "entropy_reduction": 1.0,
+                "new_atom_coverage": 1.0,
+                "retrieval_score": 0.1,
+                "cost_ratio": 0.1,
+            },
+        },
+    ]
+
+    weights, metrics = train_learned_marginal_reward_weights(rows, epochs=30, learning_rate=0.1, prior_weight=0.0)
+    eval_metrics = evaluate_learned_marginal_reward_weights(rows, weights)
+
+    assert metrics["pair_count"] > 0
+    assert eval_metrics["pair_accuracy"] == 1.0
+    assert eval_metrics["step_top1_match"] == 1.0
+    assert score_marginal_features(rows[1]["mrec_features"], weights) > score_marginal_features(rows[0]["mrec_features"], weights)
 
 
 def _candidate(

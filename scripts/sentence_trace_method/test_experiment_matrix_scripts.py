@@ -170,6 +170,256 @@ def test_atom_anchor_v0_1_full_wrapper_uses_existing_mrec_traces_for_ministral3_
     assert "--early-stopping-metric macro_f1" in output
 
 
+def test_atom_anchor_v0_2_learned_proxy_top5_full_wrapper_uses_existing_mrec_traces(
+    tmp_path: Path,
+) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_liar_raw_ministral3_atom_anchor_v0_2_learned_marginal_proxy_top5_lora_ebs16_lr2e5_ep12_eval100.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "FORCE_BUILD": "true",
+            "MODE": "full",
+            "RUN_TAU_EVAL": "auto",
+        },
+    )
+
+    assert "liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_top5" in output
+    assert "TRACE_ROOT=outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy" in output
+    assert "WEIGHT_FILE=outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy/weights/weights.json" in output
+    assert "TRACE_PROMPT_STYLE=mrec_min" in output
+    assert "EVIDENCE_TEXT_MODE=full" in output
+    assert "EXPECTED_SELECTOR_NAME=mrec_greedy_transition_v0_2_learned_marginal_proxy" in output
+    assert "--expected-selector-name mrec_greedy_transition_v0_2_learned_marginal_proxy" in output
+    assert "--train-trace outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy/selection_trace_train.jsonl" in output
+    assert "--top-k 5" in output
+    assert "scripts/sentence_trace_method/prepare_lora_config.py" in output
+    assert "sft.label_token_trainer" in output
+    assert "sft.label_token_infer" in output
+    assert "run_lora_label_token_logit_adjust_eval_only.sh" in output
+    assert "EVAL_SPLITS=val,test" in output
+    assert "SFT_LEARNING_RATE=2e-5" in output
+    assert "SFT_NUM_TRAIN_EPOCHS=12" in output
+    assert "SFT_EVAL_STEPS=100" in output
+    assert "--early-stopping-metric macro_f1" in output
+
+
+def test_atom_anchor_v0_2_learned_proxy_budget1024_full_wrapper_builds_budget_traces(
+    tmp_path: Path,
+) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_liar_raw_ministral3_atom_anchor_v0_2_learned_marginal_proxy_budget1024_lora_ebs16_lr2e5_ep12_eval100.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "FORCE_BUILD": "true",
+            "FORCE_MREC_BUILD": "true",
+            "MODE": "full",
+            "RUN_TAU_EVAL": "auto",
+        },
+    )
+
+    assert "liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_budget1024" in output
+    assert "TRACE_ROOT=outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy_budget1024" in output
+    assert "WEIGHT_FILE=outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy/weights/weights.json" in output
+    assert "TOKEN_BUDGET=1024" in output
+    assert "TRACE_TOP_K=100" in output
+    assert "EXPECTED_SELECTOR_NAME=mrec_greedy_transition_v0_2_learned_marginal_proxy_budget1024" in output
+    assert "scripts/phase5_selectors/build/build_mrec_traces.py" in output
+    assert "--input outputs/selectors/atom_anchor/liar_raw_abc_v0_1/04_evidence_map/candidate_evidence_map_features_train.jsonl" in output
+    assert "--selection-policy learned_marginal_proxy" in output
+    assert "--weight-file outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy/weights/weights.json" in output
+    assert "--token-budget 1024" in output
+    assert "--max-steps 100" in output
+    assert "--stop-threshold -1000000000" in output
+    assert "--expected-selector-name mrec_greedy_transition_v0_2_learned_marginal_proxy_budget1024" in output
+    assert "--top-k 100" in output
+    assert "scripts/sentence_trace_method/prepare_lora_config.py" in output
+    assert "sft.label_token_trainer" in output
+    assert "sft.label_token_infer" in output
+    assert "EVAL_SPLITS=val,test" in output
+    assert "SFT_LEARNING_RATE=2e-5" in output
+    assert "SFT_NUM_TRAIN_EPOCHS=12" in output
+    assert "SFT_EVAL_STEPS=100" in output
+
+
+def test_atom_anchor_v0_2_fullpool_policy_wrapper_reads_yaml_config(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_liar_raw_ministral3_atom_anchor_v0_2_fullpool_policy_lora_ebs16_lr2e5_ep12_eval100.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "FORCE_BUILD": "true",
+            "FORCE_MREC_BUILD": "true",
+            "MODE": "full",
+            "RUN_TAU_EVAL": "auto",
+        },
+    )
+
+    assert "MREC_POLICY_CONFIG=configs/experiment/mrec_v0.2/learned_marginal_proxy_fullpool_policy.yaml" in output
+    assert "PROMPT_EVIDENCE_POLICY=fixed_topk" in output
+    assert "PROMPT_EVIDENCE_MIN_COUNT=5" in output
+    assert "PROMPT_EVIDENCE_MAX_COUNT=5" in output
+    assert "TRACE_CANDIDATE_TOP_N=0" in output
+    assert "TRACE_MAX_STEPS=0" in output
+    assert "scripts/phase5_selectors/build/build_mrec_traces.py" in output
+    assert "--candidate-top-n 0" in output
+    assert "--max-steps 0" in output
+    assert "--config configs/experiment/mrec_v0.2/learned_marginal_proxy_fullpool_policy.yaml" in output
+    assert "--prompt-evidence-policy fixed_topk" in output
+    assert "--prompt-evidence-min-count 5" in output
+    assert "--prompt-evidence-max-count 5" in output
+    assert "--swanlab-project fact-checking-sentence-trace-method-atom-anchor-v0-2" in output
+    assert "-u SWANLAB_PROJECT" in output
+    assert "TOKEN_BUDGET=1024" not in output
+    assert "BUDGET_MAX_STEPS=100" not in output
+
+
+def test_selector_mechanism_s0_s4_wrapper_dry_run_expands_cases(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_liar_raw_ministral3_selector_mechanism_s0_s4_plain_lora_ebs16_lr2e5_ep12_eval100.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "SELECTOR_MECH_MODE": "full",
+            "PREPARE_SELECTOR_MECH_TRACES": "true",
+            "RUN_TAU_EVAL": "false",
+        },
+    )
+
+    for selector in (
+        "selector_mech_s0_no_evidence",
+        "selector_mech_s1_claim_pool_random_top5",
+        "selector_mech_s2_claim_pool_hybrid_top5",
+        "selector_mech_s3_claim_pool_hybrid_mmr_top5",
+        "selector_mech_s4_atom_union_source_score_top5",
+    ):
+        assert selector in output
+        assert f"CASE_SUFFIX=__{selector}_plain" in output
+    assert "run_liar_raw_selector_mechanism_s0_s4.sh" in output
+    assert "ALLOW_EMPTY_EVIDENCE=true" in output
+    assert "ALLOW_EMPTY_CANDIDATE_POOL=true" in output
+    assert "TRACE_PROMPT_STYLE=plain" in output
+    assert "SFT_LEARNING_RATE=2e-5" in output
+    assert "SFT_NUM_TRAIN_EPOCHS=12" in output
+    assert "SFT_EVAL_STEPS=100" in output
+
+
+def test_rawfc_atom_anchor_v0_2_fullpool_policy_wrapper_reads_rawfc_yaml_config(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_rawfc_ministral3_atom_anchor_v0_2_fullpool_policy_lora_r16a32_d010_lr1e5_ep12_eval50.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "FORCE_BUILD": "true",
+            "FORCE_MREC_BUILD": "true",
+            "FORCE_WEIGHT_TRAIN": "true",
+            "MODE": "full",
+            "RUN_TAU_EVAL": "auto",
+        },
+    )
+
+    assert "MREC_POLICY_CONFIG=configs/experiment/mrec_v0.2/rawfc_learned_marginal_proxy_fullpool_minmax5_10.yaml" in output
+    assert "SOURCE_FEATURE_ROOT=outputs/selectors/atom_anchor/rawfc_abc_v0_1/04_evidence_map" in output
+    assert "TRACE_ROOT=outputs/selectors/atom_anchor/rawfc_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy_fullpool" in output
+    assert "WEIGHT_FILE=outputs/selectors/atom_anchor/rawfc_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy/weights/weights.json" in output
+    assert "rawfc__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10" in output
+    assert "PROMPT_EVIDENCE_POLICY=minmax" in output
+    assert "PROMPT_EVIDENCE_MIN_COUNT=5" in output
+    assert "PROMPT_EVIDENCE_MAX_COUNT=10" in output
+    assert "QUALITY_AUDIT_MODE=source_only" in output
+    assert "scripts/phase5_selectors/train/train_mrec_learned_marginal_proxy.py" in output
+    assert "--train-input outputs/selectors/atom_anchor/rawfc_abc_v0_1/04_evidence_map/candidate_evidence_map_features_train.jsonl" in output
+    assert "--val-input outputs/selectors/atom_anchor/rawfc_abc_v0_1/04_evidence_map/candidate_evidence_map_features_val.jsonl" in output
+    assert "--input outputs/selectors/atom_anchor/rawfc_abc_v0_1/04_evidence_map/candidate_evidence_map_features_train.jsonl" in output
+    assert "--source-selector-name v0_7_atom_facts_abc_budgeted_marginal_chain_adaptive5_10" in output
+    assert "--dataset rawfc" in output
+    assert "--label-schema rawfc3" in output
+    assert "--train-raw data/raw/RAWFC/train.json" in output
+    assert "--val-raw data/raw/RAWFC/val.json" in output
+    assert "--test-raw data/raw/RAWFC/test.json" in output
+    assert "--config configs/experiment/mrec_v0.2/rawfc_learned_marginal_proxy_fullpool_minmax5_10.yaml" in output
+    assert "--class-weight false=1.0" in output
+    assert "--class-weight half=1.0" in output
+    assert "--class-weight true=1.0" in output
+    assert "SFT_LEARNING_RATE=1e-5" in output
+    assert "SFT_EVAL_STEPS=50" in output
+    assert "pants-fire" not in output
+
+
+def test_rawfc_atom_anchor_baseline20_fullpool_policy_wrapper_reads_baseline20_yaml_config(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_rawfc_ministral3_atom_anchor_v0_2_fullpool_policy_baseline20_lora_r16a32_d010_lr1e5_ep12_eval50.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "FORCE_BUILD": "true",
+            "FORCE_MREC_BUILD": "true",
+            "FORCE_WEIGHT_TRAIN": "true",
+            "MODE": "full",
+            "RUN_TAU_EVAL": "auto",
+        },
+    )
+
+    assert "MREC_POLICY_CONFIG=configs/experiment/mrec_v0.2/rawfc_learned_marginal_proxy_fullpool_minmax5_10_baseline20.yaml" in output
+    assert "SOURCE_FEATURE_ROOT=outputs/selectors/atom_anchor/rawfc_abc_v0_1_baseline20/04_evidence_map" in output
+    assert "TRACE_ROOT=outputs/selectors/atom_anchor/rawfc_abc_v0_1_baseline20/05_mrec_v0_2_learned_marginal_proxy_fullpool" in output
+    assert "WEIGHT_FILE=outputs/selectors/atom_anchor/rawfc_abc_v0_1_baseline20/05_mrec_v0_2_learned_marginal_proxy/weights/weights.json" in output
+    assert "rawfc__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_baseline20" in output
+    assert "--train-input outputs/selectors/atom_anchor/rawfc_abc_v0_1_baseline20/04_evidence_map/candidate_evidence_map_features_train.jsonl" in output
+    assert "--config configs/experiment/mrec_v0.2/rawfc_learned_marginal_proxy_fullpool_minmax5_10_baseline20.yaml" in output
+    assert "--dataset rawfc" in output
+    assert "SFT_LEARNING_RATE=1e-5" in output
+    assert "SFT_EVAL_STEPS=50" in output
+
+
+def test_mrec_policy_config_does_not_export_swanlab_project_env() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/sentence_trace_method/mrec_policy_config.py"),
+            "--config",
+            "configs/experiment/mrec_v0.2/learned_marginal_proxy_fullpool_policy.yaml",
+        ],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "export WRAPPER_SWANLAB_PROJECT=" in result.stdout
+    assert "export SWANLAB_PROJECT=" not in result.stdout
+
+
+def test_atom_anchor_v0_2_fullpool_policy_wrapper_rejects_too_many_processes_for_visible_devices(
+    tmp_path: Path,
+) -> None:
+    env = {
+        **os.environ,
+        "PYTHONPATH": f"{ROOT / 'src'}:{os.environ.get('PYTHONPATH', '')}",
+        "DRY_RUN": "true",
+        "MODE": "train",
+        "OUTPUT_ROOT": str(tmp_path / "outputs"),
+        "CUDA_VISIBLE_DEVICES": "0",
+        "RUN_TAU_EVAL": "false",
+    }
+    result = subprocess.run(
+        [
+            "bash",
+            str(
+                ROOT
+                / "scripts/sentence_trace_method/run_liar_raw_ministral3_atom_anchor_v0_2_fullpool_policy_lora_ebs16_lr2e5_ep12_eval100.sh"
+            ),
+        ],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 2
+    assert (
+        "Requested NPROC_PER_NODE=4 but CUDA_VISIBLE_DEVICES exposes only 1 device(s): 0"
+        in result.stderr
+    )
+    assert "sft.label_token_trainer" not in result.stdout
+
+
 def test_mrec_quick_ablation_build_wrappers_set_capacity_knobs(tmp_path: Path) -> None:
     cases = [
         (

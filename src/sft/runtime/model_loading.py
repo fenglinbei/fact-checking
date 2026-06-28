@@ -258,5 +258,6 @@ def load_causal_lm_compatible_model(model_name_or_path: str, **model_kwargs: Any
         except Exception as fallback_exc:  # noqa: BLE001 - preserve loader context.
             raise RuntimeError(
                 f"Failed to load {model_name_or_path!r} with {loader_cls.__name__} after "
-                "AutoModelForCausalLM did not recognize the architecture."
+                "AutoModelForCausalLM did not recognize the architecture. "
+                f"Fallback error: {type(fallback_exc).__name__}: {fallback_exc}"
             ) from fallback_exc

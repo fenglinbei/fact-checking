@@ -111,11 +111,18 @@ def validate_sentence_candidates(
     line_no: int,
     *,
     allow_multi_sentence_candidates: bool = False,
-) -> tuple[int, int, int]:
+    allow_empty_candidate_pool: bool = False,
+) -> tuple[int, int, int, int]:
     checked = 0
     bad = 0
     multi_sentence = 0
-    for candidate in iter_candidate_pool(row):
+    candidates = iter_candidate_pool(row)
+    if not candidates:
+        if allow_empty_candidate_pool:
+            return 0, 0, 0, 1
+        claim_id = row.get("claim_id") or row.get("id") or "<unknown>"
+        raise ValueError(f"{split}:{line_no} claim={claim_id} has no auditable candidate_pool.")
+    for candidate in candidates:
         indices = candidate.get("chunk_sent_indices")
         checked += 1
         if not isinstance(indices, list) or not indices:
@@ -137,10 +144,7 @@ def validate_sentence_candidates(
                         f"{split}:{line_no} claim={claim_id} has non-sentence candidate "
                         f"chunk_sent_indices={indices!r}"
                     )
-    if checked == 0:
-        claim_id = row.get("claim_id") or row.get("id") or "<unknown>"
-        raise ValueError(f"{split}:{line_no} claim={claim_id} has no auditable candidate_pool.")
-    return checked, bad, multi_sentence
+    return checked, bad, multi_sentence, 0
 
 
 def clean_row(
@@ -185,6 +189,7 @@ def stage_split(
     expected_fingerprint: str | None = None,
     forbidden_fingerprints: set[str] | None = None,
     allow_multi_sentence_candidates: bool = False,
+    allow_empty_candidate_pool: bool = False,
 ) -> dict[str, Any]:
     if target_path.exists() and not force:
         return audit_existing(
@@ -195,6 +200,7 @@ def stage_split(
             expected_fingerprint=expected_fingerprint,
             forbidden_fingerprints=forbidden_fingerprints,
             allow_multi_sentence_candidates=allow_multi_sentence_candidates,
+            allow_empty_candidate_pool=allow_empty_candidate_pool,
         )
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -206,6 +212,7 @@ def stage_split(
     rows = 0
     checked_candidates = 0
     multi_sentence_candidates = 0
+    empty_candidate_pool_rows = 0
     fingerprints: set[str] = set()
     with source_path.open("r", encoding="utf-8") as src, target_path.open("w", encoding="utf-8") as dst:
         for line_no, line in enumerate(src, start=1):
@@ -217,14 +224,16 @@ def stage_split(
             fingerprint = row_fingerprint(row)
             if fingerprint:
                 fingerprints.add(fingerprint)
-            checked, _, multi_sentence = validate_sentence_candidates(
+            checked, _, multi_sentence, empty_pool = validate_sentence_candidates(
                 row,
                 split,
                 line_no,
                 allow_multi_sentence_candidates=allow_multi_sentence_candidates,
+                allow_empty_candidate_pool=allow_empty_candidate_pool,
             )
             checked_candidates += checked
             multi_sentence_candidates += multi_sentence
+            empty_candidate_pool_rows += empty_pool
             dst.write(
                 json.dumps(
                     clean_row(
@@ -265,9 +274,13 @@ def stage_split(
             "candidate_pool_rows": rows,
             "checked_candidates": checked_candidates,
             "multi_sentence_candidates": multi_sentence_candidates,
+            "empty_candidate_pool_rows": empty_candidate_pool_rows,
             "allow_multi_sentence_candidates": allow_multi_sentence_candidates,
+            "allow_empty_candidate_pool": allow_empty_candidate_pool,
             "rule": (
-                "candidate_pool.chunk_sent_indices must be non-empty; multi-sentence candidates are allowed"
+                "candidate_pool may be empty only for explicit no-evidence controls"
+                if allow_empty_candidate_pool
+                else "candidate_pool.chunk_sent_indices must be non-empty; multi-sentence candidates are allowed"
                 if allow_multi_sentence_candidates
                 else "every candidate_pool.chunk_sent_indices must contain exactly one sentence index"
             ),
@@ -290,10 +303,12 @@ def audit_existing(
     expected_fingerprint: str | None = None,
     forbidden_fingerprints: set[str] | None = None,
     allow_multi_sentence_candidates: bool = False,
+    allow_empty_candidate_pool: bool = False,
 ) -> dict[str, Any]:
     rows = 0
     checked_candidates = 0
     multi_sentence_candidates = 0
+    empty_candidate_pool_rows = 0
     fingerprints: set[str] = set()
     with target_path.open("r", encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, start=1):
@@ -305,14 +320,16 @@ def audit_existing(
             fingerprint = row_fingerprint(row)
             if fingerprint:
                 fingerprints.add(fingerprint)
-            checked, _, multi_sentence = validate_sentence_candidates(
+            checked, _, multi_sentence, empty_pool = validate_sentence_candidates(
                 row,
                 split,
                 line_no,
                 allow_multi_sentence_candidates=allow_multi_sentence_candidates,
+                allow_empty_candidate_pool=allow_empty_candidate_pool,
             )
             checked_candidates += checked
             multi_sentence_candidates += multi_sentence
+            empty_candidate_pool_rows += empty_pool
             rows += 1
 
     if rows == 0:
@@ -339,6 +356,8 @@ def audit_existing(
             "checked_candidates": checked_candidates,
             "multi_sentence_candidates": multi_sentence_candidates,
             "allow_multi_sentence_candidates": allow_multi_sentence_candidates,
+            "empty_candidate_pool_rows": empty_candidate_pool_rows,
+            "allow_empty_candidate_pool": allow_empty_candidate_pool,
         },
         "staged_trace": str(target_path),
         "reused_existing_staged_trace": True,
@@ -381,6 +400,11 @@ def main() -> int:
             "Malformed or empty indices still fail."
         ),
     )
+    parser.add_argument(
+        "--allow-empty-candidate-pool",
+        action="store_true",
+        help="Allow empty candidate_pool rows for explicit no-evidence controls.",
+    )
     args = parser.parse_args()
 
     dataset = normalize_dataset(args.dataset)
@@ -405,6 +429,7 @@ def main() -> int:
                 expected_fingerprint=args.expected_fingerprint,
                 forbidden_fingerprints=forbidden_fingerprints or None,
                 allow_multi_sentence_candidates=args.allow_multi_sentence_candidates,
+                allow_empty_candidate_pool=args.allow_empty_candidate_pool,
             )
             manifests.append(manifest)
             trace_paths[split] = target_path
@@ -424,6 +449,7 @@ def main() -> int:
             expected_fingerprint=args.expected_fingerprint,
             forbidden_fingerprints=forbidden_fingerprints or None,
             allow_multi_sentence_candidates=args.allow_multi_sentence_candidates,
+            allow_empty_candidate_pool=args.allow_empty_candidate_pool,
         )
         manifests.append(manifest)
         trace_paths[split] = target_path

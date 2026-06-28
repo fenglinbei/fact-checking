@@ -2,7 +2,7 @@
 # Stage 1 verifier calibration: train on fixed-MMR prompts with weighted CE over A-F label tokens.
 
 defaults:
-  - b3_mmr_topk_sweep_1024
+  - /experiment/baselines/b3_mmr_topk_sweep_1024
   - _self_
 
 experiment:

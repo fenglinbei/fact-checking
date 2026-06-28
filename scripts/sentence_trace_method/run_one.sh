@@ -21,6 +21,8 @@ CASE_SUFFIX="${CASE_SUFFIX:-}"
 DRY_RUN="${DRY_RUN:-false}"
 FORCE_STAGE="${FORCE_STAGE:-false}"
 ALLOW_MULTI_SENTENCE_CANDIDATES="${ALLOW_MULTI_SENTENCE_CANDIDATES:-false}"
+ALLOW_EMPTY_CANDIDATE_POOL="${ALLOW_EMPTY_CANDIDATE_POOL:-false}"
+ALLOW_EMPTY_EVIDENCE="${ALLOW_EMPTY_EVIDENCE:-false}"
 FORCE_BUILD="${FORCE_BUILD:-false}"
 FORCE_TRAIN="${FORCE_TRAIN:-false}"
 FORCE_EVAL="${FORCE_EVAL:-false}"
@@ -171,6 +173,9 @@ stage_sources() {
   if [[ "$ALLOW_MULTI_SENTENCE_CANDIDATES" == "true" || "$ALLOW_MULTI_SENTENCE_CANDIDATES" == "1" ]]; then
     cmd+=(--allow-multi-sentence-candidates)
   fi
+  if [[ "$ALLOW_EMPTY_CANDIDATE_POOL" == "true" || "$ALLOW_EMPTY_CANDIDATE_POOL" == "1" ]]; then
+    cmd+=(--allow-empty-candidate-pool)
+  fi
   if [[ -n "$SOURCE_ROOT" ]]; then
     cmd+=(--source-root "$SOURCE_ROOT")
   fi
@@ -224,6 +229,9 @@ do_build() {
   fi
   if [[ "$SAMPLE_LIMIT" != "0" ]]; then
     cmd+=(--sample-limit "$SAMPLE_LIMIT")
+  fi
+  if [[ "$ALLOW_EMPTY_EVIDENCE" == "true" || "$ALLOW_EMPTY_EVIDENCE" == "1" ]]; then
+    cmd+=(--allow-empty-evidence)
   fi
   run_cmd "${cmd[@]}"
   apply_train_config_overrides

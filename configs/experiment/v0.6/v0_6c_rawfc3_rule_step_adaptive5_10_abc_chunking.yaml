@@ -3,7 +3,7 @@
 # v0_7_atom_facts_abc evidence-map construction.
 
 defaults:
-  - v0_6c_rawfc3_rule_step_adaptive5_10
+  - /experiment/v0.6/v0_6c_rawfc3_rule_step_adaptive5_10
   - _self_
 
 experiment:

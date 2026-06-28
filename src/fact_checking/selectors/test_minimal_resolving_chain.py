@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import pytest
 
+from fact_checking.selectors.mrec_learned_marginal import (
+    LearnedMarginalWeights,
+    REWARD_WEIGHT_SCHEMA_VERSION,
+    save_learned_marginal_weights,
+)
 from fact_checking.selectors.minimal_resolving_chain import (
     MRECSelectorParams,
     build_mrec_trace_row,
@@ -116,6 +121,33 @@ def test_build_mrec_trace_row_respects_token_budget() -> None:
     assert trace["mrec_steps"][0]["token_cost"] == 4
     assert trace["mrec_diagnostics"]["stop_reason"] == "token_budget_exhausted"
     assert trace["mrec_diagnostics"]["unresolved_atom_ids"] == ["A2"]
+
+
+def test_build_mrec_trace_row_treats_zero_max_steps_as_full_candidate_pool() -> None:
+    row = _row(
+        claim_atoms=[
+            {"atom_id": "A1", "text": "The bill passed.", "importance": 1.0},
+            {"atom_id": "A2", "text": "It passed in 2024.", "importance": 1.0},
+            {"atom_id": "A3", "text": "The vote was bipartisan.", "importance": 1.0},
+        ],
+        candidates=[
+            _candidate("E1", relation="support", atoms=["A1"], text="The bill passed."),
+            _candidate("E2", relation="support", atoms=["A2"], text="It passed in 2024."),
+            _candidate("E3", relation="support", atoms=["A3"], text="The vote was bipartisan."),
+        ],
+    )
+
+    trace = build_mrec_trace_row(
+        row,
+        params=MRECSelectorParams(candidate_top_n=0, max_steps=0, target_resolved_rate=1.0),
+    )
+
+    assert [step["evidence_id"] for step in trace["mrec_steps"]] == ["E1", "E2", "E3"]
+    assert trace["mrec_diagnostics"]["total_candidate_count"] == 3
+    assert trace["mrec_diagnostics"]["stop_reason"] == "reached_max_steps"
+    assert trace["mrec_steps"][0]["trace_state"]["selected_count"] == 1
+    assert trace["mrec_steps"][-1]["trace_state"]["target_resolved"] is True
+    assert trace["mrec_steps"][-1]["trace_state"]["unresolved_atom_ids"] == []
 
 
 def test_build_mrec_trace_row_uses_single_fallback_when_no_resolving_evidence_exists() -> None:
@@ -257,6 +289,44 @@ def test_learned_marginal_proxy_continues_to_unresolved_atom_after_target_rate()
     assert [step["evidence_id"] for step in trace["mrec_steps"]] == ["E1", "E2"]
     assert trace["atom_states_final"] == {"A1": "S", "A2": "R"}
     assert trace["mrec_diagnostics"]["stop_reason"] == "min_steps_satisfied"
+
+
+def test_learned_marginal_reward_stops_after_min_steps_when_reward_is_non_positive(tmp_path) -> None:
+    weights_path = tmp_path / "reward_weights.json"
+    save_learned_marginal_weights(
+        weights_path,
+        LearnedMarginalWeights(
+            feature_weights={},
+            cost_weight=0.0,
+            schema_version=REWARD_WEIGHT_SCHEMA_VERSION,
+            bias=-1.0,
+        ),
+    )
+    row = _row(
+        claim_atoms=[{"atom_id": "A1", "text": "The bill passed.", "importance": 1.0}],
+        candidates=[
+            _candidate("E1", relation="support", atoms=["A1"], text="The bill passed."),
+            _candidate("E2", relation="support", atoms=["A1"], text="A second report says the bill passed."),
+        ],
+    )
+
+    trace = build_mrec_trace_row(
+        row,
+        params=MRECSelectorParams(
+            selection_policy="learned_marginal_reward",
+            selector_name="mrec_greedy_transition_v0_2_learned_marginal_reward",
+            weight_file=str(weights_path),
+            max_steps=5,
+            min_steps=1,
+            stop_threshold=0.0,
+        ),
+    )
+
+    assert [step["evidence_id"] for step in trace["mrec_steps"]] == ["E1"]
+    assert trace["mrec_steps"][0]["selection_policy"] == "learned_marginal_reward"
+    assert trace["mrec_steps"][0]["utility_score"] < 0.0
+    assert trace["mrec_diagnostics"]["selection_policy"] == "learned_marginal_reward"
+    assert trace["mrec_diagnostics"]["stop_reason"] == "utility_below_threshold"
 
 
 def test_build_mrec_trace_row_rejects_empty_candidate_pool() -> None:

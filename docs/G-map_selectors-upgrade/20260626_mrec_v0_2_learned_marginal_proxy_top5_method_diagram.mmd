@@ -1,0 +1,58 @@
+flowchart LR
+  I["Input\nClaim c + reports R"] --> S2
+
+  subgraph S2["Stage 2 · Atomic Evidence Map (secondary focus)"]
+    A["Claim atoms\nA={a1,...,am}"]
+    C["Candidate pool\nC={e1,...,en}"]
+    M["Atom-evidence map\nM(ej,ai)=(rij,dij,qij)"]
+    H["Atom state tracker\nht(ai) in {U,S,R,Q,C}\nresolved rate ρt"]
+    A --> M
+    C --> M
+    M --> H
+  end
+
+  subgraph S4["Stage 4 · Proxy Pairwise Learning (primary focus)"]
+    ROL["Short proxy rollout\nunder selected prefix Z<t"]
+    PAIR["Pairwise preferences\n(e+, e-, Z<t, ht-1)"]
+    LOSS["Logistic pairwise loss\nLproxy = log(1+exp(-(u(e+)-u(e-))))"]
+    THETA["Learned weights\nθ, β"]
+    ROL --> PAIR --> LOSS --> THETA
+  end
+
+  subgraph S3["Stage 3 · Learned Marginal Utility (primary focus)"]
+    FEAT["Prefix-conditioned features\nφt(e)=φ(e | Z<t, ht-1, M)"]
+    SCORE["Marginal utility\nuθ(e|Z<t)=b+Σθℓφt,ℓ(e)-βcost(e)"]
+    FEAT --> SCORE
+  end
+
+  subgraph S5["Stage 5 · Greedy MREC Selection (primary focus)"]
+    POOL["Remaining candidates\nCt = C \\ Z<t"]
+    PICK["Select next evidence\net = argmax uθ(e|Z<t)"]
+    UPDATE["Update atom state\nht = Update(ht-1, et, M)"]
+    STOP["Stop / continue\nkmin≤|Z|≤kmax\nstop if utility≤τ after kmin"]
+    CHAIN["Ordered chain\nZ=(z1,...,zT)"]
+    POOL --> PICK --> UPDATE --> STOP
+    STOP -->|"continue"| POOL
+    STOP -->|"finish"| CHAIN
+  end
+
+  OUT["Top-5 realization\nZ1:5 → Check cue + evidence text"] --> V["Label-token verifier\nŷ = argmax pψ(y | π(c,Z1:5))"]
+
+  S2 --> S3
+  THETA -. "learned scorer" .-> SCORE
+  S3 --> S5
+  H --> FEAT
+  M --> FEAT
+  CHAIN --> OUT
+
+  classDef secondary fill:#EAF7F2,stroke:#2C8A6A,stroke-width:2px,color:#12372D;
+  classDef primaryA fill:#FFF1E6,stroke:#D66A1F,stroke-width:3px,color:#3C2412;
+  classDef primaryB fill:#EAF0FF,stroke:#496BD8,stroke-width:3px,color:#17234D;
+  classDef primaryC fill:#F2ECFF,stroke:#7A4DD8,stroke-width:3px,color:#24153F;
+  classDef neutral fill:#F7F8FA,stroke:#7D8793,stroke-width:1.5px,color:#1F2933;
+
+  class A,C,M,H secondary;
+  class FEAT,SCORE primaryA;
+  class ROL,PAIR,LOSS,THETA primaryB;
+  class POOL,PICK,UPDATE,STOP,CHAIN primaryC;
+  class I,OUT,V neutral;

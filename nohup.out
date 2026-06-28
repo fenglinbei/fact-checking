@@ -1,0 +1,174 @@
+[2026-06-22 03:46:41] ============================================
+[2026-06-22 03:46:41] queue: Qwen3-14B no-sibling full pipeline
+[2026-06-22 03:46:41] log path:  /data/liaozijie/fact-checking/outputs/sentence_trace_method/_queue_logs/qwen3_14b_queue_20260622_034641.log
+[2026-06-22 03:46:41] wait pid:  1338115
+[2026-06-22 03:46:41] deadline:  2026-06-23 10:00:00 (epoch 1782180000)
+[2026-06-22 03:46:41] poll:      60s
+[2026-06-22 03:46:41] grace:     600s
+[2026-06-22 03:46:41] target:    /data/liaozijie/MedFact/scripts/run_qwen3_14b_no_sibling_full_pipeline.sh
+[2026-06-22 03:46:41] medfact:   /data/liaozijie/MedFact
+[2026-06-22 03:46:41] NPROC:     4
+[2026-06-22 03:46:41] ============================================
+[2026-06-22 03:46:41] phase1: waiting for pid=1338115 to exit
+[2026-06-22 05:45:42] wait-pid: pid 1338115 exited before deadline
+[2026-06-22 05:45:42] phase3: launching qwen3-14b no-sibling pipeline in /data/liaozijie/MedFact
+qwen3-14b no-sibling full pipeline
+model_config: configs/models/qwen3_14b_lora_no_sibling.yaml
+features_dir: data/processed/rag_same_question_topk2/features
+prompt_dir: data/processed/rag_same_question_topk2/prompts/qwen3_14b_no_sibling
+output_dir: outputs/qwen3_14b_lora_no_sibling
+python: /data/liaozijie/conda/accelerate-fc-gemma4/bin/python
+nproc_per_node: 4
+deepspeed_config: configs/deepspeed/zero2_lora.json
+
++ /data/liaozijie/conda/accelerate-fc-gemma4/bin/python -m medfact_pipeline.cli build-prompts --features-dir data/processed/rag_same_question_topk2/features --model-config configs/models/qwen3_14b_lora_no_sibling.yaml
+[2026-06-22 05:45:42] phase3: job pid=1570688
+[HAMI-core Msg(1570691:139766318455680:libvgpu.c:856)]: Initializing.....
+{
+  "train": 3878,
+  "val": 1186,
+  "test_a": 1186,
+  "test_b": 1159
+}
+[HAMI-core Msg(1570691:139766318455680:multiprocess_memory_limit.c:455)]: Calling exit handler 1570691
++ /data/liaozijie/conda/accelerate-fc-gemma4/bin/python -m torch.distributed.run --nproc_per_node=4 -m medfact_pipeline.cli train-lora --model-config configs/models/qwen3_14b_lora_no_sibling.yaml --prompt-dir data/processed/rag_same_question_topk2/prompts/qwen3_14b_no_sibling --output-dir outputs/qwen3_14b_lora_no_sibling --deepspeed-config configs/deepspeed/zero2_lora.json
+[HAMI-core Msg(1572073:139649429437312:libvgpu.c:856)]: Initializing.....
+
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+[HAMI-core Msg(1572218:140180299975552:libvgpu.c:856)]: Initializing.....
+[HAMI-core Msg(1572216:139777846115200:libvgpu.c:856)]: Initializing.....
+[HAMI-core Msg(1572215:139623204494208:libvgpu.c:856)]: Initializing.....
+[HAMI-core Msg(1572217:140051069057920:libvgpu.c:856)]: Initializing.....
+[HAMI-core Msg(1572216:139777846115200:utils.c:32)]: unified_lock locked, waiting 1 second...
+[HAMI-core Msg(1572217:140051069057920:utils.c:32)]: unified_lock locked, waiting 1 second...
+[HAMI-core Msg(1572215:139623204494208:libvgpu.c:878)]: Initialized
+[HAMI-core Msg(1572217:140051069057920:utils.c:32)]: unified_lock locked, waiting 1 second...
+[HAMI-core Msg(1572216:139777846115200:libvgpu.c:878)]: Initialized
+Loading weights:   0%|          | 0/443 [00:00<?, ?it/s]Loading weights:   1%|▏         | 6/443 [00:00<00:07, 59.93it/s]Loading weights:   4%|▍         | 19/443 [00:00<00:04, 91.19it/s]Loading weights:   6%|▋         | 28/443 [00:00<00:05, 74.98it/s]Loading weights:  13%|█▎        | 56/443 [00:00<00:02, 141.04it/s]Loading weights:  16%|█▌        | 71/443 [00:00<00:04, 83.56it/s] Loading weights:  19%|█▊        | 83/443 [00:01<00:08, 43.40it/s]Loading weights:  21%|██        | 92/443 [00:01<00:07, 48.76it/s]Loading weights:  23%|██▎       | 101/443 [00:01<00:06, 53.69it/s]Loading weights:  25%|██▍       | 110/443 [00:01<00:05, 59.17it/s]Loading weights:  27%|██▋       | 121/443 [00:01<00:04, 66.41it/s]Loading weights:  29%|██▉       | 130/443 [00:02<00:04, 66.12it/s]Loading weights:  32%|███▏      | 142/443 [00:02<00:03, 76.66it/s]Loading weights:   0%|          | 0/443 [00:00<?, ?it/s]Loading weights:  34%|███▍      | 151/443 [00:02<00:03, 78.50it/s]Loading weights:  36%|███▌      | 158/443 [00:00<00:00, 1454.67it/s]Loading weights:  36%|███▌      | 160/443 [00:02<00:03, 72.16it/s][HAMI-core Msg(1572217:140051069057920:libvgpu.c:878)]: Initialized
+Loading weights:  39%|███▉      | 173/443 [00:02<00:03, 81.77it/s]Loading weights:  42%|████▏     | 187/443 [00:02<00:03, 85.02it/s]Loading weights:  46%|████▌     | 202/443 [00:02<00:02, 99.77it/s]Loading weights:  48%|████▊     | 214/443 [00:02<00:02, 99.41it/s]Loading weights:  55%|█████▍    | 243/443 [00:02<00:01, 141.68it/s][HAMI-core Msg(1572218:140180299975552:libvgpu.c:878)]: Initialized
+Loading weights:  58%|█████▊    | 258/443 [00:03<00:03, 50.07it/s] Loading weights:  61%|██████    | 269/443 [00:03<00:03, 56.76it/s]Loading weights:  66%|██████▌   | 291/443 [00:04<00:01, 76.18it/s]Loading weights:  69%|██████▉   | 307/443 [00:04<00:01, 86.21it/s]Loading weights:  69%|██████▊   | 304/443 [00:01<00:01, 132.58it/s] Loading weights:  72%|███████▏  | 320/443 [00:04<00:01, 88.71it/s]Loading weights:  76%|███████▌  | 337/443 [00:04<00:01, 102.37it/s]Loading weights:   0%|          | 0/443 [00:00<?, ?it/s]Loading weights:  79%|███████▉  | 350/443 [00:04<00:00, 100.85it/s]Loading weights:  56%|█████▋    | 250/443 [00:00<00:00, 2314.07it/s]Loading weights:  82%|████████▏ | 363/443 [00:04<00:00, 106.40it/s]Loading weights:  83%|████████▎ | 369/443 [00:02<00:00, 129.64it/s]Loading weights:  86%|████████▋ | 383/443 [00:04<00:00, 118.50it/s]Loading weights:  89%|████████▉ | 396/443 [00:05<00:00, 75.54it/s] Loading weights:   0%|          | 0/443 [00:00<?, ?it/s]Loading weights:  93%|█████████▎| 410/443 [00:05<00:00, 81.73it/s]Loading weights:  93%|█████████▎| 410/443 [00:03<00:00, 109.87it/s]Loading weights:  63%|██████▎   | 277/443 [00:00<00:00, 2178.25it/s]Loading weights:  95%|█████████▌| 421/443 [00:05<00:00, 78.04it/s]Loading weights:  99%|█████████▉| 438/443 [00:03<00:00, 113.05it/s]Loading weights: 100%|██████████| 443/443 [00:05<00:00, 80.07it/s]
+Loading weights: 100%|██████████| 443/443 [00:03<00:00, 133.40it/s]
+Loading weights: 100%|██████████| 443/443 [00:01<00:00, 427.83it/s] 
+Loading weights: 100%|██████████| 443/443 [00:00<00:00, 1350.86it/s]
+[transformers] warmup_ratio is deprecated and will be removed in v5.2. Use `warmup_steps` instead.
+[transformers] warmup_ratio is deprecated and will be removed in v5.2. Use `warmup_steps` instead.
+[transformers] warmup_ratio is deprecated and will be removed in v5.2. Use `warmup_steps` instead.
+[transformers] warmup_ratio is deprecated and will be removed in v5.2. Use `warmup_steps` instead.
+[HAMI-core Msg(1572972:140594723195776:libvgpu.c:856)]: Initializing.....
+[HAMI-core Msg(1572974:139906145749888:libvgpu.c:856)]: Initializing.....
+[HAMI-core Msg(1572973:140256304794496:libvgpu.c:856)]: Initializing.....
+[HAMI-core Msg(1572978:140387548597120:libvgpu.c:856)]: Initializing.....
+[HAMI-core Msg(1572972:140594723195776:utils.c:32)]: unified_lock locked, waiting 1 second...
+[HAMI-core Msg(1572978:140387548597120:utils.c:32)]: unified_lock locked, waiting 1 second...
+[HAMI-core Msg(1572973:140256304794496:utils.c:32)]: unified_lock locked, waiting 1 second...
+[HAMI-core Msg(1572974:139906145749888:libvgpu.c:878)]: Initialized
+[HAMI-core Msg(1572978:140387548597120:utils.c:32)]: unified_lock locked, waiting 1 second...
+[HAMI-core Msg(1572973:140256304794496:utils.c:32)]: unified_lock locked, waiting 1 second...
+[HAMI-core Msg(1573357:140331402708800:multiprocess_memory_limit.c:455)]: Calling exit handler 1573357
+[RANK 0] Detected kernel version 4.18.0, which is below the recommended minimum of 5.5.0; this can cause the process to hang. It is recommended to upgrade the kernel to the minimum version or higher.
+[RANK 0] Gradient accumulation steps mismatch: GradientAccumulationPlugin has 1, DeepSpeed config has 16. Using DeepSpeed's value.
+[HAMI-core Msg(1573363:140466685515584:multiprocess_memory_limit.c:455)]: Calling exit handler 1573363
+[HAMI-core Msg(1572972:140594723195776:libvgpu.c:878)]: Initialized
+[HAMI-core Msg(1573364:139774719076160:multiprocess_memory_limit.c:455)]: Calling exit handler 1573364
+[HAMI-core Msg(1573365:140658257127232:multiprocess_memory_limit.c:455)]: Calling exit handler 1573365
+[HAMI-core Msg(1572973:140256304794496:utils.c:32)]: unified_lock locked, waiting 1 second...
+[HAMI-core Msg(1572978:140387548597120:libvgpu.c:878)]: Initialized
+[HAMI-core Msg(1572973:140256304794496:libvgpu.c:878)]: Initialized
+[HAMI-core ERROR (pid:1572215 thread=139623204494208 allocator.c:121)]: cuMemoryAllocate failed res=2
+[HAMI-core ERROR (pid:1572215 thread=139623204494208 allocator.c:121)]: cuMemoryAllocate failed res=2
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "<frozen runpy>", line 198, in _run_module_as_main
+[rank0]:   File "<frozen runpy>", line 88, in _run_code
+[rank0]:   File "/data/liaozijie/MedFact/medfact_pipeline/cli.py", line 419, in <module>
+[rank0]:     raise SystemExit(main())
+[rank0]:                      ^^^^^^
+[rank0]:   File "/data/liaozijie/MedFact/medfact_pipeline/cli.py", line 111, in main
+[rank0]:     train_lora(
+[rank0]:   File "/data/liaozijie/MedFact/medfact_pipeline/training.py", line 672, in train_lora
+[rank0]:     trainer.train()
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/transformers/trainer.py", line 1427, in train
+[rank0]:     return inner_training_loop(
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/transformers/trainer.py", line 1466, in _inner_training_loop
+[rank0]:     model, train_dataloader = self._prepare_for_training(max_steps, train_dataloader, resume_from_checkpoint)
+[rank0]:                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/transformers/trainer.py", line 1602, in _prepare_for_training
+[rank0]:     model, self.optimizer = self.accelerator.prepare(self.model, self.optimizer)
+[rank0]:                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/accelerate/accelerator.py", line 1548, in prepare
+[rank0]:     result = self._prepare_deepspeed(*args)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/accelerate/accelerator.py", line 2427, in _prepare_deepspeed
+[rank0]:     engine, optimizer, _, lr_scheduler = ds_initialize(**kwargs)
+[rank0]:                                          ^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/deepspeed/__init__.py", line 214, in initialize
+[rank0]:     engine = DeepSpeedEngine(args=args,
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 305, in __init__
+[rank0]:     self._configure_distributed_model(model)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 1469, in _configure_distributed_model
+[rank0]:     self.module.to(self.device)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1343, in to
+[rank0]:     return self._apply(convert)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/torch/nn/modules/module.py", line 903, in _apply
+[rank0]:     module._apply(fn)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/torch/nn/modules/module.py", line 903, in _apply
+[rank0]:     module._apply(fn)
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/torch/nn/modules/module.py", line 903, in _apply
+[rank0]:     module._apply(fn)
+[rank0]:   [Previous line repeated 5 more times]
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/torch/nn/modules/module.py", line 930, in _apply
+[rank0]:     param_applied = fn(param)
+[rank0]:                     ^^^^^^^^^
+[rank0]:   File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1329, in convert
+[rank0]:     return t.to(
+[rank0]:            ^^^^^
+[rank0]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 44.39 GiB of which 75.44 MiB is free. Process 1570497 has 19.77 GiB memory in use. Including non-PyTorch memory, this process has 24.61 GiB memory in use. Of the allocated memory 24.32 GiB is allocated by PyTorch, and 1.93 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[rank0]:[W622 05:48:04.061324102 ProcessGroupNCCL.cpp:1496] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+[HAMI-core Msg(1572215:139623204494208:multiprocess_memory_limit.c:455)]: Calling exit handler 1572215
+W0622 05:48:05.310000 1572073 site-packages/torch/distributed/elastic/multiprocessing/api.py:897] Sending process 1572216 closing signal SIGTERM
+W0622 05:48:05.313000 1572073 site-packages/torch/distributed/elastic/multiprocessing/api.py:897] Sending process 1572217 closing signal SIGTERM
+W0622 05:48:05.316000 1572073 site-packages/torch/distributed/elastic/multiprocessing/api.py:897] Sending process 1572218 closing signal SIGTERM
+[HAMI-core Msg(1572972:140594723195776:multiprocess_memory_limit.c:455)]: Calling exit handler 1572972
+E0622 05:48:05.946000 1572073 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 0 (pid: 1572215) of binary: /data/liaozijie/conda/accelerate-fc-gemma4/bin/python
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/torch/distributed/run.py", line 922, in <module>
+    main()
+  File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/torch/distributed/run.py", line 918, in main
+    run(args)
+  File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/torch/distributed/run.py", line 909, in run
+    elastic_launch(
+  File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/liaozijie/conda/accelerate-fc-gemma4/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+medfact_pipeline.cli FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-06-22_05:48:05
+  host      : cuda12-4-1-cudnn9-code-conda-878a193fe7034b0ab8-69456f56f94l8lx
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 1572215)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+[HAMI-core Msg(1572073:139649429437312:multiprocess_memory_limit.c:455)]: Calling exit handler 1572073
+[HAMI-core Warn(1572972:140594723195776:multiprocess_memory_limit.c:475)]: Failed to take lock on exit: errno=110
+[HAMI-core Warn(1572073:139649429437312:multiprocess_memory_limit.c:475)]: Failed to take lock on exit: errno=110
+[2026-06-22 05:48:42] qwen3-14b: pid 1570688 exited before deadline
+[2026-06-22 05:48:42] phase4: job exited with status 0

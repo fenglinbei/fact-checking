@@ -50,10 +50,7 @@ def _load_config(config: str) -> dict[str, Any]:
         except ValueError:
             loaded = OmegaConf.load(config_path)
             return dict(OmegaConf.to_container(loaded, resolve=True) or {})
-        if len(rel.parts) != 1:
-            loaded = OmegaConf.load(config_path)
-            return dict(OmegaConf.to_container(loaded, resolve=True) or {})
-        experiment_name = rel.stem
+        experiment_name = rel.with_suffix("").as_posix()
 
     if GlobalHydra.instance().is_initialized():
         GlobalHydra.instance().clear()

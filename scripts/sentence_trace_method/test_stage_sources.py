@@ -91,6 +91,37 @@ def test_stage_split_allows_multi_sentence_candidates_when_requested(tmp_path: P
     assert audit["checked_candidates"] == 1
 
 
+def test_stage_split_allows_empty_candidate_pool_when_requested(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.jsonl"
+    target_path = tmp_path / "target" / "selection_trace_val.jsonl"
+    row = _trace_row()
+    row["candidate_pool"] = []
+    row["selector_ordered_indices"] = []
+    row["selected_indices"] = []
+    source_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    manifest = stage_sources.stage_split(
+        dataset="liar_raw",
+        split="val",
+        source_path=source_path,
+        target_path=target_path,
+        sample_limit=0,
+        force=False,
+        selector_name="selector_mech_s0_no_evidence",
+        graph_version="selector_mechanism_ablation_v0",
+        adaptive_policy="fixed_top5",
+        expected_fingerprint="fp",
+        forbidden_fingerprints=set(),
+        allow_empty_candidate_pool=True,
+    )
+
+    staged = json.loads(target_path.read_text(encoding="utf-8").strip())
+    audit = manifest["sentence_chunk_audit"]
+    assert staged["candidate_pool"] == []
+    assert audit["empty_candidate_pool_rows"] == 1
+    assert audit["allow_empty_candidate_pool"] is True
+
+
 def test_main_summary_uses_custom_selector_name(tmp_path: Path, monkeypatch) -> None:
     source_root = tmp_path / "source"
     source_split = source_root / "val"

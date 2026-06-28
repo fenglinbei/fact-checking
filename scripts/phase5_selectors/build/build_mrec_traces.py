@@ -15,6 +15,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from fact_checking.selectors.minimal_resolving_chain import (  # noqa: E402
     MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
+    MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD,
     MREC_SELECTION_POLICY_TRANSITION_V0_1,
     MREC_SELECTOR_NAME,
     MRECSelectorParams,
@@ -32,6 +33,7 @@ from fact_checking.selectors.mrec_schema import (  # noqa: E402
 
 MREC_ADAPTIVE_POLICY = "minimal_resolving_chain_v0_1"
 MREC_LEARNED_MARGINAL_ADAPTIVE_POLICY = "learned_marginal_proxy_v0_2"
+MREC_LEARNED_MARGINAL_REWARD_ADAPTIVE_POLICY = "learned_marginal_reward_v0_2"
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,7 +55,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--selection-policy",
         default=MREC_SELECTION_POLICY_TRANSITION_V0_1,
-        choices=[MREC_SELECTION_POLICY_TRANSITION_V0_1, MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY],
+        choices=[
+            MREC_SELECTION_POLICY_TRANSITION_V0_1,
+            MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
+            MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD,
+        ],
     )
     parser.add_argument("--weight-file", default="")
     parser.add_argument("--stop-threshold", type=float, default=0.0)
@@ -66,8 +72,11 @@ def main() -> int:
     input_path = Path(args.input)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    if str(args.selection_policy) == MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY and not str(args.weight_file or ""):
-        raise SystemExit("--weight-file is required when --selection-policy learned_marginal_proxy is used.")
+    if str(args.selection_policy) in {
+        MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
+        MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD,
+    } and not str(args.weight_file or ""):
+        raise SystemExit("--weight-file is required when --selection-policy learned_marginal_proxy/reward is used.")
 
     params = MRECSelectorParams(
         candidate_top_n=int(args.candidate_top_n),
@@ -230,13 +239,18 @@ def _summarize_traces(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _adaptive_policy_for_params(params: MRECSelectorParams) -> str:
+    if str(params.selection_policy) == MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD:
+        return MREC_LEARNED_MARGINAL_REWARD_ADAPTIVE_POLICY
     if str(params.selection_policy) == MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY:
         return MREC_LEARNED_MARGINAL_ADAPTIVE_POLICY
     return MREC_ADAPTIVE_POLICY
 
 
 def _weight_fingerprint_for_params(params: MRECSelectorParams) -> str:
-    if str(params.selection_policy) != MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY:
+    if str(params.selection_policy) not in {
+        MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
+        MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD,
+    }:
         return ""
     return learned_marginal_weight_fingerprint(params.weight_file or None)
 
