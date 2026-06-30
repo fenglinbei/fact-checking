@@ -1,0 +1,31 @@
+extends: learned_marginal_proxy_fullpool_policy.yaml
+
+experiment:
+  name: liar_raw__ministral3_8b__selector_mech_s5_map_quality_greedy
+  case_suffix: __selector_mech_s5_map_quality_greedy
+  run_label: selector-mech-s5-map-quality-greedy
+  run_header_label: selector-mech-s5-map-quality-greedy-full
+
+trace:
+  output_root: outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_map_quality_greedy_fullpool
+  weight_file: ""
+  selector_name: selector_mech_s5_map_quality_greedy
+  adaptive_policy: map_quality_greedy_v0_2
+  selection_policy: map_quality_greedy
+  source_selector_name: v0_7_atom_facts_abc_budgeted_marginal_chain_adaptive5_10
+  candidate_top_n: 0
+  max_steps: 0
+  min_steps: 0
+  token_budget: null
+  target_resolved_rate: 1.0
+  continue_after_target_for_contrast: false
+  post_target_fill_policy: contrast_only
+  stop_threshold: -1000000000
+
+swanlab:
+  experiment_name: liar_raw__ministral3_8b__selector_mech_s5_map_quality_greedy
+
+sentence_trace_method:
+  selector_name: selector_mech_s5_map_quality_greedy
+  adaptive_policy: map_quality_greedy_v0_2
+  top_k: 5

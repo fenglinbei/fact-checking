@@ -301,6 +301,33 @@ def test_selector_mechanism_s0_s4_wrapper_dry_run_expands_cases(tmp_path: Path) 
     assert "SFT_EVAL_STEPS=100" in output
 
 
+def test_selector_mechanism_s5_s6_wrapper_dry_run_expands_chain_cases(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_liar_raw_ministral3_selector_mechanism_s5_s6_plain_lora_ebs16_lr2e5_ep12_eval100.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "SELECTOR_MECH_MODE": "full",
+            "FORCE_MREC_BUILD": "true",
+            "RUN_TAU_EVAL": "false",
+        },
+    )
+
+    assert "selector_mech_s5_map_quality_greedy" in output
+    assert "selector_mech_s6_learned_marginal_proxy_trace_shuffle" in output
+    assert "configs/experiment/mrec_v0.2/selector_mech_s5_map_quality_greedy.yaml" in output
+    assert "configs/experiment/mrec_v0.2/selector_mech_s6_learned_marginal_proxy_trace_shuffle.yaml" in output
+    assert "CASE_SUFFIX=__selector_mech_s5_map_quality_greedy" in output
+    assert "CASE_SUFFIX=__selector_mech_s6_learned_marginal_proxy_trace_shuffle" in output
+    assert "--selection-policy map_quality_greedy" in output
+    assert "scripts/phase5_selectors/build/shuffle_mrec_trace_order.py" in output
+    assert "--seed 0" in output
+    assert "TRACE_PROMPT_STYLE=mrec_min" in output
+    assert "PROMPT_EVIDENCE_POLICY=fixed_topk" in output
+    assert "SFT_LEARNING_RATE=2e-05" in output
+    assert "SFT_NUM_TRAIN_EPOCHS=12" in output
+    assert "SFT_EVAL_STEPS=100" in output
+
+
 def test_rawfc_atom_anchor_v0_2_fullpool_policy_wrapper_reads_rawfc_yaml_config(tmp_path: Path) -> None:
     output = _run_script(
         "scripts/sentence_trace_method/run_rawfc_ministral3_atom_anchor_v0_2_fullpool_policy_lora_r16a32_d010_lr1e5_ep12_eval50.sh",
