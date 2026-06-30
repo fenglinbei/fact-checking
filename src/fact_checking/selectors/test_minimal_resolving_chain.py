@@ -8,6 +8,7 @@ from fact_checking.selectors.mrec_learned_marginal import (
     save_learned_marginal_weights,
 )
 from fact_checking.selectors.minimal_resolving_chain import (
+    MREC_SELECTION_POLICY_MAP_QUALITY_GREEDY,
     MRECSelectorParams,
     build_mrec_trace_row,
 )
@@ -264,6 +265,66 @@ def test_learned_marginal_proxy_fills_single_atom_to_min_steps_with_diverse_evid
     assert trace["mrec_diagnostics"]["selection_policy"] == "learned_marginal_proxy"
 
 
+def test_map_quality_greedy_orders_by_map_quality_without_learned_weights() -> None:
+    row = _row(
+        claim_atoms=[
+            {"atom_id": "A1", "text": "The bill passed.", "importance": 1.0},
+            {"atom_id": "A2", "text": "The vote was bipartisan.", "importance": 1.0},
+            {"atom_id": "A3", "text": "It passed in 2024.", "importance": 1.0},
+        ],
+        candidates=[
+            _candidate(
+                "E-high-hybrid-low-quality",
+                relation="support",
+                atoms=["A1"],
+                text="A high retrieval score item has weak map quality.",
+                evidence_map_quality_score=0.10,
+                base_score=30.0,
+                hybrid_score=99.0,
+            ),
+            _candidate(
+                "E-map-quality-score",
+                relation="support",
+                atoms=["A2"],
+                text="A fallback map_quality_score item should rank first.",
+                evidence_map_quality_score=None,
+                map_quality_score=0.95,
+                base_score=0.1,
+                hybrid_score=0.1,
+            ),
+            _candidate(
+                "E-evidence-map-quality",
+                relation="support",
+                atoms=["A3"],
+                text="An evidence_map_quality_score item should rank second.",
+                evidence_map_quality_score=0.80,
+                base_score=0.2,
+                hybrid_score=0.2,
+            ),
+        ],
+    )
+
+    trace = build_mrec_trace_row(
+        row,
+        params=MRECSelectorParams(
+            selection_policy=MREC_SELECTION_POLICY_MAP_QUALITY_GREEDY,
+            selector_name="mrec_greedy_transition_v0_2_map_quality_greedy",
+            max_steps=3,
+            target_resolved_rate=1.1,
+        ),
+    )
+
+    assert [step["evidence_id"] for step in trace["mrec_steps"]] == [
+        "E-map-quality-score",
+        "E-evidence-map-quality",
+        "E-high-hybrid-low-quality",
+    ]
+    assert [step["map_quality_greedy_score"] for step in trace["mrec_steps"]] == [0.95, 0.80, 0.10]
+    assert all(step["selection_policy"] == MREC_SELECTION_POLICY_MAP_QUALITY_GREEDY for step in trace["mrec_steps"])
+    assert trace["mrec_diagnostics"]["selection_policy"] == MREC_SELECTION_POLICY_MAP_QUALITY_GREEDY
+    assert "utility_score" not in trace["mrec_steps"][0]
+
+
 def test_learned_marginal_proxy_continues_to_unresolved_atom_after_target_rate() -> None:
     row = _row(
         claim_atoms=[
@@ -358,8 +419,12 @@ def _candidate(
     directness: str = "direct",
     duplicate_group: str = "",
     source_group: str = "report-a",
+    evidence_map_quality_score: float | None = 0.7,
+    map_quality_score: float | None = None,
+    base_score: float = 0.5,
+    hybrid_score: float | None = None,
 ) -> dict[str, object]:
-    return {
+    candidate: dict[str, object] = {
         "evidence_id": evidence_id,
         "candidate_idx": 0,
         "selector_candidate_idx": 0,
@@ -368,8 +433,14 @@ def _candidate(
         "map_relation": relation,
         "map_directness": directness,
         "map_confidence": 0.8,
-        "evidence_map_quality_score": 0.7,
         "duplicate_group": duplicate_group,
         "source_group": source_group,
-        "base_score": 0.5,
+        "base_score": base_score,
     }
+    if evidence_map_quality_score is not None:
+        candidate["evidence_map_quality_score"] = evidence_map_quality_score
+    if map_quality_score is not None:
+        candidate["map_quality_score"] = map_quality_score
+    if hybrid_score is not None:
+        candidate["hybrid_score"] = hybrid_score
+    return candidate

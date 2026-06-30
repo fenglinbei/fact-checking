@@ -26,9 +26,11 @@ TokenCostFn = Callable[[Mapping[str, Any]], int]
 MREC_SELECTOR_NAME = "mrec_greedy_transition_v0_1"
 MREC_SELECTOR_NAME_V0_2_LEARNED_MARGINAL_PROXY = "mrec_greedy_transition_v0_2_learned_marginal_proxy"
 MREC_SELECTOR_NAME_V0_2_LEARNED_MARGINAL_REWARD = "mrec_greedy_transition_v0_2_learned_marginal_reward"
+MREC_SELECTOR_NAME_V0_2_MAP_QUALITY_GREEDY = "mrec_greedy_transition_v0_2_map_quality_greedy"
 MREC_SELECTION_POLICY_TRANSITION_V0_1 = "transition_v0_1"
 MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY = "learned_marginal_proxy"
 MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD = "learned_marginal_reward"
+MREC_SELECTION_POLICY_MAP_QUALITY_GREEDY = "map_quality_greedy"
 FALLBACK_CUE = "Verify the main factual claim."
 
 _RESOLVING_STATES = {"S", "R", "Q", "C"}
@@ -46,6 +48,7 @@ _SELECTION_POLICIES = {
     MREC_SELECTION_POLICY_TRANSITION_V0_1,
     MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
     MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD,
+    MREC_SELECTION_POLICY_MAP_QUALITY_GREEDY,
 }
 
 
@@ -155,6 +158,14 @@ def _select_mrec_steps(
     policy = _normalize_selection_policy(params.selection_policy)
     if policy in {MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY, MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD}:
         return _select_learned_marginal_steps(
+            candidates,
+            claim_atoms=claim_atoms,
+            atom_by_id=atom_by_id,
+            initial_atom_states=initial_atom_states,
+            params=params,
+        )
+    if policy == MREC_SELECTION_POLICY_MAP_QUALITY_GREEDY:
+        return _select_map_quality_greedy_steps(
             candidates,
             claim_atoms=claim_atoms,
             atom_by_id=atom_by_id,
@@ -449,6 +460,131 @@ def _select_learned_marginal_steps(
         "stop_reason": stop_reason,
         "rejected": rejected,
         "weight_fingerprint": weight_fingerprint,
+    }
+
+
+def _select_map_quality_greedy_steps(
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    claim_atoms: list[dict[str, Any]],
+    atom_by_id: dict[str, dict[str, Any]],
+    initial_atom_states: dict[str, str],
+    params: MRECSelectorParams,
+) -> dict[str, Any]:
+    policy = _normalize_selection_policy(params.selection_policy)
+    atom_states = dict(initial_atom_states)
+    selected_indices: set[int] = set()
+    selected_duplicate_groups: set[str] = set()
+    selected_texts: set[str] = set()
+    steps: list[dict[str, Any]] = []
+    total_token_cost = 0
+    stop_reason = ""
+    min_steps = max(int(params.min_steps), 0)
+    max_steps = _effective_max_steps(params.max_steps, len(candidates))
+
+    while len(steps) < max_steps:
+        target_met = _resolved_rate(atom_states) >= float(params.target_resolved_rate)
+        ranked: list[dict[str, Any]] = []
+        skipped_by_budget = False
+        for idx, candidate in enumerate(candidates):
+            if idx in selected_indices:
+                continue
+            if _is_duplicate_candidate(candidate, selected_duplicate_groups, selected_texts):
+                continue
+            token_cost = int(candidate.get("mrec_token_cost") or 0)
+            if params.token_budget is not None and total_token_cost + token_cost > int(params.token_budget):
+                skipped_by_budget = True
+                continue
+            evaluation = _evaluate_candidate_transition(
+                candidate,
+                atom_states=atom_states,
+                atom_by_id=atom_by_id,
+                cue_policy=str(params.cue_policy),
+            )
+            if not evaluation:
+                evaluation = _fallback_candidate_evaluation(
+                    candidate,
+                    claim_atoms=claim_atoms,
+                    atom_states=atom_states,
+                    cue_policy=str(params.cue_policy),
+                )
+            evaluation["candidate_idx"] = idx
+            evaluation["token_cost"] = token_cost
+            evaluation["map_quality_greedy_score"] = _map_quality_greedy_score(candidate)
+            ranked.append(evaluation)
+
+        if not ranked:
+            if skipped_by_budget:
+                stop_reason = "token_budget_exhausted"
+            elif target_met and len(steps) >= min_steps:
+                stop_reason = "min_steps_satisfied" if min_steps > 0 else "target_resolution_reached"
+            elif steps:
+                stop_reason = "no_valid_transition"
+            else:
+                stop_reason = "fallback_only" if params.allow_fallback else "no_valid_transition"
+                if params.allow_fallback:
+                    fallback = _fallback_step(candidates, claim_atoms=claim_atoms, token_budget=params.token_budget)
+                    if fallback is not None:
+                        steps.append(fallback["step"])
+                        selected_indices.add(int(fallback["candidate_idx"]))
+                        total_token_cost += int(fallback["token_cost"])
+                        _attach_trace_state(
+                            steps[-1],
+                            atom_states=atom_states,
+                            total_token_cost=total_token_cost,
+                            target_resolved_rate=float(params.target_resolved_rate),
+                        )
+            break
+
+        ranked.sort(key=_map_quality_greedy_sort_key)
+        pick = ranked[0]
+        idx = int(pick["candidate_idx"])
+        candidate = candidates[idx]
+        step_candidate = pick.get("step_candidate")
+        if not isinstance(step_candidate, Mapping):
+            step_candidate = candidate
+        step = build_mrec_step(
+            step=len(steps) + 1,
+            candidate=step_candidate,
+            atom_id=str(pick["atom_id"]),
+            atom_text=str(pick["atom_text"]),
+            state_before=str(pick["state_before"]),
+            state_after=str(pick["state_after"]),
+            operation=str(pick["operation"]),
+            cue_text=str(pick["cue_text"]),
+            cue_source=str(pick["cue_source"]),
+            transition_reason=str(pick["transition_reason"]),
+            token_cost=int(pick["token_cost"]),
+        )
+        step["post_target_fill"] = bool(target_met)
+        step["map_quality_greedy_score"] = float(pick.get("map_quality_greedy_score") or 0.0)
+        step["selection_policy"] = policy
+        _copy_step_metadata(step, candidate)
+        steps.append(step)
+        selected_indices.add(idx)
+        total_token_cost += int(pick["token_cost"])
+        if step.get("atom_id"):
+            atom_states[str(step["atom_id"])] = str(step["state_after"])
+        _attach_trace_state(
+            step,
+            atom_states=atom_states,
+            total_token_cost=total_token_cost,
+            target_resolved_rate=float(params.target_resolved_rate),
+        )
+        duplicate_group = _compact(candidate.get("duplicate_group") or "")
+        if duplicate_group:
+            selected_duplicate_groups.add(duplicate_group)
+        selected_texts.add(_normalize_text(candidate.get("text") or candidate.get("evidence_text") or ""))
+
+    if not stop_reason:
+        stop_reason = "reached_max_steps" if len(steps) >= max_steps else "no_valid_transition"
+
+    rejected = _rejection_counts(candidates, selected_indices=selected_indices, selected_steps=steps)
+    return {
+        "steps": steps,
+        "atom_states_final": atom_states,
+        "stop_reason": stop_reason,
+        "rejected": rejected,
     }
 
 
@@ -920,6 +1056,28 @@ def _learned_marginal_sort_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
         int(row.get("token_cost", 0)),
         int(row.get("candidate_idx", 0)),
     )
+
+
+def _map_quality_greedy_sort_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        -_float_or_default(row.get("map_quality_greedy_score"), 0.0),
+        int(row.get("token_cost", 0)),
+        int(row.get("candidate_idx", 0)),
+    )
+
+
+def _map_quality_greedy_score(candidate: Mapping[str, Any]) -> float:
+    for key in ("evidence_map_quality_score", "map_quality_score", "base_score", "hybrid_score"):
+        if key not in candidate:
+            continue
+        value = candidate.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
 
 
 def _utility_score_summary(steps: Sequence[Mapping[str, Any]]) -> dict[str, float]:

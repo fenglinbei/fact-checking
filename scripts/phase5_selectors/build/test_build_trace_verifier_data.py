@@ -527,6 +527,100 @@ def test_mrec_prompt_evidence_budget_policy_records_max_length_guard(tmp_path: P
     assert report["max_length_guard"]["violation_count"] == 1
 
 
+def test_mrec_prompt_evidence_state_budget_keeps_state_changing_lookahead(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_mrec_policy_inputs(tmp_path)
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace["mrec_steps"][2]["operation"] = "CONTRAST"
+    trace["mrec_steps"][2]["state_after"] = "C"
+    trace["mrec_steps"][2]["trace_state"]["target_resolved"] = True
+    trace["mrec_steps"][2]["trace_state"]["resolved_atom_rate"] = 1.0
+    trace["mrec_steps"][2]["trace_state"]["conflicted_atom_ids"] = ["A1"]
+    trace["mrec_steps"][2]["trace_state"]["atom_states_after"] = {"A1": "C"}
+    trace["mrec_steps"][3]["trace_state"]["conflicted_atom_ids"] = ["A1"]
+    trace["mrec_steps"][3]["trace_state"]["atom_states_after"] = {"A1": "C"}
+    trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="mrec_min",
+        expected_selector_name="test_selector",
+        top_k=99,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+        prompt_evidence_config={
+            "policy": "state_budget",
+            "min_evidence_count": 1,
+            "max_evidence_count": 0,
+            "state_budget": {
+                "lookahead_on_target_resolved": True,
+                "unresolved_patience": 1,
+                "budget_ratio": 1.0,
+            },
+        },
+    )
+
+    row = rows[0]
+    assert row["selector_trace"]["selected_indices"] == [0, 1, 2]
+    assert [step["evidence_id"] for step in row["mrec_prompt_steps"]] == ["E40", "E41", "E42"]
+    assert row["prompt_evidence_policy"] == "state_budget"
+    assert row["prompt_evidence_selected_count_before_prompt_truncation"] == 3
+    assert row["prompt_evidence_stop_reason"] == "target_resolved_stable"
+    assert report["prompt_evidence"]["policy"] == "state_budget"
+    assert report["prompt_evidence"]["state_budget"]["lookahead_on_target_resolved"] is True
+    assert report["prompt_evidence"]["stop_reasons"] == {"target_resolved_stable": 1}
+
+
+def test_mrec_prompt_evidence_state_budget_respects_soft_token_budget(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_mrec_policy_inputs(tmp_path)
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="mrec_min",
+        expected_selector_name="test_selector",
+        top_k=99,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+        prompt_evidence_config={
+            "policy": "state_budget",
+            "min_evidence_count": 1,
+            "max_evidence_count": 0,
+            "evidence_token_budget": 8,
+            "state_budget": {
+                "lookahead_on_target_resolved": True,
+                "unresolved_patience": 1,
+            },
+        },
+    )
+
+    row = rows[0]
+    assert row["selector_trace"]["selected_indices"] == [0]
+    assert row["prompt_evidence_policy"] == "state_budget"
+    assert row["prompt_evidence_token_budget"] == 8
+    assert row["prompt_evidence_selected_token_cost"] == 4
+    assert row["prompt_evidence_stop_reason"] == "token_budget_exhausted"
+    assert report["prompt_evidence"]["stop_reasons"] == {"token_budget_exhausted": 1}
+
+
 def test_rawfc_boundaries_prompt_style_uses_rawfc_three_label_boundaries() -> None:
     prompt_cfg = build_trace_verifier_data._prompt_cfg_for_trace_style(
         {"auto_length": False, "output_mode": "label_only", "label_format": "letter"},

@@ -42,7 +42,14 @@ SELECTION_MODES = (
 )
 TRACE_PROMPT_STYLES = ("plain", "trace_lite", "rawfc_boundaries", "qec_min", "qec_map", "mrec_min")
 EVIDENCE_TEXT_MODES = ("full", "anchor_only")
-PROMPT_EVIDENCE_POLICIES = ("prefix_topk", "resolve_stop", "fixed_topk", "minmax", "budget")
+PROMPT_EVIDENCE_POLICIES = (
+    "prefix_topk",
+    "resolve_stop",
+    "fixed_topk",
+    "minmax",
+    "budget",
+    "state_budget",
+)
 
 RAWFC_BOUNDARIES_SYSTEM_PROMPT = (
     "You are a careful fact-checking assistant for RAWFC claims. "
@@ -609,12 +616,17 @@ def _normalize_prompt_evidence_config(
         prompt_cfg=prompt_cfg,
         evidence_token_budget=token_budget,
     )
+    state_budget = _normalize_state_budget_config(
+        dict(raw.get("state_budget") or {}),
+        guard=guard,
+    )
     return {
         "policy": policy,
         "min_evidence_count": int(min_count),
         "max_evidence_count": int(max_count),
         "evidence_token_budget": token_budget,
         "max_length_guard": guard,
+        "state_budget": state_budget,
     }
 
 
@@ -659,6 +671,40 @@ def _normalize_max_length_guard(
     }
 
 
+def _normalize_state_budget_config(
+    raw: dict[str, Any],
+    *,
+    guard: dict[str, Any],
+) -> dict[str, Any]:
+    budget_ratio = _float_or_default(raw.get("budget_ratio"), 0.75)
+    if budget_ratio < 0:
+        budget_ratio = 0.0
+    if budget_ratio > 1:
+        budget_ratio = 1.0
+
+    explicit_budget = _int_or_none(raw.get("effective_token_budget"))
+    if explicit_budget is not None and explicit_budget <= 0:
+        explicit_budget = None
+    effective_guard_budget = int(guard.get("effective_prompt_budget") or 0)
+    effective_token_budget = explicit_budget
+    if effective_token_budget is None and effective_guard_budget > 0 and budget_ratio > 0:
+        effective_token_budget = max(1, int(effective_guard_budget * budget_ratio))
+
+    return {
+        "budget_ratio": float(budget_ratio),
+        "effective_token_budget": effective_token_budget,
+        "lookahead_on_target_resolved": _bool_or_default(
+            raw.get("lookahead_on_target_resolved"),
+            True,
+        ),
+        "include_contrast_after_target": _bool_or_default(
+            raw.get("include_contrast_after_target"),
+            True,
+        ),
+        "unresolved_patience": max(0, _int_or_default(raw.get("unresolved_patience"), 2)),
+    }
+
+
 def _public_prompt_evidence_config(config: dict[str, Any]) -> dict[str, Any]:
     return {
         "policy": str(config.get("policy") or "prefix_topk"),
@@ -666,6 +712,7 @@ def _public_prompt_evidence_config(config: dict[str, Any]) -> dict[str, Any]:
         "max_evidence_count": int(config.get("max_evidence_count") or 0),
         "evidence_token_budget": config.get("evidence_token_budget"),
         "max_length_guard": dict(config.get("max_length_guard") or {}),
+        "state_budget": dict(config.get("state_budget") or {}),
     }
 
 
@@ -680,6 +727,11 @@ def _select_prompt_evidence_indices(
     max_count = max(0, int(config.get("max_evidence_count") or 0))
     token_budget = config.get("evidence_token_budget")
     token_budget = int(token_budget) if token_budget is not None else None
+    state_budget = dict(config.get("state_budget") or {})
+    if policy == "state_budget" and token_budget is None:
+        parsed_state_budget = _int_or_none(state_budget.get("effective_token_budget"))
+        if parsed_state_budget is not None and parsed_state_budget > 0:
+            token_budget = parsed_state_budget
 
     selected: list[int] = []
     total_token_cost = 0
@@ -697,6 +749,26 @@ def _select_prompt_evidence_indices(
             token_budget=token_budget,
             total_token_cost=_prompt_evidence_total_token_cost(trace, selected),
             stop_reason=stop_reason,
+        )
+
+    if policy == "state_budget":
+        selected, total_token_cost, stop_reason = _select_state_budget_prompt_evidence_indices(
+            trace,
+            ordered_indices=ordered_indices,
+            min_count=min_count,
+            max_count=max_count,
+            token_budget=token_budget,
+            state_budget=state_budget,
+        )
+        return _prompt_evidence_decision(
+            selected,
+            policy=policy,
+            min_count=min_count,
+            max_count=max_count,
+            token_budget=token_budget,
+            total_token_cost=total_token_cost,
+            stop_reason=stop_reason,
+            state_budget=state_budget,
         )
 
     for idx in ordered_indices:
@@ -737,6 +809,110 @@ def _select_prompt_evidence_indices(
     )
 
 
+def _select_state_budget_prompt_evidence_indices(
+    trace: dict[str, Any],
+    *,
+    ordered_indices: list[int],
+    min_count: int,
+    max_count: int,
+    token_budget: int | None,
+    state_budget: dict[str, Any],
+) -> tuple[list[int], int, str]:
+    selected: list[int] = []
+    total_token_cost = 0
+    stop_reason = "end_of_trace"
+    previous_state: dict[str, Any] | None = None
+    unresolved_no_progress = 0
+
+    lookahead_on_target_resolved = _bool_or_default(
+        state_budget.get("lookahead_on_target_resolved"),
+        True,
+    )
+    unresolved_patience = max(0, _int_or_default(state_budget.get("unresolved_patience"), 2))
+
+    for position, idx in enumerate(ordered_indices):
+        token_cost = _prompt_evidence_token_cost(trace, idx)
+        if max_count > 0 and len(selected) >= max_count:
+            stop_reason = "max_evidence_count"
+            break
+        if (
+            token_budget is not None
+            and selected
+            and len(selected) >= min_count
+            and total_token_cost + token_cost > token_budget
+        ):
+            stop_reason = "token_budget_exhausted"
+            break
+
+        selected.append(int(idx))
+        total_token_cost += token_cost
+        current_state = _prompt_evidence_step_state(trace, idx)
+
+        if len(selected) < min_count:
+            previous_state = current_state
+            continue
+
+        if bool(current_state.get("target_resolved")):
+            if not lookahead_on_target_resolved:
+                stop_reason = "target_resolved"
+                break
+            next_idx = _next_ordered_index(ordered_indices, position)
+            if next_idx is None:
+                stop_reason = "target_resolved"
+                break
+            if _state_budget_should_include_next_after_target(
+                trace,
+                current_idx=idx,
+                next_idx=next_idx,
+                state_budget=state_budget,
+            ):
+                previous_state = current_state
+                continue
+            stop_reason = "target_resolved_stable"
+            break
+
+        if previous_state is not None:
+            if _prompt_evidence_state_changed(previous_state, current_state):
+                unresolved_no_progress = 0
+            else:
+                unresolved_no_progress += 1
+            if unresolved_patience > 0 and unresolved_no_progress >= unresolved_patience:
+                stop_reason = "unresolved_no_progress"
+                break
+        previous_state = current_state
+
+    if max_count > 0 and len(selected) >= max_count and stop_reason == "end_of_trace":
+        stop_reason = "max_evidence_count"
+    if not selected:
+        raise ValueError("prompt evidence policy selected no indices")
+    return selected, total_token_cost, stop_reason
+
+
+def _next_ordered_index(ordered_indices: list[int], position: int) -> int | None:
+    next_position = int(position) + 1
+    if next_position >= len(ordered_indices):
+        return None
+    return int(ordered_indices[next_position])
+
+
+def _state_budget_should_include_next_after_target(
+    trace: dict[str, Any],
+    *,
+    current_idx: int,
+    next_idx: int,
+    state_budget: dict[str, Any],
+) -> bool:
+    current_state = _prompt_evidence_step_state(trace, current_idx)
+    next_state = _prompt_evidence_step_state(trace, next_idx)
+    if _prompt_evidence_state_changed(current_state, next_state):
+        return True
+    if not _bool_or_default(state_budget.get("include_contrast_after_target"), True):
+        return False
+    current_operation = _prompt_evidence_step_operation(trace, current_idx)
+    next_operation = _prompt_evidence_step_operation(trace, next_idx)
+    return next_operation == "CONTRAST" and current_operation != "CONTRAST"
+
+
 def _prompt_evidence_decision(
     selected: list[int],
     *,
@@ -746,8 +922,9 @@ def _prompt_evidence_decision(
     token_budget: int | None,
     total_token_cost: int,
     stop_reason: str,
+    state_budget: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    decision = {
         "selected_indices": [int(idx) for idx in selected],
         "policy": policy,
         "min_evidence_count": int(min_count),
@@ -757,11 +934,14 @@ def _prompt_evidence_decision(
         "selected_token_cost": int(total_token_cost),
         "stop_reason": stop_reason,
     }
+    if state_budget is not None:
+        decision["state_budget"] = dict(state_budget)
+    return decision
 
 
 def _prompt_evidence_row_fields(config: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:
     del config
-    return {
+    fields = {
         "prompt_evidence_policy": str(decision["policy"]),
         "prompt_evidence_min_count": int(decision["min_evidence_count"]),
         "prompt_evidence_max_count": int(decision["max_evidence_count"]),
@@ -772,6 +952,9 @@ def _prompt_evidence_row_fields(config: dict[str, Any], decision: dict[str, Any]
         "prompt_evidence_selected_token_cost": int(decision["selected_token_cost"]),
         "prompt_evidence_stop_reason": str(decision["stop_reason"]),
     }
+    if decision.get("state_budget") is not None:
+        fields["prompt_evidence_state_budget"] = dict(decision.get("state_budget") or {})
+    return fields
 
 
 def _max_length_guard_result(
@@ -840,6 +1023,65 @@ def _prompt_evidence_target_resolved(trace: dict[str, Any], idx: int) -> bool:
     if "target_resolved" in step:
         return bool(step.get("target_resolved"))
     return False
+
+
+def _prompt_evidence_step_state(trace: dict[str, Any], idx: int) -> dict[str, Any]:
+    step = _mrec_step_by_selector_idx(trace).get(int(idx))
+    if not isinstance(step, dict):
+        return {
+            "target_resolved": False,
+            "resolved_atom_rate": 0.0,
+            "unresolved_atom_ids": (),
+            "conflicted_atom_ids": (),
+            "atom_states_after": (),
+        }
+
+    trace_state = step.get("trace_state")
+    state = dict(trace_state) if isinstance(trace_state, dict) else {}
+    target_resolved = state.get("target_resolved")
+    if target_resolved is None:
+        target_resolved = step.get("target_resolved", False)
+    resolved_atom_rate = _float_or_default(state.get("resolved_atom_rate"), 0.0)
+    atom_states_after = state.get("atom_states_after")
+    if not isinstance(atom_states_after, dict):
+        atom_id = _compact_whitespace(step.get("atom_id") or "")
+        state_after = _compact_whitespace(step.get("state_after") or "")
+        atom_states_after = {atom_id: state_after} if atom_id and state_after else {}
+    return {
+        "target_resolved": bool(target_resolved),
+        "resolved_atom_rate": float(resolved_atom_rate),
+        "unresolved_atom_ids": tuple(sorted(_covered_atom_ids(state.get("unresolved_atom_ids")))),
+        "conflicted_atom_ids": tuple(sorted(_covered_atom_ids(state.get("conflicted_atom_ids")))),
+        "atom_states_after": tuple(
+            sorted(
+                (
+                    _compact_whitespace(atom_id),
+                    _compact_whitespace(atom_state),
+                )
+                for atom_id, atom_state in atom_states_after.items()
+                if _compact_whitespace(atom_id)
+            )
+        ),
+    }
+
+
+def _prompt_evidence_state_changed(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    left_rate = float(left.get("resolved_atom_rate") or 0.0)
+    right_rate = float(right.get("resolved_atom_rate") or 0.0)
+    return (
+        bool(left.get("target_resolved")) != bool(right.get("target_resolved"))
+        or abs(left_rate - right_rate) > 1e-9
+        or tuple(left.get("unresolved_atom_ids") or ()) != tuple(right.get("unresolved_atom_ids") or ())
+        or tuple(left.get("conflicted_atom_ids") or ()) != tuple(right.get("conflicted_atom_ids") or ())
+        or tuple(left.get("atom_states_after") or ()) != tuple(right.get("atom_states_after") or ())
+    )
+
+
+def _prompt_evidence_step_operation(trace: dict[str, Any], idx: int) -> str:
+    step = _mrec_step_by_selector_idx(trace).get(int(idx))
+    if not isinstance(step, dict):
+        return ""
+    return _compact_whitespace(step.get("operation") or "").upper()
 
 
 def _mrec_step_by_selector_idx(trace: dict[str, Any]) -> dict[int, dict[str, Any]]:
@@ -1327,6 +1569,19 @@ def _float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _bool_or_default(value: Any, default: bool) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    text = _compact_whitespace(value).lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return bool(default)
 
 
 def _focus_priority(value: Any) -> int:

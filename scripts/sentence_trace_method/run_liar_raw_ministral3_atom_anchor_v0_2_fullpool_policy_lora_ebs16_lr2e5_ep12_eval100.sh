@@ -58,7 +58,17 @@ should_build_fullpool_traces() {
   esac
 }
 
+selection_policy_requires_weight() {
+  case "${EXPECTED_SELECTION_POLICY:-}" in
+    learned_marginal_proxy|learned_marginal_reward) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 train_weights_if_needed() {
+  if ! selection_policy_requires_weight; then
+    return 0
+  fi
   if [[ "${MREC_AUTO_TRAIN_WEIGHTS:-false}" != "true" && "$FORCE_WEIGHT_TRAIN" != "true" ]]; then
     return 0
   fi
@@ -98,7 +108,11 @@ build_fullpool_traces() {
   for split in "${split_array[@]}"; do
     split="${split// /}"
     [[ -z "$split" ]] && continue
-    input_path="${SOURCE_FEATURE_ROOT}/candidate_evidence_map_features_${split}.jsonl"
+    if [[ "${TRACE_BUILD_MODE:-mrec}" == "shuffle_existing" ]]; then
+      input_path="${TRACE_SHUFFLE_SOURCE_ROOT}/selection_trace_${split}.jsonl"
+    else
+      input_path="${SOURCE_FEATURE_ROOT}/candidate_evidence_map_features_${split}.jsonl"
+    fi
     output_trace="${TRACE_ROOT}/selection_trace_${split}.jsonl"
     if [[ -f "$output_trace" && "$FORCE_MREC_BUILD" != "true" ]]; then
       printf '[atom-anchor-v0.2-fullpool-policy] reuse fullpool trace: %s\n' "$output_trace"
@@ -117,30 +131,52 @@ build_fullpool_traces() {
     if [[ "${TRACE_CONTINUE_AFTER_TARGET_FOR_CONTRAST:-false}" == "true" ]]; then
       contrast_args=(--continue-after-target-for-contrast)
     fi
-    run_cmd "$PYTHON_BIN" scripts/phase5_selectors/build/build_mrec_traces.py \
-      --input "$input_path" \
-      --output-dir "$TRACE_ROOT" \
-      --split "$split" \
-      --candidate-top-n "$TRACE_CANDIDATE_TOP_N" \
-      --max-steps "$TRACE_MAX_STEPS" \
-      --min-steps "$TRACE_MIN_STEPS" \
-      "${token_budget_args[@]}" \
-      --target-resolved-rate "$TRACE_TARGET_RESOLVED_RATE" \
-      "${contrast_args[@]}" \
-      --post-target-fill-policy "$TRACE_POST_TARGET_FILL_POLICY" \
-      --selector-name "$EXPECTED_SELECTOR_NAME" \
-      --selection-policy "$EXPECTED_SELECTION_POLICY" \
-      --weight-file "$WEIGHT_FILE" \
-      --stop-threshold "$TRACE_STOP_THRESHOLD" \
-      --source-selector-name "$SOURCE_SELECTOR_NAME" \
-      "${sample_args[@]}"
+    case "${TRACE_BUILD_MODE:-mrec}" in
+      mrec)
+        run_cmd "$PYTHON_BIN" scripts/phase5_selectors/build/build_mrec_traces.py \
+          --input "$input_path" \
+          --output-dir "$TRACE_ROOT" \
+          --split "$split" \
+          --candidate-top-n "$TRACE_CANDIDATE_TOP_N" \
+          --max-steps "$TRACE_MAX_STEPS" \
+          --min-steps "$TRACE_MIN_STEPS" \
+          "${token_budget_args[@]}" \
+          --target-resolved-rate "$TRACE_TARGET_RESOLVED_RATE" \
+          "${contrast_args[@]}" \
+          --post-target-fill-policy "$TRACE_POST_TARGET_FILL_POLICY" \
+          --selector-name "$EXPECTED_SELECTOR_NAME" \
+          --selection-policy "$EXPECTED_SELECTION_POLICY" \
+          --weight-file "$WEIGHT_FILE" \
+          --stop-threshold "$TRACE_STOP_THRESHOLD" \
+          --source-selector-name "$SOURCE_SELECTOR_NAME" \
+          "${sample_args[@]}"
+        ;;
+      shuffle_existing)
+        run_cmd "$PYTHON_BIN" scripts/phase5_selectors/build/shuffle_mrec_trace_order.py \
+          --input "$input_path" \
+          --output-dir "$TRACE_ROOT" \
+          --split "$split" \
+          --selector-name "$EXPECTED_SELECTOR_NAME" \
+          --adaptive-policy "$EXPECTED_ADAPTIVE_POLICY" \
+          --source-selector-name "$SOURCE_SELECTOR_NAME" \
+          --seed "$TRACE_SHUFFLE_SEED" \
+          "${sample_args[@]}"
+        ;;
+      *)
+        printf 'Unsupported TRACE_BUILD_MODE=%s. Use mrec or shuffle_existing.\n' "${TRACE_BUILD_MODE:-}" >&2
+        exit 2
+        ;;
+    esac
   done
 }
 
-printf '[atom-anchor-v0.2-fullpool-policy] MREC_POLICY_CONFIG=%s SOURCE_FEATURE_ROOT=%s TRACE_ROOT=%s WEIGHT_FILE=%s TRACE_CANDIDATE_TOP_N=%s TRACE_MAX_STEPS=%s TRACE_MIN_STEPS=%s PROMPT_EVIDENCE_POLICY=%s PROMPT_EVIDENCE_MIN_COUNT=%s PROMPT_EVIDENCE_MAX_COUNT=%s PROMPT_EVIDENCE_TOKEN_BUDGET=%s EXPECTED_SELECTOR_NAME=%s QUALITY_AUDIT_MODE=%s EVAL_SPLITS=%s\n' \
+printf '[atom-anchor-v0.2-fullpool-policy] MREC_POLICY_CONFIG=%s TRACE_BUILD_MODE=%s SOURCE_FEATURE_ROOT=%s TRACE_ROOT=%s TRACE_SHUFFLE_SOURCE_ROOT=%s TRACE_SHUFFLE_SEED=%s WEIGHT_FILE=%s TRACE_CANDIDATE_TOP_N=%s TRACE_MAX_STEPS=%s TRACE_MIN_STEPS=%s PROMPT_EVIDENCE_POLICY=%s PROMPT_EVIDENCE_MIN_COUNT=%s PROMPT_EVIDENCE_MAX_COUNT=%s PROMPT_EVIDENCE_TOKEN_BUDGET=%s EXPECTED_SELECTOR_NAME=%s QUALITY_AUDIT_MODE=%s EVAL_SPLITS=%s\n' \
   "$MREC_POLICY_CONFIG" \
+  "${TRACE_BUILD_MODE:-mrec}" \
   "$SOURCE_FEATURE_ROOT" \
   "$TRACE_ROOT" \
+  "${TRACE_SHUFFLE_SOURCE_ROOT:-}" \
+  "${TRACE_SHUFFLE_SEED:-0}" \
   "$WEIGHT_FILE" \
   "$TRACE_CANDIDATE_TOP_N" \
   "$TRACE_MAX_STEPS" \
@@ -156,7 +192,9 @@ printf '[atom-anchor-v0.2-fullpool-policy] MREC_POLICY_CONFIG=%s SOURCE_FEATURE_
 if should_build_fullpool_traces; then
   train_weights_if_needed
 fi
-require_path "$WEIGHT_FILE" "v0.2 learned marginal weight file"
+if selection_policy_requires_weight; then
+  require_path "$WEIGHT_FILE" "v0.2 learned marginal weight file"
+fi
 if should_build_fullpool_traces; then
   build_fullpool_traces
 fi

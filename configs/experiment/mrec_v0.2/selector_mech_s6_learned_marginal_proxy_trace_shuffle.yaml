@@ -1,0 +1,26 @@
+extends: learned_marginal_proxy_fullpool_policy.yaml
+
+experiment:
+  name: liar_raw__ministral3_8b__selector_mech_s6_learned_marginal_proxy_trace_shuffle
+  case_suffix: __selector_mech_s6_learned_marginal_proxy_trace_shuffle
+  run_label: selector-mech-s6-learned-proxy-trace-shuffle
+  run_header_label: selector-mech-s6-learned-proxy-trace-shuffle-full
+
+trace:
+  build_mode: shuffle_existing
+  output_root: outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy_fullpool_trace_shuffle_seed0
+  shuffle_source_root: outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy_fullpool
+  shuffle_seed: 0
+  weight_file: ""
+  selector_name: selector_mech_s6_learned_marginal_proxy_trace_shuffle
+  adaptive_policy: learned_marginal_proxy_trace_shuffle_v0_2
+  selection_policy: learned_marginal_proxy_trace_shuffle
+  source_selector_name: mrec_greedy_transition_v0_2_learned_marginal_proxy_fullpool
+
+swanlab:
+  experiment_name: liar_raw__ministral3_8b__selector_mech_s6_learned_marginal_proxy_trace_shuffle
+
+sentence_trace_method:
+  selector_name: selector_mech_s6_learned_marginal_proxy_trace_shuffle
+  adaptive_policy: learned_marginal_proxy_trace_shuffle_v0_2
+  top_k: 5
