@@ -14,6 +14,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from fact_checking.selectors.selector_mechanism_ablation import (  # noqa: E402
+    SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED,
     SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5,
     SELECTOR_MECHANISM_GRAPH_VERSION,
     SELECTOR_MECHANISM_NAMES,
@@ -31,6 +32,10 @@ DEFAULT_UNION_JSONL = (
     "atom_union_candidate_pool_val.jsonl"
 )
 DEFAULT_OUTPUT_DIR = "outputs/selectors/selector_mechanism_ablation/liar_raw_selector_mech_s2_claim_pool_hybrid_top5_val"
+ATOM_UNION_SELECTORS = {
+    SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5,
+    SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED,
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,12 +76,12 @@ def main(args: argparse.Namespace | None = None) -> int:
         str(row.get("event_id") or ""): row
         for row in (build_claim_candidate_pool_row(sample, params=params) for sample in samples)
     }
-    union_rows = _load_union_rows(args.atom_union_jsonl) if args.selector_name == SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5 else {}
+    union_rows = _load_union_rows(args.atom_union_jsonl) if args.selector_name in ATOM_UNION_SELECTORS else {}
 
     traces: list[dict[str, Any]] = []
     for event_id, claim_row in claim_rows.items():
         union_row = union_rows.get(event_id)
-        if args.selector_name == SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5 and union_row is None:
+        if args.selector_name in ATOM_UNION_SELECTORS and union_row is None:
             raise SystemExit(f"Missing atom union row for event_id={event_id}")
         traces.append(
             build_selector_mechanism_trace_row(

@@ -301,6 +301,195 @@ def test_selector_mechanism_s0_s4_wrapper_dry_run_expands_cases(tmp_path: Path) 
     assert "SFT_EVAL_STEPS=100" in output
 
 
+def test_lora_matrix_dry_run_passes_prompt_evidence_policy_args(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_lora_matrix.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "DATASETS": "liar_raw",
+            "MODELS": "ministral3_8b",
+            "CASE_SUFFIX": "__prompt_policy_probe",
+            "SELECTOR_NAME": "selector_mech_s4_atom_union_source_score_ordered",
+            "EXPECTED_SELECTOR_NAME": "selector_mech_s4_atom_union_source_score_ordered",
+            "SOURCE_ROOT": "outputs/selectors/selector_mechanism_ablation_chunking/liar_raw_abc_selector_mech_s4_atom_union_source_score_ordered",
+            "TRACE_TOP_K": "20",
+            "PROMPT_EVIDENCE_POLICY": "budget",
+            "PROMPT_EVIDENCE_MIN_COUNT": "1",
+            "PROMPT_EVIDENCE_MAX_COUNT": "20",
+            "PROMPT_EVIDENCE_TOKEN_BUDGET": "541",
+            "PROMPT_EVIDENCE_MAX_LENGTH_GUARD": "warn",
+        },
+    )
+
+    assert "PROMPT_EVIDENCE_POLICY=budget" in output
+    assert "PROMPT_EVIDENCE_MIN_COUNT=1" in output
+    assert "PROMPT_EVIDENCE_MAX_COUNT=20" in output
+    assert "PROMPT_EVIDENCE_TOKEN_BUDGET=541" in output
+    assert "PROMPT_EVIDENCE_MAX_LENGTH_GUARD=warn" in output
+
+
+def test_run_one_dry_run_passes_prompt_evidence_policy_args(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_one.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "DATASET": "liar_raw",
+            "MODEL": "ministral3_8b",
+            "CASE_SUFFIX": "__prompt_policy_probe",
+            "SELECTOR_NAME": "selector_mech_s4_atom_union_source_score_ordered",
+            "EXPECTED_SELECTOR_NAME": "selector_mech_s4_atom_union_source_score_ordered",
+            "SOURCE_ROOT": "outputs/selectors/selector_mechanism_ablation_chunking/liar_raw_abc_selector_mech_s4_atom_union_source_score_ordered",
+            "TRACE_TOP_K": "20",
+            "PROMPT_EVIDENCE_POLICY": "budget",
+            "PROMPT_EVIDENCE_MIN_COUNT": "1",
+            "PROMPT_EVIDENCE_MAX_COUNT": "20",
+            "PROMPT_EVIDENCE_TOKEN_BUDGET": "541",
+            "PROMPT_EVIDENCE_MAX_LENGTH_GUARD": "warn",
+        },
+    )
+
+    assert "--top-k 20" in output
+    assert "--prompt-evidence-policy budget" in output
+    assert "--prompt-evidence-min-count 1" in output
+    assert "--prompt-evidence-max-count 20" in output
+    assert "--prompt-evidence-token-budget 541" in output
+    assert "--prompt-evidence-max-length-guard warn" in output
+
+
+def test_lora_matrix_skips_train_when_best_checkpoint_exists(tmp_path: Path) -> None:
+    output_root = tmp_path / "outputs"
+    lora_root = output_root / "liar_raw__ministral3_8b__resume_probe_lora"
+    (lora_root / "train" / "best").mkdir(parents=True)
+    (lora_root / "train.resolved.yaml").write_text("sft_train: {}\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / "scripts/sentence_trace_method/run_lora_matrix.sh"),
+        ],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PYTHONPATH": f"{ROOT / 'src'}:{os.environ.get('PYTHONPATH', '')}",
+            "PYTHON_BIN": sys.executable,
+            "ACCELERATE_BIN": "/bin/false",
+            "OUTPUT_ROOT": str(output_root),
+            "DATASETS": "liar_raw",
+            "MODELS": "ministral3_8b",
+            "CASE_SUFFIX": "__resume_probe",
+            "LORA_SUFFIX": "_lora",
+            "MODE": "train",
+        },
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "LoRA training artifacts already exist" in result.stdout
+    assert "sft.label_token_trainer" not in result.stdout
+
+
+def test_lora_matrix_skips_eval_when_nested_label_token_metrics_exist(tmp_path: Path) -> None:
+    output_root = tmp_path / "outputs"
+    lora_root = output_root / "liar_raw__ministral3_8b__eval_probe_lora"
+    (lora_root / "eval" / "val" / "best" / "label_token").mkdir(parents=True)
+    (lora_root / "eval" / "val" / "best" / "label_token" / "metrics.json").write_text(
+        json.dumps({"macro_f1": 1.0}),
+        encoding="utf-8",
+    )
+    (lora_root / "train.resolved.yaml").write_text("sft_train: {}\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / "scripts/sentence_trace_method/run_lora_matrix.sh"),
+        ],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PYTHONPATH": f"{ROOT / 'src'}:{os.environ.get('PYTHONPATH', '')}",
+            "PYTHON_BIN": "/bin/false",
+            "OUTPUT_ROOT": str(output_root),
+            "DATASETS": "liar_raw",
+            "MODELS": "ministral3_8b",
+            "CASE_SUFFIX": "__eval_probe",
+            "LORA_SUFFIX": "_lora",
+            "MODE": "eval",
+            "EVAL_SPLITS": "val",
+            "CHECKPOINTS": "best",
+        },
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "LoRA eval already exists" in result.stdout
+
+
+def test_atom_union_s4_chunking_ablation_wrapper_dry_run_expands_cases(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_liar_raw_ministral3_atom_union_s4_chunking_ablation.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "MODE": "full",
+            "RUN_TAU_EVAL": "false",
+        },
+    )
+
+    for case in ("abc", "sentence", "sentwin1", "semantic07", "report"):
+        assert f"chunk_{case}_s4_union_top5_plain" in output
+        assert f"chunk_{case}_s4_union_budget_promptmatched_plain" in output
+    assert "selector_mech_s4_atom_union_source_score_ordered" in output
+    assert "PROMPT_EVIDENCE_POLICY=fixed_topk" in output
+    assert "PROMPT_EVIDENCE_MIN_COUNT=5" in output
+    assert "PROMPT_EVIDENCE_MAX_COUNT=5" in output
+    assert "PROMPT_EVIDENCE_POLICY=budget" in output
+    assert "PROMPT_EVIDENCE_MIN_COUNT=1" in output
+    assert "PROMPT_EVIDENCE_MAX_COUNT=20" in output
+    assert "TRACE_PROMPT_STYLE=plain" in output
+    assert "EVIDENCE_TEXT_MODE=full" in output
+    assert "NPROC_PER_NODE=4" in output
+    assert "NCCL_CUMEM_HOST_ENABLE=0" in output
+    assert "OMP_NUM_THREADS=1" in output
+
+
+def test_atom_union_s4_chunking_ablation_wrapper_rejects_too_many_processes_for_visible_devices(
+    tmp_path: Path,
+) -> None:
+    env = {
+        **os.environ,
+        "PYTHONPATH": f"{ROOT / 'src'}:{os.environ.get('PYTHONPATH', '')}",
+        "DRY_RUN": "true",
+        "MODE": "train",
+        "OUTPUT_ROOT": str(tmp_path / "outputs"),
+        "CUDA_VISIBLE_DEVICES": "0",
+        "RUN_TAU_EVAL": "false",
+    }
+    result = subprocess.run(
+        [
+            "bash",
+            str(
+                ROOT
+                / "scripts/sentence_trace_method/run_liar_raw_ministral3_atom_union_s4_chunking_ablation.sh"
+            ),
+        ],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 2
+    assert (
+        "Requested NPROC_PER_NODE=4 but CUDA_VISIBLE_DEVICES exposes only 1 device(s): 0"
+        in result.stderr
+    )
+    assert "sft.label_token_trainer" not in result.stdout
+
+
 def test_selector_mechanism_s5_s6_wrapper_dry_run_expands_chain_cases(tmp_path: Path) -> None:
     output = _run_script(
         "scripts/sentence_trace_method/run_liar_raw_ministral3_selector_mechanism_s5_s6_plain_lora_ebs16_lr2e5_ep12_eval100.sh",

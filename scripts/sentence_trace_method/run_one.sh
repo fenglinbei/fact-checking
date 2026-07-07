@@ -35,6 +35,12 @@ EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME:-$SELECTOR_NAME}"
 PROMPT_OUTPUT_MODE="${PROMPT_OUTPUT_MODE:-}"
 TRACE_PROMPT_STYLE="${TRACE_PROMPT_STYLE:-plain}"
 EVIDENCE_TEXT_MODE="${EVIDENCE_TEXT_MODE:-full}"
+TRACE_TOP_K="${TRACE_TOP_K:-10}"
+PROMPT_EVIDENCE_POLICY="${PROMPT_EVIDENCE_POLICY:-}"
+PROMPT_EVIDENCE_MIN_COUNT="${PROMPT_EVIDENCE_MIN_COUNT:-}"
+PROMPT_EVIDENCE_MAX_COUNT="${PROMPT_EVIDENCE_MAX_COUNT:-}"
+PROMPT_EVIDENCE_TOKEN_BUDGET="${PROMPT_EVIDENCE_TOKEN_BUDGET:-}"
+PROMPT_EVIDENCE_MAX_LENGTH_GUARD="${PROMPT_EVIDENCE_MAX_LENGTH_GUARD:-}"
 RAW_ROOT="${RAW_ROOT:-}"
 COVERAGE_DATA_ROOT="${COVERAGE_DATA_ROOT:-}"
 COVERAGE_POLICY="${COVERAGE_POLICY:-all}"
@@ -218,7 +224,7 @@ do_build() {
     --evidence-text-mode "$EVIDENCE_TEXT_MODE"
     --expected-selector-name "$EXPECTED_SELECTOR_NAME"
     --expected-chunk-mmr-fingerprint "$EXPECTED_CHUNK_MMR_FINGERPRINT"
-    --top-k 10
+    --top-k "$TRACE_TOP_K"
     --prompt-model-name-or-path "$MODEL_PATH"
     --train-model-name-or-path "$MODEL_PATH"
     --train-trace "$TRAIN_TRACE"
@@ -226,6 +232,21 @@ do_build() {
     --test-trace "$TEST_TRACE")
   if [[ -n "$PROMPT_OUTPUT_MODE" ]]; then
     cmd+=(--prompt-output-mode "$PROMPT_OUTPUT_MODE")
+  fi
+  if [[ -n "$PROMPT_EVIDENCE_POLICY" ]]; then
+    cmd+=(--prompt-evidence-policy "$PROMPT_EVIDENCE_POLICY")
+  fi
+  if [[ -n "$PROMPT_EVIDENCE_MIN_COUNT" ]]; then
+    cmd+=(--prompt-evidence-min-count "$PROMPT_EVIDENCE_MIN_COUNT")
+  fi
+  if [[ -n "$PROMPT_EVIDENCE_MAX_COUNT" ]]; then
+    cmd+=(--prompt-evidence-max-count "$PROMPT_EVIDENCE_MAX_COUNT")
+  fi
+  if [[ -n "$PROMPT_EVIDENCE_TOKEN_BUDGET" ]]; then
+    cmd+=(--prompt-evidence-token-budget "$PROMPT_EVIDENCE_TOKEN_BUDGET")
+  fi
+  if [[ -n "$PROMPT_EVIDENCE_MAX_LENGTH_GUARD" ]]; then
+    cmd+=(--prompt-evidence-max-length-guard "$PROMPT_EVIDENCE_MAX_LENGTH_GUARD")
   fi
   if [[ "$SAMPLE_LIMIT" != "0" ]]; then
     cmd+=(--sample-limit "$SAMPLE_LIMIT")
@@ -318,12 +339,9 @@ do_train() {
     printf 'Training is already complete for %s; set FORCE_TRAIN=true to launch training again.\n' "$CASE_NAME"
     return 0
   fi
-  if [[ -d "${train_dir}/best" && "$FORCE_TRAIN" != "true" ]]; then
-    if [[ -f "${train_dir}/latest_state/trainer_state.json" ]]; then
-      printf 'Best checkpoint exists but training is not marked complete for %s; resuming from latest_state.\n' "$CASE_NAME"
-    else
-      printf 'Best checkpoint exists but training is not marked complete for %s; launching trainer instead of skipping. No latest_state was found, so this may restart from the beginning.\n' "$CASE_NAME"
-    fi
+  if [[ -e "${train_dir}/best" && "$FORCE_TRAIN" != "true" ]]; then
+    printf 'Training artifacts already exist for %s at %s; set FORCE_TRAIN=true to launch training again.\n' "$CASE_NAME" "${train_dir}/best"
+    return 0
   fi
   run_cmd env \
     SAVE_LATEST_TRAIN_STATE="$SAVE_LATEST_TRAIN_STATE" \
@@ -349,9 +367,14 @@ do_eval() {
     for checkpoint in "${checkpoint_array[@]}"; do
       checkpoint="${checkpoint// /}"
       [[ -z "$checkpoint" ]] && continue
-      local metrics_path="${RUN_DIR}/eval/${split}/${checkpoint}/metrics.json"
-      if [[ -f "$metrics_path" && "$FORCE_EVAL" != "true" ]]; then
-        printf 'Eval artifact already exists: %s; set FORCE_EVAL=true to rerun.\n' "$metrics_path"
+      local legacy_metrics_path="${RUN_DIR}/eval/${split}/${checkpoint}/metrics.json"
+      local label_token_metrics_path="${RUN_DIR}/eval/${split}/${checkpoint}/label_token/metrics.json"
+      if [[ "$FORCE_EVAL" != "true" && -f "$label_token_metrics_path" ]]; then
+        printf 'Eval artifact already exists: %s; set FORCE_EVAL=true to rerun.\n' "$label_token_metrics_path"
+        continue
+      fi
+      if [[ "$FORCE_EVAL" != "true" && -f "$legacy_metrics_path" ]]; then
+        printf 'Eval artifact already exists: %s; set FORCE_EVAL=true to rerun.\n' "$legacy_metrics_path"
         continue
       fi
       run_cmd "$PYTHON_BIN" -m sft.label_token_infer \

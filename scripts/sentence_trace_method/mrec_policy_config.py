@@ -25,6 +25,7 @@ def main() -> int:
     trace = dict(cfg.get("trace") or {})
     prompt_evidence = dict(cfg.get("prompt_evidence") or {})
     guard = dict(prompt_evidence.get("max_length_guard") or {})
+    two_pass = dict(prompt_evidence.get("two_pass_uncertainty") or {})
     train = dict(cfg.get("train") or {})
     sft_train = dict(cfg.get("sft_train") or {})
     lora = dict(sft_train.get("lora") or {})
@@ -113,6 +114,41 @@ def main() -> int:
         "PROMPT_EVIDENCE_MAX_COUNT": str(max_count),
         "PROMPT_EVIDENCE_TOKEN_BUDGET": "" if evidence_token_budget is None else str(evidence_token_budget),
         "PROMPT_EVIDENCE_MAX_LENGTH_GUARD": max_length_guard,
+        "TWO_PASS_DECISION_DIR": _get(two_pass, "decision_dir", ""),
+        "TWO_PASS_CALIBRATION_FILE": _get(two_pass, "calibration_file", ""),
+        "TWO_PASS_TEACHER_RUN_DIR": _get(two_pass, "teacher_run_dir", ""),
+        "TWO_PASS_TEACHER_CHECKPOINT": _get(two_pass, "teacher_checkpoint", "best"),
+        "TWO_PASS_SCORING_BACKEND": _get(two_pass, "scoring_backend", "auto"),
+        "TWO_PASS_BASE_MODEL": _get(two_pass, "base_model", ""),
+        "TWO_PASS_VLLM_TENSOR_PARALLEL_SIZE": str(
+            _int_or_default(two_pass.get("vllm_tensor_parallel_size"), 4)
+        ),
+        "TWO_PASS_VLLM_GPU_MEMORY_UTILIZATION": str(
+            two_pass.get("vllm_gpu_memory_utilization", 0.85)
+        ),
+        "TWO_PASS_VLLM_DTYPE": _get(two_pass, "vllm_dtype", "auto"),
+        "TWO_PASS_VLLM_TOKENIZER_MODE": _get(two_pass, "vllm_tokenizer_mode", "auto"),
+        "TWO_PASS_VLLM_CONFIG_FORMAT": _get(two_pass, "vllm_config_format", ""),
+        "TWO_PASS_VLLM_LOAD_FORMAT": _get(two_pass, "vllm_load_format", ""),
+        "TWO_PASS_VLLM_MAX_MODEL_LEN": str(_int_or_default(two_pass.get("vllm_max_model_len"), 1032)),
+        "TWO_PASS_VLLM_PROMPT_BATCH_SIZE": str(
+            _int_or_default(two_pass.get("vllm_prompt_batch_size"), 6000)
+        ),
+        "TWO_PASS_VLLM_ENFORCE_EAGER": _bool_text(two_pass.get("vllm_enforce_eager", False)),
+        "TWO_PASS_VLLM_LORA_MODE": _get(two_pass, "vllm_lora_mode", "dynamic"),
+        "TWO_PASS_VLLM_MERGE_LORA_CACHE_DIR": _get(
+            two_pass,
+            "vllm_merge_lora_cache_dir",
+            "outputs/cache/merged_lora",
+        ),
+        "TWO_PASS_VLLM_MERGE_LORA_FORCE_REBUILD": _bool_text(
+            two_pass.get("vllm_merge_lora_force_rebuild", False)
+        ),
+        "TWO_PASS_TRANSFORMERS_DEVICE": _get(two_pass, "transformers_device", "auto"),
+        "TWO_PASS_TRANSFORMERS_DTYPE": _get(two_pass, "transformers_dtype", "auto"),
+        "TWO_PASS_TRANSFORMERS_PROMPT_BATCH_SIZE": str(
+            _int_or_default(two_pass.get("transformers_prompt_batch_size"), 24)
+        ),
         "MODEL_PATH": _get(train, "model_name_or_path", ""),
         "DEEPSPEED_CONFIG": _get(train, "deepspeed_config", ""),
         "NPROC_PER_NODE": str(_int_or_default(train.get("nproc_per_node"), 4)),

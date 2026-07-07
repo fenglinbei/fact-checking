@@ -23,3 +23,279 @@
 人类在进行事实核查时，会经过多个步骤：1）信息收集：对一个声明，收集其所有相关的原始报告并整理；2）要素抽取：把一个声明拆分成多个原子事实，每个原子事实都包含最小的子命题；3）证据组织：判断每一条证据支持了声明的哪一部分，并组织成一条逻辑链；4）来源评估及矛盾识别：检查report来源的可信度，以及处理证据中存在的矛盾；5）结论形成：根据所有信息得出最终判决。
 
 随着大模型技术的发展，大模型展示出了强大的逻辑推理能力，使其可以完成许多以前人类才能完成的推理流程。结合人类事实核查流程，这启发我们，能否在一定程度上利用大模型的推理能力，构建一套可以模仿人类进行事实核查的流程
+
+# Related Work
+
+少量早期Bert之前的AFC方法
+部分重要的Bert类方法
+重要的篇幅讲使用LLM的各种方法，基于辩护的/智能体的/内在表示的/图的等，然后围绕这一系列方法的复杂度高，黑箱化展开
+
+# Methodology
+
+## Overview
+
+本文重构了一套AFC方法，从原始声明claim出发，将其分解成最小的独立的，语义完整原子事实，基于这些原子事实完成三件事，1）对原始report的基于Atom语义的chunking；2）利用Atom检索分解后的chunks扩充基础证据池；3）围绕Atom逐步构建证据链。而后，基于构建得到的证据链接入大模型的推理分类得到最终的判决结果，该证据链人类与大模型都统一可读，既保证可解释性，又能够充分利用大模型推理能力。
+
+## 符号约定
+
+XXX
+
+## 声明与证据的前处理
+
+### claim-aware Chunking
+
+在做后续证据组织之前，如何确定好证据单元的粒度是一件重要的事，若粒度过小（如单句），则可能会导致单个证据单元得不到有效信息；
+若粒度过大（如整段report）这单个证据单元会包含过多信息，为后续处理引入噪声，
+因此本文实现了一个同时关注证据单元对claim的相关性以及在段落内连贯性的chunking策略，具体关于证据粒度的实验见XXX/
+
+设 claim 为 \(c\)，一篇 report 包含的所有句子为 \(s_1,\dots,s_n\)，句向量为 \(e_i\)，claim 向量为 \(e_c\)，本文使用统一的embedding模型得到向量\(E(s)=e\)。
+
+首先对每个句子计算 claim-aware relevance：
+\[
+r_i = 0.70\,\mathrm{norm}(\cos(e_i,e_c)) + 0.20\,\mathrm{norm}(\mathrm{LexF1}(c,s_i)) + 0.10\,\mathrm{norm}(\mathrm{BM25}(c,s_i)).
+\]
+
+然后，对相邻句子边界打分 \(i|i+1\)：
+\[
+b_i = w_{\text{sem}}(1-\cos(e_i,e_{i+1})) + w_{\text{rel}}|r_i-r_{i+1}| - d_{\text{coref}}.
+\]
+其中， \(w_{\text{sem}}=0.75\)、\(w_{\text{rel}}=0.25\)，\(d_{\text{coref}}\)惩罚连续指代，降低错误切开的概率，此时\(b_i\)越大，该边界越有可能成为分段边界，得到一系列分数后，通过计算局部峰值来拆分组合句子
+
+最终每个 chunk 记录：
+\[
+u_j = [s_a,\dots,s_b],
+\]
+
+### Claim Decomposing
+
+在一般的人声明验证流程中，通常不会同时验证多个事实，这样不仅会互相干扰，还会导致边界模糊不清，因此，参考该流程以及一般的做法（放点参考文献），我们把原始 claim \(c\) 转成少量可独立验证的 atomic propositions，作为后续 atom-conditioned retrieval、evidence map、MREC 状态转移的“状态变量”。
+
+输入是一条 claim，输出是：
+\[
+A(c)=\{(a_1,q_i),\dots,(a_m,q_m)\},\quad 1\le m\le 6
+\]
+
+其中\(a,q\)分别为分解后的原子命题以及其对应的查询，该查询在后面用于检索证据单元。
+实现上，该分解通过LLM完成，我们在prompt 中要求：只使用 claim 本身，不引入外部知识；只在 claim 含有多个可分别验证的事实断言时拆分；日期、数量、否定、比较对象、地点、范围、归因等必须保留在 proposition 内，不能拆成孤立片段。即每个 atom 不能只是关键词片段，而是一个个可验证的语义完整的原子命题，
+
+### Atom-Union Evidence Pool
+
+每一个claim中完成chunking后的证据单元可能多达数十个，而为了降低后续证据链的构造难度，我们对完整的证据池进行处理，为每个claim检索其对应的有限个证据单元。在实现上，为了加大召回率我们把原来“用整条 claim 检索证据”改成“每个 atom 各自检索一批证据”，再合成一个 atom-aware candidate pool。
+
+ 
+对每个 atom \(a_i\)，取它的查询 \(q_i\)，在该 claim 的 evidence chunk pool \(\mathcal{U}=\{u_j\}\) 上打分：
+
+\[
+s(q_i,u_j)
+=0.70\,\mathrm{norm}(\cos(e_{q_i},e_{u_j}))
++0.20\,\mathrm{norm}(\mathrm{LexF1}(q_i,u_j))
++0.10\,\mathrm{norm}(\mathrm{BM25}(q_i,u_j)).
+\]
+
+然后每个 atom 保留 top-\(k_1\) routes：
+
+\[
+R_i=\operatorname{TopK}_{k_1}\{u_j:s(q_i,u_j)\}.
+\]
+
+多个 atom 的 top-\(k_1\) 结果会按证据单元去重、聚合以及排序得到基础候选池。
+
+记所有 atom 检索结果的并集，即最后得到的候选池为：
+
+\[
+\mathcal{R}=\bigcup_{i=1}^{m} R_i .
+\]
+
+可以，下面这段可以直接接在你前面的 **Atom-Union Evidence Pool** 后面。这里我把 \(\mathcal{R}\) 定义为 Atom-Union 后送入 selector 的候选证据池。
+
+可以把 learned marginal selector 细化为“状态条件化的边际效用选择器”。它不是对 \(\mathcal R\) 做一次静态 top-k 排序，而是在每一步根据已经选过的证据、当前 atom 状态和候选的 evidence-map 标注，重新估计每个候选的边际贡献。
+
+## Evidence Selector
+
+完成证据候选池的构建后，开始进行证据链的选择，我们的选择器遵从一个简单原则：“在每一步证据选择时，优先选对解决所有claim atom最有帮助的证据”，这种帮助在本文被定为：
+1）该证据直接支持/反对了一条没有被solve的claim atom；
+2）该证据支持/反对了一条新的claim atom
+3）该证据为已有的evidence提供了有效的背景信息/反对意见
+根据这一原则，本文设计了一种证据选择器。
+
+对于某个claim，给定 Atom-Union pool \(\mathcal R=\{u_j\}_{j=1}^{n}\) 和 claim atoms \(\mathcal A=\{a_i\}_{i=1}^{m}\)，我们为所有claim atom以及evidence构建一个map，该map为每个候选证据和 atom 提供结构化标注：
+
+\[
+M(u_j,a_i)=(r_{ij}, d_{ij}, c_{ij}),
+\]
+
+其中 \(r_{ij}\) 是关系类型，\(d_{ij}\) 是 directness，\(c_{ij}\in[0,1]\) 是置信度，实现上，我们通过设计prompt让这一标注由LLM给出。
+我们为每个atom定义了一组验证状态，通过selector 维护：
+
+\[
+h_i^{(t)}\in\{U,S,R,Q,C\},
+\]
+
+分别表示 unresolved, supported, refuted, qualified, conflicted。初始时所有 atom 均为 \(U\)。
+
+在第 \(t\) 步，selector 对每个未选择候选 \(u_j\) 计算状态条件化的边际特征。若 \(u_j\) 对 atom \(a_i\) 给出可解析关系，则其解析增益可写为：
+
+\[
+g_{ij}^{(t)}
+=
+p_i^{(t)}(U)\cdot \delta(d_{ij})\cdot \max(c_{ij},0.5),
+\]
+
+其中 \(p_i^{(t)}(U)\) 是当前 atom 仍未解析的概率质量，\(\delta(d_{ij})\)w为一组根据directness程度递增的手动权重。于是候选的解析边际贡献为：
+
+\[
+\phi_{\text{res}}^{(t)}(u_j)
+=
+\frac{1}{m}\sum_{i=1}^{m}
+\max_{M(u_j,a_i)} g_{ij}^{(t)}.
+\]
+
+同时计算信息增益、覆盖增益、新关系增益、立场张力、佐证增益、来源/文本新颖性、map 质量、检索分数和长度代价：
+
+\[
+\phi_t(u_j)=
+[
+\phi_{\text{res}},
+\phi_{\text{ent}},
+\phi_{\text{cov}},
+\phi_{\text{new-rel}},
+\phi_{\text{tension}},
+\phi_{\text{corr}},
+\phi_{\text{src-novel}},
+\phi_{\text{text-novel}},
+\phi_{\text{conf}},
+\phi_{\text{map}},
+\phi_{\text{ret}},
+\phi_{\text{cost}}
+].
+\]
+
+Selector 用一个线性边际效用函数给候选打分：
+
+\[
+U_\theta(u_j\mid \mathcal T_{<t},H^{(t)})
+=
+b+
+\sum_{\ell\neq \text{cost}} w_\ell \phi_{\ell}^{(t)}(u_j)
+-
+w_c \phi_{\text{cost}}^{(t)}(u_j).
+\]
+
+我们为这组效用特征构建了一个pairwise学习器，其目的是让selector学习到哪些证据是“好”的，此处的好即为本节开头所说的简单原则。训练时，在 evidence-map feature rows 上模拟 rollout，构造偏好对 \((u^+,u^-)\)，其中 \(u^+\) 是 proxy排序更优的候选，\(u^-\) 是较差候选。
+proxy来自一组手工定义的规则，根据resolving / 新 atom 覆盖 / 新 relation等来获得排序。
+
+pairwise学习器的优化目标为：
+
+\[
+\mathcal L(\theta)
+=
+\frac{1}{|\mathcal P|}
+\sum_{(u^+,u^-)\in\mathcal P}
+\log\left(
+1+\exp\left(
+-\left[
+U_\theta(u^+) - U_\theta(u^-)
+\right]
+\right)
+\right).
+\]
+
+实现中使用 Adam 优化，并用 softplus 参数化保证权重非负：
+
+\[
+w_\ell=\mathrm{softplus}(\theta_\ell),\quad
+w_c=\mathrm{softplus}(\theta_c).
+\]
+
+推理时，selector 进行贪心构链：
+
+\[
+u_t
+=
+\arg\max_{u_j\in \mathcal R\setminus \mathcal T_{<t}}
+U_\theta(u_j\mid \mathcal T_{<t},H^{(t)}).
+\]
+
+选中 \(u_t\) 后，selector 会生成一个step：
+
+\[
+s_t=
+(u_t,a_{i_t},h_{i_t}^{(t-1)}\rightarrow h_{i_t}^{(t)}).
+\]
+
+并更新 atom 状态。例如 support/refute/qualify 分别映射到 \(S/R/Q\)，若新证据与已有 \(S/R\) 状态冲突，则进入 \(C\)。最终输出的是一个 ordered evidence trace：
+
+\[
+\mathcal T=
+[s_1,s_2,\ldots,s_T].
+\]
+
+值得注意的是，本文在selector的部分使用了不少的人工 / 启发式规则，经过实际测试，一些更复杂的规则，如：根据最终 verifier反馈学习selector / 人工标注学习，其效果与该方式相当，于是根据简化原则，本文使用这一手动方法，具体的实验以及方法细节在XXX。
+
+## Verifier
+
+在得到 ordered evidence trace \(\mathcal T=[u_1,u_2,\ldots,u_T]\) 后，我们使用一个指令微调后的 LLM 作为最终 verifier。Verifier 接收 claim 及其 prompt-visible evidence trace，并输出事实核查标签：
+
+\[
+\hat y
+=
+\arg\max_y p_\theta(y\mid x),
+\]
+
+其中 \(x=\mathrm{Render}(c,\mathcal T_{\mathrm{prompt}})\) 表示由 claim \(c\) 和被截断后的证据 trace \(\mathcal T_{\mathrm{prompt}}\) 构造的输入 prompt。训练阶段采用监督微调，最小化标准交叉熵损失：
+
+\[
+\mathcal L_{\mathrm{verifier}}
+=
+-\log p_\theta(y^\ast\mid x),
+\]
+
+其中 \(y^\ast\) 为样本的 gold fact-checking label。
+
+由于selector 生成的完整 trace \(\mathcal T\) 长度存在显著差异，直接将完整 trace 输入 verifier 可能导致长上下文噪声增加、有效证据信号被稀释，并显著提高训练与推理成本。因此，我们在 verifier 之前引入 prompt evidence policy，将完整 ordered trace 映射为 verifier 可见的 evidence prefix：
+
+\[
+\mathcal T_{\mathrm{prompt}}
+=
+[u_1,u_2,\ldots,u_{K^\ast}],
+\quad
+K^\ast \le T.
+\]
+
+具体地，我们沿 selector 给出的顺序逐步加入 evidence step，并在满足最小证据数 \(k_{\min}\) 后检查当前 trace 是否已经达到 atom-level resolution target。令
+
+\[
+\rho_t
+=
+\frac{
+|\{a_i:h_i^{(t)}\in\{S,R,Q,C\}\}|
+}{
+|\mathcal A|
+},
+\]
+
+其中 \(\rho_t\) 是第 \(t\) 步后的 resolved atom rate。若
+
+\[
+\rho_t \ge \rho_{\mathrm{target}},
+\]
+
+则认为当前 trace 已经达到目标解析状态，并停止继续加入证据。因此截断位置定义为：
+
+\[
+K^\ast
+=
+\min
+\left\{
+t:
+t\ge k_{\min}
+\land
+\rho_t\ge \rho_{\mathrm{target}}
+\right\}.
+\]
+
+若不存在满足条件的 \(t\)，则退化为最大证据数约束：
+
+\[
+K^\ast=\min(k_{\max},T).
+\]

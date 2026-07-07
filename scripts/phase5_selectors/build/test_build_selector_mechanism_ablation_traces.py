@@ -132,6 +132,85 @@ def test_builder_writes_atom_union_source_score_trace(tmp_path: Path) -> None:
     assert rows[0]["selected_candidates"][0]["text"] == "atom"
 
 
+def test_builder_writes_full_atom_union_source_score_order(tmp_path: Path) -> None:
+    cache_path = _write_cache(tmp_path)
+    union_path = tmp_path / "union.jsonl"
+    _write_jsonl(
+        union_path,
+        [
+            {
+                "event_id": "event0",
+                "claim": "claim token",
+                "label": "true",
+                "gold_label": "true",
+                "claim_atoms": [{"atom_id": "A1", "text": "atom"}],
+                "candidates": [
+                    {
+                        "text": "baseline",
+                        "canonical_text": "baseline",
+                        "from_baseline": True,
+                        "from_atom_route": False,
+                        "baseline_rank": 1,
+                        "atom_rrf_score": 0.0,
+                        "atom_route_hit_count": 0,
+                        "atom_max_route_hybrid": 0.0,
+                        "union_pool_rank": 1,
+                        "chunk_sent_indices": [0],
+                    },
+                    {
+                        "text": "atom",
+                        "canonical_text": "atom",
+                        "from_baseline": False,
+                        "from_atom_route": True,
+                        "atom_pool_rank": 1,
+                        "atom_rrf_score": 0.2,
+                        "atom_route_hit_count": 2,
+                        "atom_max_route_hybrid": 0.9,
+                        "union_pool_rank": 2,
+                        "chunk_sent_indices": [1],
+                    },
+                    {
+                        "text": "weak",
+                        "canonical_text": "weak",
+                        "from_baseline": False,
+                        "from_atom_route": True,
+                        "atom_pool_rank": 2,
+                        "atom_rrf_score": 0.01,
+                        "atom_route_hit_count": 0,
+                        "atom_max_route_hybrid": 0.0,
+                        "union_pool_rank": 3,
+                        "chunk_sent_indices": [2],
+                    },
+                ],
+            }
+        ],
+    )
+    output_dir = tmp_path / "out"
+
+    exit_code = main(
+        Namespace(
+            chunk_cache_path=str(cache_path),
+            atom_union_jsonl=str(union_path),
+            output_dir=str(output_dir),
+            split="val",
+            selector_name="selector_mech_s4_atom_union_source_score_ordered",
+            top_k=2,
+            claim_pool_top_n=4,
+            random_seed=0,
+            merge_mmr_lambda=0.70,
+            chunk_mmr_fingerprint="fp",
+            sample_limit=0,
+        )
+    )
+
+    assert exit_code == 0
+    rows = _read_jsonl(output_dir / "selection_trace_val.jsonl")
+    assert rows[0]["selector_ordered_indices"] == [1, 0, 2]
+    assert rows[0]["selected_candidates"][0]["text"] == "atom"
+    assert rows[0]["selected_candidates"][-1]["text"] == "weak"
+    assert rows[0]["adaptive_policy"] == "source_score_ordered"
+
+
 def _write_cache(tmp_path: Path) -> Path:
     path = tmp_path / "val.pkl"
     sample = ChunkMMRSample(

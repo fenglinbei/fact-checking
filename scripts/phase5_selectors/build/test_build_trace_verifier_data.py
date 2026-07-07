@@ -621,6 +621,119 @@ def test_mrec_prompt_evidence_state_budget_respects_soft_token_budget(tmp_path: 
     assert report["prompt_evidence"]["stop_reasons"] == {"token_budget_exhausted": 1}
 
 
+def test_mrec_prompt_evidence_two_pass_uncertainty_reads_decision_cache(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_mrec_policy_inputs(tmp_path)
+    decision_dir = tmp_path / "two_pass_decisions"
+    decision_dir.mkdir()
+    (decision_dir / "two_pass_uncertainty_decisions_val.jsonl").write_text(
+        json.dumps(
+            {
+                "event_id": "event-mrec-policy",
+                "split": "val",
+                "initial_indices": [0],
+                "selected_indices": [0, 1, 2],
+                "threshold": 0.42,
+                "uncertainty_margin": 0.51,
+                "prompt_evidence_expanded": True,
+                "score_trace": [
+                    {
+                        "role": "initial",
+                        "selected_indices": [0],
+                        "pred_margin": 0.10,
+                        "pred_label": "true",
+                        "prompt_token_count": 100,
+                        "was_truncated": False,
+                    },
+                    {
+                        "role": "expanded",
+                        "selected_indices": [0, 1, 2],
+                        "pred_margin": 0.51,
+                        "pred_label": "true",
+                        "prompt_token_count": 220,
+                        "was_truncated": False,
+                    },
+                ],
+                "stop_reason": "expanded_confident",
+                "prompt_token_count_before_final_build": 220,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_prompt_style="mrec_min",
+        expected_selector_name="test_selector",
+        top_k=99,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+        prompt_evidence_config={
+            "policy": "two_pass_uncertainty",
+            "two_pass_uncertainty": {
+                "decision_dir": str(decision_dir),
+                "calibration_file": str(decision_dir / "two_pass_uncertainty_calibration.json"),
+            },
+        },
+    )
+
+    row = rows[0]
+    assert row["selector_trace"]["selected_indices"] == [0, 1, 2]
+    assert row["prompt_evidence_policy"] == "two_pass_uncertainty"
+    assert row["prompt_evidence_two_pass_initial_count"] == 1
+    assert row["prompt_evidence_uncertainty_margin"] == 0.51
+    assert row["prompt_evidence_expanded"] is True
+    assert row["prompt_evidence_decision_source"].endswith("two_pass_uncertainty_decisions_val.jsonl")
+    assert row["prompt_evidence_stop_reason"] == "expanded_confident"
+    assert len(row["prompt_evidence_score_trace"]) == 2
+    assert report["prompt_evidence"]["two_pass_uncertainty"]["expanded_rate"] == 1.0
+    assert report["prompt_evidence"]["stop_reasons"] == {"expanded_confident": 1}
+
+
+def test_mrec_prompt_evidence_two_pass_uncertainty_requires_decision_cache(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_mrec_policy_inputs(tmp_path)
+
+    try:
+        build_trace_verifier_data._build_split(
+            split="val",
+            source_type="trace",
+            source_path=trace_path,
+            raw_path=raw_path,
+            dataset=None,
+            label_schema="liar6",
+            tokenizer=_FakeTokenizer(),
+            prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+            selection_mode="trace",
+            trace_prompt_style="mrec_min",
+            expected_selector_name="test_selector",
+            top_k=99,
+            random_seed=0,
+            expected_chunk_mmr_fingerprint="fp",
+            sample_limit=None,
+            show_progress=False,
+            prompt_evidence_config={
+                "policy": "two_pass_uncertainty",
+                "two_pass_uncertainty": {
+                    "decision_dir": str(tmp_path / "missing_decisions"),
+                },
+            },
+        )
+    except ValueError as exc:
+        assert "missing two-pass uncertainty decision cache" in str(exc)
+    else:
+        raise AssertionError("two_pass_uncertainty should fail when decision cache is missing")
+
+
 def test_rawfc_boundaries_prompt_style_uses_rawfc_three_label_boundaries() -> None:
     prompt_cfg = build_trace_verifier_data._prompt_cfg_for_trace_style(
         {"auto_length": False, "output_mode": "label_only", "label_format": "letter"},

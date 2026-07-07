@@ -1,0 +1,192 @@
+% kr-zh.sty
+% Unofficial: Chinese-friendly typography layer for using kr.sty as notes.
+% Recommended engine: XeLaTeX.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{kr-zh}[2026/03/03 v1.1 Chinese notes patch layer for kr]
+
+\RequirePackage{kvoptions}
+\SetupKeyvalOptions{family=krzh,prefix=krzh@}
+
+% Layout options for notes
+\DeclareBoolOption[true]{onecolumn}      % force one-column notes
+\DeclareBoolOption[true]{parskip}        % add small paragraph skip
+\DeclareBoolOption[true]{pagenumbers}    % show page numbers (KR style hides)
+\DeclareStringOption[a4]{papersize}      % a4 | a4paper | letter | letterpaper
+\DeclareStringOption[2.2cm]{margin}      % geometry margin
+
+\ProcessKeyvalOptions*
+
+% ---- Load original KR style ----
+\RequirePackage{kr}
+
+% ---- Engine detection ----
+\RequirePackage{iftex}
+
+% IMPORTANT: allow @ in control sequence names in THIS package code
+\makeatletter
+
+% ---- Helpers ----
+\@ifpackageloaded{etoolbox}{}{\RequirePackage{etoolbox}}
+\@ifpackageloaded{microtype}{}{\RequirePackage{microtype}}
+\@ifpackageloaded{hyperref}{\hypersetup{unicode=true,hidelinks}}{%
+  \RequirePackage[unicode,hidelinks]{hyperref}%
+}
+\@ifpackageloaded{bookmark}{}{\RequirePackage{bookmark}}
+\@ifpackageloaded{geometry}{}{\RequirePackage{geometry}}
+
+% ---- papersize mapping for geometry ----
+\def\krzh@papersize@geom{\krzh@papersize}
+\ifdefstrequal{\krzh@papersize}{a4}{\def\krzh@papersize@geom{a4paper}}{}
+\ifdefstrequal{\krzh@papersize}{letter}{\def\krzh@papersize@geom{letterpaper}}{}
+
+% ---- Page layout for notes (override conference-like tight layout) ----
+\AtBeginDocument{%
+  \geometry{\krzh@papersize@geom,margin=\krzh@margin}%
+  \ifkrzh@pagenumbers
+    \pagestyle{plain}%
+  \fi
+  \ifkrzh@onecolumn
+    \if@twocolumn\onecolumn\fi
+  \fi
+}
+
+% ---- Chinese support ----
+\ifPDFTeX
+  % pdfLaTeX fallback: workable but not as beautiful as XeLaTeX.
+  \RequirePackage[utf8]{inputenc}
+  \RequirePackage{CJKutf8}
+  \AtBeginDocument{\begin{CJK*}{UTF8}{gbsn}\CJKtilde}
+  \AtEndDocument{\end{CJK*}}
+  \renewcommand\CJKglue{\hskip 0pt plus 0.08\baselineskip}
+\else
+  % XeLaTeX / LuaLaTeX
+  \RequirePackage{fontspec}
+  \defaultfontfeatures{Ligatures=TeX}
+
+  \ifXeTeX
+    \RequirePackage{xeCJK}
+
+    % Line breaking for Chinese
+    \XeTeXlinebreaklocale "zh"
+    \XeTeXlinebreakskip = 0pt plus 1pt
+
+    % CJK punctuation & spacing
+    \xeCJKsetup{
+      PunctStyle = kaiming,
+      AllowBreakBetweenPuncts = true,
+      CJKecglue = {\hskip 0.08em plus 0.04em minus 0.02em}
+    }
+
+    % Latin fonts
+    \IfFontExistsTF{TeX Gyre Pagella}{
+      \setmainfont{TeX Gyre Pagella}
+    }{
+      \IfFontExistsTF{Times New Roman}{
+        \setmainfont{Times New Roman}
+      }{
+        \setmainfont{Latin Modern Roman}
+      }
+    }
+    \IfFontExistsTF{TeX Gyre Heros}{
+      \setsansfont{TeX Gyre Heros}
+    }{
+      \setsansfont{Latin Modern Sans}
+    }
+    \IfFontExistsTF{JetBrains Mono}{
+      \setmonofont{JetBrains Mono}
+    }{
+      \IfFontExistsTF{Inconsolata}{
+        \setmonofont{Inconsolata}
+      }{
+        \setmonofont{Latin Modern Mono}
+      }
+    }
+
+    % CJK fonts (auto fallback)
+    \IfFontExistsTF{Source Han Serif SC}{
+      \setCJKmainfont{Source Han Serif SC}
+    }{
+      \IfFontExistsTF{Noto Serif CJK SC}{
+        \setCJKmainfont{Noto Serif CJK SC}
+      }{
+        \IfFontExistsTF{Songti SC}{
+          \setCJKmainfont{Songti SC}
+        }{
+          \IfFontExistsTF{SimSun}{
+            \setCJKmainfont{SimSun}
+          }{
+            \setCJKmainfont{FandolSong-Regular}
+          }
+        }
+      }
+    }
+
+    \IfFontExistsTF{Source Han Sans SC}{
+      \setCJKsansfont{Source Han Sans SC}
+    }{
+      \IfFontExistsTF{Noto Sans CJK SC}{
+        \setCJKsansfont{Noto Sans CJK SC}
+      }{
+        \IfFontExistsTF{PingFang SC}{
+          \setCJKsansfont{PingFang SC}
+        }{
+          \IfFontExistsTF{Microsoft YaHei}{
+            \setCJKsansfont{Microsoft YaHei}
+          }{
+            \setCJKsansfont{FandolHei-Regular}
+          }
+        }
+      }
+    }
+
+    \IfFontExistsTF{Sarasa Mono SC}{
+      \setCJKmonofont{Sarasa Mono SC}
+    }{
+      \IfFontExistsTF{Source Han Sans SC}{
+        \setCJKmonofont{Source Han Sans SC}
+      }{
+        \setCJKmonofont{FandolFang-Regular}
+      }
+    }
+
+  \else
+    % LuaLaTeX: simplest robust path
+    \RequirePackage[UTF8,scheme=plain,fontset=fandol]{ctex}
+  \fi
+\fi
+
+% ---- Readability tuning (notes style) ----
+\AtBeginDocument{%
+  \linespread{1.15}\selectfont
+  \setlength{\parindent}{2em}%
+  \ifkrzh@parskip
+    \setlength{\parskip}{0.25\baselineskip}%
+  \else
+    \setlength{\parskip}{0pt}%
+  \fi
+  \setlength{\emergencystretch}{2em}%
+}
+
+% ---- Headings and lists ----
+\@ifpackageloaded{titlesec}{}{\RequirePackage{titlesec}}
+\@ifpackageloaded{enumitem}{}{\RequirePackage{enumitem}}
+
+\titleformat{\section}{\Large\bfseries}{\thesection}{0.8em}{}
+\titlespacing*{\section}{0pt}{1.1\baselineskip}{0.6\baselineskip}
+
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.7em}{}
+\titlespacing*{\subsection}{0pt}{0.9\baselineskip}{0.45\baselineskip}
+
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.6em}{}
+\titlespacing*{\subsubsection}{0pt}{0.7\baselineskip}{0.35\baselineskip}
+
+\setlist[itemize]{leftmargin=2em, topsep=0.25\baselineskip, itemsep=0.1\baselineskip, parsep=0pt}
+\setlist[enumerate]{leftmargin=2em, topsep=0.25\baselineskip, itemsep=0.1\baselineskip, parsep=0pt}
+
+% ---- Tables and math ----
+\@ifpackageloaded{booktabs}{}{\RequirePackage{booktabs}}
+\@ifpackageloaded{amsmath}{}{\RequirePackage{amsmath}}
+\@ifpackageloaded{amssymb}{}{\RequirePackage{amssymb}}
+
+\makeatother
+\endinput

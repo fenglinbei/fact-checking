@@ -1,0 +1,505 @@
+% !TEX program = xelatex
+\documentclass[UTF8,a4paper,zihao=5,twocolumn]{ctexart}
+
+\usepackage[a4paper,top=2.6cm,bottom=2.4cm,left=2.5cm,right=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs,multirow,tabularx,longtable}
+\usepackage{subcaption}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage{array}
+\usepackage{fancyhdr}
+\usepackage[hidelinks]{hyperref}
+\usepackage[backend=biber,style=numeric,natbib=true]{biblatex}
+\addbibresource{refs.bib}
+
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0pt}
+\setlength{\columnsep}{0.75cm}
+\linespread{1.25}
+\pagestyle{empty}
+\setlist[itemize]{leftmargin=2em,itemsep=0.2em,topsep=0.2em}
+\captionsetup{font=small,labelfont=bf,textfont=bf,labelsep=quad}
+
+\newcommand{\ReportName}{姓名：唐耿}
+\newcommand{\ReportAuthorName}{唐耿}
+\newcommand{\ReportMajor}{计算机系 电子信息人工智能方向}
+\newcommand{\ReportStudentID}{学号：202534261065}
+\newcommand{\ReportCourse}{电子信息人工智能方向}
+\newcommand{\ReportType}{研究报告}
+\newcommand{\ReportTerm}{2025年2学期}
+\newcommand{\ReportDate}{2026年6月25日}
+\newcommand{\makereportheader}{%
+  {\songti\zihao{-5}
+  \noindent
+  \begin{tabular*}{\textwidth}{@{}p{0.28\textwidth}@{\extracolsep{\fill}}>{\centering\arraybackslash}p{0.32\textwidth}>{\raggedleft\arraybackslash}p{0.28\textwidth}@{}}
+  \ReportName & \ReportCourse & \ReportTerm\\
+  \ReportStudentID & \ReportType & \ReportDate
+  \end{tabular*}\par
+  \vspace{0.15em}
+  \hrule height 0.4pt
+  \vspace{0.08em}
+  \hrule height 0.4pt
+  \vspace{1.2em}}
+}
+
+\ctexset{
+  section={format=\zihao{4}\heiti,beforeskip=1.4ex plus .2ex,afterskip=0.8ex plus .2ex},
+  subsection={format=\zihao{5}\heiti,beforeskip=1.0ex plus .2ex,afterskip=0.5ex plus .2ex},
+  subsubsection={format=\zihao{5}\songti\bfseries,beforeskip=0.8ex plus .2ex,afterskip=0.4ex plus .2ex}
+}
+
+\newcommand{\missingfigure}[1]{%
+  \fbox{\parbox[c][0.16\textheight][c]{0.88\linewidth}{\centering\zihao{-5}图文件暂缺：\texttt{\detokenize{#1}}}}%
+}
+\newcommand{\safeincludegraphics}[2][]{%
+  \IfFileExists{#2}{\includegraphics[#1]{#2}}{%
+    \IfFileExists{AuthorKit27_work/AuthorKit27/#2}{\includegraphics[#1]{AuthorKit27_work/AuthorKit27/#2}}{\missingfigure{#2}}%
+  }%
+}
+
+\begin{document}
+
+\twocolumn[{%
+\makereportheader
+\begin{center}
+{\heiti\zihao{2} KELP：面向学习路径推荐的知识点--习题循环规划\par}
+\vspace{0.6em}
+{\bfseries\zihao{4} KELP: Knowledge-Exercise Loop Planning for Learning Path Recommendation\par}
+\vspace{0.7em}
+{\fangsong\zihao{3} \ReportAuthorName\par}
+\vspace{0.35em}
+{\songti\zihao{6} （\ReportMajor）\par}
+\vspace{0.9em}
+\end{center}
+
+\begin{center}
+{\heiti\zihao{5} 摘\quad 要}
+\end{center}
+{\songti\zihao{-5}
+在线教育平台的普及使个性化学习指导成为自适应学习的重要任务。学习路径推荐旨在根据学习者状态与学习目标动态安排学习内容，以提高目标导向学习效率。然而，现有方法要么主要在知识点层面进行粗粒度规划，难以区分不同习题的学习作用；要么虽引入习题推荐，却仍缺乏逐题反馈驱动的知识点调整与高质量局部选题机制，导致路径规划不够灵活，具体知识点的学习效率受限。为此，本文提出知识点--习题循环规划（Knowledge-Exercise Loop Planning, KELP），一种闭合知识点规划与习题执行循环的细粒度学习路径推荐框架。KELP利用离散--连续混合过程奖励增强强化学习式知识点规划，并通过逐题重规划机制及时响应学习状态变化；同时，监督式局部执行器根据当前知识点目标选择更具学习收益的习题。我们在Junyi、Assist09和Assist17三个公开数据集上进行实验。结果表明，KELP在两种不同粒度的指标上均实现总体最优，证明了所提出框架的有效性。
+\par}
+\vspace{0.5em}
+{\songti\zihao{-5}\noindent\textbf{关键词：}学习路径推荐；知识追踪；强化学习；习题推荐；混合过程奖励}
+\vspace{0.7em}
+
+\begin{center}
+{\bfseries\zihao{5} Abstract}
+\end{center}
+{\zihao{-5}\rmfamily
+With the broad adoption of online education platforms, personalized learning guidance has become an important task in adaptive learning. Learning Path Recommendation (LPR) aims to dynamically arrange learning content according to learner states and learning goals, thereby improving goal-oriented learning efficiency. However, existing methods either plan coarsely at the concept level and fail to distinguish the effects of different exercises, or introduce exercise recommendation without tightly coupling concept replanning with local exercise selection. As a result, they suffer from limited path flexibility and inefficient local concept learning. To address these challenges, we propose Knowledge-Exercise Loop Planning (KELP), a fine-grained LPR framework that closes the loop between concept planning and exercise execution. KELP strengthens reinforcement-learning-based concept planning with discrete--continuous hybrid process rewards and replans concepts after each exercise based on updated learner states. A supervised local executor further selects exercises with higher expected utility for the current concept goal. Experiments on three public datasets show that KELP achieves the best overall performance under both granularity-aware metrics, demonstrating the effectiveness of the proposed framework.
+\par}
+\vspace{0.5em}
+{\zihao{-5}\rmfamily\noindent\textbf{Keywords:} learning path recommendation; knowledge tracing; reinforcement learning; exercise recommendation; hybrid process reward}
+\vspace{0.4em}
+
+{\zihao{-5}\rmfamily\noindent\textbf{Code} -- \url{https://github.com/anony9959/KELP}}
+\vspace{1.0em}
+}]
+
+\section{引言}
+随着在线教育平台的快速发展，学习者可以自由访问海量学习资源\cite{KorDK2019,ZhaHC2019}。然而，面对内容、难度和知识关联各异的学习材料，学习者往往难以自主确定合适的学习顺序。学习路径推荐（Learning Path Recommendation, LPR）旨在根据学习者状态与学习目标生成个性化学习项目序列，从而提高目标导向学习的有效性\cite{NabLR2020,GuaCX2025,LiuTL2019}。
+
+早期LPR方法主要依赖规则、知识结构、优化算法或序列推荐技术，根据先修关系、相似学习者或历史行为模式生成路径\cite{YuNJ2007,ZhuTW2018,NabGG2020,ZhoHH2018}。这类方法具有一定可解释性或行为建模能力，但通常并不直接优化学习收益。随着知识追踪技术能够估计学生状态，强化学习逐渐成为LPR的重要范式。按推荐对象粒度，强化学习式LPR可分为知识点级与习题级两类：知识点级方法将学习抽象为概念序列，如CSEAL利用认知导航约束选择\cite{LiuTL2019}，GEHRL规划多目标知识点顺序\cite{LiXY2023}，SRC和LIGHT从目标集合生成完整路径\cite{CheSX2023,YuYW2025}，UNO利用过程奖励优化逐步知识点推荐\cite{PenZC2026}；习题级方法则进一步面向真实作答项目，如DLPR引入习题难度,将知识点的学习建模为独立的规划问题\cite{ZhaSX2024}，KnowLP基于知识结构与难度匹配选择习题\cite{CheZW2025}，GenAL和ReAL结合题目文本、语义或相似学习者经验进行逐题推荐\cite{LvLG2025a,LvLG2025b}。此外，IB-GRPO从指标优化角度研究大语言模型式LPR与教育目标的对齐问题\cite{WanYL2026}。
+
+尽管上述方法取得了进展，现有细粒度LPR仍存在三个关键问题。首先，奖励机制对于强化学习式LPR的训练效果有很重要的影响。UNO指出，以往方法主要使用终局奖励，只有在完整学习路径结束后才能获得反馈，因而面临典型的奖励稀疏问题；为此，UNO提出过程级的离散达成收益，即根据相邻时刻目标集合中达到掌握阈值的知识点数量变化来计算奖励。然而，这一改进仍不足以完全缓解奖励稀疏：当学生对目标知识点已有提升但尚未跨越阈值，或已达阈值后继续巩固时，离散达成收益仍可能为零，难以区分这些有效学习步骤。其次，现有规划策略的灵活性仍不足：知识图谱约束、固定子目标或阶段练习上限可降低复杂度，却也可能限制知识点切换、回访和练习次数调整；同时，现有方法难以根据学生当前的掌握情况灵活调整整体策略。最后，输出具体习题并不必然带来高效学习，难度匹配或文本/相似学习者驱动的选题未直接优化当前知识点目标收益,而将知识点的学习构建为独立的规划问题忽略了习题对于其他知识点的影响.
+
+我们认为，有效的细粒度LPR应同时具备三点能力。第一，细粒度奖励机制应在离散达成收益之外引入连续掌握收益，即利用目标集合整体掌握度变化刻画每一步学习带来的连续状态变化，使策略能够在较大动作空间中获得更明确的判断信号，而不必过度依赖固定认知导航或A*\cite{DucBK2014}式路径搜索。第二，知识点规划应具有逐题调整能力，并区分目标尚未达成时的推进需求与目标达成后的巩固需求。第三，当学生处于某一状态并需要提升某个知识点时，系统应像有经验的教师一样，从相关习题中选择对当前目标更有帮助的练习。如图~\ref{fig:method-comparison} 所示，细粒度LPR的关键不只是把推荐对象下沉到习题，还要闭合知识点规划与习题执行之间的反馈循环。
+\begin{figure} % 位置参数，见下文解释
+    \centering % 图片居中
+    \safeincludegraphics[width=\columnwidth]{illus.pdf} % 插入图片并设置宽度
+    \caption{细粒度学习路径推荐中奖励设计与决策粒度的动机比较。绿色虚线表示离散达成收益为0。}
+    \label{fig:method-comparison} % 用于交叉引用的标签
+\end{figure}
+
+为此，本文提出知识点--习题循环规划（Knowledge-Exercise Loop Planning, KELP），将基于混合奖励的知识点规划与监督式局部习题执行统一到逐题交互闭环中。具体而言，\textbf{KELP提出离散--连续混合过程奖励}，在保持目标达成导向的同时提供连续掌握收益，从而缓解阈值式过程奖励仍可能产生的稀疏反馈问题；\textbf{KELP提出逐题反馈驱动的两阶段知识点规划机制}，使规划器能够在每次交互后自主继续、切换或回访知识点，并结合剩余预算适应目标推进与巩固阶段的不同需求；\textbf{KELP设计监督式局部习题执行器}，通过图辅助候选扩展、状态感知双塔匹配和一步前瞻收益监督，提高面向当前知识点目标的习题选择质量。在三个公开数据集上的大量实验验证了本文方法的有效性。
+\section{相关工作}
+\subsection{学习路径推荐}
+学习路径推荐旨在根据学习者的知识状态与学习目标，个性化地规划有序的学习项目序列\cite{NabLR2020}。早期方法采用协同过滤、KNN、GRU4Rec等序列推荐技术\cite{CovH1967,HidKB2015}，但主要重构行为序列，而不是直接优化学习效果。知识追踪（Knowledge Tracing, KT）技术\cite{PieBH2015,SheHL2022,LiuGL2025}的发展使系统能够动态估计学生知识状态\cite{KubFM2021}，强化学习也进一步将LPR建模为序贯决策问题。知识点级方法将学习过程建模为概念序列：CSEAL利用认知导航约束知识点选择\cite{LiuTL2019}，GEHRL通过分层强化学习分解多目标规划\cite{LiXY2023}，SRC和LIGHT生成完整知识点路径\cite{CheSX2023,YuYW2025}，UNO则利用KT过程奖励优化逐步知识点推荐\cite{PenZC2026}。此类方法降低了规划复杂度，但不区分同一知识点下的具体习题。
+
+习题级方法进一步面向真实作答项目进行推荐。DLPR在分层规划中引入习题难度\cite{ZhaSX2024}，KnowLP基于知识结构与难度匹配选择习题\cite{CheZW2025}，GenAL和ReAL利用大语言模型、题目语义或相似学习者经验辅助逐题推荐\cite{LvLG2025a,LvLG2025b}。这些研究推动了细粒度推荐，但知识点规划与习题选择之间的协同仍未得到充分探索。
+\subsection{强化学习}
+强化学习通过序贯交互优化长期决策策略，但稀疏或延迟奖励往往会影响探索、信用分配与价值估计。已有研究通过目标重标记、带内部奖励的分层策略和回报重分配等方式缓解上述问题\cite{AndWR2017,KulNS2016,ArjGG2019}。强化学习和bandit建模也被广泛用于上下文感知和资源约束推荐\cite{LiCL2010,PanCT2019,YanLQ2020}。在强化学习式LPR中，知识结构约束、分层子目标与KT过程奖励也分别用于缩小搜索空间和提供更强的步级监督\cite{LiuTL2019,LiXY2023,ZhaSX2024,PenZC2026}。然而，结构先验和固定子目标可能限制知识点的灵活切换，并依赖预定义任务结构；基于阈值的过程奖励也可能忽略未跨越目标阈值的有效掌握提升。
+
+
+\section{问题定义}
+
+\subsection{预备知识}
+记知识点集合为 $\mathcal{K}$，习题集合为 $\mathcal{I}$，知识结构图为 $\mathcal{G}=(\mathcal{K},\mathcal{E})$。在时刻 $t$，知识点掌握状态记为 $h_t\in[0,1]^{|\mathcal{K}|}$，其中 $h_t(k)$ 表示学生对知识点 $k$ 的掌握程度；题目级作答概率状态记为 $p_t\in[0,1]^{|\mathcal{I}|}$，其中 $p_t(i)$ 表示学生正确回答习题 $i$ 的概率。由于真实学习日志主要记录题目级交互，本文依据知识追踪模型和题目--知识点映射，从同一历史序列中估计上述两类状态\cite{LiuGL2025}。为衡量目标导向学习效果，定义时刻 $t$ 在目标集合上的离散目标达成量和连续掌握量为
+\begin{equation}
+\begin{aligned}
+Q_t^N &= \sum_{k\in\hat{\mathcal{G}}}
+\mathbb{I}\!\left(h_t(k)\geq\tau\right),\\
+Q_t^S &= \sum_{k\in\hat{\mathcal{G}}} h_t(k),
+\end{aligned}
+\end{equation}
+其中 $\tau$ 为掌握阈值，学习会话开始时目标集合尚未被完全掌握。时刻 $t$ 的归一化学习效果指标定义为
+\begin{equation}
+\begin{aligned}
+E_t^N &= \frac{Q_t^N-Q_0^N}{|\hat{\mathcal{G}}|-Q_0^N},\\
+E_t^S &= \frac{Q_t^S-Q_0^S}{|\hat{\mathcal{G}}|-Q_0^S}.
+\end{aligned}
+\end{equation}
+最终评估指标分别记为 $E_N=E_T^N$ 和 $E_S=E_T^S$：前者衡量离散目标达成进度，后者衡量连续掌握进度.
+\subsection{问题定义}
+本文关注目标导向的学习路径推荐问题。给定学习者历史 $\mathcal{H}$、目标集合 $\hat{\mathcal{G}}$ 与有限学习预算 $T$，系统需要逐步生成学习路径
+$
+\mathcal{P}=((g_1,e_1),\dots,(g_T,e_T)),
+$
+其中 $g_t\in\mathcal{K}$ 表示时刻 $t$ 选择的知识点，$e_t\in\mathcal{I}$ 表示围绕该知识点推荐的习题。时刻 $t$ 的剩余预算记为 $b_t=T-t+1$。本文的目标是在预算约束下学习知识点规划策略 $\pi^h_\theta$ 与监督式局部习题执行器 $f_\psi$，使生成路径在目标集合上最大化最终学习效果指标 $E_N$ 与 $E_S$。
+
+\section{方法}
+\subsection{总体框架}
+\begin{figure*}[htbp]
+  \centering
+  \safeincludegraphics[width=1.0\textwidth]{FW.pdf} % 换成你的图
+  \caption{\textbf{KELP框架概览。} (a) 习题同步的规划--执行循环；(b) 基于离散--连续混合过程奖励的知识点规划；(c) 使用状态感知双塔匹配的监督式局部习题执行。}
+  \label{fig:framework}
+\end{figure*}
+如图~\ref{fig:framework} 所示，KELP由学生状态估计模块 S-Agent、知识点规划器 L-Agent、监督式局部习题执行器与学生模拟器 KES-DIMKT\cite{ZhaSX2024} 组成。图~\ref{fig:framework}(a)展示整体交互闭环：在时刻 $t$，S-Agent根据历史交互估计状态 $(h_t,p_t)$；L-Agent结合目标集合与剩余预算选择知识点 $g_t$；局部执行器围绕该知识点选择习题 $e_t$；学生模拟器返回作答反馈 $y_t$ 后，S-Agent再估计下一时刻状态。图中的大写 $Y_t$ 表示训练阶段为虚拟候选习题构造执行器监督信号时使用的反馈。该闭环以一道习题为完整决策周期，因此L-Agent在每次交互后均可重新规划知识点。
+
+图~\ref{fig:framework}(b)展示知识点规划。L-Agent是框架中使用强化学习的规划模块，其利用离散--连续混合过程奖励学习知识点策略，并根据目标完成情况分别执行目标推进与目标巩固。图~\ref{fig:framework}(c)展示监督式局部习题执行：执行器不参与知识点规划，而是利用知识图谱扩展与当前目标相关的习题候选，并通过状态感知的两塔模型选择最有助于提升该知识点的习题。
+
+S-Agent与学生模拟器均采用预训练DIMKT模型，但二者参数相互独立，并基于内部隐向量实现状态更新；图中S-Agent处的 $v_t$ 即表示该隐向量。S-Agent负责为规划器和执行器提供状态估计，学生模拟器负责在交互过程中提供作答反馈。
+
+\subsection{习题同步的知识点规划}
+
+\subsubsection{逐题重规划与知识点状态}
+
+传统分层方法通常在阶段或子会话开始时确定高层目标，并在多次低层交互期间保持该目标不变。KELP仍保留“知识点规划--习题执行”的职责分解，但不为高层目标预先分配固定练习窗口。每完成一道习题，S-Agent都会基于新的作答反馈更新状态并立即返回L-Agent，由其重新选择下一步知识点：
+\begin{equation}
+(h_t,p_t,b_t)
+\xrightarrow{\pi^h_\theta}
+g_t
+\xrightarrow{f_\psi}
+e_t
+\xrightarrow{y_t}
+(h_{t+1},p_{t+1},b_{t+1}).
+\end{equation}
+其中，$y_t$ 表示由学生模拟器产生的作答反馈。
+因此，当 $g_{t+1}=g_t$ 时，系统继续练习当前知识点；当 $g_{t+1}\neq g_t$ 时，系统切换学习知识点；当 $g_{t+1}$ 等于更早时刻学习过的知识点时，系统实现知识点回访。三种行为均由同一高层策略根据最新状态自主决定。
+
+结合图~\ref{fig:framework}(b)，L-Agent的状态由学生当前知识点掌握状态 $h_t$、目标感知状态 $\bar{h}_t=h_t\odot y$ 与预算嵌入 $e_b(b_t)$ 构成。其中，$y\in\{0,1\}^{|\mathcal{K}|}$ 为目标指示向量，当 $k\in\hat{\mathcal{G}}$ 时有 $y(k)=1$，否则为 $0$。高层状态定义为
+\begin{equation}
+s_t^h=[h_t;\,\bar{h}_t;\,e_b(b_t)],
+\end{equation}
+其中，$h_t$描述学生的全局知识背景，$\bar{h}_t$突出目标集合上的实时进展，$e_b(b_t)$则使策略能够区分不同剩余学习预算下的决策需求。
+
+\subsubsection{预算感知的双阶段策略}
+
+目标导向学习包含目标推进与目标巩固两种不同需求：目标尚未完成时，应优先推动知识点达到掌握阈值；目标达成后，则可利用剩余预算维持并进一步提升掌握状态。单一策略难以同时兼顾两类目标，因此KELP维护两个独立的知识点策略。
+
+当仍存在未达到掌握阈值 $\tau$ 的目标知识点时，系统激活LL-Agent执行目标推进；当全部目标知识点均达标且预算仍有剩余时，系统切换至LH-Agent进行目标巩固。对于阶段 $m\in\{1,2\}$，策略网络与价值网络根据高层状态 $s_t^h$ 分别输出知识点选择分布和长期回报估计：
+\begin{equation}
+\begin{aligned}
+\pi_{\theta_m}^h( s_t^h)
+&=
+\mathrm{Softmax}\!\big(FC_{\theta_m}(s_t^h)\big),\\
+\qquad
+V_{\phi_m}(s_t^h)&=FC_{\phi_m}(s_t^h).
+\end{aligned}
+\end{equation}
+两个阶段分别使用对应轨迹优化策略，但均保持习题同步的决策周期，即L-Agent在每道习题交互后重新规划知识点。
+
+\subsection{离散--连续混合过程奖励}
+
+\subsubsection{混合过程奖励与双阶段设计}
+
+仅使用离散达成收益作为过程奖励时，奖励只有在目标知识点跨越掌握阈值后才会变化，因而无法反映未达阈值时的渐进改善以及达标后的进一步提升。为此，KELP联合使用一步离散达成收益与一步连续掌握收益，分别定义为
+$
+\Delta E_t^{N}=E_{t+1}^{N}-E_t^{N},
+\Delta E_t^{S}=E_{t+1}^{S}-E_t^{S}.
+$
+其中，$\Delta E_t^{N}$为离散达成收益，用于判断当前交互是否推动目标知识点达标；$\Delta E_t^{S}$为连续掌握收益，用于判断当前交互是否产生了尚未体现为阈值跨越的有效学习进展。
+
+在此基础上，为了使双阶段策略与其优化目标保持一致，我们分别构造目标推进与目标巩固阶段的过程奖励。阶段一的一步奖励写为
+\begin{equation}
+r_t^{h,1}
+=
+\Delta E_t^{N}
++
+\Delta E_t^{S}
+-
+\eta
+-
+\xi_t,
+\end{equation}
+其中，$\eta$为固定步级惩罚，$\xi_t$表示预算耗尽但目标尚未完成时的终局惩罚，其幅度为 $\xi=\lambda_{\xi}(1-E_T^{N})$。混合过程奖励为策略提供逐步学习信号，步级惩罚与终局惩罚则促使策略在有限预算内提高目标推进效率。
+
+当全部目标知识点均达到阈值且预算仍有剩余时，系统进入阶段二。此时，LH-Agent不再将“达标”作为主要优化方向，而是转而强调目标状态的稳定保持与进一步提升。阶段二奖励定义为:
+\begin{equation}
+r_t^{h,2}=2\Delta E_t^{S}-
+\mu\,\mathbb{I}\!\left(\exists k\in\hat{\mathcal{G}},\,h_{t+1}(k)<\tau\right)
+-
+\eta,
+\end{equation}
+其中，$\mu$为退化惩罚系数。阶段二主要利用连续掌握收益推动目标状态进一步提升；一旦某个目标知识点重新跌破阈值，退化惩罚将抑制可能破坏已达成目标的决策。
+
+\subsubsection{L-Agent策略优化}
+
+我们采用 PPO 对知识点策略进行优化.给定一条由知识点决策形成的交互轨迹，首先根据时序差分误差构造优势项：
+\begin{equation}
+\begin{aligned}
+\delta_t &= r_t^{h,m}+\gamma V_{\phi_m}(s_{t+1}^h)-V_{\phi_m}(s_t^h),\\
+\hat{A}_t &= \sum_{l=0}^{\infty}(\gamma\lambda)^l\delta_{t+l}.
+\end{aligned}
+\end{equation}
+其中，$\gamma$表示折扣因子,$\lambda\in[0,1]$ 为 广义优势估计(GAE)中的衰减系数，用于调节优势估计在偏差与方差之间的权衡；较大的 $\lambda$ 使估计更多吸收长时域回报信息，而较小的 $\lambda$ 则使其更接近局部时序差分更新。随后，策略网络通过 PPO 裁剪目标进行更新：
+\begin{equation}
+\mathcal{L}_{actor}^{(m)}
+=
+-\mathbb{E}_t
+\left[
+\min\left(
+\rho_t\hat{A}_t,\,
+\mathrm{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat{A}_t
+\right)
+\right],
+\end{equation}
+其中 $\rho_t=\pi_{\theta_m}^h(g_t\mid s_t^h)/\pi_{\theta_m^{old}}^h(g_t\mid s_t^h)$。价值网络基于冻结的价值估计构造 TD($\lambda$) 式目标回报，并通过平方误差进行更新：
+\begin{equation}
+\begin{aligned}
+\hat{R}_t^{(m)}
+&=\hat{A}_t+\hat{V}_{\phi_m}(s_t^h),\\
+\mathcal{L}_{critic}^{(m)}
+&=\mathbb{E}_t\!\left[
+\left(V_{\phi_m}(s_t^h)-\hat{R}_t^{(m)}\right)^2
+\right].
+\end{aligned}
+\end{equation}
+其中 $\hat{V}_{\phi_m}(s_t^h)$ 表示在当前更新轮次开始时计算得到的价值基线。由于两个阶段分别维护独立的L-Agent，阶段一与阶段二的轨迹用于更新对应策略，使其分别学习目标推进和目标巩固偏好。
+
+\subsection{监督式局部习题执行}
+L-Agent利用强化学习决定下一步需要提升的知识点，监督式局部习题执行器 $f_\psi$ 则负责完成该知识点目标。本文采用图~\ref{fig:framework}(c)所示的两塔结构学习学生与习题之间的匹配函数。两塔结构是语义匹配和大规模推荐中常用的建模方式\cite{HuaHG2013,CovAS2016,YiYH2019}，本文进一步使用一步前瞻收益监督局部选题过程。
+
+\subsubsection{双塔匹配建模}
+
+学生塔用于在当前学习知识点条件下生成学生侧状态表示。其输入由三部分组成：学生基础表征 $s_t^l=[p_t;\,h_t]$，其中 $p_t$ 和 $h_t$ 分别表示题目级与知识点级掌握状态；当前学习知识点的语义条件 $e_k(g_t)$；以及学生对该知识点的动态掌握特征 $e_h(h_t(g_t))$，用于突出当前局部学习需求。三类信息共同输入学生侧编码器，得到:
+\begin{equation}
+a_t^{u}
+=
+f_u\!\left([s_t^l;\,e_k(g_t);\,
+e_h(h_t(g_t))]\right),
+\end{equation}
+其中，$f_u(\cdot)$ 对应于图~\ref{fig:framework}(c)中的学生塔前馈编码网络。$a_t^u$ 表示知识点条件化的学生侧表示。
+
+与之对应，习题塔同时整合习题静态特征与学生-习题交互相关的动态特征。对于任意候选习题 $i$，我们将题目标识嵌入$e_i(i)$、所属知识点嵌入$e_k(k_i)$与题目难度嵌入$e_d(d_i)$视为其静态描述.在此基础上，再引入题目级掌握度嵌入 $e_p(p_t(i))$ 作为动态补充,进而得到习题表示:
+\begin{equation}
+a_i^{v}
+=
+f_v\!\left(
+W_s[e_i(i);\,
+e_k(k_i);\,
+e_d(d_i)]
++
+W_p e_p(p_t(i))
+\right),
+\end{equation}
+其中$W_s$ 与 $W_p$ 分别表示静态特征映射与动态特征映射，$f_v(\cdot)$ 为习题侧输出网络，$a_i^v$ 表示动态化的习题侧表示。
+
+在此基础上，我们采用内积形式衡量学生表示与习题表示之间的匹配强度，并将其作为当前状态下的习题适配得分输出：
+\begin{equation}
+\hat{r}_{t}(i\mid s_t^l,g_t)=\langle a_t^{u},a_i^{v}\rangle.
+\end{equation}
+该得分并不直接等价于作答正确概率，而是刻画题目 $i$ 在当前学习知识点 $g_t$ 及当前学生状态下的练习适配性。分数越高，表示该题越可能在当前局部学习阶段发挥有效练习作用。
+\subsubsection{候选生成}
+
+围绕当前知识点 $g_t$，我们首先依据知识点到习题的映射关系 $\mathcal{M}(k)$ 收集相关题目。同时，考虑到提升 $g_t$ 的最有效习题可能来自关联知识点，我们进一步根据当前掌握状态自适应地引入一对邻近知识点：
+\begin{equation}
+\tilde{k}_t^{-}
+=
+\arg\min_{k\in \mathrm{Pre}(g_t)} h_t(k),\quad
+\tilde{k}_t^{+}
+=
+\arg\max_{k\in \mathrm{Suc}(g_t)} h_t(k),
+\end{equation}
+其中 $\mathrm{Pre}(g_t)$ 与 $\mathrm{Suc}(g_t)$ 分别表示 $g_t$ 在知识图中的前置知识点集合与后继知识点集合。前者用于定位当前最薄弱的先修支撑点，后者用于定位当前掌握程度较高的后继关联点。于是，合法候选集合定义为
+\begin{equation}
+\mathcal{I}_t(g_t)
+=
+\mathcal{M}(g_t)\cup
+\mathcal{M}(\tilde{k}_t^{-})\cup
+\mathcal{M}(\tilde{k}_t^{+}),
+\end{equation}
+当某一邻域集合为空时，对应项自然省略。在得到合法候选集合后，我们再由两塔网络在该集合上输出习题适配得分，并形成一个用于后续训练决策的小规模候选子集
+\begin{equation}
+\mathcal{A}_t
+=
+\mathrm{TopK}\!\left(\hat{r}_{t}(\cdot\mid s_t^l,g_t),K\right)
+\cup
+\mathrm{Rand}\!\left(\mathcal{I}_t(g_t),K_r\right).
+\end{equation}
+其中，$K$ 表示由两塔匹配得分筛出的高分候选数，$K_r$ 表示为保持候选多样性而额外加入的随机候选数。
+
+\subsubsection{题目选择与监督学习}
+
+在训练阶段，局部执行器并不直接把两塔打分最高的题目作为最终执行题目，而是对候选题进行一步前瞻评估。具体地，对于每个候选习题 $i\in\mathcal{A}_t$，学生模拟器首先给出虚拟作答反馈，S-Agent再据此估计一步前瞻知识状态 $\hat{h}_{t+1}^{(i)}$，并令
+\begin{equation}
+\tilde{r}_t(i)=
+\hat{h}_{t+1}^{(i)}(g_t)-h_t(g_t),
+\end{equation}
+我们会选择收益最大的候选习题作为训练阶段实际执行的习题。同时该收益也作为训练时的监督信号，使局部执行器学习当前状态下更可靠的习题匹配函数。
+
+在监督学习时，我们会保留同一候选集合 $\mathcal{A}_t$ 中各题目的 $(s_t^l,g_t,i,\tilde{r}_t(i))$。这样，模型能够同时观察“最终被选中的题目”与“在同一状态下未被选中的备选题目”，从而学习更稳定的局部偏序关系。记 $\bar{r}_t(i)$ 为对 $\tilde{r}_t(i)$ 进行组内标准化后得到的监督信号，则局部习题执行器的训练目标写为
+\begin{equation}
+\begin{aligned}
+\mathcal{L}_{grp}
+&=
+\frac{1}{|\mathcal{P}_t|}
+\sum_{(i,j)\in\mathcal{P}_t}
+\mathrm{softplus}\!\big(
+\hat{r}_{t}(j)-\hat{r}_{t}(i)
+\big),\\
+\mathcal{L}_{reg}
+&=
+\mathrm{SmoothL1}\!\left(
+\hat{r}_{t}(i\mid s_t^l,g_t),\bar{r}_t(i)
+\right),\\
+\mathcal{L}_{exec}
+&=
+\lambda_{grp} \mathcal{L}_{grp}
++
+\lambda_{reg} \mathcal{L}_{reg},
+\end{aligned}
+\end{equation}
+其中，$\mathcal{P}_t=\{(i,j)\mid \tilde{r}_t(i)>\tilde{r}_t(j)\}$ 表示由前瞻收益诱导的候选偏序集合；$\lambda_{grp}$ 与 $\lambda_{reg}$ 分别控制组内排序约束与收益回归约束的强度。前者推动模型在同一候选组内学习“哪道题更优”，后者则使预测得分与收益监督保持数值一致。
+
+在推理阶段，我们不再使用上述一步前瞻收益，而是直接依据局部执行器已经学得的两塔匹配函数，在合法候选集内完成选题.
+由此，混合过程奖励为L-Agent提供逐步知识点规划依据，习题同步架构使其能够在每次交互后立即调整规划，而监督式局部执行器负责完成当前知识点目标，三者共同形成细粒度闭环。
+
+\section{实验}
+\subsection{数据集}
+我们在 Junyi、Assist09 和 Assist17 三个公开数据集上进行实验。三个数据集均采用 pyKT 的预处理流程，并划分为训练集、验证集和测试集\cite{LiuGL2025}。表~\ref{tab:datasets}展示了数据集的统计信息。
+\begin{table}[H]
+\centering
+\captionsetup{labelfont=bf,textfont=bf}
+\caption{数据集统计信息。}
+\label{tab:datasets}
+\setlength{\tabcolsep}{4pt}
+\footnotesize
+\begin{tabular}{cccc}
+\toprule
+\textbf{Dataset} & \textbf{Junyi} & \textbf{Assist09} & \textbf{Assist17}  \\
+\midrule
+Concept & 39 & 123 & 102 \\
+Item & 721 & 17,737 & 3,162 \\
+Learner & 191,874 & 3,852 & 1,708 \\
+Interaction & 25,853,987 & 337,424 & 942,814 \\
+Difficulty & 26.87 & 34.29 & 53.91 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{table*}[t]
+\centering
+\captionsetup{labelfont=bf,textfont=bf}
+\caption{Junyi、Assist09和Assist17上的性能对比。每行最优和次优结果分别用加粗和下划线表示。}
+\label{tab:main_results}
+\setlength{\tabcolsep}{3.2pt}
+\renewcommand{\arraystretch}{1.0}
+\scriptsize
+\resizebox{\textwidth}{!}{
+\begin{tabular}{cccccccccccc}
+\toprule
+\textbf{Dataset} & \textbf{Indicator} & \textbf{Step} & \textbf{AC} & \textbf{PPO} & \textbf{GRU4Rec} & \textbf{SRC} & \textbf{CSEAL} & \textbf{GEHRL} & \textbf{DLPR} & \textbf{UNO} & \textbf{KELP} \\
+\midrule
+\multirow[c]{6}{*}{Junyi} & \multirow[c]{3}{*}{$E_N$} & 5  & 0.2487 & 0.3574 & 0.0912 & 0.2007 & 0.2516 & 0.2038 & \underline{0.5364} & 0.2898 & \textbf{0.5477} \\
+ &  & 10 & 0.3407 & 0.5199 & 0.1646 & 0.2686 & 0.3440 & 0.3090 & \underline{0.6350} & 0.4216 & \textbf{0.7436} \\
+ &  & 20 & 0.5145 & 0.6697 & 0.2392 & \underline{0.7183} & 0.4327 & 0.4463 & 0.6976 & 0.5666 & \textbf{0.9105} \\
+\cmidrule(lr){2-12}
+ & \multirow[c]{3}{*}{$E_S$} & 5  & 0.0721 & 0.1286 & 0.0612 & 0.1451 & 0.0514 & 0.0669 & \underline{0.2348} & 0.1181 & \textbf{0.2461} \\
+ &  & 10 & 0.1161 & 0.2146 & 0.1749 & 0.2308 & 0.0867 & 0.1042 & \underline{0.2493} & 0.1840 & \textbf{0.3818} \\
+ &  & 20 & 0.1836 & 0.3295 & 0.1241 & \underline{0.4506} & 0.1364 & 0.1614 & 0.2746 & 0.2689 & \textbf{0.6032} \\
+\midrule
+\multirow[c]{6}{*}{Assist09} & \multirow[c]{3}{*}{$E_N$} & 5  & 0.3428 & 0.3375 & 0.3293 & 0.3476 & 0.2516 & 0.2867 & 0.1802 & \underline{0.4602} & \textbf{0.6389} \\
+ &  & 10 & 0.4079 & 0.4729 & 0.1533 & 0.4205 & 0.3440 & 0.3685 & 0.2175 & \underline{0.4917} & \textbf{0.6862} \\
+ &  & 20 & 0.4207 & 0.6063 & 0.1241 & \underline{0.6883} & 0.4143 & 0.4287 & 0.2466 & 0.4947 & \textbf{0.8632} \\
+\cmidrule(lr){2-12}
+ & \multirow[c]{3}{*}{$E_S$} & 5  & 0.1530 & 0.1892 & 0.1721 & 0.2042 & 0.1128 & 0.1515 & 0.0194 & \underline{0.2269} & \textbf{0.4246} \\
+ &  & 10 & 0.1435 & 0.2426 & 0.0058 & \underline{0.2848} & 0.1152 & 0.1476 & -0.0057 & 0.1909 & \textbf{0.4668} \\
+ &  & 20 & 0.1382 & 0.3276 & 0.0131 & \underline{0.4318} & 0.1140 & 0.1523 & -0.0197 & 0.1659 & \textbf{0.6739} \\
+\midrule
+\multirow[c]{6}{*}{Assist17} & \multirow[c]{3}{*}{$E_N$} & 5  & 0.1795 & \textbf{0.2172} & -0.0468 & 0.0249 & 0.0837 & 0.0191 & 0.1059 & 0.1697 & \underline{0.2032} \\
+ &  & 10 & 0.2572 & 0.3243 & -0.0041 & \underline{0.3460} & 0.1681 & 0.0302 & 0.1920 & 0.1848 & \textbf{0.3662} \\
+ &  & 20 & \underline{0.4270} & 0.4012 & 0.0068 & 0.4259 & 0.2967 & 0.0442 & 0.1387 & 0.1824 & \textbf{0.7934} \\
+\cmidrule(lr){2-12}
+ & \multirow[c]{3}{*}{$E_S$} & 5  & 0.0728 & 0.1030 & 0.0290 & \textbf{0.1904} & 0.0953 & 0.0313 & 0.0466 & 0.1020 & \underline{0.1403} \\
+ &  & 10 & 0.0589 & 0.1310 & 0.0655 & \underline{0.2159} & 0.1255 & 0.0289 & 0.0800 & 0.0809 & \textbf{0.2601} \\
+ &  & 20 & 0.1204 & 0.1681 & 0.0947 & \underline{0.2260} & 0.1726 & 0.0329 & 0.1039 & 0.0572 & \textbf{0.4766} \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}
+
+\subsection{对比方法}
+
+为了证明我们方法的优越性,我们与以下方法进行对比:
+\begin{itemize}
+\item AC:使用DIMKT对学生状态进行建模,在其基础上使用基于步级奖励方式训练的标准Actor-Critic算法作为推荐器\cite{SutMS1999}.
+\item PPO:使用DIMKT对学生状态进行建模,在其基础上使用基于步级奖励方式训练的PPO算法作为推荐器\cite{SchWD2017}.
+\item GRU4Rec:GRU4Rec 是一种基于 GRU 的序列推荐模型，把用户历史交互看成时间序列，用循环神经网络去预测“下一个最可能交互的项目”\cite{HidKB2015}。
+\item SRC:SRC 是一种 set-to-sequence 的学习路径推荐方法：先把目标知识点集合输入到概念感知编码器中，建模知识点之间的关系并得到整体表示,然后再由解码器根据这个表示按顺序逐步生成学习路径\cite{CheSX2023}.
+\item CSEAL:CSEAL根据学习者状态并通过使用一种认知导航算法限制强化学习动作空间来指导Actor-Critic网络实现学习路径推荐\cite{LiuTL2019}.
+\item GEHRL:GEHRL使用分层强化学习方法,通过高层 PPO 代理规划多目标学习顺序、低层 Actor-Critic 代理实现单目标的学习\cite{LiXY2023}.
+\item DLPR:DLPR在分层强化学习的基础上,引入习题层面的考虑,将高层建模为基于PPO和A*算法的知识点学习规划,将低层建模为基于Actor-Critic的具体知识点的练习规划\cite{ZhaSX2024}.
+\item UNO:UNO是一种基于序列编码的强化学习推荐方法，它首先对学生历史作答序列进行表示学习以构建当前状态，再结合知识追踪辅助监督与 GRPO 式策略优化实现下一知识点推荐\cite{PenZC2026}。
+\end{itemize}
+
+\subsection{实现细节}
+我们基于 PyTorch\cite{PasGM2019}、Gym\cite{BroCP2016}实现框架，并使用 pyKT 提供的代码预训练 DIMKT\cite{SheHL2022}。训练集上的 DIMKT 作为S-Agent，负责在训练和测试阶段提供状态估计；训练集与测试集合并训练的另一套 DIMKT 作为学生模拟器，负责在交互过程中提供作答反馈。
+
+知识点规划层采用两个 PPO 智能体分别对应目标推进与巩固阶段。掌握阈值设为 0.6，单次会话最大预算为 20 步，步级惩罚和终局惩罚系数分别为 0.03 和 1.0。局部习题执行器采用监督式双塔模型，每步保留 6 道高分候选并补充 10 道随机候选。训练时，执行器使用一步前瞻收益监督候选评分，并联合优化组内排序损失与回归损失，权重分别为 0.1 和 1.0。PPO 代理使用 Adam\cite{KinB2015} 优化，执行器使用带小权重衰减的 AdamW\cite{LosH2019} 优化。
+
+\subsection{实验结果}
+\subsubsection{主实验对比}
+表~\ref{tab:main_results}显示，本文方法在三个数据集的大多数设置下取得最优结果，说明所提出的知识点--习题循环规划框架能够稳定提升目标导向学习路径推荐效果。具体来看，KELP 在 Junyi 和 Assist09 上的不同步数与两类指标下均取得最优表现；在 Assist17 上，KELP 仅在 $Step=5$ 的极短学习过程中低于少数基线，但在 $Step=10$ 与 $Step=20$ 时重新取得最优结果。该现象说明，本文方法在短预算下可能更倾向于为后续学习积累有利状态，而不是只追求最初几步的即时收益。
+
+进一步观察基线方法可以发现，AC 与 PPO 虽然建模更简单，但在多数设置下整体优于 CSEAL 和 GEHRL，并在部分场景下接近甚至超过 UNO。这表明，合理的奖励机制对学习路径推荐性能具有关键作用：即使不引入复杂结构，只要奖励能够准确反映学习增益，系统依然能够学到较优策略。SRC 同样表现出较强竞争力，其重要原因在于编码器--解码器框架支持大批量并行训练，能够在更短时间内利用更多学生数据，具有明显的工程化优势；相比之下，其余强化学习方法大多依赖串行交互训练。即便如此，本文方法仍在绝大多数设置下超越 SRC，说明将连续掌握收益、双阶段知识点决策与面向局部增益的习题选择统一起来，能够进一步提升目标导向学习路径推荐的性能上限。
+
+\subsubsection{消融实验}
+\begin{figure}[t]
+    \centering
+    \safeincludegraphics[width=\columnwidth]{ablation_study_step20.pdf}
+    \caption{各优化模块的消融实验。}
+    \label{fig:ablation-study}
+\end{figure}
+\begin{figure*}[t]
+    \centering
+    \safeincludegraphics[width=0.98\textwidth]{p1_p12_diff_comparison.pdf}
+    \caption{奖励迁移实验。纵轴表示两种奖励机制所得平均学习收益的差值，即 $\text{Hybrid Process Reward}-\text{Discrete-Attainment Reward}$。}
+    \label{fig:diff-comparison}
+\end{figure*}
+\begin{figure}[t] % 位置参数，见下文解释
+    \centering % 图片居中
+    \safeincludegraphics[width=\columnwidth]{adaptability_experiment_font_large.pdf} % 插入图片并设置宽度
+    \caption{不同局部执行器评分等级下的习题性能对比。}
+    \label{fig:executor-effectiveness} % 用于交叉引用的标签 
+\end{figure}
+
+图~\ref{fig:ablation-study}报告了 $Step=20$ 时各模块的消融结果。我们设计四个变体：w/o Dynamic 去除双塔匹配中的动态编码，即学生塔中的目标知识点掌握编码 $e_h(h_t(g_t))$ 与习题塔中的题目作答概率编码 $W_p e_p(p_t(i))$；w/o Step 去除剩余预算嵌入及步级惩罚；w/o LH 移除目标巩固策略；w/o Adaptive 移除自适应候选机制。完整模型在多数数据集--指标组合上最优。去除动态编码会降低性能，说明状态感知匹配有助于习题选择；w/o Step 在 Assist09 和 Assist17 上下降更明显，表明长预算下仍需感知剩余步数；w/o LH 主要影响部分 $E_S$ 结果，说明巩固策略有助于目标保持与提升；w/o Adaptive 的退化则说明围绕当前知识点及其邻域构造候选能提升局部选题质量。
+
+\subsubsection{奖励迁移实验}
+为验证知识点层细粒度奖励设计的可迁移性，我们在 PPO、UNO 和本文方法上比较两种步级奖励设置：仅使用离散达成收益 $\Delta E_t^{N}$ 的 \textbf{Discrete-Attainment Reward}，以及联合使用 $\Delta E_t^{N}+\Delta E_t^{S}$ 的 \textbf{Hybrid Process Reward}。图~\ref{fig:diff-comparison}展示的是采用两种奖励机制后所得平均学习收益的差值，即“使用 \textbf{Hybrid Process Reward} 得到的结果”减去“使用 \textbf{Discrete-Attainment Reward} 得到的结果”。可以看到，实验结果均大于 0，说明在不同方法和不同数据集上，引入连续掌握收益后整体都能带来稳定增益。进一步观察可以发现，PPO 的增益效果最为明显，说明合理的奖励机制对普通强化学习模型的影响更大；当模型结构相对简单时，细粒度奖励信号能够更直接地引导策略优化。这表明连续掌握收益不仅对本文方法有效，也具有较好的方法无关性与可迁移性。
+
+\subsubsection{局部执行器有效性分析}
+为进一步验证局部习题执行器评分机制的有效性，我们在测试阶段分别执行排序第 1 至第 5 的候选习题，并比较不同选择下的最终表现，如图~\ref{fig:executor-effectiveness} 所示。其中，等级 1 表示当前状态下由执行器判定为$\hat{r}_{t}$分数最高的习题，等级越大表示所选习题在候选集合
+中的匹配分数越低。从结果来看，三个数据集整体上都呈现出一致趋势：随着所选习题的等级从 1 下降到 5，$E_N$ 与 $E_S$ 均整体下降，说明执行器给出的分数能够较好反映习题对当前知识点目标的真实适配性。其中，Junyi 与 Assist17 上的下降更为明显，尤其在步数较大时，高排名习题与低排名习题之间的差距进一步拉大；相比之下，Assist09 上不同排序之间的差距相对更平缓，但最优结果仍出现在排序最靠前的位置。总体而言，该实验说明局部习题执行器的评分不仅能够用于候选重排，而且与真实学习收益具有较强一致性，从实验上支持了监督式局部习题执行设计的合理性。
+
+\begin{figure}[t]
+\centering
+\safeincludegraphics[width=\columnwidth]{case_study.pdf}
+\captionsetup{labelfont=bf,textfont=bf}
+\caption{Junyi数据集上的习题练习路径案例。(a)、(b)、(c)、(d)分别表示KELP、PPO、UNO和SRC。}
+\label{fig:case_study}
+\end{figure}
+\subsubsection{案例分析}
+为进一步分析不同方法的推荐行为，我们展示 Junyi 数据集上的一个习题练习路径案例，如图~\ref{fig:case_study} 所示。由于 $E_N$ 并不会在每一步都发生变化，仅使用离散达成收益作为过程奖励会不可避免地产生零奖励交互，从而削弱对当前动作有效性的判断。KELP 最快将学习目标推进到合格水平，表现出更高的目标达成效率。进一步地，图中的 (a)--(c) 都属于基于步级过程奖励的方法，因此学习收益整体保持逐步上升，没有出现明显的中途退化；相比之下，使用终局奖励的 SRC 在初始阶段出现收益下降，这种现象在真实学习场景中可能降低学习者动机，并削弱其对推荐系统的信任。另一个值得注意的现象是，UNO 在该案例中多次重复推荐同一知识点，这可能是因为其序列模型捕捉并放大了重复知识点练习模式。因此，有效的LPR不仅需要关注学习收益，也需要控制重复知识点练习的频率，使重复练习服务于巩固而不是变成冗余训练。
+
+\section{结论}
+本文提出 KELP，用于解决目标导向学习路径推荐中知识点规划不够灵活和局部知识点学习效率不足的问题。KELP 通过逐题反馈闭合知识点--习题循环，将基于强化学习的知识点规划与监督式局部习题执行结合起来。离散--连续混合过程奖励缓解了阈值式反馈仍可能存在的稀疏性，状态感知的双塔匹配则提升了当前知识点目标下的习题选择质量。在 Junyi、Assist09 和 Assist17 上的实验表明，KELP 在多数设置下取得了更优的学习收益；消融与扩展实验进一步验证了关键模块的有效性、连续掌握收益的可迁移性，以及习题匹配分数与真实学习收益的一致性。未来将结合真实在线交互数据和更长学习周期进一步评估 KELP。
+
+% \bibliography{refs}
+\printbibliography[title={参考文献}]
+\end{document}

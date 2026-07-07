@@ -7,7 +7,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from fact_checking.data.constants import LABEL2ID, LETTER2LABEL, LETTER_ORDER
+from fact_checking.data.constants import (
+    LABEL2ID,
+    label2id_for_schema,
+    letter2label_for_schema,
+    letter_order_for_schema,
+    normalize_label_schema,
+)
 from fact_checking.infer.api import (
     OpenAICompletionsClient,
     _choice_payload_prompt_logprobs,
@@ -44,7 +50,12 @@ class VerifierScoreRequest:
             self.metadata = {}
 
 
-def build_verifier_scoring_prompts(prompt_row: dict[str, Any], label_prefix: str) -> list[str]:
+def build_verifier_scoring_prompts(
+    prompt_row: dict[str, Any],
+    label_prefix: str,
+    *,
+    label_schema: str | None = None,
+) -> list[str]:
     sample = PreparedSample(
         prompt=str(prompt_row["prompt"]),
         target=str(prompt_row.get("target") or ""),
@@ -60,31 +71,42 @@ def build_verifier_scoring_prompts(prompt_row: dict[str, Any], label_prefix: str
         claim=str(prompt_row.get("claim") or ""),
         no_evidence=int(prompt_row.get("evidence_count") or 0) == 0,
         long_claim=len(str(prompt_row.get("claim") or "").split()) > 64,
+        label_schema=str(label_schema or prompt_row.get("label_schema") or "liar6"),
     )
+    letter_order = letter_order_for_schema(sample.label_schema)
     return [
         build_label_decoding_prompt(sample, label_prefix) + label_choice_text(label_prefix, letter)
-        for letter in LETTER_ORDER
+        for letter in letter_order
     ]
 
 
 def extract_label_logprobs_from_prompt_logprobs_list(
     prompt_logprobs_list: list[Any],
     label_token_ids: dict[str, int],
+    *,
+    label_schema: str | None = None,
 ) -> dict[str, float]:
-    if len(prompt_logprobs_list) != len(LETTER_ORDER):
+    letter_order = letter_order_for_schema(label_schema)
+    if len(prompt_logprobs_list) != len(letter_order):
         raise RuntimeError(
-            f"Expected {len(LETTER_ORDER)} prompt_logprobs entries, got {len(prompt_logprobs_list)}."
+            f"Expected {len(letter_order)} prompt_logprobs entries, got {len(prompt_logprobs_list)}."
         )
     label_logprobs: dict[str, float] = {}
-    for idx, letter in enumerate(LETTER_ORDER):
+    for idx, letter in enumerate(letter_order):
         label_logprobs[letter] = _extract_final_prompt_logprob(
             prompt_logprobs_list[idx], int(label_token_ids[letter])
         )
     return label_logprobs
 
 
-def summarize_label_logprobs(label_logprobs: dict[str, float]) -> dict[str, Any]:
-    scores = {letter: float(label_logprobs[letter]) for letter in LETTER_ORDER}
+def summarize_label_logprobs(
+    label_logprobs: dict[str, float],
+    *,
+    label_schema: str | None = None,
+) -> dict[str, Any]:
+    letter_order = letter_order_for_schema(label_schema)
+    letter2label = letter2label_for_schema(label_schema)
+    scores = {letter: float(label_logprobs[letter]) for letter in letter_order}
     ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     pred_letter, top1 = ordered[0]
     top2 = ordered[1][1] if len(ordered) > 1 else float("-inf")
@@ -99,7 +121,7 @@ def summarize_label_logprobs(label_logprobs: dict[str, float]) -> dict[str, Any]
     return {
         "label_logprobs": scores,
         "pred_letter": pred_letter,
-        "pred_label": LETTER2LABEL[pred_letter],
+        "pred_label": letter2label[pred_letter],
         "top1_logprob": float(top1),
         "top2_logprob": float(top2),
         "pred_margin": float(top1 - top2),
@@ -109,11 +131,35 @@ def summarize_label_logprobs(label_logprobs: dict[str, float]) -> dict[str, Any]
 
 
 def compute_score_from_logprobs(
-    label_logprobs: dict[str, float], gold_label: str
+    label_logprobs: dict[str, float],
+    gold_label: str,
+    *,
+    label_schema: str | None = None,
 ) -> dict[str, Any]:
-    summary = summarize_label_logprobs(label_logprobs)
-    if str(gold_label).strip().lower() in LABEL2ID:
+    resolved_schema = normalize_label_schema(label_schema)
+    summary = summarize_label_logprobs(label_logprobs, label_schema=resolved_schema)
+    label2id = label2id_for_schema(resolved_schema)
+    if resolved_schema == "liar6" and str(gold_label).strip().lower() in LABEL2ID:
         summary.update(score_margin(label_logprobs, gold_label))
+    elif str(gold_label).strip().lower() in label2id:
+        gold_label_norm = str(gold_label).strip().lower()
+        letter_order = letter_order_for_schema(resolved_schema)
+        gold_idx = label2id[gold_label_norm]
+        gold_letter = letter_order[gold_idx]
+        gold_logprob = float(label_logprobs[gold_letter])
+        other_logprobs = [
+            float(label_logprobs[letter])
+            for idx, letter in enumerate(letter_order)
+            if idx != gold_idx
+        ]
+        best_other = max(other_logprobs) if other_logprobs else float("-inf")
+        summary.update(
+            {
+                "gold_logprob": gold_logprob,
+                "best_other_logprob": float(best_other),
+                "margin": float(gold_logprob - best_other),
+            }
+        )
     return summary
 
 
@@ -137,10 +183,13 @@ class APIVerifierScorer(BaseVerifierScorer):
         max_retries: int = 5,
         initial_delay: float = 1.0,
         max_delay: float = 30.0,
+        label_schema: str | None = None,
     ) -> None:
         self._client = client
         self._label_token_ids = label_token_ids
         self._label_prefix = label_prefix
+        self._label_schema = normalize_label_schema(label_schema)
+        self._letter_order = letter_order_for_schema(self._label_schema)
         self._prompt_logprobs = prompt_logprobs
         self._max_retries = max_retries
         self._initial_delay = initial_delay
@@ -169,7 +218,11 @@ class APIVerifierScorer(BaseVerifierScorer):
         ) from last_error
 
     def _score_one(self, request: VerifierScoreRequest) -> dict[str, Any]:
-        prompts = build_verifier_scoring_prompts(request.prompt_row, self._label_prefix)
+        prompts = build_verifier_scoring_prompts(
+            request.prompt_row,
+            self._label_prefix,
+            label_schema=self._label_schema,
+        )
         data = self._client.complete(
             prompts,
             max_tokens=1,
@@ -177,18 +230,24 @@ class APIVerifierScorer(BaseVerifierScorer):
             extra_body={"prompt_logprobs": int(self._prompt_logprobs)},
         )
         choices = data.get("choices", [])
-        if len(choices) != len(LETTER_ORDER):
+        if len(choices) != len(self._letter_order):
             raise RuntimeError(
-                f"Verifier API returned {len(choices)} choices for {len(LETTER_ORDER)} labels."
+                f"Verifier API returned {len(choices)} choices for {len(self._letter_order)} labels."
             )
         by_index = {int(choice.get("index", idx)): choice for idx, choice in enumerate(choices)}
         prompt_logprobs_list = [
-            _choice_payload_prompt_logprobs(by_index[idx]) for idx in range(len(LETTER_ORDER))
+            _choice_payload_prompt_logprobs(by_index[idx]) for idx in range(len(self._letter_order))
         ]
         label_logprobs = extract_label_logprobs_from_prompt_logprobs_list(
-            prompt_logprobs_list, self._label_token_ids
+            prompt_logprobs_list,
+            self._label_token_ids,
+            label_schema=self._label_schema,
         )
-        return compute_score_from_logprobs(label_logprobs, request.gold_label)
+        return compute_score_from_logprobs(
+            label_logprobs,
+            request.gold_label,
+            label_schema=self._label_schema,
+        )
 
 
 class LLMVerifierScorer(BaseVerifierScorer):
@@ -201,6 +260,7 @@ class LLMVerifierScorer(BaseVerifierScorer):
         label_prefix: str = "Label:",
         lora_request=None,
         prompt_batch_size: int = 6000,
+        label_schema: str | None = None,
     ) -> None:
         self._llm = llm
         self._sampling_params = sampling_params
@@ -208,6 +268,8 @@ class LLMVerifierScorer(BaseVerifierScorer):
         self._label_prefix = label_prefix
         self._lora_request = lora_request
         self._prompt_batch_size = int(prompt_batch_size)
+        self._label_schema = normalize_label_schema(label_schema)
+        self._letter_order = letter_order_for_schema(self._label_schema)
 
     def score_batch(
         self,
@@ -218,10 +280,14 @@ class LLMVerifierScorer(BaseVerifierScorer):
         if not requests:
             return []
 
-        n_labels = len(LETTER_ORDER)
+        n_labels = len(self._letter_order)
         all_prompts: list[str] = []
         for request in requests:
-            prompts = build_verifier_scoring_prompts(request.prompt_row, self._label_prefix)
+            prompts = build_verifier_scoring_prompts(
+                request.prompt_row,
+                self._label_prefix,
+                label_schema=self._label_schema,
+            )
             all_prompts.extend(prompts)
 
         batch_size = max(self._prompt_batch_size, n_labels)
@@ -273,9 +339,17 @@ class LLMVerifierScorer(BaseVerifierScorer):
                 chunk = batch_outputs[req_idx * n_labels : (req_idx + 1) * n_labels]
                 prompt_logprobs_list = [output.prompt_logprobs for output in chunk]
                 label_logprobs = extract_label_logprobs_from_prompt_logprobs_list(
-                    prompt_logprobs_list, self._label_token_ids
+                    prompt_logprobs_list,
+                    self._label_token_ids,
+                    label_schema=self._label_schema,
                 )
-                batch_results.append(compute_score_from_logprobs(label_logprobs, request.gold_label))
+                batch_results.append(
+                    compute_score_from_logprobs(
+                        label_logprobs,
+                        request.gold_label,
+                        label_schema=self._label_schema,
+                    )
+                )
 
             if on_batch_complete is not None:
                 on_batch_complete(batch_requests, batch_results)

@@ -3,12 +3,17 @@ from __future__ import annotations
 import numpy as np
 
 from fact_checking.build.candidates import ChunkMMRSample
-from fact_checking.selectors.atom_retrieval_union import AtomUnionSelectionParams, select_atom_union_rules
+from fact_checking.selectors.atom_retrieval_union import (
+    AtomUnionSelectionParams,
+    rank_atom_union_source_score_candidates,
+    select_atom_union_rules,
+)
 from fact_checking.selectors.selector_mechanism_ablation import (
     SELECTOR_MECH_S0_NO_EVIDENCE,
     SELECTOR_MECH_S1_CLAIM_POOL_RANDOM_TOP5,
     SELECTOR_MECH_S2_CLAIM_POOL_HYBRID_TOP5,
     SELECTOR_MECH_S3_CLAIM_POOL_HYBRID_MMR_TOP5,
+    SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED,
     SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5,
     SelectorMechanismParams,
     build_claim_candidate_pool_row,
@@ -77,41 +82,7 @@ def test_claim_pool_hybrid_mmr_selects_top5_from_same_pool() -> None:
 
 
 def test_atom_union_source_score_matches_existing_union_rule() -> None:
-    union_row = {
-        "event_id": "event0",
-        "claim": "claim",
-        "label": "true",
-        "gold_label": "true",
-        "claim_atoms": [{"atom_id": "A1", "text": "atom"}],
-        "candidates": [
-            {
-                "text": "baseline",
-                "canonical_text": "baseline",
-                "from_baseline": True,
-                "from_atom_route": False,
-                "baseline_rank": 1,
-                "atom_pool_rank": None,
-                "atom_rrf_score": 0.0,
-                "atom_route_hit_count": 0,
-                "atom_max_route_hybrid": 0.0,
-                "union_pool_rank": 1,
-                "chunk_sent_indices": [0],
-            },
-            {
-                "text": "atom",
-                "canonical_text": "atom",
-                "from_baseline": False,
-                "from_atom_route": True,
-                "baseline_rank": None,
-                "atom_pool_rank": 1,
-                "atom_rrf_score": 0.20,
-                "atom_route_hit_count": 2,
-                "atom_max_route_hybrid": 0.9,
-                "union_pool_rank": 2,
-                "chunk_sent_indices": [1],
-            },
-        ],
-    }
+    union_row = _union_row()
     params = SelectorMechanismParams(top_k=2)
 
     trace = build_selector_mechanism_trace_row(
@@ -130,6 +101,90 @@ def test_atom_union_source_score_matches_existing_union_rule() -> None:
     assert trace["selected_indices"] == [1, 0]
 
 
+def test_atom_union_source_score_ordered_keeps_full_union_order_and_matches_top5_prefix() -> None:
+    union_row = _union_row(
+        extra_candidates=[
+            {
+                "text": "weak atom",
+                "canonical_text": "weak atom",
+                "from_baseline": False,
+                "from_atom_route": True,
+                "baseline_rank": None,
+                "atom_pool_rank": 2,
+                "atom_rrf_score": 0.01,
+                "atom_route_hit_count": 1,
+                "atom_max_route_hybrid": 0.1,
+                "union_pool_rank": 3,
+                "chunk_sent_indices": [2],
+            },
+            {
+                "text": "second baseline",
+                "canonical_text": "second baseline",
+                "from_baseline": True,
+                "from_atom_route": False,
+                "baseline_rank": 2,
+                "atom_pool_rank": None,
+                "atom_rrf_score": 0.0,
+                "atom_route_hit_count": 0,
+                "atom_max_route_hybrid": 0.0,
+                "union_pool_rank": 4,
+                "chunk_sent_indices": [3],
+            },
+            {
+                "text": "third baseline",
+                "canonical_text": "third baseline",
+                "from_baseline": True,
+                "from_atom_route": False,
+                "baseline_rank": 3,
+                "atom_pool_rank": None,
+                "atom_rrf_score": 0.0,
+                "atom_route_hit_count": 0,
+                "atom_max_route_hybrid": 0.0,
+                "union_pool_rank": 5,
+                "chunk_sent_indices": [4],
+            },
+            {
+                "text": "tiny atom",
+                "canonical_text": "tiny atom",
+                "from_baseline": False,
+                "from_atom_route": True,
+                "baseline_rank": None,
+                "atom_pool_rank": 3,
+                "atom_rrf_score": 0.005,
+                "atom_route_hit_count": 0,
+                "atom_max_route_hybrid": 0.0,
+                "union_pool_rank": 6,
+                "chunk_sent_indices": [5],
+            },
+        ]
+    )
+
+    full_order_trace = build_selector_mechanism_trace_row(
+        claim_pool_row=None,
+        union_row=union_row,
+        selector_name=SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED,
+        params=SelectorMechanismParams(top_k=5),
+        chunk_mmr_fingerprint="fp",
+    )
+    top5_trace = build_selector_mechanism_trace_row(
+        claim_pool_row=None,
+        union_row=union_row,
+        selector_name=SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5,
+        params=SelectorMechanismParams(top_k=5),
+        chunk_mmr_fingerprint="fp",
+    )
+    ranked = rank_atom_union_source_score_candidates(
+        union_row["candidates"],
+        params=AtomUnionSelectionParams(selector_top_k=len(union_row["candidates"])),
+    )
+
+    assert len(full_order_trace["selector_ordered_indices"]) == len(union_row["candidates"])
+    assert full_order_trace["selector_ordered_indices"][:5] == top5_trace["selector_ordered_indices"]
+    assert [c["text"] for c in full_order_trace["selected_candidates"]] == [c["text"] for c in ranked]
+    assert full_order_trace["adaptive_policy"] == "source_score_ordered"
+    assert full_order_trace["candidate_pool_metadata"]["adaptive_policy"] == "source_score_ordered"
+
+
 def test_no_evidence_trace_has_empty_pool_and_selected_indices() -> None:
     trace = build_selector_mechanism_trace_row(
         claim_pool_row={"event_id": "event0", "claim": "claim", "label": "true", "gold_label": "true", "candidates": []},
@@ -142,6 +197,46 @@ def test_no_evidence_trace_has_empty_pool_and_selected_indices() -> None:
     assert trace["candidate_pool"] == []
     assert trace["selected_indices"] == []
     assert trace["selector_ordered_indices"] == []
+
+
+def _union_row(extra_candidates: list[dict[str, object]] | None = None) -> dict[str, object]:
+    candidates = [
+        {
+            "text": "baseline",
+            "canonical_text": "baseline",
+            "from_baseline": True,
+            "from_atom_route": False,
+            "baseline_rank": 1,
+            "atom_pool_rank": None,
+            "atom_rrf_score": 0.0,
+            "atom_route_hit_count": 0,
+            "atom_max_route_hybrid": 0.0,
+            "union_pool_rank": 1,
+            "chunk_sent_indices": [0],
+        },
+        {
+            "text": "atom",
+            "canonical_text": "atom",
+            "from_baseline": False,
+            "from_atom_route": True,
+            "baseline_rank": None,
+            "atom_pool_rank": 1,
+            "atom_rrf_score": 0.20,
+            "atom_route_hit_count": 2,
+            "atom_max_route_hybrid": 0.9,
+            "union_pool_rank": 2,
+            "chunk_sent_indices": [1],
+        },
+    ]
+    candidates.extend(extra_candidates or [])
+    return {
+        "event_id": "event0",
+        "claim": "claim",
+        "label": "true",
+        "gold_label": "true",
+        "claim_atoms": [{"atom_id": "A1", "text": "atom"}],
+        "candidates": candidates,
+    }
 
 
 def _sample(n: int) -> ChunkMMRSample:

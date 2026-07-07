@@ -36,8 +36,20 @@ from sft.runtime.adapters import checkpoint_has_hf_artifacts, checkpoint_has_pef
 
 logger = init_logger(__name__)
 
-_MERGED_LORA_CACHE_VERSION = 2
+_MERGED_LORA_CACHE_VERSION = 3
 _MERGED_LORA_IMPL = "peft_from_pretrained_merge_and_unload"
+_MERGED_LORA_SIDECAR_FILENAMES = (
+    "processor_config.json",
+    "preprocessor_config.json",
+    "image_processor_config.json",
+    "tokenizer_config.json",
+    "tokenizer.json",
+    "tekken.json",
+    "chat_template.jinja",
+    "configuration.json",
+    "params.json",
+    "SYSTEM_PROMPT.txt",
+)
 
 
 @dataclass
@@ -611,7 +623,11 @@ def _merged_lora_cache_key(
 
 
 def _merged_lora_cache_complete(path: Path) -> bool:
-    return checkpoint_has_hf_artifacts(path) and (path / "tokenizer_config.json").exists()
+    has_tokenizer_artifact = any(
+        (path / filename).exists()
+        for filename in ("tokenizer_config.json", "tokenizer.json", "tekken.json")
+    )
+    return checkpoint_has_hf_artifacts(path) and has_tokenizer_artifact
 
 
 def _write_merge_cache_metadata(
@@ -647,6 +663,194 @@ def _torch_dtype_for_merge(dtype: str):
     return "auto"
 
 
+def _torch_dtype_for_saved_checkpoint(dtype: str):
+    import torch
+
+    normalized = str(dtype).strip().lower()
+    if normalized in {"bfloat16", "bf16"}:
+        return torch.bfloat16
+    if normalized in {"float16", "fp16", "half"}:
+        return torch.float16
+    if normalized in {"float32", "fp32"}:
+        return torch.float32
+    return None
+
+
+def _checkpoint_dtype_name(dtype: str) -> str | None:
+    normalized = str(dtype).strip().lower()
+    if normalized in {"bfloat16", "bf16"}:
+        return "bfloat16"
+    if normalized in {"float16", "fp16", "half"}:
+        return "float16"
+    if normalized in {"float32", "fp32"}:
+        return "float32"
+    return None
+
+
+def _is_float8_tensor(tensor: Any) -> bool:
+    return "float8_" in str(getattr(tensor, "dtype", ""))
+
+
+def _weight_scale_key(weight_key: str) -> str:
+    if weight_key.endswith(".weight"):
+        return f"{weight_key[:-len('.weight')]}.weight_scale_inv"
+    return f"{weight_key}_scale_inv"
+
+
+def _dequantize_fp8_weight_tensor(weight: Any, scale: Any, *, dtype: Any) -> Any:
+    rows, cols = weight.shape[-2:]
+    if scale.numel() == 1:
+        return (weight.to(scale.dtype) * scale.reshape(1, 1)).to(dtype)
+
+    block_m = rows // int(scale.shape[-2])
+    block_n = cols // int(scale.shape[-1])
+    reshaped = weight.to(scale.dtype).reshape(-1, scale.shape[-2], block_m, scale.shape[-1], block_n)
+    expanded_scale = scale.reshape(-1, scale.shape[-2], scale.shape[-1]).unsqueeze(-1).unsqueeze(2)
+    return (reshaped * expanded_scale).reshape(weight.shape).to(dtype)
+
+
+def _strip_dequantized_fp8_config(path: Path, *, dtype_name: str) -> None:
+    config_path = path / "config.json"
+    if not config_path.exists():
+        return
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(config, dict):
+        return
+
+    changed = False
+    if "quantization_config" in config:
+        config.pop("quantization_config", None)
+        changed = True
+    if config.get("dtype") != dtype_name:
+        config["dtype"] = dtype_name
+        changed = True
+    for nested_key in ("text_config", "vision_config"):
+        nested = config.get(nested_key)
+        if not isinstance(nested, dict):
+            continue
+        if "quantization_config" in nested:
+            nested.pop("quantization_config", None)
+            changed = True
+        if nested.get("dtype") != dtype_name:
+            nested["dtype"] = dtype_name
+            changed = True
+    if changed:
+        config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _dequantize_fp8_safetensors_checkpoint(
+    path: str | Path,
+    *,
+    dtype: str,
+    max_shard_size_bytes: int = 2_000_000_000,
+) -> bool:
+    target_dtype = _torch_dtype_for_saved_checkpoint(dtype)
+    dtype_name = _checkpoint_dtype_name(dtype)
+    if target_dtype is None or dtype_name is None:
+        return False
+
+    import torch
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+
+    path = Path(path)
+    source_shards = sorted(
+        shard for shard in path.glob("*.safetensors") if not shard.name.startswith(".dequantized-")
+    )
+    if not source_shards:
+        return False
+
+    scale_tensors: dict[str, Any] = {}
+    needs_conversion = False
+    for shard_path in source_shards:
+        with safe_open(shard_path, framework="pt", device="cpu") as handle:
+            for key in handle.keys():
+                tensor = handle.get_tensor(key)
+                if key.endswith(".weight_scale_inv") or key.endswith(".activation_scale"):
+                    scale_tensors[key] = tensor
+                    needs_conversion = True
+                    continue
+                if _is_float8_tensor(tensor) or (tensor.is_floating_point() and tensor.dtype != target_dtype):
+                    needs_conversion = True
+    if not needs_conversion:
+        return False
+
+    temp_records: list[tuple[Path, list[str], int]] = []
+    current: dict[str, Any] = {}
+    current_bytes = 0
+
+    def flush_current() -> None:
+        nonlocal current, current_bytes
+        if not current:
+            return
+        shard_idx = len(temp_records) + 1
+        temp_path = path / f".dequantized-{shard_idx:05d}.safetensors"
+        save_file(current, temp_path)
+        temp_records.append((temp_path, list(current.keys()), current_bytes))
+        current = {}
+        current_bytes = 0
+
+    try:
+        for shard_path in source_shards:
+            with safe_open(shard_path, framework="pt", device="cpu") as handle:
+                for key in handle.keys():
+                    if key.endswith(".weight_scale_inv") or key.endswith(".activation_scale"):
+                        continue
+                    tensor = handle.get_tensor(key)
+                    if _is_float8_tensor(tensor):
+                        scale = scale_tensors.get(_weight_scale_key(key))
+                        if scale is not None:
+                            tensor = _dequantize_fp8_weight_tensor(tensor, scale, dtype=target_dtype)
+                        else:
+                            tensor = tensor.to(target_dtype)
+                    elif tensor.is_floating_point() and tensor.dtype != target_dtype:
+                        tensor = tensor.to(target_dtype)
+                    tensor = tensor.contiguous()
+                    tensor_bytes = int(tensor.numel() * tensor.element_size())
+                    if current and current_bytes + tensor_bytes > max_shard_size_bytes:
+                        flush_current()
+                    current[key] = tensor
+                    current_bytes += tensor_bytes
+        flush_current()
+    except BaseException:
+        for temp_path, _, _ in temp_records:
+            temp_path.unlink(missing_ok=True)
+        raise
+
+    for shard_path in source_shards:
+        shard_path.unlink()
+    for index_path in path.glob("*.safetensors.index.json"):
+        index_path.unlink()
+
+    if len(temp_records) == 1:
+        temp_path, _, _ = temp_records[0]
+        temp_path.replace(path / "model.safetensors")
+    else:
+        weight_map: dict[str, str] = {}
+        total_size = 0
+        total_shards = len(temp_records)
+        for idx, (temp_path, keys, shard_bytes) in enumerate(temp_records, start=1):
+            final_name = f"model-{idx:05d}-of-{total_shards:05d}.safetensors"
+            temp_path.replace(path / final_name)
+            total_size += int(shard_bytes)
+            for key in keys:
+                weight_map[key] = final_name
+        index = {
+            "metadata": {"total_size": total_size},
+            "weight_map": weight_map,
+        }
+        (path / "model.safetensors.index.json").write_text(
+            json.dumps(index, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    _strip_dequantized_fp8_config(path, dtype_name=dtype_name)
+    return True
+
+
 def _load_adapter_state_for_validation(adapter_path: Path) -> dict[str, object]:
     if adapter_path.suffix == ".safetensors":
         import safetensors.torch
@@ -661,6 +865,24 @@ def _load_adapter_state_for_validation(adapter_path: Path) -> dict[str, object]:
     if not isinstance(state, dict):
         raise RuntimeError(f"Unsupported LoRA adapter checkpoint format: {adapter_path}")
     return state
+
+
+def _copy_merge_sidecar_artifacts(
+    *,
+    source_dirs: list[Path],
+    output_dir: Path,
+) -> list[str]:
+    copied: list[str] = []
+    for filename in _MERGED_LORA_SIDECAR_FILENAMES:
+        for source_dir in source_dirs:
+            source_path = source_dir / filename
+            if source_path.is_file():
+                shutil.copy2(source_path, output_dir / filename)
+                copied.append(filename)
+                break
+    if copied:
+        logger.info("Copied merged LoRA sidecar artifacts: %s", ", ".join(copied))
+    return copied
 
 
 def _merge_lora_to_dir(
@@ -706,10 +928,14 @@ def _merge_lora_to_dir(
 
     merged = peft_model.merge_and_unload()
     merged.save_pretrained(output_dir)
-    del merged, peft_model
+    del merged, peft_model, model
+    if _dequantize_fp8_safetensors_checkpoint(output_dir, dtype=dtype):
+        logger.info("Dequantized merged FP8 checkpoint to %s for vLLM compatibility: %s", dtype, output_dir)
 
     tokenizer = load_compatible_tokenizer(str(tokenizer_dir), trust_remote_code=True)
     tokenizer.save_pretrained(output_dir)
+    sidecar_sources = [path for path in (tokenizer_dir, Path(base_model)) if path.exists() and path.is_dir()]
+    _copy_merge_sidecar_artifacts(source_dirs=sidecar_sources, output_dir=output_dir)
     return output_dir
 
 

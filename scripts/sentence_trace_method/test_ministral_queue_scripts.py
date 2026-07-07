@@ -47,6 +47,28 @@ def test_ministral_fullft_qec_queue_enforces_order_deadline_and_checkpoint_signa
     assert "kill -TERM $trainer_pids" in text
 
 
+def test_fullpool_policy_wrapper_moves_vllm_runtime_cache_to_project_outputs() -> None:
+    wrapper = (
+        SCRIPT_DIR
+        / "run_liar_raw_ministral3_atom_anchor_v0_2_fullpool_policy_lora_ebs16_lr2e5_ep12_eval100.sh"
+    )
+    text = wrapper.read_text(encoding="utf-8")
+
+    assert (
+        'MREC_RUNTIME_CACHE_ROOT="${MREC_RUNTIME_CACHE_ROOT:-${ROOT_DIR}/outputs/cache/runtime/mrec_fullpool_policy}"'
+        in text
+    )
+    assert 'export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${MREC_RUNTIME_CACHE_ROOT}/xdg}"' in text
+    assert 'export VLLM_CACHE_ROOT="${VLLM_CACHE_ROOT:-${MREC_RUNTIME_CACHE_ROOT}/vllm}"' in text
+    assert (
+        'export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-${MREC_RUNTIME_CACHE_ROOT}/torchinductor}"'
+        in text
+    )
+    assert 'export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${MREC_RUNTIME_CACHE_ROOT}/triton}"' in text
+    assert 'mkdir -p "$XDG_CACHE_HOME" "$VLLM_CACHE_ROOT" "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR"' in text
+    assert "RUNTIME_CACHE_ROOT=%s XDG_CACHE_HOME=%s VLLM_CACHE_ROOT=%s TORCHINDUCTOR_CACHE_DIR=%s TRITON_CACHE_DIR=%s" in text
+
+
 def test_rawfc_ministral3_lora_tuning_queue_waits_active_first_then_runs_ordered() -> None:
     queue_script = SCRIPT_DIR / "run_rawfc_ministral3_lora_tuning_queue.sh"
     text = queue_script.read_text(encoding="utf-8")

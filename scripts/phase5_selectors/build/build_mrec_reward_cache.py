@@ -94,9 +94,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vllm-tensor-parallel-size", type=int, default=4)
     parser.add_argument("--vllm-gpu-memory-utilization", type=float, default=0.85)
     parser.add_argument("--vllm-dtype", default="auto")
+    parser.add_argument("--vllm-tokenizer-mode", default="auto")
+    parser.add_argument("--vllm-config-format", default="")
+    parser.add_argument("--vllm-load-format", default="")
     parser.add_argument("--vllm-max-model-len", type=int, default=1032)
     parser.add_argument("--vllm-prompt-batch-size", type=int, default=6000)
     parser.add_argument("--vllm-enforce-eager", action="store_true")
+    parser.add_argument("--vllm-lora-mode", default="dynamic", choices=["dynamic", "merged"])
+    parser.add_argument("--vllm-merge-lora-cache-dir", default="outputs/cache/merged_lora")
+    parser.add_argument("--vllm-merge-lora-force-rebuild", action="store_true")
     parser.add_argument("--transformers-tokenizer-path", default="")
     parser.add_argument("--transformers-device", default="auto")
     parser.add_argument("--transformers-dtype", default="auto", choices=["auto", "bf16", "bfloat16", "fp16", "float16", "fp32", "float32"])
@@ -128,6 +134,8 @@ def main() -> int:
     prompt_cfg = _prompt_cfg(args)
     tokenizer = _load_prompt_tokenizer(str(prompt_cfg["model_name_or_path"]))
     scorer = _init_scorer(args, checkpoint)
+    checkpoint = dict(checkpoint)
+    checkpoint["scoring_fingerprint"] = _scoring_fingerprint(args, scorer)
     score_cache = _load_score_cache(raw_scores_path) if bool(args.resume) else {}
     completed_events = _completed_event_ids(records_path) if bool(args.resume) else set()
 
@@ -155,6 +163,7 @@ def main() -> int:
             **checkpoint,
             "scoring_backend_requested": str(args.scoring_backend),
             "scoring_backend": str(getattr(scorer, "backend_name", args.scoring_backend)),
+            "vllm_lora_mode": str(getattr(scorer, "vllm_lora_mode", args.vllm_lora_mode)),
         },
         "prompt_config": prompt_cfg,
         "n_input_rows": len(rows),
@@ -494,6 +503,7 @@ def _score_request_for_indices(
             "selected_indices": [int(idx) for idx in selected_indices],
             "candidate_idx": int(candidate_idx) if candidate_idx is not None else None,
             "teacher_fingerprint": checkpoint["teacher_fingerprint"],
+            "scoring_fingerprint": str(checkpoint.get("scoring_fingerprint") or ""),
             "prompt_fingerprint": stable_fingerprint(prompt_cfg, length=16),
         }
     )
@@ -564,7 +574,11 @@ def _teacher_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     missing = [str(path) for path in (adapter_config, adapter_model) if not path.exists()]
     if missing:
         raise FileNotFoundError("Teacher checkpoint is incomplete:\n" + "\n".join(f"- {item}" for item in missing))
-    label_token_ids = load_label_token_ids(run_dir, label_prefix=str(args.label_prefix))
+    label_token_ids = load_label_token_ids(
+        run_dir,
+        label_prefix=str(args.label_prefix),
+        label_schema=str(args.label_schema),
+    )
     with adapter_config.open(encoding="utf-8") as handle:
         adapter_cfg = json.load(handle)
     base_model = str(args.base_model or adapter_cfg.get("base_model_name_or_path") or DEFAULT_BASE_MODEL)
@@ -604,12 +618,14 @@ class TransformersVerifierScorer:
         label_token_ids: Mapping[str, int],
         label_prefix: str,
         prompt_batch_size: int,
+        label_schema: str,
     ) -> None:
         self._model = model
         self._tokenizer = tokenizer
         self._label_token_ids = {str(key): int(value) for key, value in dict(label_token_ids).items()}
         self._label_prefix = str(label_prefix)
         self._prompt_batch_size = max(int(prompt_batch_size), 1)
+        self._label_schema = str(label_schema)
         self._prefix_ids = tokenizer(self._label_prefix, add_special_tokens=False, truncation=False)["input_ids"]
         if not self._prefix_ids:
             raise ValueError(f"label_prefix={self._label_prefix!r} produced no tokens.")
@@ -660,7 +676,11 @@ class TransformersVerifierScorer:
             missing = [letter for letter in self._label_token_ids if letter not in label_logprobs]
             if missing:
                 raise RuntimeError(f"Missing label logprobs for event_id={request.event_id}: {missing}")
-            score = compute_score_from_logprobs(label_logprobs, request.gold_label)
+            score = compute_score_from_logprobs(
+                label_logprobs,
+                request.gold_label,
+                label_schema=self._label_schema,
+            )
             score["scoring_backend"] = self.backend_name
             results.append(score)
         return results
@@ -748,6 +768,22 @@ def _init_scorer(args: argparse.Namespace, checkpoint: Mapping[str, Any]) -> Any
         return _init_transformers_scorer(args, checkpoint)
 
 
+def _scoring_fingerprint(args: argparse.Namespace, scorer: Any) -> str:
+    backend = str(getattr(scorer, "backend_name", args.scoring_backend))
+    payload: dict[str, Any] = {
+        "backend": backend,
+        "label_schema": str(args.label_schema),
+    }
+    if backend == "vllm":
+        payload["vllm_lora_mode"] = str(
+            getattr(scorer, "vllm_lora_mode", getattr(args, "vllm_lora_mode", "dynamic"))
+        )
+        payload["vllm_tokenizer_mode"] = str(getattr(args, "vllm_tokenizer_mode", "auto") or "auto")
+        payload["vllm_config_format"] = str(getattr(args, "vllm_config_format", "") or "")
+        payload["vllm_load_format"] = str(getattr(args, "vllm_load_format", "") or "")
+    return stable_fingerprint(payload, length=16)
+
+
 def _init_transformers_scorer(args: argparse.Namespace, checkpoint: Mapping[str, Any]) -> TransformersVerifierScorer:
     import torch
 
@@ -779,8 +815,139 @@ def _init_transformers_scorer(args: argparse.Namespace, checkpoint: Mapping[str,
         label_token_ids=dict(checkpoint["label_token_ids"]),
         label_prefix=str(checkpoint["label_prefix"]),
         prompt_batch_size=int(args.transformers_prompt_batch_size),
+        label_schema=str(args.label_schema),
     )
     return scorer
+
+
+def _merge_lora_for_vllm_scorer(
+    *,
+    base_model: str,
+    adapter_dir: str | Path,
+    tokenizer_dir: str | Path,
+    dtype: str,
+    cache_dir: str | Path,
+    force_rebuild: bool,
+) -> Path:
+    from fact_checking.infer.api import _merge_lora_to_cache
+
+    return _merge_lora_to_cache(
+        base_model=base_model,
+        adapter_dir=adapter_dir,
+        tokenizer_dir=tokenizer_dir,
+        dtype=dtype,
+        cache_dir=cache_dir,
+        force_rebuild=force_rebuild,
+    )
+
+
+def _should_disable_vllm_image_inputs_for_text_scoring(model_path: str | Path) -> bool:
+    config_path = Path(model_path) / "config.json"
+    if not config_path.exists():
+        return False
+    try:
+        with config_path.open(encoding="utf-8") as handle:
+            config = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    architectures = [str(item) for item in config.get("architectures") or []]
+    model_type = str(config.get("model_type") or "").lower()
+    architecture_blob = " ".join(architectures).lower()
+    return (
+        "mistral3" in architecture_blob
+        or "pixtral" in architecture_blob
+        or model_type in {"mistral3", "pixtral"}
+    )
+
+
+def _ensure_vllm_mistral3_text_architecture(model_path: str | Path) -> bool:
+    config_path = Path(model_path) / "config.json"
+    if not config_path.exists():
+        return False
+    try:
+        with config_path.open(encoding="utf-8") as handle:
+            config = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    architectures = [str(item) for item in config.get("architectures") or []]
+    if not any("Mistral3ForConditionalGeneration" == item for item in architectures):
+        return False
+
+    text_config = config.get("text_config")
+    if not isinstance(text_config, dict):
+        return False
+    if text_config.get("architectures") is not None:
+        return False
+    text_model_type = str(text_config.get("model_type") or "").lower()
+    if text_model_type not in {"mistral", "ministral", "ministral3"}:
+        return False
+
+    text_config["architectures"] = ["MistralForCausalLM"]
+    try:
+        config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
+def _model_has_fp8_scale_weights(model_path: str | Path) -> bool:
+    try:
+        from safetensors import safe_open
+    except ImportError:
+        return False
+
+    for shard_path in Path(model_path).glob("*.safetensors"):
+        try:
+            with safe_open(shard_path, framework="pt", device="cpu") as handle:
+                if any(
+                    key.endswith(".weight_scale")
+                    or key.endswith(".weight_scale_inv")
+                    or key.endswith(".input_scale")
+                    for key in handle.keys()
+                ):
+                    return True
+        except Exception:  # noqa: BLE001 - best-effort compatibility metadata probe.
+            continue
+    return False
+
+
+def _ensure_vllm_fp8_quantization_config(model_path: str | Path) -> bool:
+    config_path = Path(model_path) / "config.json"
+    if not config_path.exists() or not _model_has_fp8_scale_weights(model_path):
+        return False
+    try:
+        with config_path.open(encoding="utf-8") as handle:
+            config = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    quant_config = {
+        "activation_scheme": "dynamic",
+        "quant_method": "fp8",
+    }
+    changed = False
+    if config.get("quantization_config") is None:
+        config["quantization_config"] = dict(quant_config)
+        changed = True
+    text_config = config.get("text_config")
+    if isinstance(text_config, dict) and text_config.get("quantization_config") is None:
+        text_config["quantization_config"] = dict(quant_config)
+        changed = True
+    if not changed:
+        return False
+    try:
+        config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
+def _patch_vllm_mistral_common_tokenizer_kwargs() -> None:
+    from fact_checking.utils.vllm_mistral_common_patch import apply_vllm_mistral_common_tokenizer_patch
+
+    apply_vllm_mistral_common_tokenizer_patch()
 
 
 def _init_vllm_scorer(args: argparse.Namespace, checkpoint: Mapping[str, Any]) -> LLMVerifierScorer:
@@ -789,33 +956,78 @@ def _init_vllm_scorer(args: argparse.Namespace, checkpoint: Mapping[str, Any]) -
 
         logging.getLogger(lib).setLevel(logging.WARNING)
     os.environ.setdefault("VLLM_LOGGING_LEVEL", "WARNING")
+    os.environ.setdefault("MREC_PATCH_VLLM_MISTRAL_COMMON_TOKENIZER", "1")
     try:
         from vllm import LLM, SamplingParams
-        from vllm.lora.request import LoRARequest
     except ImportError as exc:
-        raise RuntimeError("vLLM with LoRA support is required to build the reward cache.") from exc
+        raise RuntimeError("vLLM is required to build the reward cache with --scoring-backend vllm.") from exc
+    _patch_vllm_mistral_common_tokenizer_kwargs()
 
     base_model = str(checkpoint["base_model_name_or_path"])
     tokenizer_path = str(args.vllm_tokenizer_path or base_model)
-    with Path(checkpoint["adapter_config_path"]).open(encoding="utf-8") as handle:
-        adapter_cfg = json.load(handle)
+    lora_mode = str(getattr(args, "vllm_lora_mode", "dynamic") or "dynamic").strip().lower()
+    if lora_mode not in {"dynamic", "merged"}:
+        raise ValueError(f"Unsupported vllm_lora_mode={lora_mode!r}; expected dynamic or merged.")
+
+    lora_request = None
+    llm_model_path = base_model
+    llm_tokenizer_path = tokenizer_path
+    dynamic_lora_kwargs: dict[str, Any] = {}
+    if lora_mode == "merged":
+        merged_dir = _merge_lora_for_vllm_scorer(
+            base_model=base_model,
+            adapter_dir=str(checkpoint["checkpoint_dir"]),
+            tokenizer_dir=tokenizer_path,
+            dtype=str(args.vllm_dtype),
+            cache_dir=str(getattr(args, "vllm_merge_lora_cache_dir", "outputs/cache/merged_lora")),
+            force_rebuild=bool(getattr(args, "vllm_merge_lora_force_rebuild", False)),
+        )
+        llm_model_path = str(merged_dir)
+        llm_tokenizer_path = str(merged_dir)
+    else:
+        try:
+            from vllm.lora.request import LoRARequest
+        except ImportError as exc:
+            raise RuntimeError(
+                "vLLM dynamic LoRA support is required for --vllm-lora-mode dynamic. "
+                "Use --vllm-lora-mode merged to score a merged teacher checkpoint instead."
+            ) from exc
+        with Path(checkpoint["adapter_config_path"]).open(encoding="utf-8") as handle:
+            adapter_cfg = json.load(handle)
+        dynamic_lora_kwargs = {
+            "enable_lora": True,
+            "max_lora_rank": int(adapter_cfg.get("r", 16)),
+        }
+        lora_request = LoRARequest("mrec-reward-teacher", 1, str(checkpoint["checkpoint_dir"]))
+
+    _ensure_vllm_mistral3_text_architecture(llm_model_path)
+    _ensure_vllm_fp8_quantization_config(llm_model_path)
     llm_kwargs: dict[str, Any] = {
-        "model": base_model,
-        "tokenizer": tokenizer_path,
+        "model": llm_model_path,
+        "tokenizer": llm_tokenizer_path,
         "tensor_parallel_size": int(args.vllm_tensor_parallel_size),
         "gpu_memory_utilization": float(args.vllm_gpu_memory_utilization),
         "dtype": str(args.vllm_dtype),
+        "tokenizer_mode": str(getattr(args, "vllm_tokenizer_mode", "auto") or "auto"),
         "trust_remote_code": True,
-        "enable_lora": True,
-        "max_lora_rank": int(adapter_cfg.get("r", 16)),
     }
+    if _should_disable_vllm_image_inputs_for_text_scoring(llm_model_path):
+        llm_kwargs["limit_mm_per_prompt"] = {"image": 0}
+    if _model_has_fp8_scale_weights(llm_model_path):
+        llm_kwargs["quantization"] = "fp8"
+    config_format = str(getattr(args, "vllm_config_format", "") or "").strip()
+    if config_format:
+        llm_kwargs["config_format"] = config_format
+    load_format = str(getattr(args, "vllm_load_format", "") or "").strip()
+    if load_format:
+        llm_kwargs["load_format"] = load_format
+    llm_kwargs.update(dynamic_lora_kwargs)
     if int(args.vllm_max_model_len) > 0:
         llm_kwargs["max_model_len"] = int(args.vllm_max_model_len)
     if bool(args.vllm_enforce_eager):
         llm_kwargs["enforce_eager"] = True
     llm = LLM(**llm_kwargs)
     sampling_params = SamplingParams(max_tokens=1, temperature=0.0, prompt_logprobs=1)
-    lora_request = LoRARequest("mrec-reward-teacher", 1, str(checkpoint["checkpoint_dir"]))
     scorer = LLMVerifierScorer(
         llm=llm,
         sampling_params=sampling_params,
@@ -823,8 +1035,10 @@ def _init_vllm_scorer(args: argparse.Namespace, checkpoint: Mapping[str, Any]) -
         label_prefix=str(checkpoint["label_prefix"]),
         lora_request=lora_request,
         prompt_batch_size=int(args.vllm_prompt_batch_size),
+        label_schema=str(args.label_schema),
     )
     scorer.backend_name = "vllm"
+    scorer.vllm_lora_mode = lora_mode
     return scorer
 
 

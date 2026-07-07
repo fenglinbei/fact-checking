@@ -4,7 +4,7 @@
 # parameters unchanged and only gives the LIAR-RAW lineage a clear name.
 
 defaults:
-  - b3_abc_claim_aware
+  - /experiment/baselines/b3_abc_claim_aware
   - _self_
 
 experiment:

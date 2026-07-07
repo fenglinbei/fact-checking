@@ -7,7 +7,11 @@ import numpy as np
 
 from fact_checking.build.candidates import ChunkMMRSample, canonicalize_sentence, compute_hybrid_scores
 from fact_checking.retrieval.mmr import maximal_marginal_relevance
-from fact_checking.selectors.atom_retrieval_union import AtomUnionSelectionParams, select_atom_union_rules
+from fact_checking.selectors.atom_retrieval_union import (
+    AtomUnionSelectionParams,
+    rank_atom_union_source_score_candidates,
+    select_atom_union_rules,
+)
 
 
 SELECTOR_MECHANISM_GRAPH_VERSION = "selector_mechanism_ablation_v0"
@@ -18,6 +22,7 @@ SELECTOR_MECH_S1_CLAIM_POOL_RANDOM_TOP5 = "selector_mech_s1_claim_pool_random_to
 SELECTOR_MECH_S2_CLAIM_POOL_HYBRID_TOP5 = "selector_mech_s2_claim_pool_hybrid_top5"
 SELECTOR_MECH_S3_CLAIM_POOL_HYBRID_MMR_TOP5 = "selector_mech_s3_claim_pool_hybrid_mmr_top5"
 SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5 = "selector_mech_s4_atom_union_source_score_top5"
+SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED = "selector_mech_s4_atom_union_source_score_ordered"
 
 SELECTOR_MECHANISM_NAMES = (
     SELECTOR_MECH_S0_NO_EVIDENCE,
@@ -25,6 +30,7 @@ SELECTOR_MECHANISM_NAMES = (
     SELECTOR_MECH_S2_CLAIM_POOL_HYBRID_TOP5,
     SELECTOR_MECH_S3_CLAIM_POOL_HYBRID_MMR_TOP5,
     SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5,
+    SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED,
 )
 
 
@@ -101,15 +107,24 @@ def build_selector_mechanism_trace_row(
     if selector_name not in SELECTOR_MECHANISM_NAMES:
         raise ValueError(f"unknown selector mechanism: {selector_name!r}")
 
-    if selector_name == SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5:
+    if selector_name in {
+        SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5,
+        SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED,
+    }:
         if union_row is None:
             raise ValueError(f"{selector_name} requires union_row")
         source_row = union_row
         candidate_pool = _normalize_candidate_pool(union_row.get("candidates") or [])
-        selected_candidates = select_atom_union_rules(
-            {**union_row, "candidates": candidate_pool},
-            params=AtomUnionSelectionParams(selector_top_k=int(params.top_k)),
-        )["atom_union_source_score_top5"]
+        if selector_name == SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED:
+            selected_candidates = rank_atom_union_source_score_candidates(
+                candidate_pool,
+                params=AtomUnionSelectionParams(selector_top_k=len(candidate_pool)),
+            )
+        else:
+            selected_candidates = select_atom_union_rules(
+                {**union_row, "candidates": candidate_pool},
+                params=AtomUnionSelectionParams(selector_top_k=int(params.top_k)),
+            )["atom_union_source_score_top5"]
         selected_indices = _indices_for_selected(candidate_pool, selected_candidates)
         candidate_pool = _merge_selected_fields(candidate_pool, selected_indices, selected_candidates)
     else:
@@ -137,7 +152,7 @@ def build_selector_mechanism_trace_row(
         "chunk_mmr_fingerprint": str(chunk_mmr_fingerprint or ""),
         "selector_name": selector_name,
         "graph_version": SELECTOR_MECHANISM_GRAPH_VERSION,
-        "adaptive_policy": SELECTOR_MECHANISM_ADAPTIVE_POLICY,
+        "adaptive_policy": _adaptive_policy_for_selector(selector_name),
     }
     return {
         "event_id": source_row.get("event_id", ""),
@@ -147,7 +162,7 @@ def build_selector_mechanism_trace_row(
         "claim_atoms": list(source_row.get("claim_atoms") or []),
         "selector_name": selector_name,
         "graph_version": SELECTOR_MECHANISM_GRAPH_VERSION,
-        "adaptive_policy": SELECTOR_MECHANISM_ADAPTIVE_POLICY,
+        "adaptive_policy": _adaptive_policy_for_selector(selector_name),
         "fingerprint": str(chunk_mmr_fingerprint or ""),
         "chunk_mmr_fingerprint": str(chunk_mmr_fingerprint or ""),
         "candidate_pool_metadata": metadata,
@@ -168,6 +183,12 @@ def build_selector_mechanism_trace_row(
             for rank, idx in enumerate(selected_indices)
         ],
     }
+
+
+def _adaptive_policy_for_selector(selector_name: str) -> str:
+    if selector_name == SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED:
+        return "source_score_ordered"
+    return SELECTOR_MECHANISM_ADAPTIVE_POLICY
 
 
 def summarize_selector_mechanism_traces(traces: Sequence[dict[str, Any]]) -> dict[str, Any]:

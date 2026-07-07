@@ -99,6 +99,37 @@ def select_atom_union_rules(
     }
 
 
+def rank_atom_union_source_score_candidates(
+    candidates: Sequence[dict[str, Any]],
+    *,
+    params: AtomUnionSelectionParams,
+) -> list[dict[str, Any]]:
+    """Return the full atom-union pool ordered by the S4 source-score rule."""
+    scored: list[dict[str, Any]] = []
+    for candidate in candidates:
+        item = dict(candidate)
+        baseline_rank = candidate.get("baseline_rank")
+        baseline_component = 0.0
+        if candidate.get("from_baseline"):
+            baseline_component += float(params.baseline_bonus)
+            if baseline_rank is not None:
+                baseline_component += float(params.baseline_rank_weight) / max(float(baseline_rank), 1.0)
+        atom_component = float(params.atom_rrf_weight) * float(candidate.get("atom_rrf_score") or 0.0)
+        atom_component += float(params.atom_route_hit_weight) * float(candidate.get("atom_route_hit_count") or 0.0)
+        atom_component += float(params.atom_max_hybrid_weight) * float(candidate.get("atom_max_route_hybrid") or 0.0)
+        item["atom_union_source_score"] = float(baseline_component + atom_component)
+        scored.append(item)
+    scored.sort(
+        key=lambda c: (
+            -float(c.get("atom_union_source_score") or 0.0),
+            int(c.get("baseline_rank") or 10**9),
+            int(c.get("atom_pool_rank") or 10**9),
+            int(c.get("union_pool_rank") or 10**9),
+        )
+    )
+    return _ranked_selection(scored, len(scored), "source_score_rank")
+
+
 def compute_atom_union_metrics(
     *,
     union_rows: Sequence[dict[str, Any]],
@@ -170,29 +201,7 @@ def _select_interleave(candidates: list[dict[str, Any]], top_k: int) -> list[dic
 
 
 def _select_source_score(candidates: list[dict[str, Any]], params: AtomUnionSelectionParams) -> list[dict[str, Any]]:
-    scored: list[dict[str, Any]] = []
-    for candidate in candidates:
-        item = dict(candidate)
-        baseline_rank = candidate.get("baseline_rank")
-        baseline_component = 0.0
-        if candidate.get("from_baseline"):
-            baseline_component += float(params.baseline_bonus)
-            if baseline_rank is not None:
-                baseline_component += float(params.baseline_rank_weight) / max(float(baseline_rank), 1.0)
-        atom_component = float(params.atom_rrf_weight) * float(candidate.get("atom_rrf_score") or 0.0)
-        atom_component += float(params.atom_route_hit_weight) * float(candidate.get("atom_route_hit_count") or 0.0)
-        atom_component += float(params.atom_max_hybrid_weight) * float(candidate.get("atom_max_route_hybrid") or 0.0)
-        item["atom_union_source_score"] = float(baseline_component + atom_component)
-        scored.append(item)
-    scored.sort(
-        key=lambda c: (
-            -float(c.get("atom_union_source_score") or 0.0),
-            int(c.get("baseline_rank") or 10**9),
-            int(c.get("atom_pool_rank") or 10**9),
-            int(c.get("union_pool_rank") or 10**9),
-        )
-    )
-    return _ranked_selection(scored, params.selector_top_k, "source_score_rank")
+    return rank_atom_union_source_score_candidates(candidates, params=params)[: int(params.selector_top_k)]
 
 
 def _ranked_selection(candidates: list[dict[str, Any]], top_k: int, rank_key: str) -> list[dict[str, Any]]:
@@ -242,5 +251,6 @@ __all__ = [
     "AtomUnionSelectionParams",
     "build_atom_union_pool_row",
     "compute_atom_union_metrics",
+    "rank_atom_union_source_score_candidates",
     "select_atom_union_rules",
 ]

@@ -1,0 +1,22 @@
+# @package _global_
+# LIAR-RAW semantic(theta=0.7) evidence units for selector-free atom-union chunking ablation.
+
+defaults:
+  - /experiment/baselines/b3
+  - _self_
+
+experiment:
+  name: v0_7_liar_raw_atom_facts_semantic07_chunking
+
+baseline:
+  variant: v0_7_atom_facts_semantic07
+  chunking_strategy: semantic
+
+build:
+  retrieval:
+    chunking:
+      strategy: semantic
+      theta: 0.7
+
+swanlab:
+  experiment_name: v0_7_liar_raw_atom_facts_semantic07

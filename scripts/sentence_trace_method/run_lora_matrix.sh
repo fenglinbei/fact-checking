@@ -36,6 +36,12 @@ EXPECTED_SELECTOR_NAME="${EXPECTED_SELECTOR_NAME:-$SELECTOR_NAME}"
 PROMPT_OUTPUT_MODE="${PROMPT_OUTPUT_MODE:-}"
 TRACE_PROMPT_STYLE="${TRACE_PROMPT_STYLE:-plain}"
 EVIDENCE_TEXT_MODE="${EVIDENCE_TEXT_MODE:-full}"
+TRACE_TOP_K="${TRACE_TOP_K:-10}"
+PROMPT_EVIDENCE_POLICY="${PROMPT_EVIDENCE_POLICY:-}"
+PROMPT_EVIDENCE_MIN_COUNT="${PROMPT_EVIDENCE_MIN_COUNT:-}"
+PROMPT_EVIDENCE_MAX_COUNT="${PROMPT_EVIDENCE_MAX_COUNT:-}"
+PROMPT_EVIDENCE_TOKEN_BUDGET="${PROMPT_EVIDENCE_TOKEN_BUDGET:-}"
+PROMPT_EVIDENCE_MAX_LENGTH_GUARD="${PROMPT_EVIDENCE_MAX_LENGTH_GUARD:-}"
 REQUIRE_PROMPT_INPUT_IDS="${REQUIRE_PROMPT_INPUT_IDS:-false}"
 RAW_ROOT="${RAW_ROOT:-}"
 COVERAGE_DATA_ROOT="${COVERAGE_DATA_ROOT:-}"
@@ -220,6 +226,12 @@ ensure_build() {
     PROMPT_OUTPUT_MODE="$PROMPT_OUTPUT_MODE" \
     TRACE_PROMPT_STYLE="$TRACE_PROMPT_STYLE" \
     EVIDENCE_TEXT_MODE="$EVIDENCE_TEXT_MODE" \
+    TRACE_TOP_K="$TRACE_TOP_K" \
+    PROMPT_EVIDENCE_POLICY="$PROMPT_EVIDENCE_POLICY" \
+    PROMPT_EVIDENCE_MIN_COUNT="$PROMPT_EVIDENCE_MIN_COUNT" \
+    PROMPT_EVIDENCE_MAX_COUNT="$PROMPT_EVIDENCE_MAX_COUNT" \
+    PROMPT_EVIDENCE_TOKEN_BUDGET="$PROMPT_EVIDENCE_TOKEN_BUDGET" \
+    PROMPT_EVIDENCE_MAX_LENGTH_GUARD="$PROMPT_EVIDENCE_MAX_LENGTH_GUARD" \
     REQUIRE_PROMPT_INPUT_IDS="$REQUIRE_PROMPT_INPUT_IDS" \
     RAW_ROOT="$RAW_ROOT" \
     COVERAGE_DATA_ROOT="$COVERAGE_DATA_ROOT" \
@@ -256,6 +268,12 @@ ensure_build() {
     PROMPT_OUTPUT_MODE="$PROMPT_OUTPUT_MODE" \
     TRACE_PROMPT_STYLE="$TRACE_PROMPT_STYLE" \
     EVIDENCE_TEXT_MODE="$EVIDENCE_TEXT_MODE" \
+    TRACE_TOP_K="$TRACE_TOP_K" \
+    PROMPT_EVIDENCE_POLICY="$PROMPT_EVIDENCE_POLICY" \
+    PROMPT_EVIDENCE_MIN_COUNT="$PROMPT_EVIDENCE_MIN_COUNT" \
+    PROMPT_EVIDENCE_MAX_COUNT="$PROMPT_EVIDENCE_MAX_COUNT" \
+    PROMPT_EVIDENCE_TOKEN_BUDGET="$PROMPT_EVIDENCE_TOKEN_BUDGET" \
+    PROMPT_EVIDENCE_MAX_LENGTH_GUARD="$PROMPT_EVIDENCE_MAX_LENGTH_GUARD" \
     REQUIRE_PROMPT_INPUT_IDS="$REQUIRE_PROMPT_INPUT_IDS" \
     RAW_ROOT="$RAW_ROOT" \
     COVERAGE_DATA_ROOT="$COVERAGE_DATA_ROOT" \
@@ -344,12 +362,9 @@ train_lora() {
     printf 'LoRA training is already complete for %s; set FORCE_TRAIN=true to launch training again.\n' "$case_name"
     return 0
   fi
-  if [[ -d "${train_dir}/best" && "$FORCE_TRAIN" != "true" ]]; then
-    if [[ -f "${train_dir}/latest_state/trainer_state.json" ]]; then
-      printf 'LoRA best checkpoint exists but training is not marked complete for %s; resuming from latest_state.\n' "$case_name"
-    else
-      printf 'LoRA best checkpoint exists but training is not marked complete for %s; launching trainer instead of skipping. No latest_state was found, so this may restart from the beginning.\n' "$case_name"
-    fi
+  if [[ -e "${train_dir}/best" && "$FORCE_TRAIN" != "true" ]]; then
+    printf 'LoRA training artifacts already exist for %s at %s; set FORCE_TRAIN=true to launch training again.\n' "$case_name" "${train_dir}/best"
+    return 0
   fi
   run_cmd env \
     SAVE_LATEST_TRAIN_STATE="$SAVE_LATEST_TRAIN_STATE" \
@@ -369,16 +384,21 @@ eval_lora() {
   local lora_root="${OUTPUT_ROOT}/${case_name}${LORA_SUFFIX}"
   IFS=',' read -r -a split_array <<< "$EVAL_SPLITS"
   IFS=',' read -r -a checkpoint_array <<< "$CHECKPOINTS"
-  local split checkpoint metrics_path
+  local split checkpoint legacy_metrics_path label_token_metrics_path
   for split in "${split_array[@]}"; do
     split="${split// /}"
     [[ -z "$split" ]] && continue
     for checkpoint in "${checkpoint_array[@]}"; do
       checkpoint="${checkpoint// /}"
       [[ -z "$checkpoint" ]] && continue
-      metrics_path="${lora_root}/eval/${split}/${checkpoint}/metrics.json"
-      if [[ -f "$metrics_path" && "$FORCE_EVAL" != "true" ]]; then
-        printf 'LoRA eval already exists: %s; set FORCE_EVAL=true to rerun.\n' "$metrics_path"
+      legacy_metrics_path="${lora_root}/eval/${split}/${checkpoint}/metrics.json"
+      label_token_metrics_path="${lora_root}/eval/${split}/${checkpoint}/label_token/metrics.json"
+      if [[ -f "$label_token_metrics_path" && "$FORCE_EVAL" != "true" ]]; then
+        printf 'LoRA eval already exists: %s; set FORCE_EVAL=true to rerun.\n' "$label_token_metrics_path"
+        continue
+      fi
+      if [[ -f "$legacy_metrics_path" && "$FORCE_EVAL" != "true" ]]; then
+        printf 'LoRA eval already exists: %s; set FORCE_EVAL=true to rerun.\n' "$legacy_metrics_path"
         continue
       fi
       run_cmd "$PYTHON_BIN" -m sft.label_token_infer \

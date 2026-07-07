@@ -1,0 +1,23 @@
+# @package _global_
+# LIAR-RAW sentence evidence units for selector-free atom-union chunking ablation.
+
+defaults:
+  - /experiment/baselines/b0
+  - _self_
+
+experiment:
+  name: v0_7_liar_raw_atom_facts_sentence_chunking
+
+baseline:
+  variant: v0_7_atom_facts_sentence
+  chunking_strategy: sentence
+
+build:
+  retrieval:
+    chunking:
+      strategy: sentence
+      context_k: 1
+      theta: 0.7
+
+swanlab:
+  experiment_name: v0_7_liar_raw_atom_facts_sentence

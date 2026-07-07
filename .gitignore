@@ -79,6 +79,28 @@ instance/
 # Sphinx documentation
 docs/_build/
 
+# LaTeX/PDF build artifacts
+docs/paper/**/build/
+docs/paper/**/dist/
+docs/paper/**/*.aux
+docs/paper/**/*.bbl
+docs/paper/**/*.bcf
+docs/paper/**/*.blg
+docs/paper/**/*.fdb_latexmk
+docs/paper/**/*.fls
+docs/paper/**/*.log
+docs/paper/**/*.out
+docs/paper/**/*.run.xml
+docs/paper/**/*.synctex.gz
+docs/paper/**/*.toc
+docs/paper/**/*.xdv
+docs/paper/aaai_course_report_pdf/course_report_aaai2027.pdf
+
+# Local paper downloads and unpacked external kits
+docs/paper/*.zip
+docs/paper/UAI_2026_HSD*.pdf
+docs/paper/aaai/AuthorKit27/
+
 # PyBuilder
 .pybuilder/
 target/

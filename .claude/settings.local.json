@@ -55,7 +55,11 @@
       "Bash(systemctl status *)",
       "Bash(netstat -tlnp)",
       "Bash(tar czf *)",
-      "Bash(ps *)"
+      "Bash(ps *)",
+      "Bash(pdflatex --version)",
+      "Bash(xelatex --version)",
+      "Bash(xelatex -interaction=nonstopmode LPR_academic_survey.tex)",
+      "Bash(biber LPR_academic_survey)"
     ]
   }
 }

@@ -1,0 +1,44 @@
+extends: rawfc_learned_marginal_proxy_fullpool_policy.yaml
+
+experiment:
+  name: rawfc__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_two_pass_uncertainty
+  case_suffix: __atom_anchor_v0_2_learned_marginal_proxy_fullpool_two_pass_uncertainty
+  run_label: rawfc-atom-anchor-v0.2-learned-proxy-fullpool-two-pass-uncertainty
+  run_header_label: rawfc-atom-anchor-v0.2-learned-proxy-fullpool-two-pass-uncertainty-full
+
+prompt_evidence:
+  policy: two_pass_uncertainty
+  min_evidence_count: 0
+  max_evidence_count: 0
+  evidence_token_budget: null
+  state_budget:
+    budget_ratio: 0.75
+    lookahead_on_target_resolved: true
+    include_contrast_after_target: true
+    unresolved_patience: 2
+  two_pass_uncertainty:
+    decision_dir: outputs/selectors/atom_anchor/rawfc_abc_v0_1/06_two_pass_uncertainty/learned_marginal_proxy_fullpool
+    calibration_file: outputs/selectors/atom_anchor/rawfc_abc_v0_1/06_two_pass_uncertainty/learned_marginal_proxy_fullpool/two_pass_uncertainty_calibration.json
+    teacher_run_dir: outputs/sentence_trace_method/rawfc__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_lora_r16a32_d010_ebs16_lr1em5_ep12_eval50_pat8_rawfc/train
+    teacher_checkpoint: best
+    scoring_backend: vllm
+    base_model: /data/models/Ministral-3-8B-Instruct-2512
+    vllm_tensor_parallel_size: 4
+    vllm_gpu_memory_utilization: 0.85
+    vllm_dtype: bfloat16
+    vllm_tokenizer_mode: auto
+    vllm_max_model_len: 1032
+    vllm_prompt_batch_size: 6000
+    vllm_enforce_eager: false
+    vllm_lora_mode: merged
+    vllm_merge_lora_cache_dir: outputs/cache/merged_lora/two_pass_uncertainty
+    vllm_merge_lora_force_rebuild: false
+    transformers_device: auto
+    transformers_dtype: auto
+    transformers_prompt_batch_size: 24
+
+swanlab:
+  experiment_name: rawfc__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_two_pass_uncertainty
+
+sentence_trace_method:
+  top_k: 0

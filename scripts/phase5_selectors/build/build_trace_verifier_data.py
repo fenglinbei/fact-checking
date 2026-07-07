@@ -49,6 +49,7 @@ PROMPT_EVIDENCE_POLICIES = (
     "minmax",
     "budget",
     "state_budget",
+    "two_pass_uncertainty",
 )
 
 RAWFC_BOUNDARIES_SYSTEM_PROMPT = (
@@ -274,6 +275,9 @@ def _build_split(
         prompt_cfg=prompt_cfg_for_style,
     )
     max_length_guard = dict(prompt_evidence.get("max_length_guard") or {})
+    two_pass_decisions: dict[str, dict[str, Any]] = {}
+    if str(prompt_evidence.get("policy") or "") == "two_pass_uncertainty":
+        two_pass_decisions = _load_two_pass_uncertainty_decisions(split, prompt_evidence)
 
     out_rows: list[dict[str, Any]] = []
     metric_traces: list[dict[str, Any]] = []
@@ -289,6 +293,11 @@ def _build_split(
     prompt_policy_counter: Counter[str] = Counter()
     prompt_policy_stop_counter: Counter[str] = Counter()
     prompt_policy_selected_counts: list[int] = []
+    two_pass_initial_counts: list[int] = []
+    two_pass_final_counts: list[int] = []
+    two_pass_prompt_tokens_before: list[int] = []
+    two_pass_uncertainty_margins: list[float] = []
+    two_pass_expanded_count = 0
     max_length_guard_violations: Counter[str] = Counter()
 
     iterator = tqdm(
@@ -352,6 +361,9 @@ def _build_split(
                     trace,
                     ordered_indices=selected_indices,
                     config=prompt_evidence,
+                    event_id=event_id,
+                    split=split,
+                    two_pass_decision=two_pass_decisions.get(event_id),
                 )
                 selected_indices = list(prompt_evidence_decision["selected_indices"])
                 candidates = _selected_candidates(trace, selected_indices, selection_mode=selection_mode)
@@ -474,6 +486,18 @@ def _build_split(
         prompt_policy_selected_counts.append(
             int(prompt_evidence_decision["selected_count_before_prompt_truncation"])
         )
+        two_pass_payload = prompt_evidence_decision.get("two_pass_uncertainty")
+        if isinstance(two_pass_payload, dict):
+            two_pass_initial_counts.append(len(two_pass_payload.get("initial_indices") or []))
+            two_pass_final_counts.append(len(two_pass_payload.get("selected_indices") or []))
+            token_count = _int_or_none(two_pass_payload.get("prompt_token_count_before_final_build"))
+            if token_count is not None:
+                two_pass_prompt_tokens_before.append(int(token_count))
+            margin = _float_or_none(two_pass_payload.get("uncertainty_margin"))
+            if margin is not None:
+                two_pass_uncertainty_margins.append(float(margin))
+            if bool(two_pass_payload.get("prompt_evidence_expanded")):
+                two_pass_expanded_count += 1
         prompt_tokens.append(int(training_row.get("prompt_token_count", 0)))
         evidence_counts.append(int(training_row.get("evidence_count", 0)))
         evidence_counts_before.append(
@@ -495,6 +519,15 @@ def _build_split(
             "policy_counts": dict(prompt_policy_counter),
             "stop_reasons": dict(prompt_policy_stop_counter),
             "selected_count_before_prompt_truncation": _summary(prompt_policy_selected_counts),
+            "two_pass_uncertainty": _two_pass_uncertainty_report(
+                two_pass_decisions=two_pass_decisions,
+                row_count=len(out_rows),
+                expanded_count=two_pass_expanded_count,
+                initial_counts=two_pass_initial_counts,
+                final_counts=two_pass_final_counts,
+                prompt_tokens_before=two_pass_prompt_tokens_before,
+                uncertainty_margins=two_pass_uncertainty_margins,
+            ),
         },
         "max_length_guard": _max_length_guard_report(
             max_length_guard,
@@ -620,6 +653,9 @@ def _normalize_prompt_evidence_config(
         dict(raw.get("state_budget") or {}),
         guard=guard,
     )
+    two_pass_uncertainty = _normalize_two_pass_uncertainty_config(
+        dict(raw.get("two_pass_uncertainty") or {})
+    )
     return {
         "policy": policy,
         "min_evidence_count": int(min_count),
@@ -627,6 +663,7 @@ def _normalize_prompt_evidence_config(
         "evidence_token_budget": token_budget,
         "max_length_guard": guard,
         "state_budget": state_budget,
+        "two_pass_uncertainty": two_pass_uncertainty,
     }
 
 
@@ -705,6 +742,20 @@ def _normalize_state_budget_config(
     }
 
 
+def _normalize_two_pass_uncertainty_config(raw: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "decision_dir": _compact_whitespace(raw.get("decision_dir") or ""),
+        "calibration_file": _compact_whitespace(raw.get("calibration_file") or ""),
+        "teacher_run_dir": _compact_whitespace(raw.get("teacher_run_dir") or ""),
+        "teacher_checkpoint": _compact_whitespace(raw.get("teacher_checkpoint") or "best"),
+        "scoring_backend": _compact_whitespace(raw.get("scoring_backend") or "auto"),
+        "base_model": _compact_whitespace(raw.get("base_model") or ""),
+        "decision_file_template": _compact_whitespace(
+            raw.get("decision_file_template") or "two_pass_uncertainty_decisions_{split}.jsonl"
+        ),
+    }
+
+
 def _public_prompt_evidence_config(config: dict[str, Any]) -> dict[str, Any]:
     return {
         "policy": str(config.get("policy") or "prefix_topk"),
@@ -713,6 +764,7 @@ def _public_prompt_evidence_config(config: dict[str, Any]) -> dict[str, Any]:
         "evidence_token_budget": config.get("evidence_token_budget"),
         "max_length_guard": dict(config.get("max_length_guard") or {}),
         "state_budget": dict(config.get("state_budget") or {}),
+        "two_pass_uncertainty": dict(config.get("two_pass_uncertainty") or {}),
     }
 
 
@@ -721,6 +773,9 @@ def _select_prompt_evidence_indices(
     *,
     ordered_indices: list[int],
     config: dict[str, Any],
+    event_id: str | None = None,
+    split: str | None = None,
+    two_pass_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     policy = str(config.get("policy") or "prefix_topk")
     min_count = max(0, int(config.get("min_evidence_count") or 0))
@@ -736,6 +791,27 @@ def _select_prompt_evidence_indices(
     selected: list[int] = []
     total_token_cost = 0
     stop_reason = "end_of_trace"
+
+    if policy == "two_pass_uncertainty":
+        if not isinstance(two_pass_decision, dict):
+            location = ":".join(item for item in (str(split or ""), str(event_id or "")) if item)
+            suffix = f" for {location}" if location else ""
+            raise ValueError(f"missing two-pass uncertainty decision{suffix}")
+        selected = _two_pass_selected_indices_from_decision(
+            trace,
+            ordered_indices=ordered_indices,
+            decision=two_pass_decision,
+        )
+        return _prompt_evidence_decision(
+            selected,
+            policy=policy,
+            min_count=min_count,
+            max_count=max_count,
+            token_budget=token_budget,
+            total_token_cost=_prompt_evidence_total_token_cost(trace, selected),
+            stop_reason=str(two_pass_decision.get("stop_reason") or "two_pass_decision"),
+            two_pass_uncertainty=two_pass_decision,
+        )
 
     if policy in {"prefix_topk", "fixed_topk"}:
         limit = max_count if max_count > 0 else len(ordered_indices)
@@ -888,6 +964,29 @@ def _select_state_budget_prompt_evidence_indices(
     return selected, total_token_cost, stop_reason
 
 
+def _two_pass_selected_indices_from_decision(
+    trace: dict[str, Any],
+    *,
+    ordered_indices: list[int],
+    decision: dict[str, Any],
+) -> list[int]:
+    pool = trace.get("candidate_pool") or []
+    n = len(pool) if isinstance(pool, list) else 0
+    selected = []
+    for item in decision.get("selected_indices") or []:
+        parsed = _int_or_none(item)
+        if parsed is not None:
+            selected.append(int(parsed))
+    selected = _dedupe_in_range(selected, n)
+    if not selected:
+        raise ValueError("two-pass uncertainty decision selected no indices")
+    ordered_set = set(int(idx) for idx in ordered_indices)
+    missing = [idx for idx in selected if idx not in ordered_set]
+    if missing:
+        raise ValueError(f"two-pass uncertainty decision has indices outside selector order: {missing}")
+    return selected
+
+
 def _next_ordered_index(ordered_indices: list[int], position: int) -> int | None:
     next_position = int(position) + 1
     if next_position >= len(ordered_indices):
@@ -923,6 +1022,7 @@ def _prompt_evidence_decision(
     total_token_cost: int,
     stop_reason: str,
     state_budget: dict[str, Any] | None = None,
+    two_pass_uncertainty: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     decision = {
         "selected_indices": [int(idx) for idx in selected],
@@ -936,6 +1036,8 @@ def _prompt_evidence_decision(
     }
     if state_budget is not None:
         decision["state_budget"] = dict(state_budget)
+    if two_pass_uncertainty is not None:
+        decision["two_pass_uncertainty"] = dict(two_pass_uncertainty)
     return decision
 
 
@@ -954,6 +1056,21 @@ def _prompt_evidence_row_fields(config: dict[str, Any], decision: dict[str, Any]
     }
     if decision.get("state_budget") is not None:
         fields["prompt_evidence_state_budget"] = dict(decision.get("state_budget") or {})
+    two_pass = decision.get("two_pass_uncertainty")
+    if isinstance(two_pass, dict):
+        fields.update(
+            {
+                "prompt_evidence_two_pass_initial_count": len(two_pass.get("initial_indices") or []),
+                "prompt_evidence_uncertainty_margin": _float_or_none(two_pass.get("uncertainty_margin")),
+                "prompt_evidence_expanded": bool(two_pass.get("prompt_evidence_expanded")),
+                "prompt_evidence_score_trace": list(two_pass.get("score_trace") or []),
+                "prompt_evidence_decision_source": str(two_pass.get("decision_source") or ""),
+                "prompt_evidence_two_pass_threshold": _float_or_none(two_pass.get("threshold")),
+                "prompt_evidence_prompt_token_count_before_final_build": _int_or_none(
+                    two_pass.get("prompt_token_count_before_final_build")
+                ),
+            }
+        )
     return fields
 
 
@@ -990,6 +1107,65 @@ def _max_length_guard_report(
         "violation_count": violation_count,
         "violation_rate": float(violation_count / max(row_count, 1)),
         "violations_by_reason": dict(violations),
+    }
+
+
+def _load_two_pass_uncertainty_decisions(
+    split: str,
+    prompt_evidence: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    config = dict(prompt_evidence.get("two_pass_uncertainty") or {})
+    decision_dir = _compact_whitespace(config.get("decision_dir") or "")
+    if not decision_dir:
+        raise ValueError("missing two-pass uncertainty decision cache: prompt_evidence.two_pass_uncertainty.decision_dir")
+    template = _compact_whitespace(
+        config.get("decision_file_template") or "two_pass_uncertainty_decisions_{split}.jsonl"
+    )
+    decision_path = Path(decision_dir) / template.format(split=str(split))
+    if not decision_path.exists():
+        raise ValueError(f"missing two-pass uncertainty decision cache: {decision_path}")
+    decisions: dict[str, dict[str, Any]] = {}
+    with decision_path.open(encoding="utf-8") as handle:
+        for line_num, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"invalid two-pass uncertainty decision cache line {line_num}: {decision_path}") from exc
+            event_id = str(row.get("event_id") or "")
+            if not event_id:
+                raise ValueError(f"two-pass uncertainty decision missing event_id at {decision_path}:{line_num}")
+            copied = dict(row)
+            copied["decision_source"] = str(decision_path)
+            decisions[event_id] = copied
+    if not decisions:
+        raise ValueError(f"missing two-pass uncertainty decision cache rows: {decision_path}")
+    return decisions
+
+
+def _two_pass_uncertainty_report(
+    *,
+    two_pass_decisions: dict[str, dict[str, Any]],
+    row_count: int,
+    expanded_count: int,
+    initial_counts: list[int],
+    final_counts: list[int],
+    prompt_tokens_before: list[int],
+    uncertainty_margins: list[float],
+) -> dict[str, Any]:
+    if not two_pass_decisions:
+        return {"enabled": False}
+    return {
+        "enabled": True,
+        "decision_count": int(len(two_pass_decisions)),
+        "expanded_count": int(expanded_count),
+        "expanded_rate": float(expanded_count / max(int(row_count), 1)),
+        "initial_evidence_count": _summary(initial_counts),
+        "final_evidence_count": _summary(final_counts),
+        "prompt_token_count_before_final_build": _summary(prompt_tokens_before),
+        "uncertainty_margin": _float_summary(uncertainty_margins),
     }
 
 
@@ -1887,6 +2063,22 @@ def _float_or_default(value: Any, default: float) -> float:
 
 
 def _summary(values: list[int]) -> dict[str, float]:
+    if not values:
+        return {"count": 0.0}
+    arr = np.asarray(values, dtype=np.float64)
+    return {
+        "count": float(arr.size),
+        "min": float(arr.min()),
+        "p50": float(np.percentile(arr, 50)),
+        "p90": float(np.percentile(arr, 90)),
+        "p95": float(np.percentile(arr, 95)),
+        "p99": float(np.percentile(arr, 99)),
+        "max": float(arr.max()),
+        "mean": float(arr.mean()),
+    }
+
+
+def _float_summary(values: list[float]) -> dict[str, float]:
     if not values:
         return {"count": 0.0}
     arr = np.asarray(values, dtype=np.float64)

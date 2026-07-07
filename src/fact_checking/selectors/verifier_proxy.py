@@ -11,7 +11,14 @@ import torch
 from torch import nn
 
 from fact_checking.build.candidates import canonicalize_sentence
-from fact_checking.data.constants import LABEL2ID, LABELS, LABEL_LETTERS, LETTER2LABEL, LETTER_ORDER
+from fact_checking.data.constants import (
+    LABEL2ID,
+    LABELS,
+    LABEL_LETTERS,
+    LETTER2LABEL,
+    LETTER_ORDER,
+    letter_order_for_schema,
+)
 from fact_checking.pipeline.artifacts import fingerprint
 
 
@@ -93,7 +100,12 @@ def require_verifier_checkpoint(
     )
 
 
-def load_label_token_ids(run_dir: str | Path, *, label_prefix: str = "Label:") -> dict[str, int]:
+def load_label_token_ids(
+    run_dir: str | Path,
+    *,
+    label_prefix: str = "Label:",
+    label_schema: str | None = None,
+) -> dict[str, int]:
     meta_path = Path(run_dir) / "label_token_ce_meta.json"
     if not meta_path.exists():
         raise FileNotFoundError(f"Missing label token metadata: {meta_path}")
@@ -104,10 +116,12 @@ def load_label_token_ids(run_dir: str | Path, *, label_prefix: str = "Label:") -
             f"label_prefix mismatch: expected {label_prefix!r}, got {meta.get('label_prefix')!r}."
         )
     ids = {str(key): int(value) for key, value in dict(meta.get("label_token_ids") or {}).items()}
-    missing = [letter for letter in LETTER_ORDER if letter not in ids]
+    meta_schema = str(meta.get("label_schema") or label_schema or "liar6")
+    letter_order = letter_order_for_schema(meta_schema)
+    missing = [letter for letter in letter_order if letter not in ids]
     if missing:
         raise ValueError(f"label_token_ce_meta.json is missing label token ids for: {missing}")
-    return {letter: ids[letter] for letter in LETTER_ORDER}
+    return {letter: ids[letter] for letter in letter_order}
 
 
 def sha256_file(path: str | Path) -> str:

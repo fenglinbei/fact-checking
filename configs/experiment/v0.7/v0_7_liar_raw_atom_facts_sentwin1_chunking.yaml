@@ -1,0 +1,23 @@
+# @package _global_
+# LIAR-RAW sentence-window evidence units for selector-free atom-union chunking ablation.
+
+defaults:
+  - /experiment/baselines/b0
+  - _self_
+
+experiment:
+  name: v0_7_liar_raw_atom_facts_sentwin1_chunking
+
+baseline:
+  variant: v0_7_atom_facts_sentwin1
+  chunking_strategy: ctx_window
+
+build:
+  retrieval:
+    chunking:
+      strategy: ctx_window
+      context_k: 1
+      theta: 0.7
+
+swanlab:
+  experiment_name: v0_7_liar_raw_atom_facts_sentwin1
