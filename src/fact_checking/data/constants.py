@@ -90,6 +90,20 @@ RAWFC_NUMERIC_LABELS = {
     "5": "true",
 }
 
+HOVER2_LABELS = ["supported", "not_supported"]
+HOVER2_LABEL2ID = {label: idx for idx, label in enumerate(HOVER2_LABELS)}
+HOVER2_ID2LABEL = {idx: label for label, idx in HOVER2_LABEL2ID.items()}
+HOVER2_LABEL_LETTERS = {
+    "supported": "A",
+    "not_supported": "B",
+}
+HOVER2_LETTER2LABEL = {letter: label for label, letter in HOVER2_LABEL_LETTERS.items()}
+HOVER2_LETTER_ORDER = [HOVER2_LABEL_LETTERS[label] for label in HOVER2_LABELS]
+HOVER2_LABEL_DEFINITIONS = {
+    "supported": "the claim is supported by the retrieved Wikipedia facts",
+    "not_supported": "the claim is not supported by the retrieved Wikipedia facts",
+}
+
 COVERAGE_LABELS = ["covered", "weak_covered", "uncovered"]
 COVERAGE_LABEL2ID = {label: idx for idx, label in enumerate(COVERAGE_LABELS)}
 COVERAGE_ID2LABEL = {idx: label for label, idx in COVERAGE_LABEL2ID.items()}
@@ -121,6 +135,13 @@ LABEL_SCHEMAS = {
         label_letters=dict(RAWFC3_LABEL_LETTERS),
         label_definitions=dict(RAWFC3_LABEL_DEFINITIONS),
     ),
+    "hover2": LabelSchema(
+        name="hover2",
+        task_name="HoVer",
+        labels=list(HOVER2_LABELS),
+        label_letters=dict(HOVER2_LABEL_LETTERS),
+        label_definitions=dict(HOVER2_LABEL_DEFINITIONS),
+    ),
 }
 
 _SCHEMA_ALIASES = {
@@ -132,6 +153,9 @@ _SCHEMA_ALIASES = {
     "liar6": "liar6",
     "rawfc": "rawfc3",
     "rawfc3": "rawfc3",
+    "hover": "hover2",
+    "hover2": "hover2",
+    "ho_ver": "hover2",
 }
 
 

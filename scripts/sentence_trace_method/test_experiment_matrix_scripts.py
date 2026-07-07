@@ -583,6 +583,86 @@ def test_rawfc_atom_anchor_baseline20_fullpool_policy_wrapper_reads_baseline20_y
     assert "SFT_EVAL_STEPS=50" in output
 
 
+def test_rawfc_llama31_atom_anchor_fullpool_minmax5_10_lora_matches_rawfc_recipe(
+    tmp_path: Path,
+) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_rawfc_llama31_atom_anchor_v0_2_fullpool_minmax5_10_lora_ebs16_lr1e5_ep12_eval50.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "FORCE_BUILD": "true",
+            "FORCE_MREC_BUILD": "true",
+            "FORCE_WEIGHT_TRAIN": "true",
+            "MODE": "full",
+            "RUN_TAU_EVAL": "auto",
+        },
+    )
+
+    assert "MREC_POLICY_CONFIG=configs/experiment/mrec_v0.2/rawfc_llama31_learned_marginal_proxy_fullpool_minmax5_10_lora.yaml" in output
+    assert "BASE_CASE_NAME=rawfc__llama31_8b" in output
+    assert "MODEL_PATH=/data/models/Meta-Llama-3.1-8B-Instruct" in output
+    assert "rawfc__llama31_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_lora_ebs16_lr1em5_ep12_eval50_pat8_rawfc" in output
+    assert "PROMPT_EVIDENCE_POLICY=minmax" in output
+    assert "PROMPT_EVIDENCE_MIN_COUNT=5" in output
+    assert "PROMPT_EVIDENCE_MAX_COUNT=10" in output
+    assert "--dataset rawfc" in output
+    assert "--label-schema rawfc3" in output
+    assert "--prompt-model-name-or-path /data/models/Meta-Llama-3.1-8B-Instruct" in output
+    assert "--train-model-name-or-path /data/models/Meta-Llama-3.1-8B-Instruct" in output
+    assert "--class-weight false=1.0" in output
+    assert "--class-weight half=1.0" in output
+    assert "--class-weight true=1.0" in output
+    assert "SFT_LEARNING_RATE=1e-5" in output
+    assert "SFT_NUM_TRAIN_EPOCHS=12" in output
+    assert "SFT_EVAL_STEPS=50" in output
+    assert "SFT_SAVE_STEPS=50" in output
+    assert "SFT_EARLY_STOPPING_PATIENCE=8" in output
+    assert "DEEPSPEED_CONFIG=configs/deepspeed/deepspeed_zero2_bsz1_ga4.json" in output
+    assert "--deepspeed-config configs/deepspeed/deepspeed_zero2_bsz1_ga4.json" in output
+    assert "LORA_R=16" in output
+    assert "LORA_ALPHA=32" in output
+    assert "LORA_DROPOUT=0.1" in output
+    assert "REQUIRE_PROMPT_INPUT_IDS=false" in output
+    assert "configs/deepspeed_zero2_bsz1_ga4.json" not in output
+    assert "pants-fire" not in output
+
+
+def test_rawfc_llama31_atom_anchor_fullpool_minmax5_10_fullft_matches_rawfc_recipe(
+    tmp_path: Path,
+) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_rawfc_llama31_atom_anchor_v0_2_fullpool_minmax5_10_fullft_ebs16_lr1e5_ep12_eval50.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "FORCE_BUILD": "true",
+            "FORCE_MREC_BUILD": "true",
+            "FORCE_WEIGHT_TRAIN": "true",
+            "MODE": "full",
+            "RUN_TAU_EVAL": "auto",
+        },
+    )
+
+    assert "MREC_POLICY_CONFIG=configs/experiment/mrec_v0.2/rawfc_llama31_learned_marginal_proxy_fullpool_minmax5_10_fullft.yaml" in output
+    assert "FINETUNE_MODE=fullft" in output
+    assert "BASE_CASE_NAME=rawfc__llama31_8b" in output
+    assert "MODEL_PATH=/data/models/Meta-Llama-3.1-8B-Instruct" in output
+    assert "CASE_NAME=rawfc__llama31_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_fullft_ebs16_lr1em5_ep12_eval50_pat8_rawfc" in output
+    assert "rawfc__llama31_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_fullft_ebs16_lr1em5_ep12_eval50_pat8_rawfc_lora" not in output
+    assert "configs/deepspeed/deepspeed_zero3_bsz1_ga4_lowpeak.json" in output
+    assert "configs/deepspeed_zero3_bsz1_ga4_lowpeak.json" not in output
+    assert "SFT_GRADIENT_ACCUMULATION_STEPS=4" in output
+    assert "SFT_LEARNING_RATE=1e-5" in output
+    assert "SFT_NUM_TRAIN_EPOCHS=12" in output
+    assert "SFT_EVAL_STEPS=50" in output
+    assert "SFT_SAVE_STEPS=50" in output
+    assert "SFT_EARLY_STOPPING_PATIENCE=8" in output
+    assert "--config" in output
+    assert "train.resolved.yaml" in output
+    assert "prepare_lora_config.py" not in output
+    assert "REQUIRE_PROMPT_INPUT_IDS=false" in output
+    assert "pants-fire" not in output
+
+
 def test_mrec_policy_config_does_not_export_swanlab_project_env() -> None:
     result = subprocess.run(
         [

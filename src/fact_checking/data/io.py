@@ -29,6 +29,8 @@ def load_split(
     dataset_name = _normalize_dataset(dataset, path=path, label_schema=label_schema)
     if dataset_name == "rawfc":
         return _load_rawfc_split(path, label_schema=label_schema or "rawfc3")
+    if dataset_name == "hover":
+        return _load_hover_split(path, label_schema=label_schema or "hover2")
     return _load_liar_raw_split(path, label_schema=label_schema or "liar6")
 
 
@@ -36,13 +38,19 @@ def _normalize_dataset(dataset: str | None, *, path: Path, label_schema: str | N
     raw = str(dataset or "").strip().lower().replace("-", "_")
     if raw in {"rawfc", "raw_fc"}:
         return "rawfc"
+    if raw in {"hover", "ho_ver"}:
+        return "hover"
     if raw in {"", "liar", "liar_raw", "liar6"}:
         if label_schema and normalize_label_schema(label_schema) == "rawfc3":
             return "rawfc"
+        if label_schema and normalize_label_schema(label_schema) == "hover2":
+            return "hover"
         if any(part.lower() == "rawfc" for part in path.parts):
             return "rawfc"
+        if any(part.lower() == "hover" for part in path.parts):
+            return "hover"
         return "liar_raw"
-    raise ValueError(f"Unsupported dataset={dataset!r}. Use liar_raw or rawfc.")
+    raise ValueError(f"Unsupported dataset={dataset!r}. Use liar_raw, rawfc, or hover.")
 
 
 def _load_liar_raw_split(path: Path, *, label_schema: str) -> list[SampleRecord]:
@@ -106,6 +114,29 @@ def _load_rawfc_split(path: Path, *, label_schema: str) -> list[SampleRecord]:
     return records
 
 
+def _load_hover_split(path: Path, *, label_schema: str) -> list[SampleRecord]:
+    label2id = label2id_for_schema(label_schema)
+    with path.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+    records: list[SampleRecord] = []
+    for item in payload:
+        label = _hover_label_name(item.get("label"), path=path)
+        if label and label not in label2id:
+            raise ValueError(f"Unknown HoVer label: {label!r} in {path}")
+        reports = item.get("reports") or []
+        records.append(
+            SampleRecord(
+                event_id=str(item["uid"]),
+                claim=clean_text(str(item["claim"])),
+                label=label,
+                explain=clean_text(str(item.get("explain", ""))),
+                reports=reports if isinstance(reports, list) else [],
+                metadata=_hover_metadata_from_raw_row(item, has_gold_label=bool(label)),
+            )
+        )
+    return records
+
+
 def _metadata_from_raw_row(item: dict[str, Any]) -> dict[str, Any]:
     return {key: item[key] for key in COVERAGE_METADATA_KEYS if key in item}
 
@@ -119,6 +150,30 @@ def _rawfc_label_name(value: Any, *, path: Path) -> str:
     if text in {"true", "false", "half"}:
         return text
     raise ValueError(f"Unknown RAWFC numeric label: {value!r} in {path}")
+
+
+def _hover_label_name(value: Any, *, path: Path) -> str:
+    if value is None:
+        return ""
+    text = clean_text(str(value)).lower().replace("-", "_")
+    if text in {"", "none", "null"}:
+        return ""
+    if text in {"supported", "support"}:
+        return "supported"
+    if text in {"not_supported", "notsupported", "not support", "not supported"}:
+        return "not_supported"
+    raise ValueError(f"Unknown HoVer label: {value!r} in {path}")
+
+
+def _hover_metadata_from_raw_row(item: dict[str, Any], *, has_gold_label: bool) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "source_dataset": "hover",
+        "has_gold_label": has_gold_label,
+    }
+    for key in ("supporting_facts", "num_hops", "hpqa_id"):
+        if key in item:
+            metadata[key] = item[key]
+    return metadata
 
 
 def load_jsonl(path: str | Path) -> list[dict[str, Any]]:

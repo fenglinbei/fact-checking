@@ -17,6 +17,11 @@ _RAWFC_LABEL_PATTERNS = [
     ("true", r"\btrue\b"),
 ]
 
+_HOVER_LABEL_PATTERNS = [
+    ("not_supported", r"\bnot\s+supported\b|\bnot\s+support\b|\bnotsupported\b"),
+    ("supported", r"\bsupported\b|\bsupport\b"),
+]
+
 
 def _normalize_for_match(text: str) -> str:
     clean = text.strip().lower()
@@ -35,6 +40,8 @@ def _label_patterns(label_schema: str | None) -> list[tuple[str, str]]:
     labels = labels_for_schema(label_schema)
     if labels == ["false", "half", "true"]:
         return _RAWFC_LABEL_PATTERNS
+    if labels == ["supported", "not_supported"]:
+        return _HOVER_LABEL_PATTERNS
     return [item for item in _LIAR_LABEL_PATTERNS if item[0] in set(labels)]
 
 

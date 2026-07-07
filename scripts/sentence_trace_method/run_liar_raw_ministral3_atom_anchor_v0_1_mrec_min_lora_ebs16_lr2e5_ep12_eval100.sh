@@ -37,11 +37,24 @@ LABEL_SCHEMA="${LABEL_SCHEMA:-liar6}"
 BASE_CASE_NAME="${BASE_CASE_NAME:-${DATASET}__ministral3_8b}"
 CASE_NAME="${CASE_NAME:-${BASE_CASE_NAME}${CASE_SUFFIX}}"
 CASE_ROOT="${CASE_ROOT:-${OUTPUT_ROOT}/${CASE_NAME}}"
-LORA_SUFFIX="${LORA_SUFFIX:-_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw}"
-LORA_ROOT="${LORA_ROOT:-${CASE_ROOT}${LORA_SUFFIX}}"
+FINETUNE_MODE="${FINETUNE_MODE:-lora}"
+case "$FINETUNE_MODE" in
+  lora)
+    LORA_SUFFIX="${LORA_SUFFIX:-_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw}"
+    LORA_ROOT="${LORA_ROOT:-${CASE_ROOT}${LORA_SUFFIX}}"
+    TRAIN_CASE_ROOT="$LORA_ROOT"
+    ;;
+  fullft)
+    LORA_SUFFIX="${LORA_SUFFIX-}"
+    LORA_ROOT="${LORA_ROOT:-}"
+    TRAIN_CASE_ROOT="$CASE_ROOT"
+    ;;
+  *) printf 'Unsupported FINETUNE_MODE=%s. Use lora or fullft.\n' "$FINETUNE_MODE" >&2; exit 2 ;;
+esac
 
 MODE="${MODE:-full}" # check|build|train|eval|full
 DRY_RUN="${DRY_RUN:-false}"
+REQUIRE_PROMPT_INPUT_IDS="${REQUIRE_PROMPT_INPUT_IDS:-true}"
 FORCE_BUILD="${FORCE_BUILD:-auto}"
 FORCE_LORA_CONFIG="${FORCE_LORA_CONFIG:-false}"
 FORCE_TRAIN="${FORCE_TRAIN:-false}"
@@ -224,7 +237,7 @@ PY
 }
 
 validate_prompt_input_ids() {
-  if [[ "$DRY_RUN" == "true" ]]; then
+  if [[ "$REQUIRE_PROMPT_INPUT_IDS" != "true" || "$DRY_RUN" == "true" ]]; then
     return 0
   fi
   "$PYTHON_BIN" - "$CASE_ROOT" <<'PY'
@@ -327,9 +340,9 @@ prepare_lora_config() {
 }
 
 train_lora() {
-  require_path "${LORA_ROOT}/train.resolved.yaml" "LoRA train config"
-  if training_complete "$LORA_ROOT" && [[ "$FORCE_TRAIN" != "true" ]]; then
-    printf '[%s] LoRA training already complete: %s; set FORCE_TRAIN=true to rerun.\n' "$RUN_LABEL" "$LORA_ROOT"
+  require_path "${TRAIN_CASE_ROOT}/train.resolved.yaml" "${FINETUNE_MODE} train config"
+  if training_complete "$TRAIN_CASE_ROOT" && [[ "$FORCE_TRAIN" != "true" ]]; then
+    printf '[%s] %s training already complete: %s; set FORCE_TRAIN=true to rerun.\n' "$RUN_LABEL" "$FINETUNE_MODE" "$TRAIN_CASE_ROOT"
     return 0
   fi
   check_distributed_device_request
@@ -344,11 +357,11 @@ train_lora() {
     --use_deepspeed \
     --deepspeed_config_file "$DEEPSPEED_CONFIG" \
     -m sft.label_token_trainer \
-    --config "${LORA_ROOT}/train.resolved.yaml"
+    --config "${TRAIN_CASE_ROOT}/train.resolved.yaml"
 }
 
 eval_lora() {
-  require_path "${LORA_ROOT}/train.resolved.yaml" "LoRA train config"
+  require_path "${TRAIN_CASE_ROOT}/train.resolved.yaml" "${FINETUNE_MODE} train config"
   local split checkpoint metrics_path
   IFS=',' read -r -a split_array <<< "$EVAL_SPLITS"
   IFS=',' read -r -a checkpoint_array <<< "$CHECKPOINTS"
@@ -358,16 +371,16 @@ eval_lora() {
     for checkpoint in "${checkpoint_array[@]}"; do
       checkpoint="${checkpoint// /}"
       [[ -z "$checkpoint" ]] && continue
-      metrics_path="${LORA_ROOT}/eval/${split}/${checkpoint}/metrics.json"
+      metrics_path="${TRAIN_CASE_ROOT}/eval/${split}/${checkpoint}/metrics.json"
       if [[ -f "$metrics_path" && "$FORCE_EVAL" != "true" ]]; then
         printf '[%s] eval exists: %s; set FORCE_EVAL=true to rerun.\n' "$RUN_LABEL" "$metrics_path"
         continue
       fi
       run_cmd "$PYTHON_BIN" -m sft.label_token_infer \
-        --run-dir "${LORA_ROOT}/train" \
+        --run-dir "${TRAIN_CASE_ROOT}/train" \
         --checkpoint "$checkpoint" \
         --split "$split" \
-        --config "${LORA_ROOT}/train.resolved.yaml"
+        --config "${TRAIN_CASE_ROOT}/train.resolved.yaml"
     done
   done
 }
@@ -378,7 +391,7 @@ run_tau_eval() {
   fi
   run_cmd env \
     PYTHON_BIN="$PYTHON_BIN" \
-    CASE_ROOT="$LORA_ROOT" \
+    CASE_ROOT="$TRAIN_CASE_ROOT" \
     SPLITS="$TAU_SPLITS" \
     CHECKPOINTS="$CHECKPOINTS" \
     TAUS="$TAUS" \
@@ -388,9 +401,9 @@ run_tau_eval() {
     bash scripts/sentence_trace_method/run_lora_label_token_logit_adjust_eval_only.sh
 }
 
-printf '[%s] CASE_NAME=%s CASE_SUFFIX=%s DATASET=%s LABEL_SCHEMA=%s ATOM_ANCHOR_ROOT=%s TRACE_ROOT=%s QUALITY_AUDIT_MODE=%s MODE=%s TRACE_PROMPT_STYLE=%s EVIDENCE_TEXT_MODE=%s TRACE_TOP_K=%s EXPECTED_SELECTOR_NAME=%s LORA_ROOT=%s EVAL_SPLITS=%s RUN_TAU_EVAL=%s SFT_LEARNING_RATE=%s SFT_NUM_TRAIN_EPOCHS=%s SFT_EVAL_STEPS=%s DEEPSPEED_CONFIG=%s NPROC_PER_NODE=%s CLASS_WEIGHTS=%s CUDA_VISIBLE_DEVICES=%s\n' \
+printf '[%s] CASE_NAME=%s CASE_SUFFIX=%s DATASET=%s LABEL_SCHEMA=%s ATOM_ANCHOR_ROOT=%s TRACE_ROOT=%s QUALITY_AUDIT_MODE=%s MODE=%s FINETUNE_MODE=%s TRACE_PROMPT_STYLE=%s EVIDENCE_TEXT_MODE=%s TRACE_TOP_K=%s EXPECTED_SELECTOR_NAME=%s TRAIN_CASE_ROOT=%s LORA_ROOT=%s EVAL_SPLITS=%s RUN_TAU_EVAL=%s REQUIRE_PROMPT_INPUT_IDS=%s SFT_LEARNING_RATE=%s SFT_NUM_TRAIN_EPOCHS=%s SFT_EVAL_STEPS=%s SFT_SAVE_STEPS=%s SFT_EARLY_STOPPING_PATIENCE=%s DEEPSPEED_CONFIG=%s NPROC_PER_NODE=%s CLASS_WEIGHTS=%s CUDA_VISIBLE_DEVICES=%s\n' \
   "$RUN_HEADER_LABEL" \
-  "$CASE_NAME" "$CASE_SUFFIX" "$DATASET" "$LABEL_SCHEMA" "$ATOM_ANCHOR_ROOT" "$TRACE_ROOT" "$QUALITY_AUDIT_MODE" "$MODE" "$TRACE_PROMPT_STYLE" "$EVIDENCE_TEXT_MODE" "$TRACE_TOP_K" "$EXPECTED_SELECTOR_NAME" "$LORA_ROOT" "$EVAL_SPLITS" "$RUN_TAU_EVAL" "$SFT_LEARNING_RATE" "$SFT_NUM_TRAIN_EPOCHS" "$SFT_EVAL_STEPS" "$DEEPSPEED_CONFIG" "$NPROC_PER_NODE" "$CLASS_WEIGHTS" "${CUDA_VISIBLE_DEVICES:-<unset>}"
+  "$CASE_NAME" "$CASE_SUFFIX" "$DATASET" "$LABEL_SCHEMA" "$ATOM_ANCHOR_ROOT" "$TRACE_ROOT" "$QUALITY_AUDIT_MODE" "$MODE" "$FINETUNE_MODE" "$TRACE_PROMPT_STYLE" "$EVIDENCE_TEXT_MODE" "$TRACE_TOP_K" "$EXPECTED_SELECTOR_NAME" "$TRAIN_CASE_ROOT" "$LORA_ROOT" "$EVAL_SPLITS" "$RUN_TAU_EVAL" "$REQUIRE_PROMPT_INPUT_IDS" "$SFT_LEARNING_RATE" "$SFT_NUM_TRAIN_EPOCHS" "$SFT_EVAL_STEPS" "$SFT_SAVE_STEPS" "$SFT_EARLY_STOPPING_PATIENCE" "$DEEPSPEED_CONFIG" "$NPROC_PER_NODE" "$CLASS_WEIGHTS" "${CUDA_VISIBLE_DEVICES:-<unset>}"
 
 case "$MODE" in
   check)
@@ -399,18 +412,20 @@ case "$MODE" in
   build)
     check_quality
     build_verifier_data
-    prepare_lora_config
+    if [[ "$FINETUNE_MODE" == "lora" ]]; then
+      prepare_lora_config
+    fi
     ;;
   train)
     check_quality
-    if [[ ! -f "${LORA_ROOT}/train.resolved.yaml" ]]; then
+    if [[ "$FINETUNE_MODE" == "lora" && ! -f "${LORA_ROOT}/train.resolved.yaml" ]]; then
       prepare_lora_config
     fi
     train_lora
     ;;
   eval)
     check_quality
-    if [[ ! -f "${LORA_ROOT}/train.resolved.yaml" ]]; then
+    if [[ "$FINETUNE_MODE" == "lora" && ! -f "${LORA_ROOT}/train.resolved.yaml" ]]; then
       prepare_lora_config
     fi
     eval_lora
@@ -419,7 +434,9 @@ case "$MODE" in
   full)
     check_quality
     build_verifier_data
-    prepare_lora_config
+    if [[ "$FINETUNE_MODE" == "lora" ]]; then
+      prepare_lora_config
+    fi
     train_lora
     eval_lora
     run_tau_eval
