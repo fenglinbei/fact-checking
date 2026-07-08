@@ -1,0 +1,98 @@
+<!--
+  Label Studio 配置：可信度实验 2 — Evidence Map 标注准确率评测
+  对应指导书第 3 节。
+
+  输入数据字段（每条 task = 一个 (evidence, atom) pair）:
+    - event_id:          str   样本 ID
+    - dataset:           str   数据集名
+    - claim:             str   原始声明
+    - atom_id:           str   atom 编号 (A1, A2, ...)
+    - atom_proposition:  str   atom 命题文本
+    - evidence_id:       str   证据编号 (E01, E02, ...)
+    - evidence_text:     str   证据文本
+
+  注意: LLM 的 relation/directness/confidence 不在输入中展示（隐藏，避免锚定偏差）。
+        仅在标注完成后比对阶段揭示。
+
+  标注产出:
+    - gold_relation:     support / refute / qualify / mixed / insufficient / background / irrelevant
+    - gold_directness:   direct / partial / context / none
+    - gold_confidence:   0.0–1.0 滑块
+    - notes:             自由文本
+-->
+<View>
+  <!-- ============ 顶部元信息 ============ -->
+  <View name="auto_1" style="background:#f5f5f5;padding:8px 12px;border-radius:4px;margin-bottom:12px">
+    <Text name="meta" value="样本 ID: $event_id  |  数据集: $dataset  |  Atom: $atom_id  |  Evidence: $evidence_id" />
+  </View>
+
+  <!-- ============ Claim 展示（中英对照）============ -->
+  <View name="auto_2" style="border-left:4px solid #2196F3;padding:8px 12px;margin-bottom:12px;background:#fafafa">
+    <Text name="auto_3" value="📋 Claim（声明）" style="font-size:14px;font-weight:bold;color:#2196F3" />
+    <Text name="claim" value="$claim" style="font-size:15px;line-height:1.6" />
+    <Text name="claim_zh_label" value="中文翻译（辅助参考，以英文为准）：" style="font-size:11px;color:#888;margin-top:4px" />
+    <Text name="claim_zh" value="$claim_zh" style="font-size:13px;line-height:1.5;color:#666" />
+  </View>
+
+  <!-- ============ Atom 展示 ============ -->
+  <View name="auto_4" style="border-left:4px solid #4caf50;padding:8px 12px;margin-bottom:12px;background:#f1f8e9">
+    <Text name="auto_5" value="🧩 Atom（原子命题）$atom_id" style="font-size:14px;font-weight:bold;color:#2e7d32" />
+    <Text name="atom_prop" value="$atom_proposition" style="font-size:15px;line-height:1.6" />
+  </View>
+
+  <!-- ============ Evidence 展示（中英对照）============ -->
+  <View name="auto_6" style="border-left:4px solid #ff9800;padding:8px 12px;margin-bottom:16px;background:#fff8e1">
+    <Text name="auto_7" value="📄 Evidence（证据）$evidence_id" style="font-size:14px;font-weight:bold;color:#e65100" />
+    <Text name="evidence" value="$evidence_text" style="font-size:15px;line-height:1.7" />
+    <Text name="evidence_zh_label" value="中文翻译（辅助参考，以英文为准）：" style="font-size:11px;color:#888;margin-top:4px" />
+    <Text name="evidence_text_zh" value="$evidence_text_zh" style="font-size:13px;line-height:1.5;color:#666" />
+  </View>
+
+  <!-- ============ 提示框 ============ -->
+  <View name="auto_8" style="background:#fff3e0;padding:8px 12px;border-radius:4px;margin-bottom:16px">
+    <Text name="auto_9" value="⚠ 请独立判断 evidence 对 atom 的关系。不要尝试猜测 LLM 的标注。只看 evidence 文本本身，不结合其他证据、不上网查证。" style="font-size:12px;color:#e65100" />
+  </View>
+
+  <!-- ============ Gold Relation 标注 ============ -->
+  <Header value="一、Gold Relation（关系类型）" />
+  <Text name="auto_10" value="请按判定流程树判断（详见指导书 3.3 节）：" style="font-size:12px;color:#666;margin-bottom:4px" />
+  <Choices name="gold_relation" toName="evidence" choice="single" required="true">
+    <Choice value="support" hint="证据直接支持该 atom 为真" />
+    <Choice value="refute" hint="证据直接反驳该 atom（证明其为假）" />
+    <Choice value="qualify" hint="部分支持/部分反驳，或加限定条件" />
+    <Choice value="mixed" hint="证据内部同时含支持和反驳成分" />
+    <Choice value="insufficient" hint="与 atom 有关，但信息不足以判断 support/refute" />
+    <Choice value="background" hint="仅提供背景上下文，不涉及 atom 真值" />
+    <Choice value="irrelevant" hint="证据与该 atom 无关" />
+  </Choices>
+
+  <View name="auto_11" style="height:16px" />
+
+  <!-- ============ Gold Directness 标注 ============ -->
+  <Header value="二、Gold Directness（直接程度）" />
+  <Text name="auto_12" value="证据对该 atom 的直接程度：" style="font-size:12px;color:#666;margin-bottom:4px" />
+  <Choices name="gold_directness" toName="evidence" choice="single" required="true">
+    <Choice value="direct" hint="证据直接陈述 atom 真值，可直接判断对错" />
+    <Choice value="partial" hint="证据间接涉及 atom，需推理才能联系" />
+    <Choice value="context" hint="证据仅提供背景上下文" />
+    <Choice value="none" hint="证据与 atom 无直接关联（通常配 irrelevant）" />
+  </Choices>
+
+  <View name="auto_13" style="height:16px" />
+
+  <!-- ============ Gold Confidence 标注 ============ -->
+  <Header value="三、Gold Confidence（你的自信程度）" />
+  <Text name="auto_14" value="你对上述 relation 标注的自信程度（0=纯猜，0.5=一半把握，1=完全确定）。用于后续校准分析，请诚实填写。" style="font-size:12px;color:#666;margin-bottom:6px" />
+  <Slider name="gold_confidence" toName="evidence" min="0" max="1" step="0.05" defaultValue="0.5" />
+
+  <View name="auto_15" style="height:16px" />
+
+  <!-- ============ 备注 ============ -->
+  <Header value="四、备注（可选，relation 难判断时请说明理由）" style="font-size:13px" />
+  <TextArea name="notes" toName="evidence" rows="3" placeholder="如: evidence 提到了相关实体但讨论另一件事；refute 和 qualify 之间犹豫，因为..." />
+
+  <!-- ============ 底部提示 ============ -->
+  <View name="auto_16" style="background:#e3f2fd;padding:8px 12px;border-radius:4px;margin-top:8px">
+    <Text name="auto_17" value="✅ 提交前请确认: gold_relation / gold_directness / gold_confidence 均已填写。" style="font-size:12px;color:#1565c0" />
+  </View>
+</View>

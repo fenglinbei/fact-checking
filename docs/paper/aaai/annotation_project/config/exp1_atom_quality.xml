@@ -1,0 +1,81 @@
+<View>
+  <!-- ============ 顶部元信息 ============ -->
+  <View name="auto_1" style="background:#f5f5f5;padding:8px 12px;border-radius:4px;margin-bottom:12px">
+    <Text name="auto_2" value="样本 ID: $event_id  |  数据集: $dataset  |  Atom: $atom_id" />
+  </View>
+
+  <!-- ============ Claim 展示（中英对照）============ -->
+  <View name="auto_3" style="border-left:4px solid #2196F3;padding:8px 12px;margin-bottom:16px;background:#fafafa">
+    <Text name="auto_4" value="📋 Claim（声明）" style="font-size:14px;font-weight:bold;color:#2196F3" />
+    <Text name="claim" value="$claim" style="font-size:15px;line-height:1.6" />
+    <Text name="claim_zh_label" value="中文翻译（辅助参考，以英文为准）：" style="font-size:11px;color:#888;margin-top:4px" />
+    <Text name="claim_zh" value="$claim_zh" style="font-size:13px;line-height:1.5;color:#666" />
+  </View>
+
+  <!-- ============ Claim 整体复杂度 ============ -->
+  <Header value="一、Claim 整体复杂度" />
+  <Choices name="claim_complexity" toName="claim" choice="single" required="true">
+    <Choice value="simple" hint="单一可验证断言" />
+    <Choice value="compound" hint="含多个可独立验证断言" />
+  </Choices>
+
+  <View name="auto_5" style="height:16px" />
+
+  <!-- ============ Atom 评测 ============ -->
+  <Header value="二、Atom 评测" />
+  <View name="auto_13" style="background:#fff3e0;padding:8px 12px;border-radius:4px;margin-bottom:8px">
+    <Text name="auto_14" value="⚠ 评估 LLM 拆出的 atom 质量，不需要改写 atom。" style="font-size:12px;color:#e65100" />
+  </View>
+
+  <View name="auto_6" style="border:1px solid #e0e0e0;border-radius:6px;padding:10px 14px;margin-bottom:14px">
+    <!-- Atom 文本展示（中英对照） -->
+    <View name="auto_7" style="background:#e8f5e9;padding:8px 12px;border-radius:4px;margin-bottom:10px">
+      <Text name="auto_15" value="🧩 Atom" style="font-size:13px;font-weight:bold;color:#2e7d32" />
+      <Text name="atom_prop" value="$proposition" style="font-size:14px;line-height:1.6" />
+      <Text name="proposition_zh_label" value="中文翻译（辅助参考，以英文为准）：" style="font-size:11px;color:#888;margin-top:4px" />
+      <Text name="proposition_zh" value="$proposition_zh" style="font-size:13px;line-height:1.5;color:#666" />
+      <Text name="auto_16" value="类型: $type" style="font-size:11px;color:#aaa;margin-top:4px" />
+    </View>
+
+    <!-- 维度 A: 忠实性 -->
+    <Header value="维度 A · 忠实性 Faithfulness" style="font-size:13px" />
+    <Text name="auto_8" value="该 atom 的语义能否完全从 claim 推出，且没有引入 claim 中不存在的信息？" style="font-size:12px;color:#666" />
+    <Choices name="faithfulness" toName="atom_prop" choice="single" required="true">
+      <Choice value="yes" hint="忠实改写/拆分，无幻觉" />
+      <Choice value="no" hint="引入了 claim 没有的信息（幻觉）" />
+    </Choices>
+
+    <View name="auto_9" style="height:10px" />
+
+    <!-- 维度 B: 完整性 -->
+    <Header value="维度 B · 完整性 Completeness" style="font-size:13px" />
+    <Text name="auto_10" value="claim 中有多少个可独立验证的事实断言没有被任何 atom 覆盖？" style="font-size:12px;color:#666" />
+    <Choices name="completeness_missed" toName="atom_prop" choice="single" required="true">
+      <Choice value="0" hint="0：atom 已完整覆盖，claim 中所有可独立验证断言都有对应 atom" />
+      <Choice value="1" hint="1：漏掉 1 个可独立验证断言" />
+      <Choice value="2" hint="2：漏掉 2 个可独立验证断言" />
+      <Choice value="3+" hint="3+：漏掉 3 个或更多可独立验证断言" />
+    </Choices>
+
+    <View name="auto_11" style="height:10px" />
+
+    <!-- 维度 C: 原子性 -->
+    <Header value="维度 C · 原子性 Atomicity" style="font-size:13px" />
+    <Text name="auto_12" value="该 atom 是否已经是最小可独立验证的命题？（选 yes 表示无法再拆出更小的可验证子断言；选 no 表示它把多个可独立验证断言黏在一起，应进一步拆分）" style="font-size:12px;color:#666" />
+    <Choices name="atomicity" toName="atom_prop" choice="single" required="true">
+      <Choice value="yes" hint="最小粒度，无法再拆出可独立验证子断言" />
+      <Choice value="no" hint="含 ≥2 个可独立验证断言，应进一步拆分" />
+    </Choices>
+
+    <View name="auto_17" style="height:10px" />
+
+    <!-- 备注 -->
+    <Header value="备注（可选）" style="font-size:12px" />
+    <TextArea name="notes" toName="atom_prop" rows="2" placeholder="如: 引入了 regulation 概念 / 漏掉了时间断言 等" />
+  </View>
+
+  <!-- ============ 底部提交确认 ============ -->
+  <View name="auto_18" style="background:#e3f2fd;padding:8px 12px;border-radius:4px;margin-top:8px">
+    <Text name="auto_19" value="✅ 完成所有维度的标注后提交。" style="font-size:12px;color:#1565c0" />
+  </View>
+</View>
