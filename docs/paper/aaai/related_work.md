@@ -121,6 +121,19 @@ x=[\mathrm{CLS}] ; c ;[\mathrm{SEP}] ; e_{1} ;[\mathrm{SEP}] ; \ldots ;[\mathrm{
 
 ![RAFTS](fig/RAFTS.png)
 
+## EVICheck
+
+标题：EVICheck: Evidence-Driven Independent Reasoning and Combined Verification Method for Fact-Checking
+
+### 主要工作
+
+主要流程为：
+1）生成子问题；
+2）选择最优问题后让LLM推理，以此循环，由计数器限制次数；
+3）把多轮问题验证信息都给LLM微调
+
+![EVICheck](fig/EVICheck.png)
+
 ## FEVER
 
 标题：FEVER: a large-scale dataset for Fact Extraction and VERification

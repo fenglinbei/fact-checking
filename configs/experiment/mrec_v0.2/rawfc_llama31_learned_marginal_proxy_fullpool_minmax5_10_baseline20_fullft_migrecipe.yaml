@@ -1,0 +1,28 @@
+extends: rawfc_llama31_learned_marginal_proxy_fullpool_minmax5_10_fullft_migrecipe.yaml
+
+# baseline20 variant: same migration-recipe training config as the baseline5
+# migrecipe run, but fed by the atom-anchor claim-MMR top-20 union evidence pool
+# (outputs/selectors/atom_anchor/rawfc_abc_v0_1_baseline20).
+experiment:
+  name: rawfc__llama31_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_baseline20_fullft_migrecipe
+  base_case_name: rawfc__llama31_8b
+  case_suffix: __atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_baseline20_fullft_ebs8_lr2em6_ep5_eval25_pat8_migrecipe_rawfc
+  lora_suffix: ""
+  run_label: rawfc-llama31-atom-anchor-v0.2-learned-proxy-fullpool-minmax5-10-baseline20-fullft-migrecipe
+  run_header_label: rawfc-llama31-atom-anchor-v0.2-learned-proxy-fullpool-minmax5-10-baseline20-fullft-migrecipe-full
+
+paths:
+  atom_anchor_root: outputs/selectors/atom_anchor/rawfc_abc_v0_1_baseline20
+  source_feature_root: outputs/selectors/atom_anchor/rawfc_abc_v0_1_baseline20/04_evidence_map
+  quality_audit: outputs/selectors/atom_anchor/rawfc_abc_v0_1_baseline20/quality_audit_after_fix.json
+  quality_audit_mode: source_only
+
+trace:
+  output_root: outputs/selectors/atom_anchor/rawfc_abc_v0_1_baseline20/05_mrec_v0_2_learned_marginal_proxy_fullpool
+  weight_file: outputs/selectors/atom_anchor/rawfc_abc_v0_1_baseline20/05_mrec_v0_2_learned_marginal_proxy/weights/weights.json
+  weight_training:
+    output_dir: outputs/selectors/atom_anchor/rawfc_abc_v0_1_baseline20/05_mrec_v0_2_learned_marginal_proxy/weights
+
+swanlab:
+  project: fact-checking-sentence-trace-method-atom-anchor-v0-2-rawfc-llama31-fullft
+  experiment_name: rawfc__llama31_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_baseline20_fullft_migrecipe

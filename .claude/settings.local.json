@@ -59,7 +59,9 @@
       "Bash(pdflatex --version)",
       "Bash(xelatex --version)",
       "Bash(xelatex -interaction=nonstopmode LPR_academic_survey.tex)",
-      "Bash(biber LPR_academic_survey)"
+      "Bash(biber LPR_academic_survey)",
+      "Bash(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 root@39.106.154.233 \"echo connection ok\")",
+      "Bash(ssh -v -o ConnectTimeout=5 root@39.106.154.233 \"echo ok\")"
     ]
   }
 }

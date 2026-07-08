@@ -1,0 +1,39 @@
+extends: rawfc_llama31_learned_marginal_proxy_fullpool_minmax5_10_fullft.yaml
+
+# Align fullft training recipe to the phase7 backbone-migration run that reached
+# val macro_f1 0.6832 / test 0.6723 (run dir:
+#   outputs/selector_trace_verifier/rawfc_v0_6c_eval25_backbone/
+#   v0_6c_rawfc3_rule_step_adaptive5_10_eval25_llama31_8b_fullft).
+# Key levers vs the default fullft: lr 2e-6, 5 epochs, plain cosine (no restarts),
+# weight_decay 0.0, eval_steps 25, ordinal_loss disabled, ZeRO-3 bsz2 ga4.
+experiment:
+  name: rawfc__llama31_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_fullft_migrecipe
+  case_suffix: __atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_fullft_ebs8_lr2em6_ep5_eval25_pat8_migrecipe_rawfc
+  lora_suffix: ""
+  run_label: rawfc-llama31-atom-anchor-v0.2-learned-proxy-fullpool-minmax5-10-fullft-migrecipe
+  run_header_label: rawfc-llama31-atom-anchor-v0.2-learned-proxy-fullpool-minmax5-10-fullft-migrecipe-full
+
+train:
+  deepspeed_config: configs/deepspeed/deepspeed_zero3_bsz2_ga4.json
+  nproc_per_node: 4
+
+sft_train:
+  learning_rate: "2e-6"
+  num_train_epochs: 5
+  gradient_accumulation_steps: 8
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  eval_steps: 25
+  save_steps: 50
+  early_stopping_patience: 8
+  lr_scheduler_type: cosine
+  lr_scheduler_kwargs: null
+  label_token_ce:
+    early_stopping_metric: macro_f1
+    ordinal_loss:
+      enabled: false
+
+swanlab:
+  project: fact-checking-sentence-trace-method-atom-anchor-v0-2-rawfc-llama31-fullft
+  experiment_name: rawfc__llama31_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_fullft_migrecipe

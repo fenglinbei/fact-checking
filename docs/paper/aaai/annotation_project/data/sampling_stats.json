@@ -1,0 +1,54 @@
+{
+  "seed": 42,
+  "exp1": {
+    "liar_raw": {
+      "total_pool": 1274,
+      "sampled": 100,
+      "easy": 70,
+      "hard": 30,
+      "atom_count_dist": {
+        "1": 78,
+        "2": 11,
+        "4": 4,
+        "3": 7
+      }
+    },
+    "rawfc": {
+      "total_pool": 200,
+      "sampled": 100,
+      "easy": 70,
+      "hard": 30,
+      "atom_count_dist": {
+        "1": 84,
+        "2": 12,
+        "3": 4
+      }
+    }
+  },
+  "exp2": {
+    "liar_raw": {
+      "total_pairs_pool": 30503,
+      "sampled": 125,
+      "relation_distribution": {
+        "irrelevant": 54,
+        "background": 14,
+        "support": 21,
+        "insufficient": 29,
+        "refute": 3,
+        "qualify": 4
+      }
+    },
+    "rawfc": {
+      "total_pairs_pool": 2665,
+      "sampled": 125,
+      "relation_distribution": {
+        "support": 94,
+        "qualify": 1,
+        "irrelevant": 4,
+        "refute": 16,
+        "insufficient": 7,
+        "background": 3
+      }
+    }
+  }
+}

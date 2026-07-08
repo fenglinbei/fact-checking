@@ -1,0 +1,56 @@
+extends: rawfc_learned_marginal_proxy_fullpool_minmax5_10_baseline20.yaml
+
+# Reverse-migration: apply the phase7 backbone-migration training recipe
+# (originally used for Llama-3.1-8B, then lifted to Llama31 migrecipe on
+# atom-anchor baseline20 evidence reaching test macro_f1 0.6900) back onto the
+# Ministral-3-8B-Instruct-2512 backbone, still fed by the atom-anchor
+# claim-MMR top-20 union evidence pool (rawfc_abc_v0_1_baseline20).
+#
+# The ministral3 migration run on v0_6c evidence already used this exact recipe
+# (lr 2e-6, ep5, cosine, ga8, weight_decay 0.0, eval25, ordinal_loss off,
+# ZeRO-3) and reached test 0.5766 — this config reproduces that recipe on the
+# atom-anchor baseline20 pool for a like-for-like comparison against the
+# llama31 baseline20 migrecipe run.
+experiment:
+  name: rawfc__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_baseline20_fullft_migrecipe
+  base_case_name: rawfc__ministral3_8b
+  case_suffix: __atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_baseline20_fullft_ebs8_lr2em6_ep5_eval25_pat8_migrecipe_rawfc
+  lora_suffix: ""
+  run_label: rawfc-ministral3-atom-anchor-v0.2-learned-proxy-fullpool-minmax5-10-baseline20-fullft-migrecipe
+  run_header_label: rawfc-ministral3-atom-anchor-v0.2-learned-proxy-fullpool-minmax5-10-baseline20-fullft-migrecipe-full
+
+train:
+  model_name_or_path: /data/models/Ministral-3-8B-Instruct-2512
+  deepspeed_config: configs/deepspeed/deepspeed_zero3.json
+  nproc_per_node: 4
+
+build:
+  prompt:
+    model_name_or_path: /data/models/Ministral-3-8B-Instruct-2512
+
+sft_train:
+  learning_rate: "2e-6"
+  num_train_epochs: 5
+  gradient_accumulation_steps: 8
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  eval_steps: 25
+  save_steps: 50
+  early_stopping_patience: 8
+  lr_scheduler_type: cosine
+  lr_scheduler_kwargs: null
+  lora:
+    enabled: false
+  label_token_ce:
+    early_stopping_metric: macro_f1
+    ordinal_loss:
+      enabled: false
+
+swanlab:
+  project: fact-checking-sentence-trace-method-atom-anchor-v0-2-rawfc-fullft
+  experiment_name: rawfc__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_baseline20_fullft_migrecipe
+
+sentence_trace_method:
+  case_name: rawfc__ministral3_8b
+  model: ministral3_8b

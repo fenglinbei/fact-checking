@@ -1,0 +1,16 @@
+extends: rawfc_llama31_learned_marginal_proxy_fullpool_minmax5_10_baseline20.yaml
+
+experiment:
+  name: rawfc__llama31_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_baseline20_fullft
+  case_suffix: __atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_baseline20_fullft_ebs16_lr1em5_ep12_eval50_pat8_rawfc
+  lora_suffix: ""
+  run_label: rawfc-llama31-atom-anchor-v0.2-learned-proxy-fullpool-minmax5-10-baseline20-fullft
+  run_header_label: rawfc-llama31-atom-anchor-v0.2-learned-proxy-fullpool-minmax5-10-baseline20-fullft-full
+
+train:
+  deepspeed_config: configs/deepspeed/deepspeed_zero3_bsz1_ga4_lowpeak.json
+  nproc_per_node: 4
+
+swanlab:
+  project: fact-checking-sentence-trace-method-atom-anchor-v0-2-rawfc-llama31-fullft
+  experiment_name: rawfc__llama31_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_baseline20_fullft

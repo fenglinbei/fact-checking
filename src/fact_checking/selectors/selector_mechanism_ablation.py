@@ -23,6 +23,7 @@ SELECTOR_MECH_S2_CLAIM_POOL_HYBRID_TOP5 = "selector_mech_s2_claim_pool_hybrid_to
 SELECTOR_MECH_S3_CLAIM_POOL_HYBRID_MMR_TOP5 = "selector_mech_s3_claim_pool_hybrid_mmr_top5"
 SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5 = "selector_mech_s4_atom_union_source_score_top5"
 SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED = "selector_mech_s4_atom_union_source_score_ordered"
+SELECTOR_MECH_S4B_ATOM_ROUTE_ONLY_SOURCE_SCORE_TOP5 = "selector_mech_s4b_atom_route_only_source_score_top5"
 
 SELECTOR_MECHANISM_NAMES = (
     SELECTOR_MECH_S0_NO_EVIDENCE,
@@ -31,6 +32,7 @@ SELECTOR_MECHANISM_NAMES = (
     SELECTOR_MECH_S3_CLAIM_POOL_HYBRID_MMR_TOP5,
     SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5,
     SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED,
+    SELECTOR_MECH_S4B_ATOM_ROUTE_ONLY_SOURCE_SCORE_TOP5,
 )
 
 
@@ -110,11 +112,17 @@ def build_selector_mechanism_trace_row(
     if selector_name in {
         SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5,
         SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED,
+        SELECTOR_MECH_S4B_ATOM_ROUTE_ONLY_SOURCE_SCORE_TOP5,
     }:
         if union_row is None:
             raise ValueError(f"{selector_name} requires union_row")
         source_row = union_row
         candidate_pool = _normalize_candidate_pool(union_row.get("candidates") or [])
+        # S4b: isolate the atom-route sub-pool by dropping candidates that come
+        # only from the baseline claim pool (i.e. not hit by any atom route).
+        # Candidates hit by both sources are kept since they are atom-route hits.
+        if selector_name == SELECTOR_MECH_S4B_ATOM_ROUTE_ONLY_SOURCE_SCORE_TOP5:
+            candidate_pool = [c for c in candidate_pool if c.get("from_atom_route")]
         if selector_name == SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED:
             selected_candidates = rank_atom_union_source_score_candidates(
                 candidate_pool,

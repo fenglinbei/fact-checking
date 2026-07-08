@@ -341,39 +341,33 @@ def save_eval_artifacts(
         )
 
     predictions_path = eval_dir / predictions_filename
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        with predictions_path.open("w", encoding="utf-8") as f:
-            for record in prediction_records or []:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        return {
-            "metrics_path": str(metrics_path),
-            "confusion_data_path": str(confusion_data_path),
-            "predictions_path": str(predictions_path),
-        }
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    im = ax.imshow(confusion_matrix, cmap="Blues")
-    ax.set_xticks(np.arange(len(confusion_labels)))
-    ax.set_xticklabels(confusion_labels, rotation=45, ha="right")
-    ax.set_yticks(np.arange(len(display_labels)))
-    ax.set_yticklabels(display_labels)
-    ax.set_xlabel("Predicted")
-    ax.set_ylabel("Gold")
-    ax.set_title(title)
-    for i in range(confusion_matrix.shape[0]):
-        for j in range(confusion_matrix.shape[1]):
-            ax.text(j, i, str(confusion_matrix[i, j]), ha="center", va="center", color="black", fontsize=8)
-    fig.colorbar(im, ax=ax)
-    fig.tight_layout()
-    confusion_png_path = eval_dir / "confusion_matrix.png"
-    fig.savefig(confusion_png_path, dpi=200)
-    plt.close(fig)
-
     with predictions_path.open("w", encoding="utf-8") as f:
         for record in prediction_records or []:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(figsize=(10, 6))
+        im = ax.imshow(confusion_matrix, cmap="Blues")
+        ax.set_xticks(np.arange(len(confusion_labels)))
+        ax.set_xticklabels(confusion_labels, rotation=45, ha="right")
+        ax.set_yticks(np.arange(len(display_labels)))
+        ax.set_yticklabels(display_labels)
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("Gold")
+        ax.set_title(title)
+        for i in range(confusion_matrix.shape[0]):
+            for j in range(confusion_matrix.shape[1]):
+                ax.text(j, i, str(confusion_matrix[i, j]), ha="center", va="center", color="black", fontsize=8)
+        fig.colorbar(im, ax=ax)
+        fig.tight_layout()
+        confusion_png_path = eval_dir / "confusion_matrix.png"
+        fig.savefig(confusion_png_path, dpi=200)
+        plt.close(fig)
+    except Exception:
+        confusion_png_path = ""
 
     return {
         "metrics_path": str(metrics_path),

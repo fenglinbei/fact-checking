@@ -1,0 +1,46 @@
+extends: rawfc_learned_marginal_proxy_fullpool_minmax5_10_baseline20.yaml
+
+# LoRA counterpart of the ministral3 fullft migrecipe run, on baseline20
+# atom-anchor evidence. Keeps the migration-recipe skeleton (plain cosine,
+# weight_decay 0.0, ordinal_loss off, eval_steps 25) but adapts two levers for
+# LoRA: learning_rate lifted to 1e-5 (2e-6 starves adapters), and both
+# num_train_epochs and early_stopping_patience extended (5/8 -> 12/12) so the
+# adapter has room to converge under the gentler cosine schedule.
+experiment:
+  name: rawfc__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_baseline20_lora_migrecipe
+  base_case_name: rawfc__ministral3_8b
+  case_suffix: __atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_baseline20_lora_ebs16_lr1em5_ep12_eval25_pat12_migrecipe_rawfc
+  lora_suffix: _lora_r16a32_d010_ebs16_lr1em5_ep12_eval25_pat12_migrecipe_rawfc
+  run_label: rawfc-ministral3-atom-anchor-v0.2-learned-proxy-fullpool-minmax5-10-baseline20-lora-migrecipe
+  run_header_label: rawfc-ministral3-atom-anchor-v0.2-learned-proxy-fullpool-minmax5-10-baseline20-lora-migrecipe-full
+
+sft_train:
+  learning_rate: "1e-5"
+  num_train_epochs: 12
+  gradient_accumulation_steps: 4
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  eval_steps: 25
+  save_steps: 25
+  early_stopping_patience: 12
+  lr_scheduler_type: cosine
+  lr_scheduler_kwargs: null
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.10
+    bias: none
+  label_token_ce:
+    early_stopping_metric: macro_f1
+    ordinal_loss:
+      enabled: false
+
+swanlab:
+  project: fact-checking-sentence-trace-method-atom-anchor-v0-2-rawfc
+  experiment_name: rawfc__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_baseline20_lora_migrecipe
+
+sentence_trace_method:
+  case_name: rawfc__ministral3_8b
+  model: ministral3_8b
