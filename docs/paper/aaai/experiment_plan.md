@@ -20,25 +20,20 @@
 ## 1. 主实验：与外部基线对比（主表）
 
 ### 目标
-证明"简单编排的证据链 + LLM 微调"超越复杂证据组织方法，且与引入外部证据/闭源模型的 agent 方法具竞争性。
+证明"简单编排的证据链 + LLM 微调"超越复杂证据组织方法。
 
 ### 实验设计
 - **数据集**：LIAR-RAW（6 类）、RAWFC（3 类）、HoVer（2 类）三个公开基准。
 - **本文方法**：`mrec_v0.2` 主配置（learned_marginal_proxy + minmax5_10，Ministral-3-8B + LoRA）。
-- **对比组**：
-  1. **无证据组织**：直接 top-k 证据 → verifier（对应 b0/b3_mmr_topk_sweep）。
-  2. **复杂证据组织（文献复现/数值）**：CofCED（证据特征级联）、L-defense（辩护）、G-defense（辩护图）、FactLLaMA、DeReC、FFRR、KG-CRAFT、HiSS、RAFTS。
-  3. **Agent / 闭源模型**：DelphiAgent；GPT-4o / DeepSeek-V4 直接 zero/few-shot（含/不含检索证据）。
-  4. **本文方法变体**：去除证据链的 atom-union top5（`v0_7_*_s4_union_top5`）。
+  - **对比组**：
+  1. **复杂证据组织（文献复现/数值）**：CofCED（证据特征级联）、L-defense（辩护）、G-defense（辩护图）、FactLLaMA、DeReC、FFRR、KG-CRAFT、HiSS、RAFTS。
+  2. **本文方法变体**：去除证据链的 atom-union top5（`v0_7_*_s4_union_top5`）。
 - **指标**：Accuracy、Macro-F1（主）、per-class P/R/F1、混淆矩阵。LIAR 额外报 ordinal MAE 与 extreme error rate（六类有序性）。
 
 ### 现状与缺口
 - ✅ LIAR/RAWFC 主方法 test 已有（LIAR acc 0.360/f1 0.367；RAWFC acc 0.635/f1 0.638，baseline20 版 0.660/0.661）。
-- ✅ DeepSeek-V4 闭源对照有 RAWFC val（需补 test）。
 - ❌ **HoVer 完全没有配置/产物**——需新建 `mrec_v0.2/hover_*` 配置（2 类标签 schema、HoVer 的 claim+evidence 加载）并跑通全流程。
 - ❌ **外部 SOTA 全靠文献数值**，无复现——可接受，但需在表注标明数据来源与是否同 split。
-- ❌ **闭源模型仅 DeepSeek 一项且仅 val**——补 GPT-4o（或 Claude）在 LIAR/RAWFC/HoVer test 上的 zero-shot + RAG 结果。
-- ❌ **LIAR 6 类下内部 baseline（b0/b3）无完整 test**——需补 b0、b3_label_token_ce_1024 的 test 评估，构成同设定对照。
 
 ---
 
@@ -172,20 +167,18 @@
 4. 对齐 ρ_target（配置 1.0 → 论文 0.80，或更新论文为 1.0 并说明）。
 
 ### P1 — 主表与核心消融
-5. 补 LIAR b0/b3（6 类）test，构成同设定内部对照。
-6. 补闭源模型（GPT-4o 或 DeepSeek）在 LIAR/RAWFC/HoVer test 的结果。
-7. 补 state_budget(LIAR) test 与 RAWFC policy sweep。
-8. 补 atom-union 候选池消融（2.2）。
+5. 补 state_budget(LIAR) test 与 RAWFC policy sweep。
+6. 补 atom-union 候选池消融（2.2）。
 
 ### P2 — 可解释性与敏感性
-9. Case study + 证据链质量量化（4.1、4.2）。
-10. evidence map 消融（2.3）。
-11. ρ_target sweep（3.2）。
-12. backbone 消融补全（3.3）。
+7. Case study + 证据链质量量化（4.1、4.2）。
+8. evidence map 消融（2.3）。
+9. ρ_target sweep（3.2）。
+10. backbone 消融补全（3.3）。
 
 ### P3 — 工程稳健性
-13. API 可靠度修复 5.2-A/C/D/E/F。
-14. 产物固化与可复现性声明 5.2-G。
+11. API 可靠度修复 5.2-A/C/D/E/F。
+12. 产物固化与可复现性声明 5.2-G。
 
 ---
 
@@ -194,7 +187,7 @@
 ```
 4. Experiments
   4.1 Experimental Setup（数据集、指标、基线、实现细节含 LLM 版本/seed/缓存策略）
-  4.2 Main Results（主表：三数据集 × 本文 vs 外部基线 vs agent/闭源）
+  4.2 Main Results（主表：三数据集 × 本文 vs 外部基线）
   4.3 Ablation Study
     4.3.1 Component Ablation（chunking / atom-union / evidence-map / selector 机制）
     4.3.2 Prompt Evidence Policy（policy 对比 + k_min/k_max sweep + ρ_target sweep）

@@ -67,6 +67,7 @@ class MRECSelectorParams:
     selection_policy: str = MREC_SELECTION_POLICY_TRANSITION_V0_1
     weight_file: str = ""
     stop_threshold: float = 0.0
+    map_ablation_mode: str = "full"
 
 
 def build_mrec_trace_row(
@@ -356,6 +357,7 @@ def _select_learned_marginal_steps(
                 soft_state=soft_state,
                 token_budget=params.token_budget,
                 pool_max_token_cost=pool_max_token_cost,
+                map_ablation_mode=str(params.map_ablation_mode),
             )
             score = score_marginal_features(features, weights)
             evaluation = _evaluate_candidate_transition(
@@ -363,6 +365,7 @@ def _select_learned_marginal_steps(
                 atom_states=atom_states,
                 atom_by_id=atom_by_id,
                 cue_policy=str(params.cue_policy),
+                map_ablation_mode=str(params.map_ablation_mode),
             )
             if not evaluation:
                 evaluation = _fallback_candidate_evaluation(
@@ -594,7 +597,11 @@ def _evaluate_candidate_transition(
     atom_states: dict[str, str],
     atom_by_id: dict[str, dict[str, Any]],
     cue_policy: str,
+    map_ablation_mode: str = "full",
 ) -> dict[str, Any] | None:
+    # no_map: no evidence-map signal at all, so no atom-conditioned transition
+    if map_ablation_mode == "no_map":
+        return None
     atom_pairs = _candidate_atom_transition_pairs(candidate, atom_states=atom_states)
     if not atom_pairs:
         return None
@@ -603,7 +610,13 @@ def _evaluate_candidate_transition(
     for pair in atom_pairs:
         atom_id = str(pair.get("atom_id") or "")
         relation = str(pair.get("relation") or "")
+        # no_relation: degrade relation to background so no resolving transition fires
+        if map_ablation_mode == "no_relation":
+            relation = "background"
         directness = str(pair.get("directness") or "").lower()
+        # no_directness: degrade directness to a neutral constant for transition inference
+        if map_ablation_mode == "no_directness":
+            directness = "medium"
         relation_state = _state_for_relation(relation)
         before = atom_states.get(atom_id, "U")
         operation = _operation_for_transition(before, relation_state, directness)
@@ -863,6 +876,12 @@ def _operation_for_transition(state_before: str, relation_state: str, directness
     if directness in _NON_DIRECTNESS and relation_state == "U":
         return "BRIDGE"
     if state_before == "U":
+        # no_directness ablation degrades directness to the synthetic "medium"
+        # value. A merely-medium evidence cannot resolve an unresolved atom on
+        # its own, so it downgrades to a background BRIDGE instead of OPEN.
+        # "medium" only ever appears under ablation; normal data is unaffected.
+        if directness == "medium":
+            return "BRIDGE"
         return "OPEN" if relation_state in {"S", "R", "Q"} else "FALLBACK"
     if relation_state in {"S", "R"} and state_before in {"S", "R"} and relation_state != state_before:
         return "CONTRAST"

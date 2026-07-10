@@ -1,8 +1,12 @@
 # Paper Data and Todo Record
 
-日期：2026-06-01
+日期：2026-06-01（最近更新：2026-07-11）
 
 状态：v0.6c AAAI-style ablation notes and paper data record
+
+> **更新（2026-07-11）**：主方法已从 v0.6c（rule-step adaptive evidence-chain graph）升级为 **mrec_v0.2**（learned marginal proxy selector + minmax(5,10) prompt evidence policy，Ministral-3-8B + LoRA）。主对比表与 5.1 节的 "Ours" 行已更新为 mrec_v0.2 的实测数据。下方第 1–4 节、第 9 节的 v0.6c 数据保留作历史记录，不再作为论文主引用；mrec_v0.2 的消融数据见 `docs/paper/aaai/writing_outline_v0.4.1.md` 的 Experiments 章节。
+>
+> mrec_v0.2 主结果（Ministral-3-8B LoRA）：LIAR-RAW macro-F1 **36.66**，RAWFC macro-F1 **66.12**（baseline20 设置）；Llama-3.1-8B FullFT migrecipe 仅 RAWFC macro-F1 **69.00**。
 
 ## 1. Current Method Context
 
@@ -228,16 +232,17 @@ trace-lite 设计约束：
 LIAR-RAW, 6-way veracity classification, raw reports / closed evidence setting, macro-P / macro-R / macro-F1.
 ```
 
-当前 v0.6c 主结果应写成：
+当前主方法（mrec_v0.2）结果应写成：
 
 ```text
-v0.6c: LIAR-RAW macro-P / macro-R / macro-F1 = 39.74 / 34.86 / 35.45
-v0.6c: RAWFC macro-P / macro-R / macro-F1 = 63.52 / 60.47 / 60.95
+mrec_v0.2 (Ministral-3-8B LoRA): LIAR-RAW macro-P / macro-R / macro-F1 = 38.37 / 35.87 / 36.66
+mrec_v0.2 (Ministral-3-8B LoRA): RAWFC    macro-P / macro-R / macro-F1 = 67.17 / 65.98 / 66.12
+mrec_v0.2 (Llama-3.1-8B FullFT migrecipe): RAWFC macro-P / macro-R / macro-F1 = 69.09 / 69.06 / 69.00
 ```
 
 注意：`macro_f1` 是 per-class F1 的 macro average，不是由 macro-P 和 macro-R 再调和得到。
 
-RAWFC 数字来自同 LIAR-RAW v0.6c 设置的 FullFT label-token test inference，和训练期 validation eval 口径一致，尚未针对 RAWFC 做专门调参；LoRA test 结果为 `59.59 / 58.04 / 55.10`，FullFT 生成式 native test 结果为 `58.48 / 58.56 / 58.39`，见 2.1 辅助表。
+RAWFC 使用 baseline20 检索池设置（20 条候选证据）。Ministral-3-8B 为 LoRA，Llama-3.1-8B 为 FullFT migrecipe（优化训练配方：ebs8/lr2e-6/ep5/eval25）。两个 backbone 均为各自最优训练配置。Llama-3.1-8B 仅在 RAWFC 上跑了 test，LIAR-RAW 未跑。LIAR-RAW per-class F1（Ministral）：pants-fire 44.90 / false 41.12 / barely-true 27.15 / half-true 33.22 / mostly-true 36.89 / true 36.69。
 
 主对比表建议只放 raw-report / near raw-report setting。`best variant` 表示同一论文中按数据集选该方法公开报告的最好变体；如果变体不同，需要在 caption 或脚注中说明。
 
@@ -250,7 +255,8 @@ RAWFC 数字来自同 LIAR-RAW v0.6c 设置的 FullFT label-token test inference
 | DeReC-qwen | dense retrieval + DeBERTa classifier | 35.94 / 32.24 / 33.13 | 65.58 / 64.56 / 64.60 | main baseline |
 | FFRR(d+q) | feedback-trained retrieval + reader | 34.50 / 32.60 / 33.50 | 56.50 / 57.40 / 57.00 | main baseline |
 | DelphiAgent GPT-4o | training-free multi-agent fact-checking | 31.33 / 28.36 / 28.36 | 68.05 / 68.03 / 68.04 | report separately or main-with-LLM note |
-| **v0.6c (Ours)** | rule-step adaptive evidence-chain graph | 39.74 / 34.86 / 35.45 | 63.52 / 60.47 / 60.95 | our main method; RAWFC uses LIAR-RAW same setting, not RAWFC-tuned |
+| **Ours (mrec_v0.2, Ministral-3-8B LoRA)** | learned marginal proxy + minmax(5,10) | 38.37 / 35.87 / 36.66 | 67.17 / 65.98 / 66.12 | our main method |
+| **Ours (mrec_v0.2, Llama-3.1-8B FullFT)** | 同上，替换 backbone 与训练方式 | — | 69.09 / 69.06 / 69.00 | Llama backbone, FullFT migrecipe; LIAR-RAW 未跑 |
 | KG-CRAFT Llama 3.3 | KG + contrastive questions + strong LLM | 77.38 / 70.67 / 73.87 | 81.63 / 81.53 / 81.58 | include as strong-LLM upper reference |
 
 Non-main higher-score or different-evidence-setting methods:

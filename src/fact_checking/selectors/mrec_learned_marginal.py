@@ -62,6 +62,7 @@ _DIRECTNESS_FACTOR = {
     "direct": 1.0,
     "full": 1.0,
     "partial": 0.65,
+    "medium": 0.4,
     "context": 0.25,
     "none": 0.0,
 }
@@ -221,6 +222,7 @@ def extract_marginal_features(
     soft_state: Mapping[str, Mapping[str, float]],
     token_budget: int | None,
     pool_max_token_cost: int | None,
+    map_ablation_mode: str = "full",
 ) -> dict[str, float]:
     pairs = _candidate_atom_pairs(candidate, soft_state)
     selected_atom_ids = _selected_atom_ids(selected_steps)
@@ -246,6 +248,15 @@ def extract_marginal_features(
         relation_state = _state_for_relation(relation)
         directness = _directness_factor(pair.get("directness"))
         confidence = _clip01(_float_or_default(pair.get("confidence"), _float_or_default(candidate.get("map_confidence"), 0.0)))
+        # Evidence-map ablation: degrade individual map signals so the
+        # learned selector is forced to rely on the remaining ones.
+        if map_ablation_mode == "no_directness":
+            directness = _directness_factor("medium")
+        elif map_ablation_mode == "no_confidence":
+            confidence = 1.0
+        elif map_ablation_mode == "no_relation":
+            relation = "background"
+            relation_state = _state_for_relation(relation)
         map_confidences.append(confidence)
         if relation_state in _RESOLVING_RELATION_STATES and atom_id in soft_state:
             unresolved_mass = _state_distribution(soft_state.get(atom_id) or {}).get("U", 0.0)
@@ -290,6 +301,18 @@ def extract_marginal_features(
         "retrieval_score": _retrieval_score(candidate),
         "cost_ratio": cost_ratio,
     }
+    if map_ablation_mode == "no_map":
+        for k in (
+            "resolution_delta",
+            "entropy_reduction",
+            "new_atom_coverage",
+            "new_relation_for_atom",
+            "stance_tension",
+            "corroboration_gain",
+            "map_confidence",
+            "map_quality",
+        ):
+            features[k] = 0.0
     return {name: float(features.get(name, 0.0)) for name in FEATURE_NAMES}
 
 
@@ -310,6 +333,7 @@ def rank_candidates_by_proxy(
     oracle_ordered_keys: Sequence[str] | None = None,
     token_budget: int | None = None,
     pool_max_token_cost: int | None = None,
+    map_ablation_mode: str = "full",
 ) -> list[int]:
     oracle_rank = {str(key): idx for idx, key in enumerate(oracle_ordered_keys or []) if str(key)}
     has_oracle_hit = any(_candidate_key(candidate) in oracle_rank for candidate in candidates)
@@ -325,6 +349,7 @@ def rank_candidates_by_proxy(
             soft_state=soft_state,
             token_budget=token_budget,
             pool_max_token_cost=pool_max_token_cost,
+            map_ablation_mode=map_ablation_mode,
         )
         best_directness = _best_directness(candidate, soft_state)
         direct_resolving = 1.0 if features["resolution_delta"] > 0.0 and best_directness >= 1.0 else 0.0
@@ -356,6 +381,7 @@ def build_proxy_pairwise_preferences(
     oracle_ordered_keys: Sequence[str] | None = None,
     token_budget: int | None = None,
     pool_max_token_cost: int | None = None,
+    map_ablation_mode: str = "full",
 ) -> list[tuple[int, int]]:
     order = rank_candidates_by_proxy(
         candidates,
@@ -364,6 +390,7 @@ def build_proxy_pairwise_preferences(
         oracle_ordered_keys=oracle_ordered_keys,
         token_budget=token_budget,
         pool_max_token_cost=pool_max_token_cost,
+        map_ablation_mode=map_ablation_mode,
     )
     if len(order) < 2:
         return []
@@ -378,6 +405,7 @@ def train_learned_marginal_proxy_weights(
     learning_rate: float = 0.05,
     candidate_top_n: int = 20,
     rollout_steps: int = 5,
+    map_ablation_mode: str = "full",
 ) -> tuple[LearnedMarginalWeights, dict[str, Any]]:
     import torch
     import torch.nn.functional as F
@@ -404,6 +432,7 @@ def train_learned_marginal_proxy_weights(
                 oracle_ordered_keys=oracle_keys,
                 token_budget=None,
                 pool_max_token_cost=pool_max_token_cost,
+                map_ablation_mode=map_ablation_mode,
             )
             if not preferences:
                 break
@@ -414,6 +443,7 @@ def train_learned_marginal_proxy_weights(
                     soft_state=soft_state,
                     token_budget=None,
                     pool_max_token_cost=pool_max_token_cost,
+                    map_ablation_mode=map_ablation_mode,
                 )
                 for candidate in remaining_candidates
             ]
@@ -469,6 +499,7 @@ def train_learned_marginal_proxy_weights(
             "pair_count": int(pair_count),
             "epochs": int(epochs),
             "learning_rate": float(learning_rate),
+            "map_ablation_mode": str(map_ablation_mode),
         },
     )
     return learned, {"pair_count": int(pair_count), "final_loss": final_loss, "epochs": int(epochs)}
