@@ -55,12 +55,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--alpha-lexical", type=float, default=0.20)
     p.add_argument("--alpha-bm25", type=float, default=0.10)
     p.add_argument("--no-progress", action="store_true")
+    p.add_argument("--num-shards", type=int, default=1)
+    p.add_argument("--shard-index", type=int, default=0)
+    p.add_argument("--merge-shards", action="store_true")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     started_at = time.time()
+    _validate_shard_args(args)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -72,6 +76,14 @@ def main() -> None:
 
     chunk_samples = _load_chunk_samples(args.chunk_cache_path)
     pairs = align_atoms_and_chunks(atom_rows, chunk_samples)
+    if bool(args.merge_shards):
+        _merge_shards(args, atom_rows=atom_rows, pairs=pairs, output_dir=output_dir, started_at=started_at)
+        return
+    pairs = _select_shard(pairs, num_shards=int(args.num_shards), shard_index=int(args.shard_index))
+    if not pairs:
+        raise ValueError(f"No atom retrieval pair assigned to shard {args.shard_index}/{args.num_shards}.")
+    atom_rows = [pair[0] for pair in pairs]
+    suffix = _shard_suffix(int(args.num_shards), int(args.shard_index))
 
     _validate_embedder_model_path(args.embedder_model)
     embedder = TextEmbedder(
@@ -102,7 +114,7 @@ def main() -> None:
     merged_rows: list[dict[str, Any]] = []
     selected_rows: list[dict[str, Any]] = []
     baseline_rows: list[dict[str, Any]] = []
-    iterator = tqdm(pairs, desc="atom retrieval", unit="claim", dynamic_ncols=True, disable=bool(args.no_progress))
+    iterator = tqdm(pairs, desc=f"atom retrieval [{args.split}{suffix}]", unit="claim", dynamic_ncols=True, disable=bool(args.no_progress))
     for atom_row, sample in iterator:
         retrieval_row = build_atom_conditioned_retrieval_row(
             atom_row,
@@ -158,12 +170,12 @@ def main() -> None:
     )
     metrics["oracle_metrics_available"] = bool(oracle_rows)
 
-    trace_path = output_dir / f"retrieval_trace_{args.split}.jsonl"
-    merged_path = output_dir / f"merged_candidate_pool_{args.split}.jsonl"
-    selected_path = output_dir / f"selected_evidence_{args.split}.jsonl"
-    baseline_path = output_dir / f"baseline_claim_mmr_selected_{args.split}.jsonl"
-    metrics_path = output_dir / "retrieval_metrics.json"
-    manifest_path = output_dir / "retrieval_manifest.json"
+    trace_path = output_dir / f"retrieval_trace_{args.split}{suffix}.jsonl"
+    merged_path = output_dir / f"merged_candidate_pool_{args.split}{suffix}.jsonl"
+    selected_path = output_dir / f"selected_evidence_{args.split}{suffix}.jsonl"
+    baseline_path = output_dir / f"baseline_claim_mmr_selected_{args.split}{suffix}.jsonl"
+    metrics_path = output_dir / f"retrieval_metrics_{args.split}{suffix}.json"
+    manifest_path = output_dir / f"retrieval_manifest_{args.split}{suffix}.json"
 
     write_jsonl(trace_path, _json_safe_rows(trace_rows))
     write_jsonl(merged_path, _json_safe_rows(merged_rows))
@@ -189,6 +201,12 @@ def main() -> None:
             "batch_size": int(args.embedder_batch_size),
             "precision": str(args.precision),
         },
+        "sharding": {
+            "mode": "single" if int(args.num_shards) <= 1 else "build_shard",
+            "num_shards": int(args.num_shards),
+            "shard_index": int(args.shard_index),
+            "shard_suffix": suffix,
+        },
         "paths": {
             "retrieval_trace": str(trace_path),
             "merged_candidate_pool": str(merged_path),
@@ -199,7 +217,6 @@ def main() -> None:
         "elapsed_seconds": round(time.time() - started_at, 3),
     }
     write_json(manifest_path, _json_safe(manifest))
-    write_json(output_dir / f"retrieval_manifest_{args.split}.json", _json_safe(manifest))
 
     print(f"Wrote atom retrieval trace: {trace_path}")
     print(f"Wrote metrics: {metrics_path}")
@@ -217,6 +234,168 @@ def main() -> None:
             metrics["baseline_claim_mmr"]["jaccard@5"],
         )
     )
+
+
+def _merge_shards(
+    args: argparse.Namespace,
+    *,
+    atom_rows: list[dict[str, Any]],
+    pairs: list[tuple[dict[str, Any], ChunkMMRSample]],
+    output_dir: Path,
+    started_at: float,
+) -> None:
+    reference_event_ids = [str(atom_row.get("event_id") or sample.event_id) for atom_row, sample in pairs]
+    trace_rows: list[dict[str, Any]] = []
+    merged_rows: list[dict[str, Any]] = []
+    selected_rows: list[dict[str, Any]] = []
+    baseline_rows: list[dict[str, Any]] = []
+    for shard_idx in range(int(args.num_shards)):
+        suffix = _shard_suffix(int(args.num_shards), shard_idx)
+        paths = {
+            "trace": output_dir / f"retrieval_trace_{args.split}{suffix}.jsonl",
+            "merged": output_dir / f"merged_candidate_pool_{args.split}{suffix}.jsonl",
+            "selected": output_dir / f"selected_evidence_{args.split}{suffix}.jsonl",
+            "baseline": output_dir / f"baseline_claim_mmr_selected_{args.split}{suffix}.jsonl",
+        }
+        for label, path in paths.items():
+            if not path.exists():
+                raise FileNotFoundError(f"Missing atom retrieval shard {label}: {path}")
+        trace_rows.extend(read_jsonl(paths["trace"]))
+        merged_rows.extend(read_jsonl(paths["merged"]))
+        selected_rows.extend(read_jsonl(paths["selected"]))
+        baseline_rows.extend(read_jsonl(paths["baseline"]))
+
+    trace_rows = _merge_rows_by_event(reference_event_ids, trace_rows, kind="retrieval trace rows")
+    merged_rows = _merge_rows_by_event(reference_event_ids, merged_rows, kind="merged candidate pool rows")
+    selected_rows = _merge_rows_by_event(reference_event_ids, selected_rows, kind="selected evidence rows")
+    baseline_rows = _merge_rows_by_event(reference_event_ids, baseline_rows, kind="baseline claim-MMR rows")
+
+    oracle_results = args.oracle_results if args.oracle_results is not None else _default_oracle_results(str(args.split))
+    oracle_rows = read_jsonl(oracle_results) if oracle_results and Path(oracle_results).exists() else []
+    if args.sample_limit is not None:
+        oracle_rows = oracle_rows[: int(args.sample_limit)]
+    atom_retrieval_rows = [
+        {
+            "event_id": row["event_id"],
+            "claim": row.get("claim", ""),
+            "label": row.get("label", ""),
+            "gold_label": row.get("gold_label", ""),
+            "claim_atoms": row.get("claim_atoms") or [],
+            "atom_routes": row.get("atom_routes") or [],
+            "merged_candidate_pool": merged_rows[idx].get("candidates") or [],
+            "selected_evidence": selected_rows[idx].get("candidates") or [],
+        }
+        for idx, row in enumerate(trace_rows)
+    ]
+    metrics = compute_retrieval_metrics(
+        atom_rows=atom_rows,
+        atom_retrieval_rows=atom_retrieval_rows,
+        baseline_rows=baseline_rows,
+        oracle_texts=oracle_selected_texts_by_event(oracle_rows),
+    )
+    metrics["oracle_metrics_available"] = bool(oracle_rows)
+
+    trace_path = output_dir / f"retrieval_trace_{args.split}.jsonl"
+    merged_path = output_dir / f"merged_candidate_pool_{args.split}.jsonl"
+    selected_path = output_dir / f"selected_evidence_{args.split}.jsonl"
+    baseline_path = output_dir / f"baseline_claim_mmr_selected_{args.split}.jsonl"
+    metrics_path = output_dir / f"retrieval_metrics_{args.split}.json"
+    manifest_path = output_dir / f"retrieval_manifest_{args.split}.json"
+
+    write_jsonl(trace_path, _json_safe_rows(trace_rows))
+    write_jsonl(merged_path, _json_safe_rows(merged_rows))
+    write_jsonl(selected_path, _json_safe_rows(selected_rows))
+    write_jsonl(baseline_path, _json_safe_rows(baseline_rows))
+    write_json(metrics_path, _json_safe(metrics))
+    params = AtomRetrievalParams(
+        per_atom_keep=int(args.per_atom_keep),
+        merged_pool_size=int(args.merged_pool_size),
+        selector_top_k=int(args.selector_top_k),
+        baseline_top_k=int(args.baseline_top_k) if args.baseline_top_k is not None else None,
+        rrf_k=float(args.rrf_k),
+        atom_weight=float(args.atom_weight),
+        merge_mmr_lambda=float(args.merge_mmr_lambda),
+        alpha_dense=float(args.alpha_dense),
+        alpha_lexical=float(args.alpha_lexical),
+        alpha_bm25=float(args.alpha_bm25),
+    )
+    manifest = {
+        "status": "completed",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "command": [Path(sys.argv[0]).as_posix(), *sys.argv[1:]],
+        "mode": "merge_shards",
+        "split": str(args.split),
+        "claim_atoms_jsonl": str(args.claim_atoms_jsonl),
+        "chunk_cache_path": str(args.chunk_cache_path),
+        "oracle_results": str(oracle_results),
+        "output_dir": str(output_dir),
+        "n_atom_rows": len(atom_rows),
+        "n_chunk_pairs": len(pairs),
+        "params": params.__dict__,
+        "embedder": {
+            "model": str(args.embedder_model),
+            "device": str(args.device),
+            "max_length": int(args.embedder_max_length),
+            "batch_size": int(args.embedder_batch_size),
+            "precision": str(args.precision),
+        },
+        "sharding": {
+            "mode": "merge_shards",
+            "num_shards": int(args.num_shards),
+            "shard_paths": [
+                str(output_dir / f"retrieval_trace_{args.split}{_shard_suffix(int(args.num_shards), idx)}.jsonl")
+                for idx in range(int(args.num_shards))
+            ],
+        },
+        "paths": {
+            "retrieval_trace": str(trace_path),
+            "merged_candidate_pool": str(merged_path),
+            "selected_evidence": str(selected_path),
+            "baseline_claim_mmr_selected": str(baseline_path),
+            "retrieval_metrics": str(metrics_path),
+        },
+        "elapsed_seconds": round(time.time() - started_at, 3),
+    }
+    write_json(manifest_path, _json_safe(manifest))
+    print(f"Merged atom retrieval shards into: {trace_path}")
+    print(f"events={len(trace_rows)} shards={int(args.num_shards)}")
+
+
+def _select_shard(rows: list[Any], *, num_shards: int, shard_index: int) -> list[Any]:
+    n = max(1, int(num_shards))
+    idx = int(shard_index)
+    return [row for offset, row in enumerate(rows) if offset % n == idx]
+
+
+def _merge_rows_by_event(reference_event_ids: list[str], rows: list[dict[str, Any]], *, kind: str) -> list[dict[str, Any]]:
+    by_event: dict[str, dict[str, Any]] = {}
+    duplicates: list[str] = []
+    for row in rows:
+        event_id = str(row.get("event_id") or "")
+        if event_id in by_event:
+            duplicates.append(event_id)
+        by_event[event_id] = row
+    if duplicates:
+        raise ValueError(f"Duplicate {kind} during shard merge: {duplicates[:10]}")
+    missing = [event_id for event_id in reference_event_ids if event_id not in by_event]
+    if missing:
+        raise ValueError(f"Missing {kind} during shard merge: {missing[:10]}")
+    return [by_event[event_id] for event_id in reference_event_ids]
+
+
+def _validate_shard_args(args: argparse.Namespace) -> None:
+    if int(args.num_shards) < 1:
+        raise ValueError("--num-shards must be >= 1.")
+    if int(args.shard_index) < 0 or int(args.shard_index) >= int(args.num_shards):
+        raise ValueError("--shard-index must satisfy 0 <= shard_index < num_shards.")
+    if bool(args.merge_shards) and int(args.num_shards) <= 1:
+        raise ValueError("--merge-shards requires --num-shards > 1.")
+
+
+def _shard_suffix(num_shards: int, shard_index: int) -> str:
+    if int(num_shards) <= 1:
+        return ""
+    return f".shard-{int(shard_index):05d}-of-{int(num_shards):05d}"
 
 
 def _load_chunk_samples(path: str | Path) -> list[ChunkMMRSample]:

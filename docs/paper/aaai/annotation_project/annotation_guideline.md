@@ -91,9 +91,11 @@ LLM 给出的 $c \in [0,1]$，表示它对这一标注的自信程度。本评�
 - Atom: "The insurance commissioner cannot do anything about health care." → **yes**（同义改写）
 - Atom: "The insurance commissioner lacks authority over health care regulation." → **no**（引入了"regulation"概念，claim 没说）
 
-#### 维度 B：完整性（Completeness）—— 单选（漏检断言数分档）
+#### 维度 B：完整性（Completeness）—— **Claim 级**标注，单选（漏检断言数分档）
 
-> claim 中有多少个 **可独立验证的事实断言** 没有被任何 atom 覆盖？
+> claim 中有多少个 **可独立验证的事实断言** 没有被 **该 claim 的全部 atoms** 覆盖？
+
+**⚠ 重要：这是 claim 级标注，不是 atom 级。** 判定时必须对照界面上方展示的"该 claim 的全部 atoms 列表"（A1/A2/…），统计所有 atoms 合起来覆盖了 claim 的几个断言、漏掉了几个。多 atom claim 只需在全景区填一次。
 
 从以下选项中选择一个：
 - **0**：完整覆盖，claim 中所有可独立验证断言都有对应 atom。
@@ -106,11 +108,14 @@ LLM 给出的 $c \in [0,1]$，表示它对这一标注的自信程度。本评�
 - 形容词/程度副词如果是可验证的（如"most"、"highest"），算独立断言。
 - 纯语法成分（时态、冠词）不算断言。
 - 如果 claim 只有一个断言且有一个 atom 覆盖，选 **0**。
+- **覆盖是合起来的**：A1 覆盖断言 1、A2 覆盖断言 2，则两个断言都已覆盖，漏检数=0；不要因为"A1 没覆盖断言 2"就填 1。
 
 **示例**：
 - Claim: "Tim Kaine urged $500 billion in Medicare cuts."
 - Atoms: [A1: "Tim Kaine urged $500 billion in Medicare cuts."]
 - 漏检数 = **0**（单一断言，单一 atom，完整覆盖）
+- Claim: "Tom said X and Jerry said Y." ｜ Atoms: [A1: "Tom said X."]
+- 漏检数 = **1**（Jerry said Y 这个断言没有任何 atom 覆盖）
 - 若 atoms 为空或缺少"urged"这个动作断言 → 选 **1** 或更高。
 
 #### 维度 C：原子性（Atomicity）—— 二值（yes/no）
@@ -131,20 +136,20 @@ LLM 给出的 $c \in [0,1]$，表示它对这一标注的自信程度。本评�
 
 ### 2.3 标注界面（Label Studio）
 
-每条样本展示：claim 文本 + LLM 拆出的 atoms 列表。对每个 atom 标注：
+每条样本展示：claim 文本 + LLM 拆出的 atoms 全景列表。对每个 atom 标注：
 
 | 字段 | 类型 | 取值 |
 |---|---|---|
 | `atom_id` | 只读 | A1, A2, … |
 | `faithfulness` | 单选 | yes / no |
-| `completeness_missed` | 数字 | 0, 1, 2, … |
 | `atomicity` | 单选 | yes / no |
 | `notes` | 文本 | 可选备注 |
 
-对整条 claim 还需标注：
+对整条 claim 标注（claim 级，每个 claim 填一次）：
 | 字段 | 类型 | 取值 |
 |---|---|---|
 | `claim_complexity` | 单选 | simple（单一断言）/ compound（多断言） |
+| `completeness_missed` | 单选 | 0 / 1 / 2 / 3+（对照全部 atoms 合起来的覆盖判定） |
 
 ### 2.4 IAA 计算
 
@@ -390,7 +395,7 @@ A: 诚实填写。0.3 = 倾向某个但很不确定，0.6 = 较有把握，0.9 =
 A: 取最直接的成分。只要有任何一句能 direct 判断 atom 真值，就选 direct。
 
 **Q8: completeness_missed 如果 claim 有 3 个断言但 atoms 只覆盖 2 个，填 1 还是填漏掉的内容？**
-A: 填数字 1（漏掉 1 个断言）。在 notes 里可补充漏掉的断言内容，但字段只填数字。
+A: 填数字 1（漏掉 1 个断言）。在 notes 里可补充漏掉的断言内容，但字段只填数字。**注意 completeness 是 claim 级标注**：对照界面上方"全部 atoms 列表"合起来覆盖了几个断言来判定，不要只看当前 atom。多 atom claim 只需在全景区填一次。
 
 ---
 

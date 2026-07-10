@@ -1,0 +1,269 @@
+% !TEX program = xelatex
+\documentclass[UTF8,a4paper,zihao=5,twocolumn]{ctexart}
+
+\usepackage[a4paper,top=2.6cm,bottom=2.4cm,left=2.5cm,right=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs,multirow,tabularx,longtable}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage{array}
+\usepackage{fancyhdr}
+\usepackage[hidelinks]{hyperref}
+\usepackage[backend=biber,style=numeric,sorting=none,natbib=true]{biblatex}
+\addbibresource{refs.bib}
+
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0pt}
+\setlength{\columnsep}{0.75cm}
+\linespread{1.25}
+\pagestyle{empty}
+\setlist[itemize]{leftmargin=2em,itemsep=0.2em,topsep=0.2em}
+\setlist[enumerate]{leftmargin=2em,itemsep=0.2em,topsep=0.2em}
+\captionsetup{font=small,labelfont=bf,textfont=bf,labelsep=quad}
+
+\newcommand{\ReportName}{姓名：廖子杰}
+\newcommand{\ReportAuthorName}{廖子杰}
+\newcommand{\ReportMajor}{计算机系 电子信息人工智能方向}
+\newcommand{\ReportStudentID}{学号：202534261067}
+\newcommand{\ReportCourse}{电子信息人工智能方向}
+\newcommand{\ReportType}{研究报告}
+\newcommand{\ReportTerm}{2025年2学期}
+\newcommand{\ReportDate}{2026年6月25日}
+\newcommand{\makereportheader}{%
+  {\songti\zihao{-5}
+  \noindent
+  \begin{tabular*}{\textwidth}{@{}p{0.28\textwidth}@{\extracolsep{\fill}}>{\centering\arraybackslash}p{0.32\textwidth}>{\raggedleft\arraybackslash}p{0.28\textwidth}@{}}
+  \ReportName & \ReportCourse & \ReportTerm\\
+  \ReportStudentID & \ReportType & \ReportDate
+  \end{tabular*}\par
+  \vspace{0.15em}
+  \hrule height 0.4pt
+  \vspace{0.08em}
+  \hrule height 0.4pt
+  \vspace{1.2em}}
+}
+
+\ctexset{
+  section={format=\zihao{4}\heiti,beforeskip=1.4ex plus .2ex,afterskip=0.8ex plus .2ex},
+  subsection={format=\zihao{5}\heiti,beforeskip=1.0ex plus .2ex,afterskip=0.5ex plus .2ex},
+  subsubsection={format=\zihao{5}\songti\bfseries,beforeskip=0.8ex plus .2ex,afterskip=0.4ex plus .2ex}
+}
+
+\begin{document}
+
+\twocolumn[{%
+\makereportheader
+\begin{center}
+{\heiti\zihao{2} 自动事实核查研究综述：从证据检索到大语言模型驱动的可解释验证\par}
+\vspace{0.6em}
+{\bfseries\zihao{4} A Survey on Automated Fact-Checking: From Evidence Retrieval to LLM-based Explainable Verification\par}
+\vspace{0.7em}
+{\fangsong\zihao{3} \ReportAuthorName\par}
+\vspace{0.35em}
+{\songti\zihao{6} （\ReportMajor）\par}
+\vspace{0.9em}
+\end{center}
+
+\begin{center}
+{\heiti\zihao{5} 摘\quad 要}
+\end{center}
+{\songti\zihao{-5}
+自动事实核查旨在从待核查声明出发，检索、筛选并组织可信证据，最终预测声明真实性并给出可解释依据。随着社交媒体、新闻平台和生成式大语言模型的发展，事实核查系统既要面对开放域证据来源、复杂多跳推理和时效性约束，也要处理模型幻觉、证据冲突与解释忠实性等新问题。本文围绕自动事实核查的任务边界、数据集演进、证据检索、神经事实验证、图与多跳推理、检索增强生成以及大语言模型驱动的可解释验证进行系统综述。本文首先梳理 LIAR、FEVER、HoVer、FEVEROUS、AVeriTeC、LIAR-RAW 和 RAWFC 等代表性数据集，说明事实核查从静态文本证据走向真实网页、多源报道和结构化/多模态证据的过程；随后总结 DeClarE、CofCED、GEAR、KGAT、BERT-FEVER 等证据感知神经模型；进一步分析 FactLLaMA、HiSS、ProgramFC、FFRR、RAFTS、L-Defense、G-Defense、KG-CRAFT 和 DeReC 等大模型时代方法。最后，本文讨论 claim-only bias、temporal leakage、证据质量评估、冲突证据处理和解释忠实性等开放问题，并指出未来事实核查系统应从简单证据拼接转向以声明原子事实为中心的可验证证据组织与有序推理链构建。
+\par}
+\vspace{0.5em}
+{\songti\zihao{-5}\noindent\textbf{关键词：}自动事实核查；证据检索；声明验证；大语言模型；检索增强生成；可解释人工智能}
+\vspace{0.7em}
+
+\begin{center}
+{\bfseries\zihao{5} Abstract}
+\end{center}
+{\zihao{-5}\rmfamily
+Automated fact-checking aims to retrieve, select, and organize reliable evidence for a given claim, then predict its veracity with inspectable justifications. With the growth of social media, online news, and generative large language models, fact-checking systems must handle open-domain evidence, multi-hop reasoning, temporal constraints, hallucination risks, conflicting sources, and faithful explanation. This report surveys automated fact-checking from task definitions and benchmark datasets to evidence retrieval, neural verification, graph reasoning, retrieval-augmented generation, and LLM-based explainable verification. We review representative datasets including LIAR, FEVER, HoVer, FEVEROUS, AVeriTeC, LIAR-RAW, and RAWFC; summarize evidence-aware and graph-based models such as DeClarE, CofCED, GEAR, KGAT, and BERT-FEVER; and discuss recent LLM-era systems including FactLLaMA, HiSS, ProgramFC, FFRR, RAFTS, L-Defense, G-Defense, KG-CRAFT, and DeReC. We further discuss open challenges such as claim-only bias, temporal leakage, evidence quality, conflicting evidence, and explanation faithfulness. The survey concludes that future systems should move beyond flat evidence concatenation toward claim-atom-centered evidence organization and ordered reasoning traces.
+\par}
+\vspace{0.5em}
+{\zihao{-5}\rmfamily\noindent\textbf{Keywords:} automated fact-checking; evidence retrieval; claim verification; large language models; retrieval-augmented generation; explainable AI}
+\vspace{1.0em}
+}]
+
+\section{引言}
+
+事实核查（fact-checking）原本是新闻业中的专业实践，目标是判断公共声明、新闻报道或网络信息是否与可靠证据一致。进入社交媒体时代后，虚假信息可以在短时间内跨平台扩散，人工事实核查面临规模、时效和成本限制。自动事实核查（Automated Fact-Checking, AFC）因此成为自然语言处理、信息检索、知识图谱、推荐系统和可信人工智能交叉领域中的重要问题\cite{Nakov2021Assisting,Guo2021Survey,Dmonte2024LLMSurvey}。
+
+从计算任务角度看，自动事实核查并不是单一分类问题。一个完整系统通常包含若干阶段：首先识别哪些声明值得核查；其次检索与声明相关的文本、表格、网页、图像或知识图谱证据；然后从候选证据中选择真正支持判断的证据单元；最后基于证据预测标签，并生成可供人类审阅的解释。若用符号表示，给定声明 $c$、外部证据库 $\mathcal{D}$ 和标签集合 $\mathcal{Y}$，系统需要学习
+\begin{equation}
+\hat{y}=\arg\max_{y\in\mathcal{Y}}p(y\mid c,\mathcal{E}),
+\quad
+\mathcal{E}\subseteq \mathrm{Retrieve}(c,\mathcal{D}),
+\end{equation}
+其中 $\mathcal{E}$ 是被选中的证据集合。与普通文本分类相比，事实核查的困难在于标签必须由证据支撑，证据本身可能不完整、相互矛盾、过时或带有来源偏差。
+
+已有研究大体经历了四个阶段。第一阶段侧重浅层语言特征、来源可信度、社交传播特征和知识图谱路径推理。第二阶段以 FEVER 为代表，将事实核查分解为文档检索、句子选择和自然语言推理式判断。第三阶段引入预训练语言模型、图神经网络和多跳推理，试图让多个证据句之间发生交互。第四阶段则由大语言模型（Large Language Models, LLMs）推动，研究重点从纯判别模型转向检索增强生成、声明分解、辩护式推理、知识图谱增强、多智能体协作和解释生成。
+
+然而，模型能力提升也带来新的问题。LLM 可以生成流畅解释，但流畅解释不一定忠实反映判别依据；RAG 可以扩大证据覆盖，但检索到的证据可能噪声更大；多智能体和图增强方法增强了表达能力，却也提高了系统复杂度。本文的核心观点是：自动事实核查的关键瓶颈正在从“能否找到证据”转向“能否围绕声明语义组织证据，并让判别过程与人类可读解释保持一致”。因此，本文在综述既有工作时，特别关注证据粒度、证据选择、证据组织和可解释推理链。
+
+\section{任务定义与评测流程}
+
+\subsection{从虚假新闻检测到声明验证}
+
+相关文献中常见术语包括 fake news detection、claim verification、fact verification、rumor verification 和 factuality detection。它们互有重叠但侧重点不同。Fake news detection 往往以新闻文章或社交媒体帖子为对象，标签可能是 true/false 或多级真实性；claim verification 更强调给定明确声明并利用证据判断其是否被支持；rumor verification 关注社交传播中的未证实信息，常结合 stance detection；factuality detection 则常用于检测生成文本中的事实错误。
+
+自动事实核查可抽象为多阶段流水线：
+\begin{enumerate}
+  \item \textbf{声明识别与可核查性判断}：从演讲、新闻、社交媒体或生成文本中识别事实性声明，并判断其是否值得核查。
+  \item \textbf{证据检索}：从 Wikipedia、网页、新闻、科学文献、表格或知识图谱中检索候选证据。
+  \item \textbf{证据选择与聚合}：从候选证据中选择与声明直接相关且足以支持判断的证据单元。
+  \item \textbf{真实性判别}：输出 supported/refuted/not enough information，或政治事实核查中的多级标签。
+  \item \textbf{解释生成与审阅}：输出证据引用、推理路径、自然语言说明或图结构解释。
+\end{enumerate}
+
+不同数据集对上述阶段的监督程度不同。FEVER 提供 Wikipedia 句子级证据和三分类标签\cite{Thorne2018FEVER}；LIAR 只提供短声明及 PolitiFact 标签，证据较弱\cite{Wang2017LIAR}；LIAR-RAW 和 RAWFC 进一步引入与声明相关的原始报道，促使模型从原始报告中抽取证据\cite{Yang2022CofCED}；AVeriTeC 则用真实网页证据和问答式中间证据表示，强调真实开放域核查\cite{Schlichtkrull2023AVeriTeC}。
+
+\subsection{评测指标}
+
+事实核查评测通常包含标签指标和证据指标。标签指标包括 Accuracy、Macro-F1、Weighted-F1 等；证据指标包括 evidence recall、precision、FEVER score、AVeriTeC score 等。FEVER score 要求标签正确且证据集合充分，因而比单纯分类准确率更严格。AVeriTeC shared task 进一步将证据质量纳入整体评分，只有标签正确且证据达到质量阈值时才视为成功\cite{Schlichtkrull2024AVeriTeCShared}。
+
+这一趋势说明，事实核查不能只优化最终标签。若模型在没有证据的情况下利用数据偏差预测标签，即使分数较高，也不是真正的事实核查。Schuster 等指出 FEVER 存在 claim-only bias，即只看声明文本的模型也能取得有竞争力的结果\cite{Schuster2019Debiasing}。因此，未来评测应同时回答三个问题：模型是否给出正确标签；模型是否检索到足够且时间有效的证据；模型给出的解释是否忠实反映证据与判别逻辑。
+
+\section{数据集演进}
+
+\subsection{政治声明与新闻事实核查}
+
+LIAR 是早期影响较大的政治声明数据集，包含来自 PolitiFact 的约 1.28 万条短声明，并使用 pants-fire、false、barely-true、half-true、mostly-true、true 六级标签\cite{Wang2017LIAR}。它推动了政治声明真实性分类研究，但原始 LIAR 的证据形态较弱，模型容易依赖声明表面特征和说话人元数据。
+
+MultiFC 从 26 个英文事实核查网站收集真实声明，覆盖多个领域和标签体系，并配有网页证据和元数据\cite{Augenstein2019MultiFC}。相比 LIAR，MultiFC 更接近真实事实核查生态，但标签体系异构也带来统一建模难题。CofCED 提出的 LIAR-RAW 和 RAWFC 则强调“原始报告”场景：系统不直接使用事实核查员写好的解释，而是从与声明相关的 raw reports 中抽取证据并判别标签\cite{Yang2022CofCED}。这一设置与实际新闻核查更接近，因为系统需要处理未经整理的多源报道。
+
+\subsection{Wikipedia 证据验证}
+
+FEVER 是事实验证领域的里程碑数据集，包含 185,445 条由 Wikipedia 句子改写而来的声明，标签为 supported、refuted 和 not enough information，并为前两类提供句子级证据\cite{Thorne2018FEVER}。FEVER 明确提出“检索证据并验证声明”的任务范式，使事实核查从纯分类问题转向检索--推理联合任务。
+
+HoVer 进一步强调多跳事实验证，要求从多篇 Wikipedia 文章中抽取最多四跳证据来判断声明\cite{Jiang2020HoVer}。它暴露了单句匹配模型的局限：许多声明必须跨实体、跨文档整合证据。FEVEROUS 则扩展到非结构化文本和结构化表格混合证据，证据单元可以是句子、表格单元格或二者组合\cite{Aly2021FEVEROUS}。这些数据集共同推动模型从简单句子匹配走向多证据聚合、表格理解和多跳推理。
+
+\subsection{专业领域、真实网页与多模态证据}
+
+TabFact 将事实验证扩展到表格，要求判断自然语言声明是否被 Wikipedia 表格蕴含或反驳\cite{Chen2019TabFact}。SciFact 则面向科学文献，要求从论文摘要中检索证据并验证科学声明\cite{Wadden2020SciFact}。CLIMATE-FEVER 和 COVID-Fact 进一步面向气候变化与新冠疫情等专业领域，显示事实核查系统需要处理领域知识、术语和证据时效性\cite{Diggelmann2020ClimateFever,Saakyan2021COVIDFact}。
+
+AVeriTeC 是真实网页事实核查的重要代表。它收集 50 个事实核查组织的真实声明，使用问答对表示中间证据，并显式避免 evidence after claim 带来的时间泄漏\cite{Schlichtkrull2023AVeriTeC}。多模态方向中，Mocheg 同时包含声明、文本段落、图像证据和解释，推动端到端多模态事实核查研究\cite{Yao2022Mocheg}。社交媒体方向中，FakeNewsNet 和 RumourEval 则提供新闻内容、社交上下文、传播动态和立场信息，使研究者能够结合内容与传播行为进行判断\cite{Shu2018FakeNewsNet,Gorrell2018RumourEval}。
+
+\begin{table*}[t]
+\centering
+\caption{代表性事实核查数据集与任务特点}
+\label{tab:datasets}
+\small
+\begin{tabularx}{\textwidth}{p{2.4cm}p{1.4cm}p{2.3cm}p{2.5cm}X}
+\toprule
+数据集 & 年份 & 证据来源 & 标签形态 & 主要特点 \\
+\midrule
+LIAR & 2017 & PolitiFact 声明与元数据 & 六级真实性 & 政治短声明，标签细粒度，但证据监督较弱\cite{Wang2017LIAR}。\\
+FEVER & 2018 & Wikipedia 句子 & S/R/NEI & 大规模句子级证据验证，奠定检索--选择--验证范式\cite{Thorne2018FEVER}。\\
+MultiFC & 2019 & 多事实核查网站网页 & 异构标签 & 真实多领域声明，包含证据与丰富元数据\cite{Augenstein2019MultiFC}。\\
+HoVer & 2020 & 多篇 Wikipedia 文档 & supported/not-supported & 强调最多四跳证据和跨文档推理\cite{Jiang2020HoVer}。\\
+FEVEROUS & 2021 & Wikipedia 文本与表格 & S/R/NEI & 将文本证据扩展到表格和混合结构化证据\cite{Aly2021FEVEROUS}。\\
+LIAR-RAW/RAWFC & 2022 & 原始新闻报道 & 六级/多级真实性 & 从 raw reports 中抽取可解释证据，贴近新闻事实核查\cite{Yang2022CofCED}。\\
+AVeriTeC & 2023 & 开放网页证据 & 四类标签 & 真实网页证据、问答式中间证据，显式控制时间泄漏\cite{Schlichtkrull2023AVeriTeC}。\\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\section{早期方法：特征、来源与知识图谱}
+
+早期自动事实核查方法主要依赖声明文本、来源信息、传播特征或知识库结构。对于政治声明，模型常使用词袋、n-gram、情感、主题、说话人历史可信度和上下文元数据进行分类。此类方法实现简单，但容易学习数据集偏差，难以证明判别依据来自真实证据。
+
+知识图谱方法提供了另一种可解释路径。Ciampaglia 等将事实核查转化为知识图上的语义接近度问题：若声明可表示为 $(s,p,o)$ 三元组，则系统在知识图中寻找连接主体和客体的路径，路径越短、语义越相关，声明越可能为真\cite{Ciampaglia2015KGFactChecking}。Shiralkar 等进一步提出 knowledge stream，用网络流思想寻找支持三元组真实性的路径模式\cite{Shiralkar2017KnowledgeStreams}。这类方法优势是可解释、可追溯，适合结构化事实；局限在于知识图覆盖有限，且许多真实政治或新闻声明难以规整为单个三元组。
+
+FactKG 等后续工作尝试构造自然语言声明和知识图推理数据集，覆盖一跳、多跳、存在性、合取和否定等推理类型\cite{Kim2023FactKG}。这说明知识图谱仍是事实核查的重要证据来源，但在开放域新闻核查中，它更适合作为文本证据的补充，而不是唯一依据。
+
+\section{证据感知神经事实验证}
+
+\subsection{端到端证据感知模型}
+
+DeClarE 是较早的证据感知深度模型之一。它从外部文章中聚合证据信号、文章语言特征和来源可信度，用神经网络预测声明真实性，并提供可解释特征\cite{Popat2018DeClarE}。CofCED 则面向原始报道提出 coarse-to-fine cascaded evidence distillation：先在 report 级选择相关报道，再在 sentence 级抽取更细证据，并将多层表示输入分类器\cite{Yang2022CofCED}。这类方法的贡献在于摆脱了只看 claim 的分类范式，把外部证据纳入判别过程。
+
+不过，证据感知模型通常仍把证据表示压缩为隐向量或聚合特征。对于人类审阅者而言，模型最终为什么相信某些证据、如何处理支持与反驳证据之间的冲突，并不总是透明。因此，后续研究开始关注证据之间的关系建模和推理过程显式化。
+
+\subsection{FEVER 式三阶段流水线}
+
+FEVER 推动了标准流水线：文档检索、句子选择、声明验证。Nie 等提出 Neural Semantic Matching Network，将三个子任务统一为语义匹配问题，并在检索与验证之间传递相关性分数\cite{Nie2019NSMN}。Soleimani 等研究 BERT 在证据检索和声明验证中的作用，使用一个 BERT 模型检索证据句，再用另一个 BERT 模型执行三分类验证\cite{Soleimani2019BERTFEVER}。
+
+这一阶段的核心进展是：预训练语言模型显著提升了 claim--evidence 匹配能力。然而，若只是把 top-$k$ 证据拼接给分类器，模型仍可能忽略证据间逻辑关系。多证据事实核查需要回答“这些证据分别支持声明的哪一部分、是否相互补充、是否冲突”，而不只是判断每个证据句与声明是否相似。
+
+\section{图推理、多跳证据与证据聚合}
+
+为处理多证据依赖，GEAR 将候选证据构造成全连接证据图，通过图神经网络在证据节点之间传播信息，再聚合得到最终表示\cite{Zhou2019GEAR}。KGAT 进一步引入核图注意力，在证据节点和边上进行细粒度注意力计算，以提升证据传播质量\cite{Liu2019KGAT}。这类方法把证据从扁平序列提升为图结构，使证据之间可以通信。
+
+HoVer 和 FEVEROUS 等数据集使多跳和混合结构推理成为重要方向。多跳事实核查的困难不仅在于检索更多证据，而在于证据必须按正确路径组合。例如，一条声明可能涉及人物、机构、时间和地点，模型需要先验证实体关系，再验证时间约束，最后判断整体是否成立。若缺少显式路径，模型可能检索到若干局部相关句子，却无法形成足够结论。
+
+图方法的局限在于，图结构常由启发式检索或相似度构建，未必对应声明的真实语义分解。若图节点粒度过粗，推理会受噪声影响；若粒度过细，图结构又难以稳定构建。因此，后续 LLM 方法开始显式进行 claim decomposition，将复杂声明拆成子声明、问题或原子事实。
+
+\section{检索增强与证据选择}
+
+\subsection{从 BM25 到 dense retrieval}
+
+证据检索是事实核查系统的上游瓶颈。传统方法常使用 TF-IDF 或 BM25 检索候选文档和句子；DPR 使用双编码器学习问题和段落的 dense representations，在开放域问答中显著提升召回\cite{Karpukhin2020DPR}；ColBERT 通过 late interaction 同时保留效率和细粒度匹配能力\cite{Khattab2020ColBERT}。RAG 将检索模块与生成模型结合，使模型能够访问非参数化外部知识\cite{Lewis2020RAG}。
+
+在事实核查中，检索质量直接影响最终判别。若关键证据未被召回，下游模型即使很强也无法做出可靠判断；若候选池包含大量噪声，模型可能被无关证据干扰。FFRR 针对黑盒 LLM 场景提出 fine-grained feedback with reinforcement retrieval，用 LLM 对检索结果的任务相关性给出反馈，并以强化学习方式优化检索策略\cite{Zhang2024FFRR}。DeReC 则从另一个方向指出， carefully engineered dense retrieval 加上判别式分类器可以在 RAWFC 和 LIAR-RAW 上取得高效且有竞争力的表现，说明并非所有场景都必须使用昂贵生成式 LLM\cite{Qazi2025DeReC}。
+
+\subsection{声明分解与问题驱动检索}
+
+复杂声明通常包含多个事实要素。ClaimDecomp 将复杂政治声明分解为 literal 和 implied subquestions，帮助系统围绕子问题检索证据并推导整体标签\cite{Chen2022ClaimDecomp}。Complex Claim Verification with Evidence Retrieved in the Wild 进一步提出完整开放网页流水线：声明分解、原始文档检索、细粒度证据检索、声明聚焦摘要和最终判别，并强调证据必须在声明发表之前可获得，以避免时间泄漏\cite{Chen2023WildEvidence}。
+
+ProgramFC 将复杂声明验证形式化为程序生成与执行：LLM 先生成由若干子任务组成的 reasoning program，再调用相应函数完成检索、计算或判断\cite{Pan2023ProgramFC}。这类方法的价值在于把隐式推理拆成可审阅步骤，但其可靠性取决于分解质量和子任务执行器质量。
+
+\section{大语言模型时代的事实核查}
+
+\subsection{RAG 与指令微调}
+
+FactLLaMA 是较早将外部检索证据和 instruction-following LLaMA 结合用于自动事实核查的工作。它先检索相关证据，再用证据增强 prompt 微调模型预测标签，在 LIAR 和 RAWFC 上取得较好结果\cite{Cheung2023FactLLaMA}。这类方法说明 LLM 可以作为强 verifier，但也暴露出两个问题：一是检索证据如何选择和排序；二是 LLM 是否真正根据证据判断，而不是利用参数记忆或标签先验。
+
+HiSS 使用 hierarchical step-by-step prompting，将新闻声明拆成子声明，并通过多轮问答逐步验证；当模型对某些子问题信心不足时，可触发搜索补充证据\cite{Zhang2023HiSS}。这种方法更接近人类核查流程，但依赖 prompt 设计和 LLM 自我判断，稳定性仍需评估。
+
+\subsection{辩护、对比论证与图增强}
+
+L-Defense 从“群体智慧”出发，将证据划分为支持与反对两方，再让 LLM 为双方生成辩护，最后由防御式推理模块进行真实性判别\cite{Wang2024LDefense}。RAFTS 与其思想相近：先检索证据，再生成支持和反驳两类 contrastive arguments，并结合 in-context learning 给出预测和解释\cite{Yue2024RAFTS}。这类方法的优点是能够显式呈现正反论证，适合处理争议性声明；风险是生成式辩护可能引入证据中没有的信息。
+
+G-Defense 将 L-Defense 扩展到图结构：先把声明拆成若干子声明并建模依赖关系，再为每个子声明检索证据和生成正反辩护，最后将图序列化用于分类，并生成解释图\cite{Wang2026GDefense}。KG-CRAFT 则从知识图谱出发，先由声明和 reports 构造细粒度知识图，再根据图结构生成对比问题，引导 LLM 进行证据蒸馏和真实性判断\cite{Lourenco2026KGCRAFT}。
+
+这些工作表明，LLM 时代的事实核查正在从“证据拼接 + 标签生成”走向“证据组织 + 中间推理结构 + 标签判断”。但它们也共同面临复杂度问题：子声明分解、图构建、辩护生成、图序列化和最终分类构成多级流水线，其中任一阶段错误都可能传播到最终结果。
+
+\section{可解释性与忠实性}
+
+事实核查天然要求解释。一个只有标签、没有证据的系统难以被事实核查员、新闻机构或普通读者信任。但解释至少有两种不同含义：一是给出可读的自然语言理由；二是揭示模型真实使用了哪些证据及如何推导结论。前者是 readability，后者是 faithfulness。
+
+早期 rationale extraction 研究试图从输入中抽取对预测最关键的 tokens 或 sentences。EX-FEVER 为多跳可解释事实验证提供带解释的数据集，强调 reasoning path\cite{Ma2023EXFEVER}；多粒度 rationale extraction 同时在句子级和 token 级提取解释，并用 fidelity、consistency、salience 约束解释质量\cite{Si2023Rationale}。在 LLM 生成文本事实性评估中，RARR、FActScore、SAFE 等方法也体现了类似思想：先把长文本拆成可核查原子事实，再检索证据判断每个事实是否被支持\cite{Gao2022RARR,Min2023FActScore,Wei2024SAFE}。
+
+对自动事实核查而言，解释忠实性有三个关键要求。第一，解释中引用的证据必须实际来自检索结果，不能由 LLM 编造。第二，解释必须覆盖声明中的关键事实要素，而不是只解释容易判断的一部分。第三，当证据冲突或不足时，系统应显式表达不确定性，而不是强行生成确定结论。CONFACT 等近期工作指出，RAG 模型面对冲突证据时可靠性会下降，来源可信度和媒体背景信息需要进入检索和生成阶段\cite{Ge2025CONFACT}。
+
+\section{开放问题}
+
+\subsection{数据偏差与时间泄漏}
+
+claim-only bias 说明模型可能利用数据集构造痕迹，而非证据推理来预测标签\cite{Schuster2019Debiasing}。时间泄漏则是另一个现实问题：若模型使用声明发表之后才出现的事实核查文章或网页，评测结果会高估真实部署能力。AVeriTeC 和 wild evidence 方向明确要求证据在声明之前可获得，这是未来开放域事实核查必须遵守的基本原则\cite{Schlichtkrull2023AVeriTeC,Chen2023WildEvidence}。
+
+\subsection{证据粒度与证据充分性}
+
+证据粒度决定模型能否有效推理。单句证据便于标注和检索，但可能缺少上下文；整篇 report 保留完整信息，却噪声大、成本高。LIAR-RAW/RAWFC 和 CofCED 说明 raw reports 场景下必须进行证据蒸馏\cite{Yang2022CofCED}。未来系统应根据声明结构动态确定证据粒度：对简单实体关系可使用句子，对因果、时间或统计声明则需要段落、表格或多文档组合。
+
+证据充分性也不等于证据相关性。一个证据单元可能与声明主题相似，却无法支持或反驳关键命题。因此，检索模块不应只优化语义相似度，还应优化对未解析事实要素的边际贡献。这一方向与 claim decomposition、atom-level evidence mapping 和 ordered evidence trace 自然相连。
+
+\subsection{LLM 可靠性与系统复杂度}
+
+LLM 能够进行分解、摘要、辩护、推理和解释，但其输出可能受幻觉、prompt 敏感性和训练语料污染影响。RAG 可缓解参数知识过时问题，但不能自动解决证据冲突、来源可信度和上下文误读。多智能体系统提供模块化和可解释流程，却增加推理成本和调试难度。未来系统需要在性能、成本、可复现性和可解释性之间取得平衡。
+
+\subsection{从证据集合到有序证据链}
+
+许多现有方法将证据视为无序集合或拼接序列。人类事实核查通常不是这样工作：核查员会先拆解声明，再逐个检查声明要素，记录哪些证据支持、反驳、限定或冲突，最后形成整体判断。因此，下一代事实核查系统可以把证据组织建模为状态条件化选择问题。设声明被拆成原子事实集合 $\mathcal{A}=\{a_1,\ldots,a_m\}$，每个 atom 有状态 $h_i^{(t)}\in\{U,S,R,Q,C\}$，系统在每一步选择证据 $u_t$ 推动某些 atom 状态转移，最终得到有序证据链
+\begin{equation}
+\mathcal{T}=[(u_1,\Delta H_1),\ldots,(u_T,\Delta H_T)].
+\end{equation}
+这种形式比平铺证据更接近人类审阅逻辑，也能让 verifier 的输入与解释输出保持一致。
+
+\section{结论}
+
+自动事实核查已经从浅层文本分类发展为融合检索、知识图谱、预训练语言模型、多跳推理和大语言模型的复杂系统。数据集从 LIAR 和 FEVER 逐步扩展到 HoVer、FEVEROUS、AVeriTeC、LIAR-RAW、RAWFC、SciFact 和 Mocheg，证据形态也从句子扩展到网页、表格、科学文献、原始报道和多模态内容。方法上，DeClarE、CofCED、BERT-FEVER、GEAR、KGAT 等工作奠定了证据感知神经验证基础；FactLLaMA、HiSS、ProgramFC、FFRR、RAFTS、L-Defense、G-Defense、KG-CRAFT 和 DeReC 则展示了 LLM/RAG 时代在证据组织、辩护推理和高效检索方面的多种路线。
+
+总体来看，事实核查系统的核心矛盾正在发生变化：早期问题是如何从外部知识中找到相关证据；当前问题则是如何判断哪些证据足以解析声明的关键事实要素，并将这些证据组织成可审阅、可复现、可用于判别的推理结构。未来研究应进一步减少对黑箱聚合和事后解释的依赖，把声明分解、证据映射、冲突处理、状态转移和 verifier 判别连接成统一流程。只有当系统既能给出高质量标签，又能清楚说明每一条证据如何改变对声明的判断时，自动事实核查才更接近真实可用的可信 AI 系统。
+
+\printbibliography[title={参考文献}]
+\end{document}

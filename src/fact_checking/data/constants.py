@@ -104,6 +104,32 @@ HOVER2_LABEL_DEFINITIONS = {
     "not_supported": "the claim is not supported by the retrieved Wikipedia facts",
 }
 
+SCIFACT2_LABELS = ["support", "contradict"]
+SCIFACT2_LABEL2ID = {label: idx for idx, label in enumerate(SCIFACT2_LABELS)}
+SCIFACT2_ID2LABEL = {idx: label for label, idx in SCIFACT2_LABEL2ID.items()}
+SCIFACT2_LABEL_LETTERS = {
+    "support": "A",
+    "contradict": "B",
+}
+SCIFACT2_LETTER2LABEL = {letter: label for label, letter in SCIFACT2_LABEL_LETTERS.items()}
+SCIFACT2_LETTER_ORDER = [SCIFACT2_LABEL_LETTERS[label] for label in SCIFACT2_LABELS]
+SCIFACT2_LABEL_DEFINITIONS = {
+    "support": "the scientific claim is supported by the retrieved abstract evidence",
+    "contradict": "the scientific claim is contradicted by the retrieved abstract evidence",
+}
+
+SCIFACT3_LABELS = ["support", "contradict", "nei"]
+SCIFACT3_LABEL_LETTERS = {
+    "support": "A",
+    "contradict": "B",
+    "nei": "C",
+}
+SCIFACT3_LABEL_DEFINITIONS = {
+    "support": "the scientific claim is supported by the retrieved abstract evidence",
+    "contradict": "the scientific claim is contradicted by the retrieved abstract evidence",
+    "nei": "the retrieved abstract evidence is insufficient to support or contradict the scientific claim",
+}
+
 COVERAGE_LABELS = ["covered", "weak_covered", "uncovered"]
 COVERAGE_LABEL2ID = {label: idx for idx, label in enumerate(COVERAGE_LABELS)}
 COVERAGE_ID2LABEL = {idx: label for label, idx in COVERAGE_LABEL2ID.items()}
@@ -142,6 +168,20 @@ LABEL_SCHEMAS = {
         label_letters=dict(HOVER2_LABEL_LETTERS),
         label_definitions=dict(HOVER2_LABEL_DEFINITIONS),
     ),
+    "scifact2": LabelSchema(
+        name="scifact2",
+        task_name="SciFact",
+        labels=list(SCIFACT2_LABELS),
+        label_letters=dict(SCIFACT2_LABEL_LETTERS),
+        label_definitions=dict(SCIFACT2_LABEL_DEFINITIONS),
+    ),
+    "scifact3": LabelSchema(
+        name="scifact3",
+        task_name="SciFact",
+        labels=list(SCIFACT3_LABELS),
+        label_letters=dict(SCIFACT3_LABEL_LETTERS),
+        label_definitions=dict(SCIFACT3_LABEL_DEFINITIONS),
+    ),
 }
 
 _SCHEMA_ALIASES = {
@@ -156,6 +196,10 @@ _SCHEMA_ALIASES = {
     "hover": "hover2",
     "hover2": "hover2",
     "ho_ver": "hover2",
+    "scifact": "scifact3",
+    "sci_fact": "scifact3",
+    "scifact2": "scifact2",
+    "scifact3": "scifact3",
 }
 
 

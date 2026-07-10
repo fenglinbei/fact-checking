@@ -13,7 +13,7 @@ fi
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 SPLITS="${SPLITS:-train val test}"
-SELECTORS="${SELECTORS:-selector_mech_s0_no_evidence selector_mech_s1_claim_pool_random_top5 selector_mech_s2_claim_pool_hybrid_top5 selector_mech_s3_claim_pool_hybrid_mmr_top5 selector_mech_s4_atom_union_source_score_top5 selector_mech_s4b_atom_route_only_source_score_top5}"
+SELECTORS="${SELECTORS:-selector_mech_s0_no_evidence selector_mech_s1_claim_pool_random_top5 selector_mech_s2_claim_pool_hybrid_top5 selector_mech_s3_claim_pool_hybrid_mmr_top5 selector_mech_s4_atom_union_source_score_top5}"
 ATOM_ANCHOR_ROOT="${ATOM_ANCHOR_ROOT:-outputs/selectors/atom_anchor/liar_raw_abc_v0_1}"
 CHUNK_CACHE_ROOT="${CHUNK_CACHE_ROOT:-outputs/cache/chunk_mmr/d4cbf7c18126}"
 SOURCE_BASE_ROOT="${SOURCE_BASE_ROOT:-outputs/selectors/selector_mechanism_ablation}"
@@ -51,8 +51,7 @@ for split in ${SPLITS}; do
   union_jsonl="${ATOM_ANCHOR_ROOT}/03_atom_union/atom_union_candidate_pool_${split}.jsonl"
   require_path "$chunk_cache" "${split} chunk cache"
   for selector in ${SELECTORS}; do
-    if [[ "$selector" == "selector_mech_s4_atom_union_source_score_top5" ]] \
-      || [[ "$selector" == "selector_mech_s4b_atom_route_only_source_score_top5" ]]; then
+    if [[ "$selector" == "selector_mech_s4_atom_union_source_score_top5" ]]; then
       require_path "$union_jsonl" "${split} atom union candidate pool"
     fi
     output_dir="${SOURCE_BASE_ROOT}/liar_raw_${selector}_${split}"

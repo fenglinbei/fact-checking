@@ -35,6 +35,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rollout-steps", type=int, default=5)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--learning-rate", type=float, default=0.05)
+    parser.add_argument(
+        "--map-ablation-mode",
+        default="full",
+        choices=["full", "no_map", "no_directness", "no_confidence", "no_relation"],
+        help="Evidence-map ablation mode for learned-marginal selector features.",
+    )
     return parser.parse_args()
 
 
@@ -53,6 +59,7 @@ def main() -> int:
         learning_rate=float(args.learning_rate),
         candidate_top_n=int(args.candidate_top_n),
         rollout_steps=int(args.rollout_steps),
+        map_ablation_mode=str(args.map_ablation_mode),
     )
     val_metrics = _evaluate_rows(
         val_rows,
@@ -79,6 +86,7 @@ def main() -> int:
             "rollout_steps": int(args.rollout_steps),
             "epochs": int(args.epochs),
             "learning_rate": float(args.learning_rate),
+            "map_ablation_mode": str(args.map_ablation_mode),
             "train_sample_limit": train_limit,
             "val_sample_limit": val_limit,
         },

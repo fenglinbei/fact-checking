@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
-from fact_checking.build.candidates import canonicalize_sentence
+import numpy as np
+
+from fact_checking.build.candidates import canonicalize_sentence, minmax_scale
+from fact_checking.retrieval.mmr import maximal_marginal_relevance
 from fact_checking.selectors.question_decomp_retrieval import _compute_prediction_metrics
 
 
@@ -15,12 +18,16 @@ class AtomUnionSelectionParams:
     atom_rrf_weight: float = 1.0
     atom_route_hit_weight: float = 0.004
     atom_max_hybrid_weight: float = 0.01
+    union_mmr_lambda: float = 0.70
 
 
 def build_atom_union_pool_row(
     *,
     baseline_row: dict[str, Any],
     atom_pool_row: dict[str, Any],
+    candidate_vectors: Mapping[str, np.ndarray] | None = None,
+    final_pool_size: int | None = None,
+    params: AtomUnionSelectionParams | None = None,
 ) -> dict[str, Any]:
     event_id = str(atom_pool_row.get("event_id") or baseline_row.get("event_id") or "")
     claim = str(atom_pool_row.get("claim") or baseline_row.get("claim") or "")
@@ -73,6 +80,17 @@ def build_atom_union_pool_row(
 
     candidates = list(merged.values())
     candidates.sort(key=_union_pool_sort_key)
+    pool_size_before_mmr = len(candidates)
+    mmr_applied = final_pool_size is not None
+    if mmr_applied:
+        if candidate_vectors is None:
+            raise ValueError("candidate_vectors are required when final_pool_size is set.")
+        candidates = select_atom_union_mmr(
+            candidates,
+            candidate_vectors=candidate_vectors,
+            top_k=int(final_pool_size),
+            params=params or AtomUnionSelectionParams(),
+        )
     for rank, candidate in enumerate(candidates, start=1):
         candidate["union_pool_rank"] = rank
         candidate["union_source"] = _union_source(candidate)
@@ -82,8 +100,48 @@ def build_atom_union_pool_row(
         "label": label,
         "gold_label": gold_label,
         "claim_atoms": list(atom_pool_row.get("claim_atoms") or []),
+        "union_pool_size_before_mmr": pool_size_before_mmr,
+        "union_mmr_applied": mmr_applied,
         "candidates": candidates,
     }
+
+
+def select_atom_union_mmr(
+    candidates: Sequence[dict[str, Any]],
+    *,
+    candidate_vectors: Mapping[str, np.ndarray],
+    top_k: int,
+    params: AtomUnionSelectionParams,
+) -> list[dict[str, Any]]:
+    rows = [dict(candidate) for candidate in candidates]
+    if not rows or int(top_k) <= 0:
+        return []
+
+    vectors: list[np.ndarray] = []
+    raw_scores: list[float] = []
+    for candidate in rows:
+        key = _candidate_key(candidate)
+        vector = candidate_vectors.get(key)
+        if vector is None:
+            raise ValueError(f"Missing chunk embedding for Atom-Union candidate: {key[:120]!r}")
+        vectors.append(np.asarray(vector, dtype=np.float32))
+        raw_scores.append(_atom_union_mmr_relevance(candidate, params=params))
+
+    query_scores = minmax_scale(np.asarray(raw_scores, dtype=np.float32))
+    selected_indices = maximal_marginal_relevance(
+        query_scores=query_scores,
+        sentence_vectors=np.asarray(vectors, dtype=np.float32),
+        top_k=min(int(top_k), len(rows)),
+        lambda_weight=float(params.union_mmr_lambda),
+    )
+    selected: list[dict[str, Any]] = []
+    for rank, candidate_idx in enumerate(selected_indices, start=1):
+        item = rows[int(candidate_idx)]
+        item["atom_union_relevance_score"] = float(raw_scores[int(candidate_idx)])
+        item["atom_union_relevance_score_normalized"] = float(query_scores[int(candidate_idx)])
+        item["atom_union_mmr_rank"] = rank
+        selected.append(item)
+    return selected
 
 
 def select_atom_union_rules(
@@ -230,6 +288,19 @@ def _union_pool_sort_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _atom_union_mmr_relevance(
+    candidate: dict[str, Any],
+    *,
+    params: AtomUnionSelectionParams,
+) -> float:
+    claim_relevance = float(candidate.get("baseline_hybrid_score") or 0.0)
+    atom_relevance = float(candidate.get("atom_max_route_hybrid") or 0.0)
+    relevance = max(claim_relevance, atom_relevance)
+    relevance += float(params.atom_rrf_weight) * float(candidate.get("atom_rrf_score") or 0.0)
+    relevance += float(params.atom_route_hit_weight) * float(candidate.get("atom_route_hit_count") or 0.0)
+    return float(relevance)
+
+
 def _union_source(candidate: dict[str, Any]) -> str:
     if candidate.get("from_baseline") and candidate.get("from_atom_route"):
         return "baseline+atom"
@@ -252,5 +323,6 @@ __all__ = [
     "build_atom_union_pool_row",
     "compute_atom_union_metrics",
     "rank_atom_union_source_score_candidates",
+    "select_atom_union_mmr",
     "select_atom_union_rules",
 ]

@@ -12,17 +12,42 @@
     <Text name="claim_zh" value="$claim_zh" style="font-size:13px;line-height:1.5;color:#666" />
   </View>
 
-  <!-- ============ Claim 整体复杂度 ============ -->
-  <Header value="一、Claim 整体复杂度" />
-  <Choices name="claim_complexity" toName="claim" choice="single" required="true">
-    <Choice value="simple" hint="单一可验证断言" />
-    <Choice value="compound" hint="含多个可独立验证断言" />
-  </Choices>
+  <!-- ============ 该 Claim 的全部 Atoms 全景（claim 级判定依据）============ -->
+  <View name="auto_atoms_panorama" style="border-left:4px solid #9c27b0;padding:8px 12px;margin-bottom:16px;background:#fafafa">
+    <Text name="auto_ap_label" value="🧩 该 Claim 的全部 Atoms（完整列表）" style="font-size:14px;font-weight:bold;color:#9c27b0" />
+    <Text name="all_atoms_text" value="$all_atoms_text" style="font-size:14px;line-height:1.7;white-space:pre-wrap" />
+    <Text name="all_atoms_text_zh_label" value="中文翻译（辅助参考，以英文为准）：" style="font-size:11px;color:#888;margin-top:4px" />
+    <Text name="all_atoms_text_zh" value="$all_atoms_text_zh" style="font-size:13px;line-height:1.6;color:#666;white-space:pre-wrap" />
+  </View>
+
+  <!-- ============ 一、Claim 级标注 ============ -->
+  <Header value="一、Claim 级标注（每个 claim 填一次）" />
+  <View name="auto_claim_block" style="background:#f3e5f5;padding:10px 14px;border-radius:6px;margin-bottom:14px">
+    <!-- 复杂度 -->
+    <Header value="复杂度 Complexity" style="font-size:13px" />
+    <Text name="auto_cx_hint" value="该 claim 含几个可独立验证断言？" style="font-size:12px;color:#666" />
+    <Choices name="claim_complexity" toName="claim" choice="single" required="true">
+      <Choice value="simple" hint="单一可验证断言" />
+      <Choice value="compound" hint="含多个可独立验证断言" />
+    </Choices>
+
+    <View name="auto_sp1" style="height:10px" />
+
+    <!-- 完整性（claim 级，对照全部 atoms 合起来的覆盖判定） -->
+    <Header value="完整性 Completeness（对照上方全部 Atoms 合起来的覆盖判定）" style="font-size:13px" />
+    <Text name="auto_cm_hint" value="claim 中有多少个可独立验证的事实断言没有被【该 claim 的全部 atoms 合起来】覆盖？" style="font-size:12px;color:#666" />
+    <Choices name="completeness_missed" toName="claim" choice="single" required="true">
+      <Choice value="0" hint="0：全部 atoms 合起来已完整覆盖所有断言" />
+      <Choice value="1" hint="1：漏掉 1 个可独立验证断言" />
+      <Choice value="2" hint="2：漏掉 2 个可独立验证断言" />
+      <Choice value="3+" hint="3+：漏掉 3 个或更多可独立验证断言" />
+    </Choices>
+  </View>
 
   <View name="auto_5" style="height:16px" />
 
-  <!-- ============ Atom 评测 ============ -->
-  <Header value="二、Atom 评测" />
+  <!-- ============ 二、Atom 评测（atom 级，逐个 atom 填）============ -->
+  <Header value="二、Atom 评测（对当前 atom 逐项填）" />
   <View name="auto_13" style="background:#fff3e0;padding:8px 12px;border-radius:4px;margin-bottom:8px">
     <Text name="auto_14" value="⚠ 评估 LLM 拆出的 atom 质量，不需要改写 atom。" style="font-size:12px;color:#e65100" />
   </View>
@@ -47,18 +72,6 @@
 
     <View name="auto_9" style="height:10px" />
 
-    <!-- 维度 B: 完整性 -->
-    <Header value="维度 B · 完整性 Completeness" style="font-size:13px" />
-    <Text name="auto_10" value="claim 中有多少个可独立验证的事实断言没有被任何 atom 覆盖？" style="font-size:12px;color:#666" />
-    <Choices name="completeness_missed" toName="atom_prop" choice="single" required="true">
-      <Choice value="0" hint="0：atom 已完整覆盖，claim 中所有可独立验证断言都有对应 atom" />
-      <Choice value="1" hint="1：漏掉 1 个可独立验证断言" />
-      <Choice value="2" hint="2：漏掉 2 个可独立验证断言" />
-      <Choice value="3+" hint="3+：漏掉 3 个或更多可独立验证断言" />
-    </Choices>
-
-    <View name="auto_11" style="height:10px" />
-
     <!-- 维度 C: 原子性 -->
     <Header value="维度 C · 原子性 Atomicity" style="font-size:13px" />
     <Text name="auto_12" value="该 atom 是否已经是最小可独立验证的命题？（选 yes 表示无法再拆出更小的可验证子断言；选 no 表示它把多个可独立验证断言黏在一起，应进一步拆分）" style="font-size:12px;color:#666" />
@@ -76,6 +89,6 @@
 
   <!-- ============ 底部提交确认 ============ -->
   <View name="auto_18" style="background:#e3f2fd;padding:8px 12px;border-radius:4px;margin-top:8px">
-    <Text name="auto_19" value="✅ 完成所有维度的标注后提交。" style="font-size:12px;color:#1565c0" />
+    <Text name="auto_19" value="✅ 完成所有维度的标注后提交。completeness 已上移至 claim 级，此处只需评 faithfulness / atomicity。" style="font-size:12px;color:#1565c0" />
   </View>
 </View>

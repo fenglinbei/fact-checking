@@ -44,7 +44,7 @@ export REQUIRE_PROMPT_INPUT_IDS="${REQUIRE_PROMPT_INPUT_IDS:-true}"
 export LIAR_CLASS_WEIGHTS="${LIAR_CLASS_WEIGHTS:-pants-fire=1.2,false=1.0,barely-true=1.5,half-true=1.0,mostly-true=1.0,true=1.8}"
 export SWANLAB_PROJECT="${SWANLAB_PROJECT:-fact-checking-sentence-trace-method-selector-mechanism}"
 
-SELECTORS="${SELECTOR_MECH_CASES:-selector_mech_s0_no_evidence selector_mech_s1_claim_pool_random_top5 selector_mech_s2_claim_pool_hybrid_top5 selector_mech_s3_claim_pool_hybrid_mmr_top5 selector_mech_s4_atom_union_source_score_top5 selector_mech_s4b_atom_route_only_source_score_top5}"
+SELECTORS="${SELECTOR_MECH_CASES:-selector_mech_s0_no_evidence selector_mech_s1_claim_pool_random_top5 selector_mech_s2_claim_pool_hybrid_top5 selector_mech_s3_claim_pool_hybrid_mmr_top5 selector_mech_s4_atom_union_source_score_top5}"
 SOURCE_BASE_ROOT="${SOURCE_BASE_ROOT:-outputs/selectors/selector_mechanism_ablation}"
 CASE_SUFFIX_EXTRA="${CASE_SUFFIX_EXTRA:-}"
 PREPARE_SELECTOR_MECH_TRACES="${PREPARE_SELECTOR_MECH_TRACES:-true}"

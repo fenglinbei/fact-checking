@@ -1,0 +1,17 @@
+extends: learned_marginal_proxy_fullpool_minmax5_5.yaml
+
+experiment:
+  name: liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_5_map_ablation_no_confidence
+  case_suffix: __atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_5_map_ablation_no_confidence
+  run_label: atom-anchor-v0.2-learned-proxy-fullpool-minmax5-5-map-ablation-no_confidence
+  run_header_label: atom-anchor-v0.2-learned-proxy-fullpool-minmax5-5-map-ablation-no_confidence-full
+
+trace:
+  output_root: outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy_fullpool_map_ablation_no_confidence
+  weight_file: outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy_map_ablation_no_confidence/weights/weights.json
+  weight_training:
+    enabled: true
+    output_dir: outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy_map_ablation_no_confidence/weights
+
+swanlab:
+  experiment_name: liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_5_map_ablation_no_confidence

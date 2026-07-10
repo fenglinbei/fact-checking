@@ -1,0 +1,165 @@
+label_schema: scifact3
+
+experiment:
+  base_case_name: scifact__ministral3_8b
+  output_root: outputs/sentence_trace_method
+  case_suffix: __atom_union_fullpool_minmax9_9
+  lora_suffix: _lora_ebs16_lr2em5_ep12_eval100_pat8
+  run_label: scifact-atom-union-fullpool
+  run_header_label: scifact-atom-union-fullpool-minmax9-9
+
+paths:
+  atom_anchor_root: outputs/selectors/scifact_atom_anchor
+  source_feature_root: outputs/selectors/scifact_atom_anchor/04_evidence_map
+  quality_audit: outputs/selectors/scifact_atom_anchor/quality_audit_after_fix.json
+  quality_audit_mode: source_only
+
+trace:
+  output_root: outputs/selectors/scifact_atom_anchor/06_traces
+  weight_file: outputs/selectors/scifact_atom_anchor/05_selector/weights.json
+  selector_name: mrec_greedy_transition_v0_2_learned_marginal_proxy_fullpool
+  adaptive_policy: learned_marginal_proxy_v0_2
+  selection_policy: learned_marginal_proxy
+  source_selector_name: scifact_atom_union_evidence_map
+  splits: [train, val, test]
+  candidate_top_n: 0
+  max_steps: 0
+  min_steps: 0
+  token_budget: null
+  target_resolved_rate: 1.0
+  continue_after_target_for_contrast: false
+  post_target_fill_policy: contrast_only
+  stop_threshold: -1000000000
+  weight_training:
+    enabled: true
+    output_dir: outputs/selectors/scifact_atom_anchor/05_selector
+    candidate_top_n: 20
+    rollout_steps: 5
+    epochs: 50
+    learning_rate: 0.05
+
+prompt_evidence:
+  policy: minmax
+  min_evidence_count: 9
+  max_evidence_count: 9
+  evidence_token_budget: null
+  trace_prompt_style: mrec_min
+  evidence_text_mode: full
+  max_length_guard:
+    enabled: true
+    reserve_tokens: 0
+    on_violation: warn
+
+baseline:
+  variant: scifact__ministral3_8b
+  label_schema: scifact3
+
+build:
+  data:
+    dataset: scifact
+    label_schema: scifact3
+    train_path: data/raw/SciFact/claims_train.jsonl
+    val_path: data/raw/SciFact/claims_dev.jsonl
+    test_path: data/raw/SciFact/claims_test.jsonl
+    sample_limit: 0
+  prompt:
+    model_name_or_path: /data/models/Ministral-3-8B-Instruct-2512
+    max_length: 1024
+    output_mode: label_only
+    label_format: letter
+    label_schema: scifact3
+    system_prompt: null
+    chat_template:
+      mode: tokenizer_default
+      add_generation_prompt: true
+      template_kwargs: {}
+
+train:
+  model_name_or_path: /data/models/Ministral-3-8B-Instruct-2512
+  deepspeed_config: configs/deepspeed_zero2_bsz1_ga4.json
+  nproc_per_node: 4
+
+sft_train:
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-05
+  num_train_epochs: 12
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  bf16: true
+  max_length: 1024
+  logging_steps: 2
+  save_steps: 100
+  eval_steps: 100
+  dataloader_num_workers: 4
+  gradient_checkpointing: true
+  use_flash_attention_2: true
+  lr_scheduler_type: cosine_with_restarts
+  lr_scheduler_kwargs:
+    num_cycles: 2
+  max_grad_norm: 1.0
+  padding: longest
+  use_length_bucket: true
+  empty_cache_steps: 0
+  empty_cache_on_eval: true
+  empty_cache_on_save: true
+  max_new_tokens: 1
+  temperature: 0.0
+  early_stopping_patience: 12
+  eval_log_predictions: 0
+  label_schema: scifact3
+  logit_adjust:
+    enabled: false
+    tau: 1.0
+  lora:
+    enabled: false
+    r: 16
+    alpha: 32
+    dropout: 0.1
+    bias: none
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    modules_to_save: null
+  label_token_ce:
+    label_prefix: "Label:"
+    early_stopping_metric: macro_f1
+    class_weights:
+      support: 1.0
+      contradict: 1.0
+      nei: 1.0
+    ordinal_loss:
+      enabled: false
+
+infer:
+  provider: label_token
+  merge_lora_cache:
+    enabled: false
+  server:
+    extra_args:
+      - --tokenizer-mode
+      - mistral
+      - --config-format
+      - mistral
+      - --load-format
+      - mistral
+
+eval:
+  splits: [val, test]
+  checkpoints: [best]
+  run_tau_eval: "false"
+  taus: [0.75]
+
+tracking:
+  enabled: true
+  backend: swanlab
+
+swanlab:
+  project: fact-checking-sentence-trace-method-scifact
+  experiment_name: scifact__ministral3_8b__atom_union_fullpool_minmax9_9

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+import numpy as np
+
 from fact_checking.selectors.atom_retrieval_union import (
     AtomUnionSelectionParams,
     build_atom_union_pool_row,
@@ -74,6 +76,47 @@ class AtomRetrievalUnionTest(unittest.TestCase):
         self.assertEqual([c["text"] for c in selected["atom_union_interleave_top5"]], ["B1", "A1"])
         self.assertEqual(selected["atom_union_source_score_top5"][0]["text"], "A1")
         self.assertIn("atom_union_source_score", selected["atom_union_source_score_top5"][0])
+
+    def test_atom_union_final_mmr_has_fixed_size_and_final_ranks(self) -> None:
+        row = build_atom_union_pool_row(
+            baseline_row={
+                "event_id": "event0",
+                "claim": "claim",
+                "candidates": [
+                    {"text": "B1", "selection_rank": 1, "hybrid_score": 0.90},
+                    {"text": "B2", "selection_rank": 2, "hybrid_score": 0.80},
+                    {"text": "B3", "selection_rank": 3, "hybrid_score": 0.70},
+                ],
+            },
+            atom_pool_row={
+                "event_id": "event0",
+                "claim": "claim",
+                "candidates": [
+                    {
+                        "text": "A1",
+                        "merge_rank": 1,
+                        "atom_rrf_score": 0.05,
+                        "atom_route_hit_count": 1,
+                        "atom_max_route_hybrid": 0.95,
+                    }
+                ],
+            },
+            candidate_vectors={
+                "b1": np.asarray([1.0, 0.0], dtype=np.float32),
+                "b2": np.asarray([0.99, 0.01], dtype=np.float32),
+                "b3": np.asarray([0.0, 1.0], dtype=np.float32),
+                "a1": np.asarray([-1.0, 0.0], dtype=np.float32),
+            },
+            final_pool_size=3,
+            params=AtomUnionSelectionParams(selector_top_k=3, union_mmr_lambda=0.70),
+        )
+
+        self.assertEqual(row["union_pool_size_before_mmr"], 4)
+        self.assertTrue(row["union_mmr_applied"])
+        self.assertEqual(len(row["candidates"]), 3)
+        self.assertEqual([candidate["union_pool_rank"] for candidate in row["candidates"]], [1, 2, 3])
+        self.assertEqual([candidate["atom_union_mmr_rank"] for candidate in row["candidates"]], [1, 2, 3])
+        self.assertIn("A1", [candidate["text"] for candidate in row["candidates"]])
 
 
 if __name__ == "__main__":

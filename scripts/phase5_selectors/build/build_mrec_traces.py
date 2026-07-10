@@ -66,6 +66,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--weight-file", default="")
     parser.add_argument("--stop-threshold", type=float, default=0.0)
+    parser.add_argument(
+        "--map-ablation-mode",
+        default="full",
+        choices=["full", "no_map", "no_directness", "no_confidence", "no_relation"],
+        help="Evidence-map ablation mode for learned-marginal selector features.",
+    )
     parser.add_argument("--source-selector-name", default="v0_7_atom_facts_abc_budgeted_marginal_chain_adaptive5_10")
     return parser.parse_args()
 
@@ -95,6 +101,7 @@ def main() -> int:
         selection_policy=str(args.selection_policy),
         weight_file=str(args.weight_file or ""),
         stop_threshold=float(args.stop_threshold),
+        map_ablation_mode=str(args.map_ablation_mode),
     )
     rows = _read_jsonl(input_path, sample_limit=int(args.sample_limit))
     traces = [_build_trace(row, params=params, source_selector_name=str(args.source_selector_name)) for row in rows]
@@ -213,6 +220,7 @@ def _manifest(
             "selection_policy": str(params.selection_policy),
             "weight_file": str(params.weight_file or ""),
             "stop_threshold": float(params.stop_threshold),
+            "map_ablation_mode": str(params.map_ablation_mode),
         },
         "weight_fingerprint": weight_fingerprint,
         "source_selector_name": str(args.source_selector_name),

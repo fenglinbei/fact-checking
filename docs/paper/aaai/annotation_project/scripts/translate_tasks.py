@@ -234,7 +234,7 @@ def main():
     exp2_input = args.data_dir / "exp2_tasks.jsonl"
     exp2_output = args.data_dir / "exp2_tasks_zh.jsonl"
     if exp2_input.exists():
-        process_file(exp2_input, exp2_output, ["claim", "evidence_text"], api_key, _concurrency)
+        process_file(exp2_input, exp2_output, ["claim", "evidence_text", "atom_proposition"], api_key, _concurrency)
     else:
         print(f"\n⚠ 实验2输入文件不存在: {exp2_input}")
 

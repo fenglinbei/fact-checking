@@ -31,6 +31,8 @@ def load_split(
         return _load_rawfc_split(path, label_schema=label_schema or "rawfc3")
     if dataset_name == "hover":
         return _load_hover_split(path, label_schema=label_schema or "hover2")
+    if dataset_name == "scifact":
+        return _load_scifact_split(path, label_schema=label_schema or "scifact3")
     return _load_liar_raw_split(path, label_schema=label_schema or "liar6")
 
 
@@ -40,17 +42,23 @@ def _normalize_dataset(dataset: str | None, *, path: Path, label_schema: str | N
         return "rawfc"
     if raw in {"hover", "ho_ver"}:
         return "hover"
+    if raw in {"scifact", "sci_fact"}:
+        return "scifact"
     if raw in {"", "liar", "liar_raw", "liar6"}:
         if label_schema and normalize_label_schema(label_schema) == "rawfc3":
             return "rawfc"
         if label_schema and normalize_label_schema(label_schema) == "hover2":
             return "hover"
+        if label_schema and normalize_label_schema(label_schema) in {"scifact2", "scifact3"}:
+            return "scifact"
         if any(part.lower() == "rawfc" for part in path.parts):
             return "rawfc"
         if any(part.lower() == "hover" for part in path.parts):
             return "hover"
+        if any(part.lower() == "scifact" for part in path.parts):
+            return "scifact"
         return "liar_raw"
-    raise ValueError(f"Unsupported dataset={dataset!r}. Use liar_raw, rawfc, or hover.")
+    raise ValueError(f"Unsupported dataset={dataset!r}. Use liar_raw, rawfc, hover, or scifact.")
 
 
 def _load_liar_raw_split(path: Path, *, label_schema: str) -> list[SampleRecord]:
@@ -137,6 +145,39 @@ def _load_hover_split(path: Path, *, label_schema: str) -> list[SampleRecord]:
     return records
 
 
+def _load_scifact_split(path: Path, *, label_schema: str) -> list[SampleRecord]:
+    label2id = label2id_for_schema(label_schema)
+    include_nei = normalize_label_schema(label_schema) == "scifact3" and not _is_scifact_test_path(path)
+    records: list[SampleRecord] = []
+    with path.open("r", encoding="utf-8") as f:
+        for line_no, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            item = json.loads(line)
+            label, label_conflict = _scifact_claim_label(
+                item.get("evidence") or {},
+                empty_label="nei" if include_nei else "",
+            )
+            if label and label not in label2id:
+                raise ValueError(f"Unknown SciFact label: {label!r} in {path}:{line_no}")
+            records.append(
+                SampleRecord(
+                    event_id=str(item["id"]),
+                    claim=clean_text(str(item["claim"])),
+                    label=label,
+                    explain="",
+                    reports=[],
+                    metadata=_scifact_metadata_from_raw_row(
+                        item,
+                        label=label,
+                        label_conflict=label_conflict,
+                    ),
+                )
+            )
+    return records
+
+
 def _metadata_from_raw_row(item: dict[str, Any]) -> dict[str, Any]:
     return {key: item[key] for key in COVERAGE_METADATA_KEYS if key in item}
 
@@ -174,6 +215,57 @@ def _hover_metadata_from_raw_row(item: dict[str, Any], *, has_gold_label: bool) 
         if key in item:
             metadata[key] = item[key]
     return metadata
+
+
+def _scifact_claim_label(evidence: Any, *, empty_label: str = "") -> tuple[str, bool]:
+    if not isinstance(evidence, dict) or not evidence:
+        return str(empty_label), False
+    labels: list[str] = []
+    for rationale_rows in evidence.values():
+        if not isinstance(rationale_rows, list):
+            continue
+        for rationale in rationale_rows:
+            if not isinstance(rationale, dict):
+                continue
+            label = _scifact_label_name(rationale.get("label"))
+            if label:
+                labels.append(label)
+    unique = list(dict.fromkeys(labels))
+    if not unique:
+        return "", False
+    return unique[0], len(set(unique)) > 1
+
+
+def _scifact_label_name(value: Any) -> str:
+    text = clean_text(str(value or "")).strip().lower().replace("-", "_")
+    if text in {"", "none", "null"}:
+        return ""
+    if text in {"support", "supports", "supported"}:
+        return "support"
+    if text in {"contradict", "contradicts", "contradicted", "refute", "refutes", "refuted"}:
+        return "contradict"
+    raise ValueError(f"Unknown SciFact label: {value!r}")
+
+
+def _scifact_metadata_from_raw_row(
+    item: dict[str, Any],
+    *,
+    label: str,
+    label_conflict: bool,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "source_dataset": "scifact",
+        "has_gold_label": bool(label),
+        "scifact_label_conflict": bool(label_conflict),
+    }
+    for key in ("evidence", "cited_doc_ids"):
+        if key in item:
+            metadata[key] = item[key]
+    return metadata
+
+
+def _is_scifact_test_path(path: Path) -> bool:
+    return path.name.strip().lower() in {"claims_test.jsonl", "test.jsonl"}
 
 
 def load_jsonl(path: str | Path) -> list[dict[str, Any]]:

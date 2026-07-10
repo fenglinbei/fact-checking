@@ -15,7 +15,6 @@ from fact_checking.selectors.selector_mechanism_ablation import (
     SELECTOR_MECH_S3_CLAIM_POOL_HYBRID_MMR_TOP5,
     SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_ORDERED,
     SELECTOR_MECH_S4_ATOM_UNION_SOURCE_SCORE_TOP5,
-    SELECTOR_MECH_S4B_ATOM_ROUTE_ONLY_SOURCE_SCORE_TOP5,
     SelectorMechanismParams,
     build_claim_candidate_pool_row,
     build_selector_mechanism_trace_row,
@@ -184,61 +183,6 @@ def test_atom_union_source_score_ordered_keeps_full_union_order_and_matches_top5
     assert [c["text"] for c in full_order_trace["selected_candidates"]] == [c["text"] for c in ranked]
     assert full_order_trace["adaptive_policy"] == "source_score_ordered"
     assert full_order_trace["candidate_pool_metadata"]["adaptive_policy"] == "source_score_ordered"
-
-
-def test_atom_route_only_drops_baseline_only_candidates() -> None:
-    """S4b keeps only atom-route candidates (including dual-source ones) and
-    drops candidates that come solely from the baseline claim pool."""
-    union_row = _union_row(
-        extra_candidates=[
-            {
-                "text": "second baseline",
-                "canonical_text": "second baseline",
-                "from_baseline": True,
-                "from_atom_route": False,
-                "baseline_rank": 2,
-                "atom_pool_rank": None,
-                "atom_rrf_score": 0.0,
-                "atom_route_hit_count": 0,
-                "atom_max_route_hybrid": 0.0,
-                "union_pool_rank": 3,
-                "chunk_sent_indices": [3],
-            },
-            {
-                "text": "dual source",
-                "canonical_text": "dual source",
-                "from_baseline": True,
-                "from_atom_route": True,
-                "baseline_rank": 3,
-                "atom_pool_rank": 2,
-                "atom_rrf_score": 0.10,
-                "atom_route_hit_count": 1,
-                "atom_max_route_hybrid": 0.5,
-                "union_pool_rank": 4,
-                "chunk_sent_indices": [4],
-            },
-        ]
-    )
-    # union_row now has: baseline-only, atom-only, baseline-only, dual-source
-    # S4b should drop the two baseline-only candidates, keeping atom-only + dual.
-    trace = build_selector_mechanism_trace_row(
-        claim_pool_row=None,
-        union_row=union_row,
-        selector_name=SELECTOR_MECH_S4B_ATOM_ROUTE_ONLY_SOURCE_SCORE_TOP5,
-        params=SelectorMechanismParams(top_k=5),
-        chunk_mmr_fingerprint="fp",
-    )
-
-    pool_texts = [c["text"] for c in trace["candidate_pool"]]
-    assert "baseline" not in pool_texts, "pure baseline candidate should be dropped"
-    assert "second baseline" not in pool_texts, "pure baseline candidate should be dropped"
-    assert "atom" in pool_texts, "atom-only candidate should be kept"
-    assert "dual source" in pool_texts, "dual-source candidate should be kept (it is an atom-route hit)"
-
-    # The source-score on the filtered pool should not include any baseline bonus,
-    # so ordering is driven purely by atom components.
-    for candidate in trace["candidate_pool"]:
-        assert candidate.get("from_atom_route") is True
 
 
 def test_no_evidence_trace_has_empty_pool_and_selected_indices() -> None:

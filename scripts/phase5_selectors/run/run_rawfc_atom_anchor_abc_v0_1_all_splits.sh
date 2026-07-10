@@ -72,6 +72,7 @@ CANDIDATE_TOP_N="${CANDIDATE_TOP_N:-20}"
 
 MOCK_ATOMS="${MOCK_ATOMS:-false}"
 MOCK_EVIDENCE_MAPS="${MOCK_EVIDENCE_MAPS:-false}"
+NO_PROGRESS="${NO_PROGRESS:-false}"
 ATOM_BASE_URL="${ATOM_BASE_URL:-https://api.deepseek.com}"
 ATOM_MODEL="${ATOM_MODEL:-deepseek-v4-flash}"
 ATOM_API_KEY_ENV="${ATOM_API_KEY_ENV:-DEEPSEEK_API_KEY}"
@@ -156,6 +157,16 @@ printf '[rawfc-atom-anchor-abc-v0.1] top-k       : atom_per=%s atom_pool=%s base
   "$PER_ATOM_KEEP" "$MERGED_POOL_SIZE" "$BASELINE_TOP_K" "$SELECTOR_TOP_K" "$CANDIDATE_TOP_N"
 printf '[rawfc-atom-anchor-abc-v0.1] stages      : cache=%s atoms=%s retrieval=%s union=%s prepare=%s teacher=%s postprocess=%s audit=%s\n' \
   "$RUN_CACHE_BUILD" "$RUN_CLAIM_ATOMS" "$RUN_ATOM_RETRIEVAL" "$RUN_ATOM_UNION" "$RUN_EVIDENCE_MAP_PREPARE" "$RUN_TEACHER" "$RUN_POSTPROCESS" "$RUN_AUDIT"
+printf '[rawfc-atom-anchor-abc-v0.1] progress    : no_progress=%s\n' "$NO_PROGRESS"
+
+teacher_progress_args=()
+if [[ "$NO_PROGRESS" == "true" || "$NO_PROGRESS" == "1" || "$NO_PROGRESS" == "True" ]]; then
+  teacher_progress_args=(--no-progress)
+fi
+atom_progress_args=()
+if [[ "$NO_PROGRESS" == "true" || "$NO_PROGRESS" == "1" || "$NO_PROGRESS" == "True" ]]; then
+  atom_progress_args=(--no-progress)
+fi
 
 if enabled "$RUN_CACHE_BUILD"; then
   if all_cache_files_exist && [[ "$FORCE_CACHE_BUILD" != "true" ]]; then
@@ -212,7 +223,7 @@ for split in ${SPLITS}; do
         --api-concurrency "$ATOM_API_CONCURRENCY" \
         --max-tokens "$ATOM_MAX_TOKENS" \
         --thinking-type "$ATOM_THINKING_TYPE" \
-        --no-progress \
+        "${atom_progress_args[@]}" \
         "${mock_atom_args[@]}" \
         "${sample_args[@]}"
     fi
@@ -299,7 +310,7 @@ for split in ${SPLITS}; do
         --top-p "$TOP_P" \
         --thinking-type "$THINKING_TYPE" \
         --resume \
-        --no-progress \
+        "${teacher_progress_args[@]}" \
         "${mock_map_args[@]}" \
         "${sample_args[@]}"
     fi
