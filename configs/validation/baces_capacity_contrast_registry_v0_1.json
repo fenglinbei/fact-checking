@@ -1,0 +1,265 @@
+{
+  "schema_version": "baces_capacity_contrast_registry_v0_1",
+  "registry_id": "baces_capacity_postval_pretest_v0_1",
+  "frozen_date": "2026-07-13",
+  "registration_timing": {
+    "current_validation": "post_hoc_rule_based_after_result_inspection",
+    "future_held_out_test": "eligible_only_with_a_separate_preinference_contract_for_an_outcome_unseen_dataset_or_split",
+    "checkpoint_selection_caveat": "The verifier checkpoint was selected with validation data; validation inference remains diagnostic even when contrasts do not use validation-selected K."
+  },
+  "prospective_confirmation_gate": {
+    "automatic_promotion_from_split_name": false,
+    "current_implementation_default": "diagnostic_only",
+    "required_future_contract": "A separate pre-inference contract must bind the unchanged registry SHA, dataset and split identity, event/source lineage, frozen verifier identity, freeze time, and an explicit attestation that outcomes were unseen for all prior method and analysis decisions.",
+    "liar_raw_test_status": "not_untouched_due_to_prior_project_evaluation"
+  },
+  "estimand": {
+    "primary_support": "full_n_deployable",
+    "sensitivity_support": "strict_full_grid_common_support",
+    "primary_endpoint": "macro_f1",
+    "key_secondary_endpoint": "class_balanced_nll_mean",
+    "secondary_endpoint": "accuracy",
+    "descriptive_endpoints": [
+      "raw_nll_mean",
+      "evidence_count_mean",
+      "prompt_token_count_mean"
+    ],
+    "system_scope": "capacity-prefix response of one frozen verifier checkpoint and frozen retrieval/map/order lineage",
+    "causal_selector_mechanism_claim_allowed": false,
+    "end_to_end_policy_training_claim_allowed": false,
+    "delta_direction": "a_minus_b",
+    "tests": "two_sided"
+  },
+  "multiplicity": {
+    "method": "holm_step_down_fwer",
+    "scope": "within_family_and_endpoint",
+    "adjusted_endpoints": [
+      "macro_f1",
+      "class_balanced_nll_mean",
+      "accuracy"
+    ],
+    "resource_endpoints_are_descriptive": true,
+    "no_global_correction_across_scientific_families": true
+  },
+  "families": [
+    {
+      "family_id": "prospective_capacity_primary",
+      "tier": "primary",
+      "current_validation_role": "retrospective_diagnostic",
+      "future_held_out_role": "eligible_prospective_fixed_verifier_confirmatory_with_external_contract",
+      "claim": "Within the frozen-verifier system estimand, tests whether historical K5 differs from the minimal K1 and upper K10 endpoints."
+    },
+    {
+      "family_id": "secondary_learned_sensitivity",
+      "tier": "secondary",
+      "current_validation_role": "retrospective_diagnostic",
+      "future_held_out_role": "eligible_prospective_fixed_verifier_secondary_with_external_contract",
+      "claim": "Within the same frozen-verifier system, compares the endpoint contrasts under the historical learned ordering as a sensitivity analysis."
+    },
+    {
+      "family_id": "secondary_order_component",
+      "tier": "secondary",
+      "current_validation_role": "retrospective_diagnostic",
+      "future_held_out_role": "eligible_prospective_fixed_verifier_secondary_with_external_contract",
+      "claim": "Compares historical learned ordering with BACES exact at frozen K5; this is matched-count, not matched-token."
+    },
+    {
+      "family_id": "diagnostic_legacy_controller",
+      "tier": "diagnostic",
+      "current_validation_role": "retrospective_diagnostic",
+      "future_held_out_role": "diagnostic_only",
+      "claim": "Tests whether the legacy ordinal minmax controller differs from fixed K5."
+    },
+    {
+      "family_id": "diagnostic_upper_boundary",
+      "tier": "diagnostic",
+      "current_validation_role": "same_split_selected_exploratory",
+      "future_held_out_role": "exploratory_only",
+      "claim": "Explores whether the final K9 to K10 increment changes performance; non-significance is not an equivalence or plateau test."
+    }
+  ],
+  "contrasts": [
+    {
+      "comparison_id": "baces_exact__k05_minus_k01",
+      "family_id": "prospective_capacity_primary",
+      "selection_basis": "K1 and K10 are frozen grid endpoints; K5 is the historical main capacity.",
+      "selection_uses_observed_validation_outcome": false,
+      "supports": [
+        "full_n_deployable",
+        "strict_full_grid_common_support"
+      ],
+      "a": {
+        "kind": "fixed_capacity",
+        "selector_level": "baces_exact",
+        "requested_k": 5
+      },
+      "b": {
+        "kind": "fixed_capacity",
+        "selector_level": "baces_exact",
+        "requested_k": 1
+      }
+    },
+    {
+      "comparison_id": "baces_exact__k05_minus_k10",
+      "family_id": "prospective_capacity_primary",
+      "selection_basis": "K1 and K10 are frozen grid endpoints; K5 is the historical main capacity.",
+      "selection_uses_observed_validation_outcome": false,
+      "supports": [
+        "full_n_deployable",
+        "strict_full_grid_common_support"
+      ],
+      "a": {
+        "kind": "fixed_capacity",
+        "selector_level": "baces_exact",
+        "requested_k": 5
+      },
+      "b": {
+        "kind": "fixed_capacity",
+        "selector_level": "baces_exact",
+        "requested_k": 10
+      }
+    },
+    {
+      "comparison_id": "learned_marginal__k05_minus_k01",
+      "family_id": "secondary_learned_sensitivity",
+      "selection_basis": "Frozen endpoint contrast sensitivity under the historical learned ordering.",
+      "selection_uses_observed_validation_outcome": false,
+      "supports": [
+        "full_n_deployable",
+        "strict_full_grid_common_support"
+      ],
+      "a": {
+        "kind": "fixed_capacity",
+        "selector_level": "learned_marginal",
+        "requested_k": 5
+      },
+      "b": {
+        "kind": "fixed_capacity",
+        "selector_level": "learned_marginal",
+        "requested_k": 1
+      }
+    },
+    {
+      "comparison_id": "learned_marginal__k05_minus_k10",
+      "family_id": "secondary_learned_sensitivity",
+      "selection_basis": "Frozen endpoint contrast sensitivity under the historical learned ordering.",
+      "selection_uses_observed_validation_outcome": false,
+      "supports": [
+        "full_n_deployable",
+        "strict_full_grid_common_support"
+      ],
+      "a": {
+        "kind": "fixed_capacity",
+        "selector_level": "learned_marginal",
+        "requested_k": 5
+      },
+      "b": {
+        "kind": "fixed_capacity",
+        "selector_level": "learned_marginal",
+        "requested_k": 10
+      }
+    },
+    {
+      "comparison_id": "learned_marginal_minus_baces_exact__k05",
+      "family_id": "secondary_order_component",
+      "selection_basis": "K5 is the historical shared-count main configuration; token count is not matched.",
+      "selection_uses_observed_validation_outcome": false,
+      "supports": [
+        "full_n_deployable",
+        "strict_full_grid_common_support"
+      ],
+      "a": {
+        "kind": "fixed_capacity",
+        "selector_level": "learned_marginal",
+        "requested_k": 5
+      },
+      "b": {
+        "kind": "fixed_capacity",
+        "selector_level": "baces_exact",
+        "requested_k": 5
+      }
+    },
+    {
+      "comparison_id": "baces_exact__ordinal_minmax_minus_k05",
+      "family_id": "diagnostic_legacy_controller",
+      "selection_basis": "Compatibility diagnostic for the frozen legacy controller.",
+      "selection_uses_observed_validation_outcome": false,
+      "supports": [
+        "full_n_deployable"
+      ],
+      "a": {
+        "kind": "trace_policy",
+        "selector_level": "baces_exact",
+        "policy_id": "ordinal_replay_minmax5_10"
+      },
+      "b": {
+        "kind": "fixed_capacity",
+        "selector_level": "baces_exact",
+        "requested_k": 5
+      }
+    },
+    {
+      "comparison_id": "learned_marginal__ordinal_minmax_minus_k05",
+      "family_id": "diagnostic_legacy_controller",
+      "selection_basis": "Compatibility diagnostic for the frozen legacy controller.",
+      "selection_uses_observed_validation_outcome": false,
+      "supports": [
+        "full_n_deployable"
+      ],
+      "a": {
+        "kind": "trace_policy",
+        "selector_level": "learned_marginal",
+        "policy_id": "ordinal_replay_minmax5_10"
+      },
+      "b": {
+        "kind": "fixed_capacity",
+        "selector_level": "learned_marginal",
+        "requested_k": 5
+      }
+    },
+    {
+      "comparison_id": "baces_exact__k10_minus_k09",
+      "family_id": "diagnostic_upper_boundary",
+      "selection_basis": "Post-result-inspection adjacent-boundary diagnostic; never confirmatory for the current validation split.",
+      "selection_uses_observed_validation_outcome": true,
+      "supports": [
+        "full_n_deployable"
+      ],
+      "a": {
+        "kind": "fixed_capacity",
+        "selector_level": "baces_exact",
+        "requested_k": 10
+      },
+      "b": {
+        "kind": "fixed_capacity",
+        "selector_level": "baces_exact",
+        "requested_k": 9
+      }
+    },
+    {
+      "comparison_id": "learned_marginal__k10_minus_k09",
+      "family_id": "diagnostic_upper_boundary",
+      "selection_basis": "Post-result-inspection adjacent-boundary diagnostic; never confirmatory for the current validation split.",
+      "selection_uses_observed_validation_outcome": true,
+      "supports": [
+        "full_n_deployable"
+      ],
+      "a": {
+        "kind": "fixed_capacity",
+        "selector_level": "learned_marginal",
+        "requested_k": 10
+      },
+      "b": {
+        "kind": "fixed_capacity",
+        "selector_level": "learned_marginal",
+        "requested_k": 9
+      }
+    }
+  ],
+  "excluded_same_split_selected_contrasts": [
+    "baces_exact K8/K9 versus K5 selected from this validation surface",
+    "learned_marginal K7/K9 versus K5 selected from this validation surface",
+    "any oracle-selected K contrast"
+  ],
+  "interpretation_boundary": "Failure to reject K5 versus K10 or K9 versus K10 is not evidence of equivalence or a plateau. Equivalence requires a separately justified margin and a frozen TOST protocol. All contrasts estimate one frozen verifier system response; they are not causal selector-mechanism or end-to-end policy-training tests."
+}

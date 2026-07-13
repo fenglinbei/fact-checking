@@ -42,6 +42,11 @@ SELECTION_MODES = (
 )
 TRACE_PROMPT_STYLES = ("plain", "trace_lite", "rawfc_boundaries", "qec_min", "qec_map", "mrec_min")
 EVIDENCE_TEXT_MODES = ("full", "anchor_only")
+TRACE_ORDER_FIELDS = (
+    "display_ordered_indices",
+    "selector_full_ordered_indices",
+    "selector_available_ordered_indices",
+)
 PROMPT_EVIDENCE_POLICIES = (
     "selected_set",
     "prefix_topk",
@@ -78,6 +83,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--label-schema", default=None, help="Label schema: liar6 or rawfc3.")
     p.add_argument("--output-dir", required=True)
     p.add_argument("--selection-mode", default="trace", choices=SELECTION_MODES)
+    p.add_argument(
+        "--trace-order-field",
+        default="display_ordered_indices",
+        choices=TRACE_ORDER_FIELDS,
+        help=(
+            "Trace field used as the ordered evidence slate when selection-mode=trace. "
+            "The default preserves the historical verifier-visible order; prefix-lattice "
+            "analysis should use selector_full_ordered_indices."
+        ),
+    )
+    p.add_argument("--train-selection-plan", default=None)
+    p.add_argument("--val-selection-plan", default=None)
+    p.add_argument("--test-selection-plan", default=None)
     p.add_argument("--trace-prompt-style", default="plain", choices=TRACE_PROMPT_STYLES)
     p.add_argument(
         "--evidence-text-mode",
@@ -94,6 +112,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--prompt-evidence-token-budget", type=int, default=None)
     p.add_argument("--prompt-evidence-max-length-guard", default=None, choices=("off", "warn", "error"))
     p.add_argument("--allow-empty-evidence", action="store_true")
+    p.add_argument("--forbid-prompt-truncation", action="store_true")
     p.add_argument("--random-seed", type=int, default=0)
     p.add_argument("--expected-chunk-mmr-fingerprint", default=EXPECTED_STAGE2_CHUNK_MMR_FINGERPRINT)
     p.add_argument("--prompt-model-name-or-path", default=None)
@@ -136,16 +155,28 @@ def main() -> None:
     split_specs = []
     if not args.val_only:
         train_source = _resolve_split_source("train", args.train_trace, args.train_oracle_results)
-        split_specs.append(("train", train_source[0], train_source[1], args.train_raw))
+        split_specs.append(
+            (
+                "train",
+                train_source[0],
+                train_source[1],
+                args.train_raw,
+                args.train_selection_plan,
+            )
+        )
     val_source = _resolve_split_source("val", args.val_trace, args.val_oracle_results)
-    split_specs.append(("val", val_source[0], val_source[1], args.val_raw))
+    split_specs.append(
+        ("val", val_source[0], val_source[1], args.val_raw, args.val_selection_plan)
+    )
     test_source = _resolve_optional_split_source(args.test_trace, args.test_oracle_results)
     if test_source is not None:
-        split_specs.append(("test", test_source[0], test_source[1], args.test_raw))
+        split_specs.append(
+            ("test", test_source[0], test_source[1], args.test_raw, args.test_selection_plan)
+        )
 
     split_paths: dict[str, str] = {}
     reports: dict[str, Any] = {}
-    for split, source_type, source_path, raw_path in split_specs:
+    for split, source_type, source_path, raw_path, selection_plan_path in split_specs:
         rows, report = _build_split(
             split=split,
             source_type=source_type,
@@ -156,6 +187,8 @@ def main() -> None:
             tokenizer=tokenizer,
             prompt_cfg=prompt_cfg,
             selection_mode=str(args.selection_mode),
+            trace_order_field=str(args.trace_order_field),
+            selection_plan_path=Path(selection_plan_path) if selection_plan_path else None,
             trace_prompt_style=str(args.trace_prompt_style),
             evidence_text_mode=str(args.evidence_text_mode),
             expected_selector_name=str(args.expected_selector_name or ""),
@@ -166,6 +199,7 @@ def main() -> None:
             show_progress=not args.no_progress,
             prompt_evidence_config=prompt_evidence_config,
             allow_empty_evidence=bool(args.allow_empty_evidence),
+            forbid_prompt_truncation=bool(args.forbid_prompt_truncation),
         )
         out_path = build_dir / f"build_{split}.jsonl"
         write_jsonl(out_path, rows)
@@ -194,6 +228,16 @@ def main() -> None:
         "output_dir": str(output_dir),
         "build_dir": str(build_dir),
         "selection_mode": args.selection_mode,
+        "trace_order_field": args.trace_order_field,
+        "selection_plans": {
+            split: path
+            for split, path in (
+                ("train", args.train_selection_plan),
+                ("val", args.val_selection_plan),
+                ("test", args.test_selection_plan),
+            )
+            if path
+        },
         "trace_prompt_style": args.trace_prompt_style,
         "evidence_text_mode": args.evidence_text_mode,
         "expected_selector_name": args.expected_selector_name,
@@ -202,6 +246,7 @@ def main() -> None:
         "expected_chunk_mmr_fingerprint": args.expected_chunk_mmr_fingerprint,
         "prompt_evidence": _public_prompt_evidence_config(prompt_evidence_config),
         "allow_empty_evidence": bool(args.allow_empty_evidence),
+        "forbid_prompt_truncation": bool(args.forbid_prompt_truncation),
         "val_only": bool(args.val_only),
         "built_splits": sorted(built_split_paths),
         "built_split_paths": built_split_paths,
@@ -244,6 +289,8 @@ def _build_split(
     tokenizer: Any,
     prompt_cfg: dict[str, Any],
     selection_mode: str,
+    trace_order_field: str = "display_ordered_indices",
+    selection_plan_path: Path | None = None,
     trace_prompt_style: str,
     evidence_text_mode: str = "full",
     expected_selector_name: str,
@@ -254,9 +301,12 @@ def _build_split(
     show_progress: bool,
     prompt_evidence_config: dict[str, Any] | None = None,
     allow_empty_evidence: bool = False,
+    forbid_prompt_truncation: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if evidence_text_mode not in EVIDENCE_TEXT_MODES:
         raise ValueError(f"unsupported evidence_text_mode: {evidence_text_mode}")
+    if trace_order_field not in TRACE_ORDER_FIELDS:
+        raise ValueError(f"unsupported trace_order_field: {trace_order_field}")
 
     raw_by_event = {
         sample.event_id: sample
@@ -279,6 +329,14 @@ def _build_split(
     two_pass_decisions: dict[str, dict[str, Any]] = {}
     if str(prompt_evidence.get("policy") or "") == "two_pass_uncertainty":
         two_pass_decisions = _load_two_pass_uncertainty_decisions(split, prompt_evidence)
+    selection_plan: dict[str, dict[str, Any]] = {}
+    if selection_plan_path is not None:
+        if source_type != "trace" or selection_mode != "trace":
+            raise ValueError("selection plans require source_type=trace and selection_mode=trace")
+        if str(prompt_evidence.get("policy") or "") != "selected_set":
+            raise ValueError("selection plans require prompt_evidence.policy=selected_set")
+        selection_plan = _load_selection_plan(selection_plan_path)
+    used_selection_plan_events: set[str] = set()
 
     out_rows: list[dict[str, Any]] = []
     metric_traces: list[dict[str, Any]] = []
@@ -357,7 +415,21 @@ def _build_split(
                     mode=selection_mode,
                     top_k=selector_top_k,
                     random_seed=random_seed,
+                    trace_order_field=trace_order_field,
                 )
+                selection_plan_row = selection_plan.get(event_id)
+                if selection_plan:
+                    if selection_plan_row is None:
+                        raise ValueError(
+                            f"selection plan has no row for event_id={event_id!r}"
+                        )
+                    selected_indices = _selected_indices_from_plan(
+                        trace,
+                        ordered_indices=selected_indices,
+                        plan=selection_plan_row,
+                        event_id=event_id,
+                    )
+                    used_selection_plan_events.add(event_id)
                 prompt_evidence_decision = _select_prompt_evidence_indices(
                     trace,
                     ordered_indices=selected_indices,
@@ -423,6 +495,15 @@ def _build_split(
             prompt_cfg_for_style,
             allow_unlabeled=split == "test" and not bool(sample.label),
         )
+        if forbid_prompt_truncation and (
+            bool(training_row.get("was_truncated"))
+            or bool(training_row.get("evidence_text_truncated"))
+        ):
+            raise ValueError(
+                f"{split}:{event_id}: prompt truncation is forbidden: "
+                f"was_truncated={training_row.get('was_truncated')!r}, "
+                f"evidence_text_truncated={training_row.get('evidence_text_truncated')!r}"
+            )
         training_row["trace_prompt_style"] = trace_prompt_style
         training_row["evidence_text_mode"] = evidence_text_mode
         training_row.update(_prompt_evidence_row_fields(prompt_evidence, prompt_evidence_decision))
@@ -461,6 +542,9 @@ def _build_split(
             "source_path": str(source_path),
             "selector_name": selector_name,
             "selection_mode": selection_mode,
+            "trace_order_field": trace_order_field,
+            "selection_plan_path": str(selection_plan_path) if selection_plan_path else None,
+            "selection_plan": selection_plan.get(event_id),
             "top_k": int(top_k),
             "random_seed": int(random_seed),
             "chunk_mmr_fingerprint": fingerprint,
@@ -510,16 +594,31 @@ def _build_split(
             int(training_row.get("evidence_count_before", training_row.get("evidence_count", 0)))
         )
 
+    if selection_plan:
+        unused_plan_events = sorted(set(selection_plan) - used_selection_plan_events)
+        if unused_plan_events:
+            raise ValueError(
+                "selection plan contains events absent from the built source rows: "
+                f"count={len(unused_plan_events)}, first={unused_plan_events[:10]}"
+            )
+
     report = {
         "split": split,
         "source_type": source_type,
         "source_path": str(source_path),
         "raw_path": str(raw_path),
         "selection_mode": selection_mode,
+        "trace_order_field": trace_order_field,
+        "selection_plan": {
+            "enabled": bool(selection_plan),
+            "path": str(selection_plan_path) if selection_plan_path else None,
+            "row_count": len(selection_plan),
+        },
         "trace_prompt_style": trace_prompt_style,
         "evidence_text_mode": evidence_text_mode,
         "top_k": int(top_k),
         "allow_empty_evidence": bool(allow_empty_evidence),
+        "forbid_prompt_truncation": bool(forbid_prompt_truncation),
         "prompt_evidence": {
             **_public_prompt_evidence_config(prompt_evidence),
             "policy_counts": dict(prompt_policy_counter),
@@ -1170,6 +1269,99 @@ def _load_two_pass_uncertainty_decisions(
     if not decisions:
         raise ValueError(f"missing two-pass uncertainty decision cache rows: {decision_path}")
     return decisions
+
+
+def _load_selection_plan(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.is_file():
+        raise ValueError(f"selection plan does not exist: {path}")
+    plans: dict[str, dict[str, Any]] = {}
+    with path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                raw = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"invalid selection plan JSON at {path}:{line_number}"
+                ) from exc
+            if not isinstance(raw, dict):
+                raise ValueError(f"selection plan row is not an object at {path}:{line_number}")
+            event_id = _compact_whitespace(raw.get("event_id") or "")
+            if not event_id:
+                raise ValueError(f"selection plan row has no event_id at {path}:{line_number}")
+            if event_id in plans:
+                raise ValueError(f"selection plan has duplicate event_id={event_id!r}")
+            indices = raw.get("selected_indices")
+            if not isinstance(indices, list) or not indices:
+                raise ValueError(
+                    f"selection plan event={event_id!r} must contain non-empty selected_indices"
+                )
+            parsed: list[int] = []
+            for value in indices:
+                if isinstance(value, bool):
+                    raise ValueError(
+                        f"selection plan event={event_id!r} contains a boolean index"
+                    )
+                parsed_value = _int_or_none(value)
+                if parsed_value is None:
+                    raise ValueError(
+                        f"selection plan event={event_id!r} contains a non-integer index"
+                    )
+                parsed.append(int(parsed_value))
+            copied = dict(raw)
+            copied["selected_indices"] = parsed
+            copied["selection_plan_path"] = str(path)
+            plans[event_id] = copied
+    if not plans:
+        raise ValueError(f"selection plan has no rows: {path}")
+    return plans
+
+
+def _selected_indices_from_plan(
+    trace: dict[str, Any],
+    *,
+    ordered_indices: list[int],
+    plan: dict[str, Any],
+    event_id: str,
+) -> list[int]:
+    selected = [int(value) for value in plan.get("selected_indices") or []]
+    pool = trace.get("candidate_pool") or []
+    if not selected:
+        raise ValueError("selection plan produced no indices")
+    if len(selected) != len(set(selected)) or any(
+        idx < 0 or idx >= len(pool) for idx in selected
+    ):
+        raise ValueError("selection plan contains duplicate or out-of-range indices")
+    if selected != ordered_indices[: len(selected)]:
+        raise ValueError(
+            "selection plan must be an exact prefix of the configured trace order"
+        )
+    declared_uids = plan.get("selected_candidate_uids")
+    if declared_uids is not None:
+        if not isinstance(declared_uids, list) or not all(
+            isinstance(value, str) for value in declared_uids
+        ):
+            raise ValueError("selection plan selected_candidate_uids must be a string array")
+        actual_uids = [
+            _compact_whitespace(pool[idx].get("candidate_uid") or "")
+            if isinstance(pool[idx], dict)
+            else ""
+            for idx in selected
+        ]
+        if [str(value) for value in declared_uids] != actual_uids:
+            raise ValueError(
+                f"selection plan candidate UID mismatch for event_id={event_id!r}"
+            )
+    realized_k = _int_or_none(plan.get("prompt_feasible_prefix_k"))
+    if realized_k is not None and realized_k != len(selected):
+        raise ValueError(
+            "selection plan prompt_feasible_prefix_k disagrees with selected_indices"
+        )
+    requested_k = _int_or_none(plan.get("requested_prefix_k"))
+    if requested_k is not None and len(selected) > requested_k:
+        raise ValueError("selection plan realized prefix exceeds requested_prefix_k")
+    return selected
 
 
 def _two_pass_uncertainty_report(
@@ -1845,6 +2037,7 @@ def _select_indices(
     mode: str,
     top_k: int,
     random_seed: int,
+    trace_order_field: str = "display_ordered_indices",
 ) -> list[int]:
     pool = trace.get("candidate_pool") or []
     if not isinstance(pool, list) or not pool:
@@ -1852,13 +2045,13 @@ def _select_indices(
     n = len(pool)
     limit = int(top_k) if int(top_k) > 0 else n
     if mode == "trace":
-        selected = _ordered_trace_indices(trace)
+        selected = _ordered_trace_indices(trace, field=trace_order_field)
     elif mode == "hybrid_score_topk":
         selected = sorted(range(n), key=lambda idx: _hybrid_score(trace, idx), reverse=True)
     elif mode == "candidate_pool_topk":
         selected = list(range(n))
     elif mode in {"same_set_hybrid_order", "same_set_candidate_pool_order", "same_set_random_order"}:
-        selected = _ordered_trace_indices(trace)
+        selected = _ordered_trace_indices(trace, field=trace_order_field)
         selected = _dedupe_in_range(selected, n)[:limit]
         selected_set = set(selected)
         if mode == "same_set_hybrid_order":
@@ -1916,10 +2109,16 @@ def _selected_candidates(
     return selected
 
 
-def _ordered_trace_indices(trace: dict[str, Any]) -> list[int]:
-    raw = trace.get("display_ordered_indices")
-    if raw is None:
+def _ordered_trace_indices(
+    trace: dict[str, Any], *, field: str = "display_ordered_indices"
+) -> list[int]:
+    if field not in TRACE_ORDER_FIELDS:
+        raise ValueError(f"unsupported trace order field: {field}")
+    raw = trace.get(field)
+    if raw is None and field == "display_ordered_indices":
         raw = trace.get("selector_ordered_indices") or []
+    elif raw is None:
+        raise ValueError(f"trace has no {field}")
     out: list[int] = []
     for item in raw:
         try:

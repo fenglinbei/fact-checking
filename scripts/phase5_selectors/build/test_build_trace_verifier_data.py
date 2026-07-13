@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 
 MODULE_PATH = Path(__file__).with_name("build_trace_verifier_data.py")
 SPEC = importlib.util.spec_from_file_location("build_trace_verifier_data", MODULE_PATH)
@@ -511,6 +513,178 @@ def test_selected_set_policy_consumes_exact_variable_length_order() -> None:
             "selector_ordered_indices": [1],
         }
     ) == [2, 0]
+
+
+def test_trace_order_field_can_use_frozen_full_selector_order() -> None:
+    trace = {
+        "display_ordered_indices": [0],
+        "selector_ordered_indices": [0],
+        "selector_full_ordered_indices": [2, 0, 1],
+    }
+
+    assert build_trace_verifier_data._ordered_trace_indices(
+        trace,
+        field="selector_full_ordered_indices",
+    ) == [2, 0, 1]
+
+    with pytest.raises(ValueError, match="trace has no selector_available_ordered_indices"):
+        build_trace_verifier_data._ordered_trace_indices(
+            trace,
+            field="selector_available_ordered_indices",
+        )
+
+
+def test_selection_plan_replays_prompt_feasible_full_order_prefix(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_minimal_inputs(tmp_path)
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace["selector_full_ordered_indices"] = [1, 0]
+    trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
+    plan_path = tmp_path / "prefix_plan.jsonl"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "event_id": "event-1",
+                "requested_prefix_k": 2,
+                "prompt_feasible_prefix_k": 1,
+                "selected_indices": [1],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={"auto_length": False, "output_mode": "label_only", "label_format": "letter"},
+        selection_mode="trace",
+        trace_order_field="selector_full_ordered_indices",
+        selection_plan_path=plan_path,
+        trace_prompt_style="plain",
+        expected_selector_name="test_selector",
+        top_k=99,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+        prompt_evidence_config={"policy": "selected_set"},
+        forbid_prompt_truncation=True,
+    )
+
+    assert rows[0]["selector_trace"]["selected_indices"] == [1]
+    assert rows[0]["selector_trace"]["trace_order_field"] == "selector_full_ordered_indices"
+    assert rows[0]["selector_trace"]["selection_plan"]["requested_prefix_k"] == 2
+    assert rows[0]["candidates"][0]["text"] == "Evidence two."
+    assert report["selection_plan"]["enabled"] is True
+    assert report["selection_plan"]["row_count"] == 1
+
+
+def test_selection_plan_rejects_nonprefix_indices() -> None:
+    trace = {
+        "candidate_pool": [
+            {"candidate_uid": "u0"},
+            {"candidate_uid": "u1"},
+        ]
+    }
+
+    with pytest.raises(ValueError, match="exact prefix"):
+        build_trace_verifier_data._selected_indices_from_plan(
+            trace,
+            ordered_indices=[0, 1],
+            plan={
+                "selected_indices": [1],
+                "requested_prefix_k": 1,
+                "prompt_feasible_prefix_k": 1,
+            },
+            event_id="event-1",
+        )
+
+
+def test_forbid_prompt_truncation_rejects_auto_length_tail_deletion(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_minimal_inputs(tmp_path)
+    common = {
+        "split": "val",
+        "source_type": "trace",
+        "source_path": trace_path,
+        "raw_path": raw_path,
+        "dataset": None,
+        "label_schema": "liar6",
+        "tokenizer": _FakeTokenizer(),
+        "prompt_cfg": {
+            "auto_length": True,
+            "max_length": 132,
+            "output_mode": "label_only",
+            "label_format": "letter",
+        },
+        "selection_mode": "trace",
+        "trace_prompt_style": "plain",
+        "expected_selector_name": "test_selector",
+        "top_k": 2,
+        "random_seed": 0,
+        "expected_chunk_mmr_fingerprint": "fp",
+        "sample_limit": None,
+        "show_progress": False,
+    }
+
+    rows, report = build_trace_verifier_data._build_split(**common)
+
+    assert rows[0]["evidence_count_before"] == 2
+    assert rows[0]["evidence_count"] == 1
+    assert rows[0]["was_truncated"] is True
+    assert rows[0]["evidence_text_truncated"] is False
+    assert report["forbid_prompt_truncation"] is False
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"val:event-1: prompt truncation is forbidden: "
+            r"was_truncated=True, evidence_text_truncated=False"
+        ),
+    ):
+        build_trace_verifier_data._build_split(
+            **common,
+            forbid_prompt_truncation=True,
+        )
+
+
+def test_forbid_prompt_truncation_accepts_clean_selected_set(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_minimal_inputs(tmp_path)
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=_FakeTokenizer(),
+        prompt_cfg={
+            "auto_length": True,
+            "max_length": 160,
+            "output_mode": "label_only",
+            "label_format": "letter",
+        },
+        selection_mode="trace",
+        trace_prompt_style="plain",
+        expected_selector_name="test_selector",
+        top_k=99,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+        prompt_evidence_config={"policy": "selected_set"},
+        forbid_prompt_truncation=True,
+    )
+
+    assert rows[0]["prompt_evidence_policy"] == "selected_set"
+    assert rows[0]["was_truncated"] is False
+    assert rows[0]["evidence_text_truncated"] is False
+    assert report["forbid_prompt_truncation"] is True
 
 
 def test_mrec_prompt_evidence_budget_policy_records_max_length_guard(tmp_path: Path) -> None:

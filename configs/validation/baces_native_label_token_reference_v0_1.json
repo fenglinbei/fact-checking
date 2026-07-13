@@ -1,0 +1,83 @@
+{
+  "schema_version": "native_label_token_reference_contract_v0_1",
+  "reference_name": "baces_exact_ordinal_replay_minmax5_10_native_v0_2_fullpool_minmax5_10_best_noadjust",
+  "cell_id": "baces_exact__ordinal_replay_minmax5_10",
+  "created_from_completed_native_run": true,
+  "artifacts": {
+    "build": {
+      "path": "outputs/sentence_trace_method/liar_raw__ministral3_8b__baces_factorial_prompt_feasible_v0_2__val/baces_exact__ordinal_replay_minmax5_10/build/build_val.jsonl",
+      "sha256": "8a843a2b021811726f5997b1e3a54589af0ecf2bec293f85cb26abf50b7db8a2"
+    },
+    "inference_config": {
+      "path": "outputs/sentence_trace_method/liar_raw__ministral3_8b__baces_factorial_prompt_feasible_v0_2__val/baces_exact__ordinal_replay_minmax5_10/train.resolved.yaml",
+      "sha256": "d5710a44ed7c2fac793b23266c23bf34b6f9c80b11eac712035eb7f59fbf373d"
+    },
+    "metrics": {
+      "path": "outputs/sentence_trace_method/liar_raw__ministral3_8b__baces_factorial_prompt_feasible_v0_2__val/baces_exact__ordinal_replay_minmax5_10/eval/val/frozen_r1_step1300_noadjust/label_token/metrics.json",
+      "sha256": "8effbcf6c7dca79a3c9c37f999420c436fb161b7e819bae02f240945ae9cad75"
+    },
+    "predictions": {
+      "path": "outputs/sentence_trace_method/liar_raw__ministral3_8b__baces_factorial_prompt_feasible_v0_2__val/baces_exact__ordinal_replay_minmax5_10/eval/val/frozen_r1_step1300_noadjust/label_token/val_predictions.jsonl",
+      "sha256": "fc3dd00d77491cf7da027613d48c1836782207177318f2bc2ae908795a02c4f7"
+    }
+  },
+  "checkpoint": {
+    "run_dir": "outputs/sentence_trace_method/liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw/train",
+    "checkpoint": "best",
+    "adapter_sha256": "ef363d90574927ee4e6481c4f6c8a481d09ddc1e290935a19bc76f90e478de7d",
+    "adapter_config_sha256": "c60be212638291420b193bc4d5e3dbe8592138a6b008b46eaabc0481f632be28",
+    "base_model_path": "/data/models/Ministral-3-8B-Instruct-2512",
+    "base_model_config_sha256": "196c38570bb4bc8168a59cc0189c9a9b9974be8dcca6b46dfc109dbd250c01aa",
+    "base_weight_index_sha256": "91360719f4ce9383f46bb5750cd0b8cb4aec070dd8804c11ed94585a9924409b",
+    "base_weight_shards": {
+      "model-00001-of-00003.safetensors": "5a4d6e02534a2a10ce9b54ee1d91020617429d348f09de4cf912bcae362a9fc9",
+      "model-00002-of-00003.safetensors": "ca3b3df6c15e1f1e19977b1bb3e1bb8ec77798c2687f0dd87337b0737002f619",
+      "model-00003-of-00003.safetensors": "ee2a5e33fe9dfdc8c013aa856fbafcb1bb9b4168f96ddef9484baa23adcb5d35"
+    },
+    "tokenizer_files": {
+      "tekken.json": "e29d19ea32eb7e26e6c0572d57cb7f9eca0f4420e0e0fe6ae1cf3be94da1c0d6",
+      "tokenizer.json": "286acad9b0e27fce778ac429763536accf618ccb6ed72963b6f94685e531c5c7",
+      "tokenizer_config.json": "2dd4c610c43937e20945d96bae1752ecfac51ad106b01fd1fdac78df3be59ee3"
+    }
+  },
+  "expected": {
+    "checkpoint": "best",
+    "eval_backend": "label_token_logits",
+    "label_schema": "liar6",
+    "logit_adjust_enabled": false,
+    "python_executable": "/data/liaozijie/conda/accelerate-fc-gemma4/bin/python3.11",
+    "mixed_precision": "bf16",
+    "attention_backend": "transformers_default",
+    "packages": {
+      "accelerate": "1.13.0",
+      "numpy": "2.3.5",
+      "peft": "0.19.1",
+      "torch": "2.11.0",
+      "transformers": "5.7.0"
+    },
+    "num_samples": 1274,
+    "per_device_eval_batch_size": 1,
+    "split": "val"
+  },
+  "native_command": [
+    "/data/liaozijie/conda/accelerate-fc-gemma4/bin/python",
+    "-m",
+    "sft.label_token_infer",
+    "--run-dir",
+    "outputs/sentence_trace_method/liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw/train",
+    "--checkpoint",
+    "best",
+    "--split",
+    "val",
+    "--config",
+    "outputs/sentence_trace_method/liar_raw__ministral3_8b__baces_factorial_prompt_feasible_v0_2__val/baces_exact__ordinal_replay_minmax5_10/train.resolved.yaml",
+    "--output-dir",
+    "outputs/sentence_trace_method/liar_raw__ministral3_8b__baces_factorial_prompt_feasible_v0_2__val/baces_exact__ordinal_replay_minmax5_10/eval/val/frozen_r1_step1300_noadjust/label_token",
+    "--logit-adjust",
+    "off",
+    "--per-device-eval-batch-size",
+    "1",
+    "--dataloader-num-workers",
+    "4"
+  ]
+}

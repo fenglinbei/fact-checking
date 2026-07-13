@@ -81,7 +81,8 @@ CONTROLLER_CONTRACTS = {
         "first prefix t>=5 reaching the common exact Kmax=10 ordinal target, else 10"
     ),
     "matched_token_cap": (
-        "hard ordered-prefix cap matched per event to reference build selected token cost"
+        "order-preserving greedy feasible packing under the per-event reference "
+        "build selected-token cap; over-budget candidates are skipped, at most 10 selected"
     ),
 }
 
@@ -98,14 +99,72 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--split", default="val")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--sample-limit", type=int, default=0)
+    parser.add_argument(
+        "--selector",
+        action="append",
+        choices=SELECTOR_LEVELS,
+        default=[],
+        help=(
+            "Materialize only this selector level. Repeat for multiple levels; "
+            "the default is the full selector grid."
+        ),
+    )
+    parser.add_argument(
+        "--controller",
+        action="append",
+        choices=CONTROLLER_LEVELS,
+        default=[],
+        help=(
+            "Materialize only this controller level. Repeat for multiple levels; "
+            "the default is the full controller grid."
+        ),
+    )
     args = parser.parse_args(argv)
     if int(args.sample_limit) < 0:
         parser.error("--sample-limit must be non-negative")
+    if len(set(args.selector)) != len(args.selector):
+        parser.error("--selector values must be unique")
+    if len(set(args.controller)) != len(args.controller):
+        parser.error("--controller values must be unique")
     return args
+
+
+def _resolve_requested_levels(
+    requested: Sequence[str] | None,
+    *,
+    available: Sequence[str],
+    argument: str,
+) -> tuple[str, ...]:
+    levels = tuple(requested or available)
+    if len(set(levels)) != len(levels):
+        raise FactorialAlignmentError(f"duplicate {argument} level requested")
+    unknown = sorted(set(levels) - set(available))
+    if unknown:
+        raise FactorialAlignmentError(
+            f"unknown {argument} levels requested: {unknown}"
+        )
+    if not levels:
+        raise FactorialAlignmentError(f"no {argument} levels requested")
+    return levels
 
 
 def main(args: argparse.Namespace | None = None) -> int:
     args = args or parse_args()
+    selector_levels = _resolve_requested_levels(
+        getattr(args, "selector", None),
+        available=SELECTOR_LEVELS,
+        argument="selector",
+    )
+    controller_levels = _resolve_requested_levels(
+        getattr(args, "controller", None),
+        available=CONTROLLER_LEVELS,
+        argument="controller",
+    )
+    factor_pairs = tuple(
+        (selector, controller)
+        for selector in selector_levels
+        for controller in controller_levels
+    )
     feature_rows = _read_jsonl(
         Path(args.features),
         limit=int(args.sample_limit) if int(args.sample_limit) > 0 else None,
@@ -128,22 +187,20 @@ def main(args: argparse.Namespace | None = None) -> int:
 
     summary_rows: dict[tuple[str, str], list[dict[str, Any]]] = {
         (selector, controller): []
-        for selector in SELECTOR_LEVELS
-        for controller in CONTROLLER_LEVELS
+        for selector, controller in factor_pairs
     }
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     trace_name = f"selection_trace_{args.split}.jsonl"
     trace_paths: dict[tuple[str, str], Path] = {}
     temp_trace_paths: dict[tuple[str, str], Path] = {}
-    for selector in SELECTOR_LEVELS:
-        for controller in CONTROLLER_LEVELS:
-            cell_dir = output_dir / _cell_id(selector, controller)
-            cell_dir.mkdir(parents=True, exist_ok=True)
-            trace_paths[(selector, controller)] = cell_dir / trace_name
-            temp_trace_paths[(selector, controller)] = (
-                cell_dir / f".{trace_name}.tmp.{os.getpid()}"
-            )
+    for selector, controller in factor_pairs:
+        cell_dir = output_dir / _cell_id(selector, controller)
+        cell_dir.mkdir(parents=True, exist_ok=True)
+        trace_paths[(selector, controller)] = cell_dir / trace_name
+        temp_trace_paths[(selector, controller)] = (
+            cell_dir / f".{trace_name}.tmp.{os.getpid()}"
+        )
 
     traces_promoted = False
     try:
@@ -167,7 +224,8 @@ def main(args: argparse.Namespace | None = None) -> int:
                     learned_row=learned_row,
                     reference_row=reference_row,
                 )
-                for factors, row in event_cells.items():
+                for factors in factor_pairs:
+                    row = event_cells[factors]
                     handles[factors].write(
                         json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
                     )
@@ -190,35 +248,41 @@ def main(args: argparse.Namespace | None = None) -> int:
                 temp_path.unlink(missing_ok=True)
 
     manifest_cells: list[dict[str, Any]] = []
-    for selector in SELECTOR_LEVELS:
-        for controller in CONTROLLER_LEVELS:
-            cell_id = _cell_id(selector, controller)
-            rows = summary_rows[(selector, controller)]
-            cell_dir = output_dir / cell_id
-            summary = summarize_cell(rows, selector=selector, controller=controller)
-            _write_json(cell_dir / "summary.json", summary)
-            manifest_cells.append(
-                {
-                    "cell_id": cell_id,
-                    "selector_level": selector,
-                    "controller_level": controller,
-                    "relative_dir": cell_id,
-                    "trace_file": f"{cell_id}/{trace_name}",
-                    "summary_file": f"{cell_id}/summary.json",
-                    "row_count": len(rows),
-                    "ready": len(rows) == len(feature_rows),
-                }
-            )
+    for selector, controller in factor_pairs:
+        cell_id = _cell_id(selector, controller)
+        rows = summary_rows[(selector, controller)]
+        cell_dir = output_dir / cell_id
+        summary = summarize_cell(rows, selector=selector, controller=controller)
+        _write_json(cell_dir / "summary.json", summary)
+        manifest_cells.append(
+            {
+                "cell_id": cell_id,
+                "selector_level": selector,
+                "controller_level": controller,
+                "relative_dir": cell_id,
+                "trace_file": f"{cell_id}/{trace_name}",
+                "trace_sha256": _sha256_file(trace_paths[(selector, controller)]),
+                "summary_file": f"{cell_id}/summary.json",
+                "summary_sha256": _sha256_file(cell_dir / "summary.json"),
+                "row_count": len(rows),
+                "ready": len(rows) == len(feature_rows),
+            }
+        )
 
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "factorial_version": FACTORIAL_VERSION,
         "split": str(args.split),
         "sample_limit": int(args.sample_limit),
-        "selector_levels": list(SELECTOR_LEVELS),
-        "controller_levels": list(CONTROLLER_LEVELS),
-        "selector_contracts": dict(SELECTOR_CONTRACTS),
-        "controller_contracts": dict(CONTROLLER_CONTRACTS),
+        "selector_levels": list(selector_levels),
+        "controller_levels": list(controller_levels),
+        "selector_contracts": {
+            selector: SELECTOR_CONTRACTS[selector] for selector in selector_levels
+        },
+        "controller_contracts": {
+            controller: CONTROLLER_CONTRACTS[controller]
+            for controller in controller_levels
+        },
         "cell_count": len(manifest_cells),
         "event_count": len(feature_rows),
         "all_ready": all(cell["ready"] for cell in manifest_cells),
@@ -495,21 +559,20 @@ def _apply_controller(
             "fixed5" if len(selected) == K_MIN else exhausted_reason(selected_count=len(selected)),
         )
     if controller == "matched_token_cap":
-        by_key = {candidate.key: candidate for candidate in problem.candidates}
-        selected: list[int] = []
-        total = 0
-        for idx in full_order[:K_MAX]:
-            uid = problem.candidates[idx].key
-            next_total = total + int(by_key[uid].cost)
-            if next_total > matched_cap:
-                return selected, "matched_token_cap"
-            selected.append(idx)
-            total = next_total
+        selected, skipped = _matched_token_pack(
+            full_order,
+            problem=problem,
+            matched_cap=matched_cap,
+        )
         return (
             selected,
             "max10"
             if len(selected) == K_MAX
-            else exhausted_reason(selected_count=len(selected)),
+            else (
+                "matched_token_cap"
+                if skipped
+                else exhausted_reason(selected_count=len(selected))
+            ),
         )
     if controller == "ordinal_replay_minmax5_10":
         state = (0,) * len(problem.weights)
@@ -528,6 +591,33 @@ def _apply_controller(
             else exhausted_reason(selected_count=len(selected)),
         )
     raise ValueError(f"unsupported controller level: {controller}")
+
+
+def _matched_token_pack(
+    full_order: Sequence[int],
+    *,
+    problem: BacesProblem,
+    matched_cap: int,
+) -> tuple[list[int], list[int]]:
+    """Greedily pack a selector order without violating count or token budget.
+
+    A candidate that does not fit is skipped rather than terminating the whole
+    controller.  Relative order among selected candidates is unchanged.
+    """
+
+    selected: list[int] = []
+    skipped: list[int] = []
+    total = 0
+    for idx in full_order:
+        if len(selected) >= K_MAX:
+            break
+        cost = int(problem.candidates[idx].cost)
+        if total + cost > matched_cap:
+            skipped.append(int(idx))
+            continue
+        selected.append(int(idx))
+        total += cost
+    return selected, skipped
 
 
 def _trace_row(
@@ -567,6 +657,23 @@ def _trace_row(
         "selector_contract": SELECTOR_CONTRACTS[selector],
         "controller_contract": CONTROLLER_CONTRACTS[controller],
     }
+    if controller == "matched_token_cap":
+        packed, skipped_over_budget = _matched_token_pack(
+            full_order,
+            problem=problem,
+            matched_cap=matched_cap,
+        )
+        if list(packed) != list(selected):
+            raise AssertionError("matched-token packing replay differs from selected slate")
+        metadata["matched_token_packing_policy"] = (
+            "order_preserving_greedy_feasible_skip_v1"
+        )
+        metadata["matched_token_skipped_over_budget_count"] = len(
+            skipped_over_budget
+        )
+        metadata["matched_token_skipped_over_budget_indices"] = list(
+            skipped_over_budget
+        )
     steps = _display_steps(
         display_eval,
         selected,
@@ -1098,6 +1205,14 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 if __name__ == "__main__":

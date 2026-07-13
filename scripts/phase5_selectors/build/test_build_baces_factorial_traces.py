@@ -58,6 +58,45 @@ def test_builder_writes_all_eighteen_ready_cells(tmp_path: Path) -> None:
         assert all("operation" not in step and "state_after" not in step for step in row["mrec_steps"])
 
 
+def test_builder_writes_only_requested_complete_subgrid(tmp_path: Path) -> None:
+    feature, learned, reference = _artifacts()
+    features_path = _write_jsonl(tmp_path / "features.jsonl", [feature])
+    learned_path = _write_jsonl(tmp_path / "learned.jsonl", [learned])
+    reference_path = _write_jsonl(tmp_path / "reference.jsonl", [reference])
+    output_dir = tmp_path / "factorial_subset"
+    controllers = ["ordinal_replay_minmax5_10", "matched_token_cap"]
+
+    assert main(
+        Namespace(
+            features=str(features_path),
+            learned_trace=str(learned_path),
+            reference_build=str(reference_path),
+            split="train",
+            output_dir=str(output_dir),
+            sample_limit=0,
+            selector=["baces_exact"],
+            controller=controllers,
+        )
+    ) == 0
+
+    manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    expected_ids = [f"baces_exact__{controller}" for controller in controllers]
+    assert manifest["selector_levels"] == ["baces_exact"]
+    assert manifest["controller_levels"] == controllers
+    assert manifest["cell_count"] == 2
+    assert manifest["all_ready"] is True
+    assert [cell["cell_id"] for cell in manifest["cells"]] == expected_ids
+    assert set(manifest["selector_contracts"]) == {"baces_exact"}
+    assert set(manifest["controller_contracts"]) == set(controllers)
+    assert sorted(path.name for path in output_dir.iterdir() if path.is_dir()) == sorted(
+        expected_ids
+    )
+    for cell in manifest["cells"]:
+        trace_path = output_dir / cell["trace_file"]
+        assert trace_path.is_file()
+        assert len(_read_jsonl(trace_path)) == 1
+
+
 def test_minmax_replays_each_new_order_and_ignores_stored_target_poison() -> None:
     feature, learned, reference = _artifacts()
     clean = build_event_factorial_rows(
@@ -110,8 +149,14 @@ def test_matched_token_cap_is_per_event_prefix_and_exact_is_budget_feasible() ->
         assert len(row["selected_indices"]) <= 10
         assert row["factorial_metadata"]["matched_token_cap"] == 7
     learned_cell = rows[("learned_marginal", "matched_token_cap")]
-    assert learned_cell["selected_candidate_uids"] == ["u5"]
-    assert learned_cell["selected_token_cost"] == 4
+    assert learned_cell["selected_candidate_uids"] == ["u5", "u7"]
+    assert learned_cell["selected_token_cost"] == 7
+    assert learned_cell["factorial_metadata"]["matched_token_packing_policy"] == (
+        "order_preserving_greedy_feasible_skip_v1"
+    )
+    assert learned_cell["factorial_metadata"][
+        "matched_token_skipped_over_budget_count"
+    ] > 0
     exact_cell = rows[("baces_exact", "matched_token_cap")]
     assert exact_cell["baces_exact_core"]["token_cost"] <= 7
     assert exact_cell["baces_exact_core"]["terminal_utility"] >= 2
