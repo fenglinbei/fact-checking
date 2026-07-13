@@ -478,6 +478,41 @@ def test_mrec_prompt_evidence_minmax_policy_stops_after_target_state(tmp_path: P
     assert report["prompt_evidence"]["stop_reasons"] == {"target_resolved": 1}
 
 
+def test_selected_set_policy_consumes_exact_variable_length_order() -> None:
+    trace = {
+        "candidate_pool": [
+            {"mrec_token_cost": 2},
+            {"mrec_token_cost": 3},
+            {"mrec_token_cost": 4},
+        ]
+    }
+
+    decision = build_trace_verifier_data._select_prompt_evidence_indices(
+        trace,
+        ordered_indices=[2, 0],
+        config={
+            "policy": "selected_set",
+            "min_evidence_count": 0,
+            "max_evidence_count": 0,
+            "evidence_token_budget": None,
+        },
+    )
+
+    assert decision["selected_indices"] == [2, 0]
+    assert decision["selected_count_before_prompt_truncation"] == 2
+    assert decision["min_evidence_count"] == 2
+    assert decision["max_evidence_count"] == 2
+    assert decision["selected_token_cost"] == 6
+    assert decision["stop_reason"] == "selected_set_exhausted"
+
+    assert build_trace_verifier_data._ordered_trace_indices(
+        {
+            "display_ordered_indices": [2, 0],
+            "selector_ordered_indices": [1],
+        }
+    ) == [2, 0]
+
+
 def test_mrec_prompt_evidence_budget_policy_records_max_length_guard(tmp_path: Path) -> None:
     raw_path, trace_path = _write_mrec_policy_inputs(tmp_path)
 

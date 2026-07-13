@@ -223,14 +223,20 @@ def _conditional_generation_loader(model_name_or_path: str, trust_remote_code: b
     return None
 
 
-def load_causal_lm_compatible_model(model_name_or_path: str, **model_kwargs: Any) -> Any:
+def load_causal_lm_compatible_model(
+    model_name_or_path: str,
+    *,
+    use_mistral3_text_only: bool = True,
+    **model_kwargs: Any,
+) -> Any:
     """Load a text-generation model for label-token logits.
 
     Most backbones are registered under AutoModelForCausalLM. Some recent
     multimodal families expose a text-generation forward pass only through a
     ForConditionalGeneration class; for text-only label-token scoring that API
     is still compatible because it accepts input_ids/attention_mask and returns
-    logits.
+    logits. FullFT defaults to the extracted text model, while legacy LoRA
+    checkpoints can retain the full wrapper's parameter names.
     """
 
     model_kwargs = dict(model_kwargs)
@@ -251,6 +257,25 @@ def load_causal_lm_compatible_model(model_name_or_path: str, **model_kwargs: Any
         if loader is None:
             raise
         loader_cls, cfg = loader
+
+        # --- Mistral3 / Ministral3 text-only extraction (方案G) ---
+        # Mistral3ForConditionalGeneration is a multimodal wrapper whose full
+        # parameter count (~17.8B for Ministral-3-8B) is dominated by duplicated
+        # embeddings + vision tower. For text-only label-token training we extract
+        # the inner language_model (~8B) + lm_head into a standalone
+        # Ministral3ForCausalLM, cutting GPU memory in half and making FullFT
+        # feasible on 44GB GPUs.
+        if use_mistral3_text_only and loader_cls.__name__ == "Mistral3ForConditionalGeneration":
+            text_model = _load_mistral3_text_only_causal_lm(model_name_or_path, cfg, **model_kwargs)
+            if text_model is not None:
+                return text_model
+        if not use_mistral3_text_only and loader_cls.__name__ == "Mistral3ForConditionalGeneration":
+            print(
+                "[model_loading] Using full Mistral3ForConditionalGeneration topology "
+                "for legacy LoRA compatibility.",
+                flush=True,
+            )
+
         fallback_kwargs = dict(model_kwargs)
         fallback_kwargs.setdefault("config", cfg)
         try:
@@ -261,3 +286,75 @@ def load_causal_lm_compatible_model(model_name_or_path: str, **model_kwargs: Any
                 "AutoModelForCausalLM did not recognize the architecture. "
                 f"Fallback error: {type(fallback_exc).__name__}: {fallback_exc}"
             ) from fallback_exc
+
+
+def _load_mistral3_text_only_causal_lm(
+    model_name_or_path: str,
+    full_cfg: Any,
+    **model_kwargs: Any,
+) -> Any:
+    """Load only the text/language-model portion of a Mistral3 multimodal model.
+
+    Returns a Ministral3ForCausalLM initialized from the inner language_model
+    weights + lm_head, discarding the vision tower and multi-modal projector.
+    Returns None if the extraction is not applicable (e.g. weights mismatch).
+    """
+    try:
+        import torch  # noqa: F401
+        from transformers import Mistral3ForConditionalGeneration
+        from transformers.models.ministral3.modeling_ministral3 import Ministral3ForCausalLM
+        from transformers.models.ministral3.configuration_ministral3 import Ministral3Config
+    except ImportError:
+        return None
+
+    text_cfg = getattr(full_cfg, "text_config", None)
+    if text_cfg is None:
+        return None
+    text_cfg_dict = text_cfg.to_dict() if hasattr(text_cfg, "to_dict") else dict(text_cfg)
+    # Build a Ministral3Config from text_config fields.
+    config_fields = Ministral3Config.__init__.__code__.co_varnames
+    init_kwargs = {k: v for k, v in text_cfg_dict.items() if k in config_fields}
+    try:
+        text_cfg = Ministral3Config(**init_kwargs)
+    except Exception:
+        return None
+
+    # Construct empty CausalLM, then load weights from the full multimodal model.
+    torch_dtype = model_kwargs.get("dtype") or model_kwargs.get("torch_dtype")
+    causal_lm = Ministral3ForCausalLM(text_cfg)
+    if torch_dtype is not None:
+        causal_lm = causal_lm.to(torch_dtype)
+
+    # Load the full model to extract text weights (CPU only, no device_map).
+    load_kwargs = {k: v for k, v in model_kwargs.items()
+                   if k in ("torch_dtype", "dtype", "trust_remote_code", "quantization_config")}
+    load_kwargs.pop("device_map", None)
+    try:
+        full_model = Mistral3ForConditionalGeneration.from_pretrained(model_name_or_path, **load_kwargs)
+    except Exception:
+        return None
+
+    # Extract language_model + lm_head state_dict.
+    language_model_sd = full_model.model.language_model.state_dict()
+    lm_head_sd = full_model.lm_head.state_dict()
+
+    # CausalLM expects: model.* (from Ministral3Model) + lm_head.*
+    combined_sd = {}
+    for k, v in language_model_sd.items():
+        combined_sd[f"model.{k}"] = v
+    for k, v in lm_head_sd.items():
+        combined_sd[f"lm_head.{k}"] = v
+
+    missing, unexpected = causal_lm.load_state_dict(combined_sd, strict=False)
+    # Free the full multimodal model before returning.
+    del full_model
+    import gc
+    gc.collect()
+
+    n_params = sum(p.numel() for p in causal_lm.parameters())
+    print(
+        f"[model_loading] Loaded Mistral3 text-only CausalLM: {n_params / 1e9:.2f}B params "
+        f"(missing={len(missing)}, unexpected={len(unexpected)} keys).",
+        flush=True,
+    )
+    return causal_lm

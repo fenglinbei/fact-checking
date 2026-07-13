@@ -11,7 +11,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,6 +54,31 @@ class APINonRetryableError(RuntimeError):
     pass
 
 
+class APIActivity:
+    """Thread-safe counters used to keep the API progress display alive."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._request_attempts = 0
+        self._retries = 0
+        self._last_activity_at = time.time()
+
+    def record_attempt(self, attempt: int) -> None:
+        with self._lock:
+            self._request_attempts += 1
+            if int(attempt) > 1:
+                self._retries += 1
+            self._last_activity_at = time.time()
+
+    def snapshot(self) -> dict[str, float | int]:
+        with self._lock:
+            return {
+                "request_attempts": self._request_attempts,
+                "retries": self._retries,
+                "seconds_since_activity": max(time.time() - self._last_activity_at, 0.0),
+            }
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Annotate event-level claim-atom evidence maps with DeepSeek-compatible API.")
     p.add_argument("--candidate-pool", required=True)
@@ -78,6 +103,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sample-limit", type=int, default=None)
     p.add_argument("--mock-maps", action="store_true")
     p.add_argument("--no-progress", action="store_true")
+    p.add_argument(
+        "--progress-refresh-seconds",
+        type=float,
+        default=float(os.environ.get("TEACHER_PROGRESS_REFRESH_SECONDS", "1.0")),
+        help="Refresh API heartbeat/progress even while all requests are waiting or retrying.",
+    )
     return p.parse_args()
 
 
@@ -99,6 +130,15 @@ def main() -> None:
     jobs = _build_jobs(rows, model=str(args.model), prompt_version=str(args.prompt_version))
     completed = _completed_keys(annotations_path) if args.resume else set()
     pending = [job for job in jobs if job.annotation_key not in completed]
+
+    if not args.no_progress:
+        print(
+            "[evidence-map teacher] "
+            f"split={args.split} jobs={len(jobs)} resumed={len(completed)} pending={len(pending)} "
+            f"model={args.model} concurrency={max(int(args.concurrency), 1)} "
+            f"rpm_limit={int(args.requests_per_minute)}",
+            flush=True,
+        )
 
     if args.mock_maps:
         n_written, n_errors, usage_totals = _write_mock_maps(
@@ -219,7 +259,15 @@ def _write_mock_maps(
     n_written = 0
     n_errors = 0
     with annotations_path.open(mode, encoding="utf-8") as ann_fh, raw_path.open(mode, encoding="utf-8") as raw_fh, errors_path.open(mode, encoding="utf-8") as err_fh:
-        for job in jobs:
+        iterator = tqdm(
+            jobs,
+            total=len(jobs),
+            desc=f"evidence-map mock [{args.split}]",
+            unit="claim",
+            dynamic_ncols=True,
+            disable=bool(args.no_progress),
+        )
+        for job in iterator:
             created_at = datetime.now(timezone.utc).isoformat()
             try:
                 system_prompt, user_prompt = build_teacher_messages(
@@ -274,57 +322,168 @@ def _run_api_jobs(
     n_written = 0
     n_errors = 0
     limiter = RateLimiter(requests_per_minute=int(args.requests_per_minute))
+    activity = APIActivity()
+    refresh_seconds = max(float(getattr(args, "progress_refresh_seconds", 1.0)), 0.2)
     mode = "a" if args.resume else "w"
     with annotations_path.open(mode, encoding="utf-8") as ann_fh, raw_path.open(mode, encoding="utf-8") as raw_fh, errors_path.open(mode, encoding="utf-8") as err_fh:
         with ThreadPoolExecutor(max_workers=max(int(args.concurrency), 1)) as executor:
-            futures = [executor.submit(_run_job, job, args=args, api_key=api_key, limiter=limiter) for job in jobs]
-            iterator = tqdm(
-                as_completed(futures),
+            futures = {
+                executor.submit(
+                    _run_job,
+                    job,
+                    args=args,
+                    api_key=api_key,
+                    limiter=limiter,
+                    activity=activity,
+                ): job
+                for job in jobs
+            }
+            progress = tqdm(
                 total=len(futures),
                 desc=f"evidence-map teacher [{args.split}]",
                 unit="claim",
                 dynamic_ncols=True,
                 disable=bool(args.no_progress),
+                mininterval=0.2,
             )
-            for future in iterator:
-                result = future.result()
-                raw = result.get("raw")
-                if raw:
-                    raw_fh.write(json.dumps(raw, ensure_ascii=False) + "\n")
-                    raw_fh.flush()
-                if result.get("ok"):
-                    ann_fh.write(json.dumps(result["annotation"], ensure_ascii=False) + "\n")
-                    ann_fh.flush()
-                    n_written += 1
-                    usage = result["annotation"].get("api_usage") or {}
-                    for key in usage_totals:
-                        usage_totals[key] += int(usage.get(key) or 0)
-                else:
-                    err_fh.write(json.dumps(result["error"], ensure_ascii=False) + "\n")
-                    err_fh.flush()
-                    n_errors += 1
-                _write_progress(
-                    progress_path,
-                    {
-                        "status": "running",
-                        "started_at": datetime.fromtimestamp(started_at, timezone.utc).isoformat(),
-                        "n_jobs": n_jobs,
-                        "n_completed_initial": n_completed_initial,
-                        "n_pending": len(jobs),
-                        "n_written": n_written,
-                        "n_errors": n_errors,
-                        "usage_totals": usage_totals,
-                    },
-                )
+            pending_futures = set(futures)
+            try:
+                while pending_futures:
+                    done, pending_futures = wait(
+                        pending_futures,
+                        timeout=refresh_seconds,
+                        return_when=FIRST_COMPLETED,
+                    )
+                    if not done:
+                        _refresh_api_progress(
+                            progress,
+                            activity=activity,
+                            n_written=n_written,
+                            n_errors=n_errors,
+                            n_pending=len(pending_futures),
+                            usage_totals=usage_totals,
+                            started_at=started_at,
+                            refresh=True,
+                        )
+                        continue
+                    for future in done:
+                        try:
+                            result = future.result()
+                        except Exception as exc:
+                            job = futures[future]
+                            result = {
+                                "ok": False,
+                                "error": _error_row(
+                                    job,
+                                    "worker_exception",
+                                    f"{type(exc).__name__}: {exc}",
+                                    0,
+                                ),
+                                "raw": None,
+                            }
+                        raw = result.get("raw")
+                        if raw:
+                            raw_fh.write(json.dumps(raw, ensure_ascii=False) + "\n")
+                            raw_fh.flush()
+                        if result.get("ok"):
+                            ann_fh.write(json.dumps(result["annotation"], ensure_ascii=False) + "\n")
+                            ann_fh.flush()
+                            n_written += 1
+                            usage = result["annotation"].get("api_usage") or {}
+                            for key in usage_totals:
+                                usage_totals[key] += int(usage.get(key) or 0)
+                        else:
+                            err_fh.write(json.dumps(result["error"], ensure_ascii=False) + "\n")
+                            err_fh.flush()
+                            n_errors += 1
+                        progress.update(1)
+                    activity_snapshot = activity.snapshot()
+                    elapsed = max(time.time() - started_at, 0.001)
+                    _refresh_api_progress(
+                        progress,
+                        activity=activity,
+                        n_written=n_written,
+                        n_errors=n_errors,
+                        n_pending=len(pending_futures),
+                        usage_totals=usage_totals,
+                        started_at=started_at,
+                        refresh=True,
+                    )
+                    _write_progress(
+                        progress_path,
+                        {
+                            "status": "running",
+                            "started_at": datetime.fromtimestamp(started_at, timezone.utc).isoformat(),
+                            "n_jobs": n_jobs,
+                            "n_completed_initial": n_completed_initial,
+                            "n_pending": len(pending_futures),
+                            "n_written": n_written,
+                            "n_errors": n_errors,
+                            "request_attempts": int(activity_snapshot["request_attempts"]),
+                            "n_retries": int(activity_snapshot["retries"]),
+                            "completed_per_minute": round(60.0 * (n_written + n_errors) / elapsed, 3),
+                            "elapsed_seconds": round(elapsed, 3),
+                            "usage_totals": usage_totals,
+                        },
+                    )
+            finally:
+                progress.close()
     return n_written, n_errors, usage_totals
 
 
-def _run_job(job: EvidenceMapJob, *, args: argparse.Namespace, api_key: str | None, limiter: "RateLimiter") -> dict[str, Any]:
-    system_prompt, user_prompt = build_teacher_messages(
-        job.row,
-        prompt_version=str(args.prompt_version),
-        max_evidence_chars=args.max_evidence_chars,
+def _refresh_api_progress(
+    progress: Any,
+    *,
+    activity: APIActivity,
+    n_written: int,
+    n_errors: int,
+    n_pending: int,
+    usage_totals: dict[str, int],
+    started_at: float,
+    refresh: bool,
+) -> None:
+    snapshot = activity.snapshot()
+    elapsed = max(time.time() - started_at, 0.001)
+    completed_per_minute = 60.0 * (n_written + n_errors) / elapsed
+    progress.set_postfix(
+        {
+            "ok": n_written,
+            "err": n_errors,
+            "retry": int(snapshot["retries"]),
+            "api": int(snapshot["request_attempts"]),
+            "pending": n_pending,
+            "tok": int(usage_totals["total_tokens"]),
+            "done/min": f"{completed_per_minute:.1f}",
+        },
+        refresh=refresh,
     )
+
+
+def _run_job(
+    job: EvidenceMapJob,
+    *,
+    args: argparse.Namespace,
+    api_key: str | None,
+    limiter: "RateLimiter",
+    activity: APIActivity | None = None,
+) -> dict[str, Any]:
+    try:
+        system_prompt, user_prompt = build_teacher_messages(
+            job.row,
+            prompt_version=str(args.prompt_version),
+            max_evidence_chars=args.max_evidence_chars,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": _error_row(
+                job,
+                "prompt_build_error",
+                f"{type(exc).__name__}: {exc}",
+                0,
+            ),
+            "raw": None,
+        }
     attempts = max(int(args.max_retries), 0) + 1
     last_error = ""
     last_raw: dict[str, Any] | None = None
@@ -333,6 +492,8 @@ def _run_job(job: EvidenceMapJob, *, args: argparse.Namespace, api_key: str | No
         attempts_made = attempt
         try:
             limiter.wait()
+            if activity is not None:
+                activity.record_attempt(attempt)
             data = _chat_completion(args=args, api_key=api_key, system_prompt=system_prompt, user_prompt=user_prompt)
             created_at = datetime.now(timezone.utc).isoformat()
             content = _response_content(data)
@@ -411,11 +572,13 @@ def _chat_completion(*, args: argparse.Namespace, api_key: str | None, system_pr
 
 class RateLimiter:
     def __init__(self, *, requests_per_minute: int) -> None:
-        self.requests_per_minute = max(int(requests_per_minute), 1)
+        self.requests_per_minute = int(requests_per_minute)
         self._request_times: list[float] = []
         self._lock = threading.Lock()
 
     def wait(self) -> None:
+        if self.requests_per_minute <= 0:
+            return
         while True:
             with self._lock:
                 now = time.time()

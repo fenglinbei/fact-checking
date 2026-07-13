@@ -804,7 +804,11 @@ def _init_transformers_scorer(args: argparse.Namespace, checkpoint: Mapping[str,
     device = str(args.transformers_device or "auto").strip().lower()
     if device == "auto" and torch.cuda.is_available():
         model_kwargs["device_map"] = "auto"
-    model = load_causal_lm_compatible_model(base_model, **model_kwargs)
+    model = load_causal_lm_compatible_model(
+        base_model,
+        use_mistral3_text_only=False,
+        **model_kwargs,
+    )
     model = PeftModel.from_pretrained(model, str(checkpoint["checkpoint_dir"]))
     if device != "auto":
         model.to(torch.device(device))

@@ -64,6 +64,7 @@ def main() -> None:
 
         model = load_causal_lm_compatible_model(
             context.model_name_or_path,
+            use_mistral3_text_only=False,
             **model_kwargs,
         )
         model = PeftModel.from_pretrained(model, str(context.checkpoint_dir))

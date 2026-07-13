@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from tqdm.auto import tqdm
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
@@ -73,6 +75,7 @@ def parse_args() -> argparse.Namespace:
         help="Evidence-map ablation mode for learned-marginal selector features.",
     )
     parser.add_argument("--source-selector-name", default="v0_7_atom_facts_abc_budgeted_marginal_chain_adaptive5_10")
+    parser.add_argument("--no-progress", action="store_true")
     return parser.parse_args()
 
 
@@ -104,7 +107,17 @@ def main() -> int:
         map_ablation_mode=str(args.map_ablation_mode),
     )
     rows = _read_jsonl(input_path, sample_limit=int(args.sample_limit))
-    traces = [_build_trace(row, params=params, source_selector_name=str(args.source_selector_name)) for row in rows]
+    iterator = tqdm(
+        rows,
+        desc=f"mrec-trace [{args.split}]",
+        unit="claim",
+        dynamic_ncols=True,
+        disable=bool(args.no_progress),
+    )
+    traces = [
+        _build_trace(row, params=params, source_selector_name=str(args.source_selector_name))
+        for row in iterator
+    ]
     manifest = _manifest(
         args=args,
         input_path=input_path,

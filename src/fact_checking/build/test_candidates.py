@@ -413,6 +413,42 @@ def test_build_training_row_preserves_anchor_metadata_without_rendering_anchor_f
     assert "Hidden anchor." not in training_row["prompt"]
 
 
+def test_build_training_row_renders_explicit_unlabeled_inference_row() -> None:
+    row = {
+        "event_id": "test-1",
+        "claim": "Claim text",
+        "label": "",
+        "label_schema": "scifact3",
+        "explain": "",
+        "candidates": [{"text": "Visible evidence."}],
+    }
+    prompt_cfg = {
+        "auto_length": True,
+        "max_length": 512,
+        "output_mode": "label_only",
+        "label_format": "letter",
+        "label_schema": "scifact3",
+    }
+
+    skipped_row = build_training_row(row, _FakeTokenizer(), prompt_cfg)
+    inference_row = build_training_row(
+        row,
+        _FakeTokenizer(),
+        prompt_cfg,
+        allow_unlabeled=True,
+    )
+
+    assert skipped_row["prompt"] == ""
+    assert inference_row["prompt"]
+    assert "Visible evidence." in inference_row["prompt"]
+    assert inference_row["target"] == ""
+    assert inference_row["gold_label"] == ""
+    assert inference_row["gold_id"] == -1
+    assert inference_row["evidence_count"] == 1
+    assert inference_row["unlabeled_inference"] is True
+    assert inference_row["inference_target_token_reserve"] > 0
+
+
 def test_raw_top_evidence_hybrid_uses_only_positive_labels_without_padding() -> None:
     sample = ChunkMMRSample(
         event_id="e1",

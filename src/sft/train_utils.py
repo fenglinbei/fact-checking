@@ -47,6 +47,7 @@ def setup_model_and_tokenizer(
     logger: Any,
 ) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
     """Load tokenizer and model with flash-attn, FLA, LoRA, and gradient checkpointing."""
+    lora_is_enabled = bool(lora_cfg and lora_cfg.get("enabled", False))
     use_flash_attention_2 = bool(model_cfg.get("use_flash_attention_2", True))
     use_fused_linear_attention = bool(model_cfg.get("use_fused_linear_attention", False))
 
@@ -69,6 +70,7 @@ def setup_model_and_tokenizer(
 
     model = load_causal_lm_compatible_model(
         model_name_or_path,
+        use_mistral3_text_only=not lora_is_enabled,
         trust_remote_code=True,
         torch_dtype=torch.bfloat16 if model_cfg.get("bf16", True) else torch.float32,
         **model_kwargs,

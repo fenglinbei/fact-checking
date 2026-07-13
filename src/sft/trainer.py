@@ -265,7 +265,11 @@ def main() -> None:
             "This is separate from flash-attn and does not block training."
         )
 
-    model = load_causal_lm_compatible_model(model_name_or_path, **model_kwargs)
+    model = load_causal_lm_compatible_model(
+        model_name_or_path,
+        use_mistral3_text_only=not lora_enabled(train_cfg),
+        **model_kwargs,
+    )
     model = freeze_modules_by_prefix(
         model,
         train_cfg,

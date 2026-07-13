@@ -105,6 +105,7 @@ def build_inference_context(
     checkpoint: str,
     split: str,
     config_path: str | None = None,
+    include_unlabeled: bool = False,
 ) -> InferenceContext:
     resolved_run_dir = Path(run_dir)
     checkpoint_name, checkpoint_dir = resolve_checkpoint_dir(resolved_run_dir, checkpoint)
@@ -143,7 +144,7 @@ def build_inference_context(
 
     max_length = int(train_cfg.get("max_length", 2048))
     rows = load_jsonl(split_map[split])
-    samples = load_prebuilt_samples(rows)
+    samples = load_prebuilt_samples(rows, include_unlabeled=include_unlabeled)
     if is_mistral_common_tokenizer(tokenizer) and any(sample.prompt_input_ids is None for sample in samples):
         raise ValueError(
             f"{split} split build rows are missing prompt_input_ids for a MistralCommon tokenizer. "

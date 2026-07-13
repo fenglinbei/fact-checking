@@ -15,7 +15,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True)
     parser.add_argument("--metrics-output", default=None)
     parser.add_argument("--predictions", default=None, help="Optional label-token predictions JSONL.")
-    parser.add_argument("--build-jsonl", default=None, help="Build JSONL used to map prediction sample_idx to event_id.")
+    parser.add_argument(
+        "--build-jsonl",
+        default=None,
+        help="Build JSONL used for prediction id mapping and final prompt evidence selection.",
+    )
     parser.add_argument("--max-sentences-per-doc", type=int, default=3)
     return parser.parse_args()
 
@@ -24,16 +28,35 @@ def main() -> int:
     args = parse_args()
     trace_rows = _read_jsonl(Path(args.trace))
     raw_rows = _read_jsonl(Path(args.raw))
-    pred_by_event = _load_predictions(args.predictions, args.build_jsonl)
+    build_rows = _read_jsonl(Path(args.build_jsonl)) if args.build_jsonl and Path(args.build_jsonl).exists() else []
+    build_by_event = {str(row.get("event_id") or ""): row for row in build_rows}
+    trace_event_ids = [str(row.get("event_id") or "") for row in trace_rows]
+    if args.predictions and Path(args.predictions).exists() and not build_rows:
+        raise ValueError("Verifier predictions require --build-jsonl for sample_idx and prompt evidence mapping.")
+    if build_rows:
+        if len(build_by_event) != len(build_rows):
+            raise ValueError("Build JSONL contains missing or duplicate event_id values.")
+        missing_build = [event_id for event_id in trace_event_ids if event_id not in build_by_event]
+        if missing_build:
+            raise ValueError(f"Build JSONL is missing {len(missing_build)} trace events, sample={missing_build[:5]}.")
+    pred_by_event = _load_predictions(args.predictions, build_rows)
+    if args.predictions and Path(args.predictions).exists():
+        missing_predictions = [event_id for event_id in trace_event_ids if event_id not in pred_by_event]
+        if missing_predictions:
+            raise ValueError(
+                f"Predictions are missing {len(missing_predictions)} trace events, sample={missing_predictions[:5]}."
+            )
     submissions = [
         _submission_row(
             trace,
             pred_label=pred_by_event.get(str(trace.get("event_id") or "")),
             max_sentences_per_doc=int(args.max_sentences_per_doc),
+            prompt_candidates=_prompt_candidates(
+                build_by_event.get(str(trace.get("event_id") or ""))
+            ) if build_rows else None,
         )
         for trace in trace_rows
     ]
-    _write_jsonl(Path(args.output), submissions)
 
     metrics = _evaluate(submissions, raw_rows)
     metrics.update(
@@ -46,10 +69,17 @@ def main() -> int:
             "prediction_source_counts": dict(
                 Counter(str(row.get("_prediction_source") or "unknown") for row in submissions)
             ),
+            "evidence_source_counts": dict(
+                Counter(str(row.get("_evidence_source") or "unknown") for row in submissions)
+            ),
+            "evidence_policy": (
+                "prompt_relation_aligned_mrec_top1" if build_rows else "trace_selected_candidates"
+            ),
         }
     )
     for row in submissions:
         row.pop("_prediction_source", None)
+        row.pop("_evidence_source", None)
     _write_jsonl(Path(args.output), submissions)
     if args.metrics_output:
         metrics_path = Path(args.metrics_output)
@@ -66,22 +96,22 @@ def _submission_row(
     *,
     pred_label: str | None,
     max_sentences_per_doc: int,
+    prompt_candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     event_id = int(trace.get("event_id"))
     if _is_nei_label(pred_label):
-        return {"id": event_id, "evidence": {}, "_prediction_source": "verifier_prediction"}
+        return {
+            "id": event_id,
+            "evidence": {},
+            "_prediction_source": "verifier_prediction",
+            "_evidence_source": "nei_empty",
+        }
     grouped: dict[str, dict[str, Any]] = {}
-    selected = trace.get("selected_candidates") or []
-    if not selected:
-        pool = trace.get("candidate_pool") or []
-        selected = []
-        for idx in trace.get("selector_ordered_indices") or trace.get("selected_indices") or []:
-            try:
-                pos = int(idx)
-            except (TypeError, ValueError):
-                continue
-            if 0 <= pos < len(pool):
-                selected.append(pool[pos])
+    if prompt_candidates is not None and pred_label:
+        selected, evidence_source = _select_prompt_submission_candidates(prompt_candidates, pred_label)
+    else:
+        selected = _trace_selected_candidates(trace)
+        evidence_source = "trace_selected_candidates"
     source = "verifier_prediction" if pred_label else "evidence_map_relation_fallback"
     for candidate in selected:
         if not isinstance(candidate, Mapping):
@@ -107,7 +137,74 @@ def _submission_row(
             continue
         label = _official_label(pred_label) if pred_label else _fallback_doc_label(item.get("_relations") or [])
         evidence[doc_id] = {"label": label, "sentences": sentences}
-    return {"id": event_id, "evidence": evidence, "_prediction_source": source}
+    return {
+        "id": event_id,
+        "evidence": evidence,
+        "_prediction_source": source,
+        "_evidence_source": evidence_source,
+    }
+
+
+def _prompt_candidates(build_row: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(build_row, Mapping):
+        return []
+    candidates = [dict(row) for row in build_row.get("candidates") or [] if isinstance(row, Mapping)]
+    try:
+        evidence_count = int(build_row.get("evidence_count", len(candidates)))
+    except (TypeError, ValueError):
+        evidence_count = len(candidates)
+    return candidates[: max(0, evidence_count)]
+
+
+def _select_prompt_submission_candidates(
+    candidates: list[dict[str, Any]],
+    pred_label: str,
+) -> tuple[list[dict[str, Any]], str]:
+    valid = [candidate for candidate in candidates if _has_scifact_location(candidate)]
+    aligned = [candidate for candidate in valid if _relation_matches_label(candidate, pred_label)]
+    if aligned:
+        return aligned[:1], "prompt_relation_aligned_top1"
+    if valid:
+        return valid[:1], "prompt_top1_fallback"
+    raise ValueError("Non-NEI SciFact prediction has no prompt candidate with document and sentence ids.")
+
+
+def _trace_selected_candidates(trace: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    selected = [row for row in trace.get("selected_candidates") or [] if isinstance(row, Mapping)]
+    if selected:
+        return selected
+    pool = trace.get("candidate_pool") or []
+    out: list[Mapping[str, Any]] = []
+    for idx in trace.get("selector_ordered_indices") or trace.get("selected_indices") or []:
+        try:
+            pos = int(idx)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= pos < len(pool) and isinstance(pool[pos], Mapping):
+            out.append(pool[pos])
+    return out
+
+
+def _relation_matches_label(candidate: Mapping[str, Any], pred_label: str) -> bool:
+    relation = str(candidate.get("map_relation") or "").strip().lower()
+    label = str(pred_label or "").strip().lower()
+    if label in {"support", "supports", "supported"}:
+        return relation in {"support", "supports", "supported"}
+    if label in {"contradict", "contradicts", "refute", "refutes"}:
+        return relation in {"contradict", "contradicts", "refute", "refutes"}
+    return False
+
+
+def _has_scifact_location(candidate: Mapping[str, Any]) -> bool:
+    doc_id = str(candidate.get("scifact_doc_id") or candidate.get("doc_id") or candidate.get("report_id") or "")
+    sentence_ids = (
+        candidate.get("scifact_sentence_ids")
+        or candidate.get("chunk_sent_indices")
+        or [candidate.get("sent_idx")]
+    )
+    if not isinstance(sentence_ids, (list, tuple, set)):
+        sentence_ids = [sentence_ids]
+    return bool(doc_id and any(value is not None for value in sentence_ids))
 
 
 def _fallback_doc_label(relations: list[str]) -> str:
@@ -130,10 +227,9 @@ def _is_nei_label(label: str | None) -> bool:
     return text in {"nei", "not_enough_info", "insufficient", "unknown"}
 
 
-def _load_predictions(predictions: str | None, build_jsonl: str | None) -> dict[str, str]:
+def _load_predictions(predictions: str | None, build_rows: list[dict[str, Any]]) -> dict[str, str]:
     if not predictions or not Path(predictions).exists():
         return {}
-    build_rows = _read_jsonl(Path(build_jsonl)) if build_jsonl and Path(build_jsonl).exists() else []
     event_order = [str(row.get("event_id") or "") for row in build_rows]
     out: dict[str, str] = {}
     for row in _read_jsonl(Path(predictions)):
@@ -141,8 +237,8 @@ def _load_predictions(predictions: str | None, build_jsonl: str | None) -> dict[
         if not event_id and "sample_idx" in row:
             try:
                 event_id = event_order[int(row["sample_idx"])]
-            except (IndexError, TypeError, ValueError):
-                event_id = ""
+            except (IndexError, TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid prediction sample_idx={row.get('sample_idx')!r}.") from exc
         pred_label = str(row.get("pred_label") or "").strip().lower()
         if event_id and pred_label:
             out[event_id] = pred_label
@@ -151,10 +247,12 @@ def _load_predictions(predictions: str | None, build_jsonl: str | None) -> dict[
 
 def _evaluate(pred_rows: list[dict[str, Any]], raw_rows: list[dict[str, Any]]) -> dict[str, Any]:
     gold_by_id = {int(row["id"]): row for row in raw_rows if isinstance(row.get("evidence"), dict)}
-    abstract_correct = 0
+    abstract_label_only_correct = 0
+    abstract_label_rationale_correct = 0
     abstract_pred = 0
     abstract_gold = 0
-    sentence_correct = 0
+    sentence_selection_only_correct = 0
+    sentence_selection_label_correct = 0
     sentence_pred = 0
     sentence_gold = 0
     claim_gold: list[str] = []
@@ -188,21 +286,43 @@ def _evaluate(pred_rows: list[dict[str, Any]], raw_rows: list[dict[str, Any]]) -
             pred_sentences_all = set(pred_sentence_list)
             pred_sentences_abstract = set(pred_sentence_list[:3])
             gold_label = _gold_doc_label(gold_rationales)
-            if pred_label == gold_label and _contains_gold_set(gold_rationales, pred_sentences_abstract):
-                abstract_correct += 1
+            for sent_idx in pred_sentences_all:
+                if _sentence_credit(gold_rationales, sent_idx, pred_sentences_all):
+                    sentence_selection_only_correct += 1
             if pred_label == gold_label:
+                abstract_label_only_correct += 1
+                if _contains_gold_set(gold_rationales, pred_sentences_abstract):
+                    abstract_label_rationale_correct += 1
                 for sent_idx in pred_sentences_all:
                     if _sentence_credit(gold_rationales, sent_idx, pred_sentences_all):
-                        sentence_correct += 1
+                        sentence_selection_label_correct += 1
+    abstract_label_only = _prf(abstract_label_only_correct, abstract_pred, abstract_gold)
+    abstract_label_rationale = _prf(abstract_label_rationale_correct, abstract_pred, abstract_gold)
+    sentence_selection_only = _prf(sentence_selection_only_correct, sentence_pred, sentence_gold)
+    sentence_selection_label = _prf(sentence_selection_label_correct, sentence_pred, sentence_gold)
     return {
-        "abstract": _prf(abstract_correct, abstract_pred, abstract_gold),
-        "sentence": _prf(sentence_correct, sentence_pred, sentence_gold),
+        # Preserve historical aliases while exposing the metric names used by
+        # SciFact papers explicitly.
+        "abstract": abstract_label_rationale,
+        "sentence": sentence_selection_label,
+        "abstract_label_only": abstract_label_only,
+        "abstract_label_rationale": abstract_label_rationale,
+        "sentence_selection_only": sentence_selection_only,
+        "sentence_selection_label": sentence_selection_label,
+        "primary_comparison": {
+            "abstract_label_only_f1": abstract_label_only["f1"],
+            "sentence_selection_label_f1": sentence_selection_label["f1"],
+        },
         "claim_label": _classification_metrics(claim_gold, claim_pred),
         "counts": {
-            "abstract_correct": abstract_correct,
+            "abstract_correct": abstract_label_rationale_correct,
+            "abstract_label_only_correct": abstract_label_only_correct,
+            "abstract_label_rationale_correct": abstract_label_rationale_correct,
             "abstract_pred": abstract_pred,
             "abstract_gold": abstract_gold,
-            "sentence_correct": sentence_correct,
+            "sentence_correct": sentence_selection_label_correct,
+            "sentence_selection_only_correct": sentence_selection_only_correct,
+            "sentence_selection_label_correct": sentence_selection_label_correct,
             "sentence_pred": sentence_pred,
             "sentence_gold": sentence_gold,
         },

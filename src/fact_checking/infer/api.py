@@ -911,7 +911,12 @@ def _merge_lora_to_dir(
         )
 
     torch_dtype = _torch_dtype_for_merge(dtype)
-    model = load_causal_lm_compatible_model(base_model, torch_dtype=torch_dtype, trust_remote_code=True)
+    model = load_causal_lm_compatible_model(
+        base_model,
+        use_mistral3_text_only=False,
+        torch_dtype=torch_dtype,
+        trust_remote_code=True,
+    )
     peft_model = PeftModel.from_pretrained(model, str(adapter_dir), is_trainable=False)
     peft_model.eval()
     model_lora_keys = _filter_lora_state_keys(name for name, _ in peft_model.named_parameters())

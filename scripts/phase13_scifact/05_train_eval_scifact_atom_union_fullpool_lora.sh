@@ -24,6 +24,7 @@ MODE="${MODE:-full}" # check|build|train|eval|full|export
 FINETUNE_MODE="${FINETUNE_MODE:-lora}"
 DRY_RUN="${DRY_RUN:-false}"
 SAMPLE_LIMIT="${SAMPLE_LIMIT:-0}"
+FORCE_EVAL="${FORCE_EVAL:-false}"
 
 eval "$("$PYTHON_BIN" scripts/sentence_trace_method/mrec_policy_config.py --config "$MREC_POLICY_CONFIG")"
 
@@ -105,6 +106,22 @@ export_scifact_split() {
     "${metrics_args[@]}"
 }
 
+predict_scifact_test() {
+  local prediction_path
+  prediction_path="$(prediction_path_for_split test)"
+  local manifest_path="${TRAIN_CASE_ROOT}/eval/test/best/label_token/prediction_manifest.json"
+  if [[ "$FORCE_EVAL" != "true" && -f "$prediction_path" && -f "$manifest_path" ]]; then
+    printf '[scifact-05] reuse test verifier predictions: %s\n' "$prediction_path"
+    return 0
+  fi
+  run_cmd "$PYTHON_BIN" -m sft.label_token_infer \
+    --run-dir "${TRAIN_CASE_ROOT}/train" \
+    --checkpoint best \
+    --split test \
+    --config "${TRAIN_CASE_ROOT}/train.resolved.yaml" \
+    --prediction-only
+}
+
 printf '[scifact-05] MREC_POLICY_CONFIG=%s MODE=%s FINETUNE_MODE=%s TRAIN_CASE_ROOT=%s TRACE_ROOT=%s WEIGHT_FILE=%s\n' \
   "$MREC_POLICY_CONFIG" "$MODE" "$FINETUNE_MODE" "$TRAIN_CASE_ROOT" "$TRACE_ROOT" "$WEIGHT_FILE"
 
@@ -127,6 +144,12 @@ case "$MODE" in
   *)
     printf 'Unsupported MODE=%s. Use check, build, train, eval, full, or export.\n' "$MODE" >&2
     exit 2
+    ;;
+esac
+
+case "$MODE" in
+  full|eval)
+    predict_scifact_test
     ;;
 esac
 

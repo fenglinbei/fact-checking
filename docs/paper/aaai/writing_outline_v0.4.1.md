@@ -4,7 +4,7 @@
 
 # Abstract
 
-社交媒体的发展提高了虚假新闻的传播效率，这使得基于证据的、可解释的自动虚假新闻检测方法成为研究热点。已有方法要么依赖复杂的证据特征工程，要么通过复杂的证据组织与变换来产出最终结果。这些方法往往依赖事后的解释，例如在真实性标签判定之后才单独输出解释文本。而在人类实际核查声明时，核查者通常会先识别声明中的可验证子事实，再围绕这些子事实组织证据，并逐步形成可追踪的证据链。受此启发，本文提出一种 atom-aware 的证据链构建方法：将声明分解为原子事实，构建 evidence map 以刻画候选证据与原子事实之间的关系、直接性与置信度，并学习一个状态条件化的边际效用选择器来生成有序证据链。该证据链既可以作为 LLM verifier 的判定输入，也可以作为人类可读的可解释信息。在 LIAR-RAW 与 RAWFC 等基准上的实验表明，该方法在保持证据链可读性的同时取得了具有竞争力的分类性能，并在若干复杂证据组织方法的对比中展现出稳定优势。
+社交媒体的发展提高了虚假新闻的传播效率，这使得基于证据的、可解释的自动虚假新闻检测方法成为研究热点。已有方法要么依赖复杂的证据特征工程，要么通过复杂的证据组织与变换来产出最终结果。这些方法往往依赖事后的解释，例如在真实性标签判定之后才单独输出解释文本。而在人类实际核查声明时，核查者通常会先识别声明中的可验证子事实，再围绕这些子事实组织证据，并逐步形成可追踪的证据链。受此启发，本文提出一种 atom-aware 的证据链构建方法：将声明分解为原子事实，构建 evidence map 以刻画候选证据与原子事实之间的关系、直接性与置信度，并学习一个状态条件化的边际效用选择器来生成有序证据链。该证据链既可以作为 LLM verifier 的判定输入，也可以作为人类可读的可解释信息。在 LIAR-RAW 与 RAWFC 上，统一采用 Ministral-3-8B + LoRA verifier 时，本文方法分别取得 36.66 与 66.12 的 test macro-F1。在跨领域 SciFact 官方开发集上，完整开放语料流程取得 72.41 的 abstract Label-only F1 和 65.82 的 abstract Label+Rationale F1，但精确句级证据定位仍是主要瓶颈。结果表明，该方法能够在不同领域和标签体系下保持较强的文档级证据组织与判别能力。
 
 # Introduction
 
@@ -52,7 +52,7 @@
 
 ## Task Definition
 
-**输入与输出。** 给定一条待核查的声明 $c$ 及其相关的若干原始报道 $\mathcal R$，任务目标是输出事实核查标签 $\hat y\in\mathcal Y$。标签集合 $\mathcal Y$ 随数据集而异：LIAR-RAW 为六类细粒度真值（pants-fire / false / barely-true / half-true / mostly-true / true），RAWFC 为三类（false / half / true），HoVer 为二分类（supported / not-supported）等。本文方法不依赖特定标签体系，可适配任意离散标签集合 $\mathcal Y$。
+**输入与输出。** 给定一条待核查的声明 $c$ 及其相关的若干原始报道 $\mathcal R$，任务目标是输出事实核查标签 $\hat y\in\mathcal Y$。标签集合 $\mathcal Y$ 随数据集而异：LIAR-RAW 为六类细粒度真值（pants-fire / false / barely-true / half-true / mostly-true / true），RAWFC 为三类（false / half / true），SciFact 为三类科学声明验证标签（SUPPORT / CONTRADICT / NOINFO），HoVer 为二分类（supported / not-supported）等。本文方法不依赖特定标签体系，可适配任意离散标签集合 $\mathcal Y$。
 
 **Claim atoms.** 本文将原始 claim $c$ 分解为少量可独立验证的 atomic propositions：
 $$
@@ -359,19 +359,102 @@ $$
 
 ## Main Evaluation
 
-**数据集与指标。** 在 LIAR-RAW（6 类细粒度真值）与 RAWFC（3 类）两个公开基准上评估。主指标为 classification accuracy 与 macro-F1；LIAR-RAW 额外报告 ordinal MAE 与 extreme error rate 以反映六类有序性。
+### Evaluation Protocol and Reporting Scope
 
-**实现。** Verifier 为 Ministral-3-8B + LoRA，label-token CE 训练，$k_{\min}{=}5,k_{\max}{=}10$ minmax prompt evidence policy，$\rho_{\mathrm{target}}{=}1.0$。训练/验证/测试 split 与各基准官方划分一致。
+**LIAR-RAW 与 RAWFC。** 两个数据集均使用官方 train/validation/test 划分，在 test split 上报告 accuracy 以及 macro-precision、macro-recall 和 macro-F1。主文献对比表统一以百分数报告 macro-P/R/F1。Macro-F1 是各类别 F1 的算术平均，而不是 macro-P 与 macro-R 的调和平均。LIAR-RAW 的 ordinal MAE 与 extreme error rate 作为补充诊断另行报告。
 
-**主结果。** 下表报告本文主方法在两个基准上的 test 性能。RAWFC 同时给出 baseline20 变体（使用 20 条候选证据的增强检索池），以展示检索池规模的影响。
+**SciFact。** 使用原始 5,183 篇摘要语料和官方 300-claim development split，不使用 gold `cited_doc_ids` 或 gold rationale 构造候选池。按照 SciFact 官方 full-pipeline scorer 报告 sentence Selection-only、sentence Selection+Label、abstract Label-only 和 abstract Label+Rationale 四项 micro-F1。由于官方 hidden-test 提交服务和联系渠道在实验定稿时不可用，SciFact 结果必须称为 **official development-set results**，不能称为 hidden-test 结果或整体 SOTA。该 development split 同时参与 checkpoint selection，因此其结论定位为跨领域迁移证据，而非未见测试集上的最终泛化估计。
 
-| 数据集 | 配置 | Acc. | Macro-F1 |
-|---|---|---|---|
-| LIAR-RAW | 主方法 (minmax5_10) | 0.360 | **0.367** |
-| RAWFC | 主方法 (minmax5_10) | 0.635 | 0.638 |
-| RAWFC | baseline20 变体 | 0.660 | **0.661** |
+**训练口径。** 本文方法的主要贡献位于 evidence construction 与 selector，而 verifier backbone 和参数更新方式均可能显著影响最终分类性能。为避免按数据集分别挑选 LoRA/FullFT 和不同 backbone 造成选择偏差，LIAR-RAW/RAWFC 主结果采用同时覆盖两个数据集、并由 validation macro-F1 选择的 matched configuration。当前完成的两组成对配置中，Ministral-3-8B + LoRA 的跨数据集平均 validation macro-F1 高于 Llama-3.1-8B + LoRA，因此本稿暂以 R1/R2 为统一主口径；二者均使用 label-token CE 和 minmax$(5,10)$ prompt evidence policy。允许针对数据集调节学习率、验证间隔与 retrieval pool 宽度，并在实现细节中完整披露；RAWFC 使用 baseline20 候选设置。SciFact 是独立的跨领域迁移实验，使用 Ministral-3-8B + LoRA 和 fixed minmax$(9,9)$。
 
-> 注：定稿时补充外部 baseline 对比（文献数值）、per-class P/R/F1、混淆矩阵，以及 LIAR 的 ordinal MAE / extreme error rate。HoVer 基准的 test 评估待补。
+### LIAR-RAW and RAWFC Controlled Results
+
+下表给出当前可作为正文主结果的统一 backbone 与 adaptation-family 口径。所有数值均来自完整 test artifact。
+
+| 数据集 | Run | Verifier / adaptation | Evidence setting | Acc. | Macro-P | Macro-R | Macro-F1 |
+|---|---:|---|---|---:|---:|---:|---:|
+| LIAR-RAW | R1 | Ministral-3-8B / LoRA | Atom-Union, minmax$(5,10)$ | 35.97 | 38.37 | 35.87 | **36.66** |
+| RAWFC | R2 | Ministral-3-8B / LoRA | Atom-Union baseline20, minmax$(5,10)$ | 66.00 | 67.17 | 65.98 | **66.12** |
+
+**Table X: LIAR-RAW/RAWFC test-set comparison under raw-report or near raw-report settings.** 外部结果沿用其论文公开的最佳变体；由于部分方法使用额外知识、不同 LLM 规模或 agent protocol，`Context` 和 `Upper reference` 行只作为上下文，不用于“同设置最佳”结论。
+
+| Method | Comparison scope | LIAR-RAW / LIAR P / R / F1 | RAWFC P / R / F1 |
+|---|---|---:|---:|
+| CofCED | Direct; raw reports | 29.48 / 29.55 / 28.93 | 52.99 / 50.99 / 51.07 |
+| L-Defense | Direct; raw reports + competing wisdom | 31.63 / 31.71 / 31.40 | 61.72 / 61.01 / 61.20 |
+| G-Defense | Direct; graph-enhanced defense | 34.17 / 32.37 / 32.49 | 66.29 / 65.49 / 65.50 |
+| DeReC-qwen | Direct; dense retrieval + DeBERTa classifier | 35.94 / 32.24 / 33.13 | 65.58 / 64.56 / 64.60 |
+| FFRR(d+q) | Direct; feedback-trained retrieval + reader | 34.50 / 32.60 / 33.50 | 56.50 / 57.40 / 57.00 |
+| **Atom-Union MREC (ours)** | **Direct; Ministral-3-8B + LoRA on both datasets (R1/R2)** | **38.37 / 35.87 / 36.66** | **67.17 / 65.98 / 66.12** |
+| FactLLaMAKnow | Context; LLaMA LoRA + external knowledge | 32.46 / 32.05 / 30.44 | 56.11 / 55.50 / 55.65 |
+| DelphiAgent GPT-4o | Context; training-free multi-agent | 31.33 / 28.36 / 28.36 | 68.05 / 68.03 / 68.04 |
+| KG-CRAFT Llama 3.3 | Upper reference; KG + contrastive questions + stronger LLM | 77.38 / 70.67 / 73.87 | 81.63 / 81.53 / 81.58 |
+
+> 表述边界：在 `Direct` 行中，本文方法当前取得最高的 LIAR-RAW 和 RAWFC macro-F1；不应据此声称超过使用额外资源或更强闭源/大规模 LLM 的所有系统。FactLLaMAKnow 与部分后续工作沿用 `LIAR` 命名，定稿时需在表注中核对其与 LIAR-RAW 的数据处理一致性。外部结果的原始来源与转录记录见 `docs/Z-cross-cutting/202606011907_paper_data_and_todo_record.md`。
+
+### Training-Regime Audit and Final Reporting Rule
+
+截至本稿更新，八组 verifier 实验的状态如下。该表是内部写作审计，最终投稿时只保留选定的 matched configuration 和必要的 backbone/adaptation ablation。
+
+| Run | Dataset | Backbone | Adaptation | Acc. | Macro-P | Macro-R | Macro-F1 | Status / role |
+|---:|---|---|---|---:|---:|---:|---:|---|
+| R1 | LIAR-RAW | Ministral-3-8B | LoRA | 35.97 | 38.37 | 35.87 | 36.66 | complete; controlled main |
+| R2 | RAWFC | Ministral-3-8B | LoRA | 66.00 | 67.17 | 65.98 | 66.12 | complete; controlled main |
+| R3 | LIAR-RAW | Llama-3.1-8B | LoRA | 33.33 | 37.71 | 33.16 | 34.31 | complete |
+| R4 | RAWFC | Llama-3.1-8B | LoRA | 62.50 | 63.54 | 62.49 | 62.83 | complete |
+| R5 | RAWFC | Ministral-3-8B | FullFT | 67.00 | 71.77 | 66.98 | 67.64 | complete |
+| R6 | RAWFC | Llama-3.1-8B | FullFT | 69.00 | 69.09 | 69.06 | 69.00 | complete; current RAWFC best |
+| R7 | LIAR-RAW | Llama-3.1-8B | FullFT | -- | -- | -- | -- | running; do not report yet |
+| R8 | LIAR-RAW | Ministral-3-8B | FullFT | -- | -- | -- | -- | queued/not materialized; do not report yet |
+
+当前 matched-configuration 的 validation 审计如下。只有两个数据集均有完整 validation artifact 的配置才可参与主配置选择。
+
+| Matched configuration | LIAR-RAW val Macro-F1 | RAWFC val Macro-F1 | Mean val Macro-F1 | Eligible now |
+|---|---:|---:|---:|---|
+| **Ministral-3-8B + LoRA (R1/R2)** | **36.59** | **64.59** | **50.59** | yes; provisional main |
+| Llama-3.1-8B + LoRA (R3/R4) | 34.72 | 58.83 | 46.78 | yes |
+| Ministral-3-8B + FullFT (R8/R5) | -- | 64.57 | -- | no |
+| Llama-3.1-8B + FullFT (R7/R6) | -- | 67.09 | -- | no |
+
+当前逐数据集最优结果是 LIAR-RAW 的 R1（Ministral + LoRA，36.66 F1）和 RAWFC 的 R6（Llama + FullFT，69.00 F1）。这两个数值可以在附加表中写为 **best observed per dataset**，但不能合并为一个未加说明的 “Ours” 主结果行，因为它们同时改变了 backbone 与 adaptation regime。建议正文采用如下表述：
+
+> To isolate the contribution of evidence construction from verifier training choices, our primary LIAR-RAW/RAWFC comparison uses the matched Ministral-3-8B + LoRA configuration (R1/R2). For completeness, the best score observed on each dataset is 36.66 macro-F1 on LIAR-RAW with Ministral-LoRA and 69.00 on RAWFC with Llama-FullFT. These per-dataset maxima form a performance envelope rather than a single shared verifier configuration.
+
+R7/R8 完成后，将四种 matched configuration 记为
+$\mathcal Q=\{\text{Ministral-LoRA},\text{Llama-LoRA},\text{Ministral-FullFT},\text{Llama-FullFT}\}$，只使用两个数据集的 validation macro-F1 选择最终主配置：
+$$
+q^\ast=\arg\max_{q\in\mathcal Q_{\mathrm{complete}}}
+\frac{1}{2}\left(F^{\mathrm{LIAR}}_{1,\mathrm{val}}(q)+F^{\mathrm{RAWFC}}_{1,\mathrm{val}}(q)\right).
+$$
+随后冻结 $q^\ast$，一次性报告两个 test 结果。不得使用各数据集 test 最优值反向选择不同配置。若 R7/R8 在截稿前仍未完成，则保留 R1/R2 为主口径，将 R6 仅列作训练方式敏感性结果。
+
+### SciFact Full-Pipeline Development Results
+
+SciFact 表使用原始 5,183-abstract corpus 和官方 300-claim development split，所有值均为官方 full-pipeline micro-F1 百分数。`Selection-only` 评价证据句定位，`Selection+Label` 要求句级证据与标签同时正确，`Label-only` 评价摘要级标签，`Label+Rationale` 则要求摘要标签正确且至少给出一组有效 rationale。所有候选证据均来自 open-corpus Atom-Union retrieval，不进行 gold evidence 回填。
+
+| Method | Year | Sent. Selection-only | Sent. Selection+Label | Abstract Label-only | Abstract Label+Rationale |
+|---|---:|---:|---:|---:|---:|
+| VeriSci | 2020 | 48.30 | 43.10 | 52.10 | 50.00 |
+| VerT5erini | 2021 | 60.87 | 57.10 | 65.07 | 61.72 |
+| ParagraphJoint | 2021 | 64.70 | 55.20 | 65.10 | 59.90 |
+| ARSJoint | 2021 | 66.20 | 57.80 | <u>66.70</u> | 62.40 |
+| QMUL-SDS | 2021 | <u>67.83</u> | <u>60.54</u> | 63.40 | 61.10 |
+| RerrFact | 2022 | **76.37** | **63.76** | 64.59 | <u>64.02</u> |
+| PrunE | 2025 | 62.96 | 53.29 | 63.21 | 60.10 |
+| **Atom-Union MREC (ours)** | -- | 40.51 | 39.23 | **72.41** | **65.82** |
+
+本文结果由 SciFact 官方 `verisci/evaluate/pipeline.py` scorer 复算，precision/recall/F1 与本地 exporter 完全一致：
+
+| Official metric | Precision | Recall | F1 |
+|---|---:|---:|---:|
+| Sentence Selection-only | 38.16 | 43.17 | 40.51 |
+| Sentence Selection+Label | 36.96 | 41.80 | 39.23 |
+| Abstract Label-only | 76.88 | 68.42 | 72.41 |
+| Abstract Label+Rationale | 69.89 | 62.20 | 65.82 |
+
+**结果分析。** 在该 development-set 对比中，本文方法的 abstract Label-only F1 为 72.41，较次高结果 66.70 提升 5.71；abstract Label+Rationale F1 为 65.82，较次高结果 64.02 提升 1.80。这说明完整迁移后，Atom-Union MREC 能够较好地完成科学摘要级标签判断，并为正确摘要附加至少一组有效 rationale。另一方面，sentence Selection-only 和 Selection+Label F1 分别只有 40.51 和 39.23，较 RerrFact 低 35.86 和 24.53，暴露出明显的 exact sentence localization 短板。因此，论文结论应表述为 **strong abstract-level cross-domain transfer with limited exact rationale localization**，而不是整体 SciFact SOTA。
+
+表中 VeriSci 至 RerrFact 的 development-set 数值来自 RerrFact Table 4；PrunE 数值来自其 Table 2。PrunE 使用 top-150 bigram-TF-IDF universe，并在 development inference 中采样 12 个候选摘要，该差异需在正式表注中保留。MultiVerS/BEVERS 的 hidden-test 结果、evidence-provided verification-only 方法、BEIR retrieval-only 指标和 SciFact-Open 结果均不混入此表。完整转录、排除规则和 BibTeX 见 `docs/paper/aaai/scifact_dev_comparison_table.md`；官方 scorer 审计 artifact 为 `outputs/sentence_trace_method/scifact__ministral3_8b__atom_union_fullpool_minmax9_9_lora_ebs16_lr2em5_ep12_eval100_pat8/submission/scifact_official_scorer_metrics_val.json`。
 
 ## Ablation Study
 

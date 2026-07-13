@@ -260,9 +260,17 @@ PY
 
 build_verifier_data() {
   if [[ "$FORCE_BUILD" != "true" && -f "${CASE_ROOT}/train.resolved.yaml" && -f "${CASE_ROOT}/build/build_report.json" ]]; then
-    printf '[%s] verifier build exists: %s; set FORCE_BUILD=true to rebuild.\n' "$RUN_LABEL" "$CASE_ROOT"
-    validate_prompt_input_ids
-    return 0
+    if [[ "$FORCE_BUILD" == "auto" ]]; then
+      if validate_prompt_input_ids; then
+        printf '[%s] verifier build exists and passed validation: %s\n' "$RUN_LABEL" "$CASE_ROOT"
+        return 0
+      fi
+      printf '[%s] verifier build failed validation; rebuilding automatically: %s\n' "$RUN_LABEL" "$CASE_ROOT"
+    else
+      printf '[%s] verifier build exists: %s; set FORCE_BUILD=true to rebuild.\n' "$RUN_LABEL" "$CASE_ROOT"
+      validate_prompt_input_ids
+      return 0
+    fi
   fi
   require_path "${TRACE_ROOT}/selection_trace_train.jsonl" "train MREC trace"
   require_path "${TRACE_ROOT}/selection_trace_val.jsonl" "val MREC trace"

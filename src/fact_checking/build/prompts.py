@@ -12,6 +12,7 @@ from fact_checking.data.constants import (
     label2id_for_schema,
     label_definitions_for_schema,
     label_letters_for_schema,
+    labels_for_schema,
     task_name_for_schema,
 )
 from sft.runtime.model_loading import is_mistral_common_tokenizer, load_compatible_tokenizer
@@ -533,12 +534,15 @@ def build_training_row(
     retrieval_result: dict,
     tokenizer: AutoTokenizer,
     prompt_cfg: dict,
+    *,
+    allow_unlabeled: bool = False,
 ) -> dict:
     row = retrieval_result
     prompt_cfg = dict(prompt_cfg or {})
     label_schema = str(prompt_cfg.get("label_schema") or row.get("label_schema") or "").strip() or None
     gold_label = normalize_gold_label(row, label_schema=label_schema)
-    if not gold_label:
+    is_unlabeled = not gold_label
+    if is_unlabeled and not allow_unlabeled:
         return copy_optional_build_row_metadata(
             {**row, "gold_label": "", "gold_id": -1, "gold_explain": "",
              "prompt": "", "target": "", "prompt_add_special_tokens": False,
@@ -546,6 +550,7 @@ def build_training_row(
              "target_token_count": 0, "evidence_count": 0, "was_truncated": False},
             row,
         )
+    budget_label = gold_label or labels_for_schema(label_schema)[0]
 
     candidates = row.get("candidates", [])
     evidence_texts = [str(c.get("text", "")).strip() for c in candidates if isinstance(c, dict)]
@@ -567,12 +572,12 @@ def build_training_row(
             output_mode=output_mode,
             system_prompt=system_prompt,
             row=row,
-            gold_label=gold_label,
+            gold_label=budget_label,
             label_format=label_format,
             label_schema=label_schema,
             chat_template=chat_template,
         )
-        return copy_optional_build_row_metadata({
+        output = {
             "event_id": row.get("event_id", ""),
             "claim": row.get("claim", ""),
             "label": row.get("label", ""),
@@ -580,7 +585,7 @@ def build_training_row(
             "explain": row.get("explain", ""),
             "candidates": candidates,
             "prompt": result["prompt"],
-            "target": result["target"],
+            "target": "" if is_unlabeled else result["target"],
             "prompt_input_ids": result.get("prompt_input_ids"),
             "gold_label": gold_label,
             "gold_id": label2id.get(gold_label, -1),
@@ -588,17 +593,23 @@ def build_training_row(
             "prompt_add_special_tokens": False,
             "preserve_prompt_prefix": True,
             "prompt_token_count": result["prompt_token_count"],
-            "target_token_count": result["target_token_count"],
+            "target_token_count": 0 if is_unlabeled else result["target_token_count"],
             "evidence_count": result["evidence_count"],
             "evidence_count_before": result["evidence_count_before"],
             "was_truncated": result["was_truncated"],
             "evidence_text_truncated": result["evidence_text_truncated"],
-        }, row)
+        }
+        if is_unlabeled:
+            output["unlabeled_inference"] = True
+            output["inference_target_token_reserve"] = result["target_token_count"]
+        return copy_optional_build_row_metadata(output, row)
 
     system_msg = build_system_message(system_prompt, label_schema)
     row_for_target = {**row, "label_schema": label_schema or "liar6"}
-    target = build_target(row_for_target, gold_label, output_mode, label_format)
-    target_token_count = count_target_tokens(target, tokenizer)
+    budget_target = build_target(row_for_target, budget_label, output_mode, label_format)
+    budget_target_token_count = count_target_tokens(budget_target, tokenizer)
+    target = "" if is_unlabeled else budget_target
+    target_token_count = 0 if is_unlabeled else budget_target_token_count
     user_content = build_user_content(str(row.get("claim", "")), evidence_texts, output_mode, label_format, label_schema)
     prompt, prompt_input_ids = build_chat_prompt_with_input_ids(
         tokenizer,
@@ -612,7 +623,7 @@ def build_training_row(
         else count_tokens(prompt, tokenizer, add_special_tokens=False)
     )
 
-    return copy_optional_build_row_metadata({
+    output = {
         "event_id": row.get("event_id", ""),
         "claim": row.get("claim", ""),
         "label": row.get("label", ""),
@@ -631,4 +642,8 @@ def build_training_row(
         "target_token_count": target_token_count,
         "evidence_count": len(evidence_texts),
         "was_truncated": False,
-    }, row)
+    }
+    if is_unlabeled:
+        output["unlabeled_inference"] = True
+        output["inference_target_token_reserve"] = budget_target_token_count
+    return copy_optional_build_row_metadata(output, row)

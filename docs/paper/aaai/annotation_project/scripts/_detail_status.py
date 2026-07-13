@@ -3,6 +3,14 @@ import re, json, http.cookiejar, urllib.request, urllib.parse
 from collections import Counter, defaultdict
 
 BASE="https://fc.fenglin.pro"; USER="admin@annotation.local"; PWD="annotation2026"
+PROJECTS = [
+    (14, "Yulin / Exp1"),
+    (15, "Zhiqiang / Exp1"),
+    (16, "Yulin / Exp2"),
+    (17, "Zhiqiang / Exp2"),
+    (18, "Zijie / Exp1"),
+    (19, "Zijie / Exp2"),
+]
 cj=http.cookiejar.CookieJar()
 op=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj), urllib.request.ProxyHandler({}))
 def get(u):
@@ -17,7 +25,7 @@ ulist=json.loads(get(f"{BASE}/api/users/"))
 ulist=ulist if isinstance(ulist,list) else ulist.get("results",[])
 users={u.get("id"):u.get("email","?") for u in ulist}
 
-for pid, pname in [(12,"Exp1-Atom-Quality"), (13,"Exp2-Evidence-Map")]:
+for pid, pname in PROJECTS:
     allt=[]; pg=1
     while True:
         r=json.loads(get(f"{BASE}/api/projects/{pid}/tasks/?page={pg}&page_size=100"))
@@ -51,7 +59,7 @@ for pid, pname in [(12,"Exp1-Atom-Quality"), (13,"Exp2-Evidence-Map")]:
 
 # 额外：检查 draft（草稿/未提交）
 print("=== 检查是否有草稿(未提交的标注) ===")
-for pid in (12,13):
+for pid, _ in PROJECTS:
     # Label Studio 把 draft 存在 annotation API 里
     try:
         d=json.loads(get(f"{BASE}/api/projects/{pid}/drafts/"))

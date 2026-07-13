@@ -388,7 +388,8 @@ def audit_teacher_prompt(row: dict[str, Any], *, system_prompt: str, user_prompt
     leaked_field_names = sorted(field for field in FORBIDDEN_PROMPT_FIELDS if field.lower() in lowered)
     if leaked_field_names:
         raise ValueError(f"Teacher prompt contains forbidden field names: {leaked_field_names}")
-    forbidden_values = [str(row.get("event_id") or "")]
+    event_id = str(row.get("event_id") or "")
+    forbidden_values = [event_id] if event_id and not event_id.isdecimal() else []
     for candidate in row.get("candidates") or []:
         forbidden_values.append(str(candidate.get("candidate_uid") or ""))
     leaked_values = [value for value in forbidden_values if value and value in prompt]

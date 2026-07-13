@@ -1,0 +1,41 @@
+{
+  "marker": "independent-iaa-v1-20260711",
+  "projects": [
+    {
+      "id": 14,
+      "title": "[YULIN ONLY] Exp1-Atom-Quality",
+      "annotator": "1849812973@qq.com",
+      "tasks": 257,
+      "migrated_annotations": 38,
+      "remaining": 219
+    },
+    {
+      "id": 15,
+      "title": "[ZHIQIANG ONLY] Exp1-Atom-Quality",
+      "annotator": "3180643570@qq.com",
+      "tasks": 257,
+      "migrated_annotations": 50,
+      "remaining": 207
+    },
+    {
+      "id": 16,
+      "title": "[YULIN ONLY] Exp2-Evidence-Map",
+      "annotator": "1849812973@qq.com",
+      "tasks": 250,
+      "migrated_annotations": 48,
+      "remaining": 202
+    },
+    {
+      "id": 17,
+      "title": "[ZHIQIANG ONLY] Exp2-Evidence-Map",
+      "annotator": "3180643570@qq.com",
+      "tasks": 250,
+      "migrated_annotations": 0,
+      "remaining": 250
+    }
+  ],
+  "exports": [
+    "docs/paper/aaai/annotation_project/results/migration_20260711/project_12_pre_split.jsonl",
+    "docs/paper/aaai/annotation_project/results/migration_20260711/project_13_pre_split.jsonl"
+  ]
+}

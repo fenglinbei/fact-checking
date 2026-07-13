@@ -23,6 +23,7 @@ class LabelTokenDataset(Dataset):
         label_schema: str | None = None,
         coverage_enabled: bool = False,
         coverage_label_prefix: str = "Coverage:",
+        allow_unlabeled: bool = False,
     ) -> None:
         self.samples = samples
         self.tokenized: list[dict[str, Any]] = []
@@ -69,7 +70,7 @@ class LabelTokenDataset(Dataset):
             if gold_id < 0:
                 sample_schema = str(getattr(sample, "label_schema", "") or label_schema or "liar6")
                 gold_id = label2id_for_schema(sample_schema).get(sample.gold_label, -1)
-            if gold_id < 0:
+            if gold_id < 0 and not allow_unlabeled:
                 raise ValueError(f"Invalid gold label for sample {sample_idx}: {sample.gold_label!r}")
 
             row = {

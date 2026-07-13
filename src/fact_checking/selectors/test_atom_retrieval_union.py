@@ -12,6 +12,57 @@ from fact_checking.selectors.atom_retrieval_union import (
 
 
 class AtomRetrievalUnionTest(unittest.TestCase):
+    def test_pool_modes_control_candidate_sources(self) -> None:
+        baseline = {
+            "event_id": "event0",
+            "claim": "claim",
+            "candidates": [
+                {"text": "Shared", "selection_rank": 1, "hybrid_score": 0.9},
+                {"text": "Baseline only", "selection_rank": 2, "hybrid_score": 0.8},
+            ],
+        }
+        atom = {
+            "event_id": "event0",
+            "claim": "claim",
+            "candidates": [
+                {"text": "Shared", "merge_rank": 1, "atom_rrf_score": 0.1},
+                {
+                    "text": "Atom only",
+                    "merge_rank": 2,
+                    "atom_rrf_score": 0.05,
+                    "atom_max_route_hybrid": 1.0,
+                },
+            ],
+        }
+
+        baseline_only = build_atom_union_pool_row(
+            baseline_row=baseline,
+            atom_pool_row=atom,
+            pool_mode="baseline_only",
+            final_pool_size=1,
+        )
+        atom_only = build_atom_union_pool_row(
+            baseline_row=baseline,
+            atom_pool_row=atom,
+            pool_mode="atom_route_only",
+            final_pool_size=1,
+        )
+        union_no_mmr = build_atom_union_pool_row(
+            baseline_row=baseline,
+            atom_pool_row=atom,
+            pool_mode="union_no_mmr",
+            final_pool_size=2,
+        )
+
+        self.assertEqual([row["text"] for row in baseline_only["candidates"]], ["Shared"])
+        self.assertTrue(all(row["from_baseline"] for row in baseline_only["candidates"]))
+        self.assertEqual([row["text"] for row in atom_only["candidates"]], ["Shared"])
+        self.assertTrue(all(row["from_atom_route"] for row in atom_only["candidates"]))
+        self.assertEqual(len(union_no_mmr["candidates"]), 2)
+        self.assertIn("Atom only", [row["text"] for row in union_no_mmr["candidates"]])
+        self.assertFalse(union_no_mmr["union_mmr_applied"])
+        self.assertEqual(atom_only["pool_mode"], "atom_only")
+
     def test_atom_union_pool_deduplicates_and_tracks_sources(self) -> None:
         row = build_atom_union_pool_row(
             baseline_row={

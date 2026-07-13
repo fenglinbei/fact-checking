@@ -180,7 +180,11 @@ def _load_model(*, context, train_cfg: Mapping[str, Any], mixed_precision: str):
         except ImportError as exc:
             raise RuntimeError("LoRA label-token inference requires the `peft` package.") from exc
 
-        model = load_causal_lm_compatible_model(context.model_name_or_path, **model_kwargs)
+        model = load_causal_lm_compatible_model(
+            context.model_name_or_path,
+            use_mistral3_text_only=False,
+            **model_kwargs,
+        )
         return PeftModel.from_pretrained(model, str(context.checkpoint_dir))
     return load_causal_lm_compatible_model(str(context.checkpoint_dir), **model_kwargs)
 

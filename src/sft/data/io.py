@@ -32,11 +32,15 @@ def _coerce_prompt_input_ids(value: object) -> list[int] | None:
     return ids
 
 
-def load_prebuilt_samples(rows: list[dict]) -> list[PreparedSample]:
+def load_prebuilt_samples(
+    rows: list[dict],
+    *,
+    include_unlabeled: bool = False,
+) -> list[PreparedSample]:
     samples: list[PreparedSample] = []
     for row in rows:
         gold_label = str(row.get("gold_label", ""))
-        if not gold_label:
+        if not gold_label and not include_unlabeled:
             continue
         label_schema = str(row.get("label_schema") or "liar6")
         label2id = label2id_for_schema(label_schema)

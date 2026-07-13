@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
 import unittest
 import sys
+import time
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fact_checking.selectors.evidence_map_selector import (
@@ -11,6 +16,7 @@ from fact_checking.selectors.evidence_map_selector import (
     COMPACT_PROMPT_VERSION,
     EVIDENCE_MAP_BASE_ONLY_SELECTOR,
     EVIDENCE_MAP_SELECTOR,
+    PROMPT_VERSION,
     EvidenceMapParams,
     attach_event_base_scores,
     atom_quality_diagnostics,
@@ -25,7 +31,12 @@ from fact_checking.selectors.evidence_map_selector import (
     summarize_atom_quality_rows,
     validate_evidence_map_payload,
 )
-from scripts.phase5_selectors.build.annotate_evidence_maps_deepseek import _build_jobs
+from scripts.phase5_selectors.build.annotate_evidence_maps_deepseek import (
+    RateLimiter,
+    _build_jobs,
+    _run_api_jobs,
+    _run_job,
+)
 from scripts.phase5_selectors.build.build_evidence_map_verifier_data import _render_until_fit
 from scripts.phase5_selectors.eval import eval_evidence_map_selector_v0_5a as eval_map_cli
 
@@ -43,6 +54,84 @@ class EvidenceMapSelectorTest(unittest.TestCase):
         self.assertNotIn("uid-1", prompt)
         self.assertNotIn("oracle_selected", prompt)
         audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
+
+    def test_teacher_prompt_allows_short_numeric_event_id_in_scientific_text(self) -> None:
+        event = _event()
+        event["event_id"] = "19"
+        event["claim"] = "COVID-19 affects respiratory function."
+        row = prepare_evidence_map_candidate_rows([event], candidate_top_n=2)[0]
+
+        system_prompt, user_prompt = build_teacher_messages(row)
+
+        self.assertIn("COVID-19", user_prompt)
+        audit_teacher_prompt(row, system_prompt=system_prompt, user_prompt=user_prompt)
+
+    def test_teacher_prompt_rejects_opaque_event_id_value(self) -> None:
+        row = prepare_evidence_map_candidate_rows([_event()], candidate_top_n=2)[0]
+
+        with self.assertRaisesRegex(ValueError, "forbidden metadata values"):
+            audit_teacher_prompt(row, system_prompt="system", user_prompt="leaked event-1")
+
+    def test_teacher_worker_converts_prompt_build_failure_to_error_row(self) -> None:
+        row = prepare_evidence_map_candidate_rows([_event()], candidate_top_n=2)[0]
+        job = _build_jobs([row], model="deepseek-v4-flash", prompt_version=PROMPT_VERSION)[0]
+        args = SimpleNamespace(prompt_version=PROMPT_VERSION, max_evidence_chars=None)
+
+        with patch(
+            "scripts.phase5_selectors.build.annotate_evidence_maps_deepseek.build_teacher_messages",
+            side_effect=ValueError("bad prompt"),
+        ):
+            result = _run_job(job, args=args, api_key=None, limiter=RateLimiter(requests_per_minute=1))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["error_type"], "prompt_build_error")
+        self.assertIn("bad prompt", result["error"]["message"])
+
+    def test_teacher_runner_isolates_unexpected_worker_exception(self) -> None:
+        row = prepare_evidence_map_candidate_rows([_event()], candidate_top_n=2)[0]
+        jobs = _build_jobs([row], model="deepseek-v4-flash", prompt_version=PROMPT_VERSION)
+        args = SimpleNamespace(
+            concurrency=1,
+            requests_per_minute=60,
+            resume=False,
+            no_progress=True,
+            split="train",
+        )
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch(
+                "scripts.phase5_selectors.build.annotate_evidence_maps_deepseek._run_job",
+                side_effect=RuntimeError("worker failed"),
+            ):
+                n_written, n_errors, _ = _run_api_jobs(
+                    jobs,
+                    args=args,
+                    api_key=None,
+                    annotations_path=root / "annotations.jsonl",
+                    raw_path=root / "raw.jsonl",
+                    errors_path=root / "errors.jsonl",
+                    progress_path=root / "progress.json",
+                    started_at=time.time(),
+                    n_jobs=len(jobs),
+                    n_completed_initial=0,
+                )
+            errors = [json.loads(line) for line in (root / "errors.jsonl").read_text(encoding="utf-8").splitlines()]
+            progress = json.loads((root / "progress.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(n_written, 0)
+        self.assertEqual(n_errors, 1)
+        self.assertEqual(errors[0]["error_type"], "worker_exception")
+        self.assertEqual(progress["n_pending"], 0)
+
+    def test_teacher_rate_limiter_zero_disables_throttling(self) -> None:
+        limiter = RateLimiter(requests_per_minute=0)
+
+        with patch("scripts.phase5_selectors.build.annotate_evidence_maps_deepseek.time.sleep") as sleep:
+            limiter.wait()
+            limiter.wait()
+
+        sleep.assert_not_called()
 
     def test_compact_v0_6b_prompt_truncates_evidence_and_excludes_forbidden_fields(self) -> None:
         event = _event()

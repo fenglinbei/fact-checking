@@ -43,6 +43,7 @@ SELECTION_MODES = (
 TRACE_PROMPT_STYLES = ("plain", "trace_lite", "rawfc_boundaries", "qec_min", "qec_map", "mrec_min")
 EVIDENCE_TEXT_MODES = ("full", "anchor_only")
 PROMPT_EVIDENCE_POLICIES = (
+    "selected_set",
     "prefix_topk",
     "resolve_stop",
     "fixed_topk",
@@ -416,7 +417,12 @@ def _build_split(
             retrieval_row["coverage_version"] = sample_metadata["coverage_version"]
         if "coverage" in sample_metadata:
             retrieval_row["coverage"] = sample_metadata["coverage"]
-        training_row = build_training_row(retrieval_row, tokenizer, prompt_cfg_for_style)
+        training_row = build_training_row(
+            retrieval_row,
+            tokenizer,
+            prompt_cfg_for_style,
+            allow_unlabeled=split == "test" and not bool(sample.label),
+        )
         training_row["trace_prompt_style"] = trace_prompt_style
         training_row["evidence_text_mode"] = evidence_text_mode
         training_row.update(_prompt_evidence_row_fields(prompt_evidence, prompt_evidence_decision))
@@ -811,6 +817,27 @@ def _select_prompt_evidence_indices(
             total_token_cost=_prompt_evidence_total_token_cost(trace, selected),
             stop_reason=str(two_pass_decision.get("stop_reason") or "two_pass_decision"),
             two_pass_uncertainty=two_pass_decision,
+        )
+
+    if policy == "selected_set":
+        selected = list(ordered_indices)
+        total_token_cost = _prompt_evidence_total_token_cost(trace, selected)
+        if max_count > 0 and len(selected) > max_count:
+            raise ValueError(
+                f"selected_set contains {len(selected)} items, exceeding max_count={max_count}"
+            )
+        if token_budget is not None and total_token_cost > token_budget:
+            raise ValueError(
+                f"selected_set token cost {total_token_cost} exceeds token_budget={token_budget}"
+            )
+        return _prompt_evidence_decision(
+            selected,
+            policy=policy,
+            min_count=len(selected),
+            max_count=len(selected),
+            token_budget=token_budget,
+            total_token_cost=total_token_cost,
+            stop_reason="selected_set_exhausted",
         )
 
     if policy in {"prefix_topk", "fixed_topk"}:
@@ -1890,7 +1917,9 @@ def _selected_candidates(
 
 
 def _ordered_trace_indices(trace: dict[str, Any]) -> list[int]:
-    raw = trace.get("selector_ordered_indices") or []
+    raw = trace.get("display_ordered_indices")
+    if raw is None:
+        raw = trace.get("selector_ordered_indices") or []
     out: list[int] = []
     for item in raw:
         try:

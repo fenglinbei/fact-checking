@@ -490,6 +490,29 @@ def test_atom_union_s4_chunking_ablation_wrapper_rejects_too_many_processes_for_
     assert "sft.label_token_trainer" not in result.stdout
 
 
+def test_atom_union_pool_ablation_wrapper_reuses_selector_and_verifier(tmp_path: Path) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_liar_raw_atom_union_pool_ablation.sh",
+        {
+            "ABLATION_ROOT": str(tmp_path / "selectors"),
+            "CASE_OUTPUT_ROOT": str(tmp_path / "cases"),
+            "SAMPLE_LIMIT": "8",
+            "MOCK_EVIDENCE_MAPS": "true",
+        },
+    )
+
+    for pool_mode in ("baseline_only", "atom_only", "union_no_mmr", "union_full"):
+        assert f"--pool-mode {pool_mode}" in output
+        assert f"atom_union_pool_ablation_{pool_mode}_reuse_main_ckpt" in output
+    assert "--baseline-top-k 20" in output
+    assert "--merged-pool-size 20" in output
+    assert "--final-pool-size 20" in output
+    assert "--selection-policy learned_marginal_proxy" in output
+    assert "--weight-file outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy/weights/weights.json" in output
+    assert "--mock-maps" in output
+    assert "sft.label_token_trainer" not in output
+
+
 def test_selector_mechanism_s5_s6_wrapper_dry_run_expands_chain_cases(tmp_path: Path) -> None:
     output = _run_script(
         "scripts/sentence_trace_method/run_liar_raw_ministral3_selector_mechanism_s5_s6_plain_lora_ebs16_lr2e5_ep12_eval100.sh",

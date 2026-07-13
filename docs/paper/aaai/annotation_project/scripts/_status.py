@@ -3,6 +3,14 @@ import re, json, http.cookiejar, urllib.request, urllib.parse
 from collections import Counter
 
 BASE="https://fc.fenglin.pro"; USER="admin@annotation.local"; PWD="annotation2026"
+PROJECTS = [
+    (14, "Yulin / Exp1"),
+    (15, "Zhiqiang / Exp1"),
+    (16, "Yulin / Exp2"),
+    (17, "Zhiqiang / Exp2"),
+    (18, "Zijie / Exp1"),
+    (19, "Zijie / Exp2"),
+]
 cj=http.cookiejar.CookieJar()
 op=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj), urllib.request.ProxyHandler({}))
 def get(u):
@@ -26,7 +34,7 @@ try:
 except Exception:
     pass
 
-for pid, name in [(12,"Exp1-Atom-Quality"), (13,"Exp2-Evidence-Map")]:
+for pid, name in PROJECTS:
     p = json.loads(get(f"{BASE}/api/projects/{pid}/"))
     ann_total = p.get("total_annotations_number") or 0
     # 分页拉 task（含 annotations）

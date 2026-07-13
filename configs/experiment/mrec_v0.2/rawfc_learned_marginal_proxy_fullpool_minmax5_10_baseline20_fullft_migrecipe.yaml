@@ -21,7 +21,7 @@ experiment:
 
 train:
   model_name_or_path: /data/models/Ministral-3-8B-Instruct-2512
-  deepspeed_config: configs/deepspeed/deepspeed_zero3_offload.json
+  deepspeed_config: configs/deepspeed/deepspeed_zero3.json
   nproc_per_node: 4
 
 build:

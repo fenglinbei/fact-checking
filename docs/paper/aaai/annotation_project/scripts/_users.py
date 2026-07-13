@@ -1,6 +1,7 @@
 """查询所有用户账号与活动情况。"""
 import re, json, http.cookiejar, urllib.request, urllib.parse
 BASE="https://fc.fenglin.pro"; USER="admin@annotation.local"; PWD="annotation2026"
+PROJECTS = (14, 15, 16, 17, 18, 19)
 cj=http.cookiejar.CookieJar()
 op=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj), urllib.request.ProxyHandler({}))
 def get(u):
@@ -19,7 +20,7 @@ for u in ulist:
 
 # 各项目的成员/分配情况
 print()
-for pid in (12,13):
+for pid in PROJECTS:
     p=json.loads(get(f"{BASE}/api/projects/{pid}/"))
     print(f"=== 项目 {pid} ({p.get('title')}) 配置 ===")
     print(f"  maximum_annotations: {p.get('maximum_annotations')}")

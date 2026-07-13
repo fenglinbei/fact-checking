@@ -14,8 +14,12 @@ PWD = "annotation2026"
 
 # 项目 ID → 本地配置文件
 PROJECTS = {
-    13: "config/exp2_evidence_map.xml",
-    12: "config/exp1_atom_quality.xml",
+    14: "config/exp1_atom_quality.xml",
+    15: "config/exp1_atom_quality.xml",
+    16: "config/exp2_evidence_map.xml",
+    17: "config/exp2_evidence_map.xml",
+    18: "config/exp1_atom_quality.xml",
+    19: "config/exp2_evidence_map.xml",
 }
 
 ROOT = Path(__file__).resolve().parents[1]

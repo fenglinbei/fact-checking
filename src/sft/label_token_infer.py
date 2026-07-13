@@ -43,6 +43,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataloader-num-workers", type=int, default=None)
     parser.add_argument("--log-predictions", type=int, default=0)
     parser.add_argument(
+        "--prediction-only",
+        action="store_true",
+        help="Keep unlabeled rows and write predictions without computing gold-label metrics or loss.",
+    )
+    parser.add_argument(
         "--logit-adjust",
         choices=["config", "on", "off"],
         default="config",
@@ -105,7 +110,10 @@ def main() -> None:
         checkpoint=args.checkpoint,
         split=args.split,
         config_path=args.config,
+        include_unlabeled=bool(args.prediction_only),
     )
+    if args.prediction_only and not context.samples:
+        raise ValueError(f"{args.split} split has no rows available for prediction-only inference.")
     effective_cfg = _config_with_logit_adjust_override(
         context.cfg,
         mode=str(args.logit_adjust),
@@ -137,7 +145,11 @@ def main() -> None:
         except ImportError as exc:
             raise RuntimeError("LoRA label-token inference requires the `peft` package.") from exc
 
-        model = load_causal_lm_compatible_model(context.model_name_or_path, **model_kwargs)
+        model = load_causal_lm_compatible_model(
+            context.model_name_or_path,
+            use_mistral3_text_only=False,
+            **model_kwargs,
+        )
         model = PeftModel.from_pretrained(model, str(context.checkpoint_dir))
     else:
         model = load_causal_lm_compatible_model(str(context.checkpoint_dir), **model_kwargs)
@@ -149,7 +161,7 @@ def main() -> None:
     )
     label_token_ids = torch.tensor(label_token_id_list, dtype=torch.long)
     class_weights = _class_weight_tensor(train_cfg, labels=labels)
-    coverage_enabled = _coverage_label_token_enabled(train_cfg)
+    coverage_enabled = _coverage_label_token_enabled(train_cfg) and not bool(args.prediction_only)
     coverage_cfg = _coverage_label_token_cfg(train_cfg)
     coverage_label_token_ids = None
     coverage_class_weights = None
@@ -178,6 +190,7 @@ def main() -> None:
         label_schema=context.label_schema,
         coverage_enabled=coverage_enabled,
         coverage_label_prefix=str(coverage_cfg.get("label_prefix", "Coverage:")),
+        allow_unlabeled=bool(args.prediction_only),
     )
     collator = LabelTokenCollator(tokenizer=context.tokenizer, pad_to_multiple_of=8)
     dataloader = build_dataloader(
@@ -197,6 +210,45 @@ def main() -> None:
         use_length_bucket=False,
     )
     model, dataloader = accelerator.prepare(model, dataloader)
+    if args.prediction_only:
+        prediction_records = _predict_label_tokens(
+            model=model,
+            dataloader=dataloader,
+            accelerator=accelerator,
+            samples=context.samples,
+            label_token_ids=label_token_ids,
+            labels=labels,
+            letter_order=letter_order,
+            label_prefix=label_prefix,
+            logit_adjust_cfg=logit_adjust_cfg,
+        )
+        accelerator.wait_for_everyone()
+        if accelerator.is_main_process:
+            if len(prediction_records) != len(context.samples):
+                raise RuntimeError(
+                    f"Prediction count mismatch for {context.split}: "
+                    f"{len(prediction_records)} predictions for {len(context.samples)} samples."
+                )
+            output_dir = Path(args.output_dir) if args.output_dir else context.eval_output_dir / "label_token"
+            artifacts = _save_prediction_only_artifacts(
+                output_dir=output_dir,
+                split=context.split,
+                checkpoint=context.checkpoint_name,
+                label_schema=context.label_schema,
+                prediction_records=prediction_records,
+                logit_adjust_cfg=logit_adjust_cfg,
+            )
+            logger.info(
+                "[INFO] %s prediction-only label-token inference for %s saved to %s "
+                "(predictions=%s, manifest=%s)",
+                context.split,
+                context.checkpoint_name,
+                output_dir,
+                artifacts["predictions_path"],
+                artifacts["manifest_path"],
+            )
+        return
+
     eval_logger = logger if accelerator.is_main_process else None
     eval_metrics = _evaluate_label_token(
         model=model,
@@ -269,6 +321,105 @@ def main() -> None:
             artifacts["metrics_path"],
             artifacts["predictions_path"],
         )
+
+
+def _predict_label_tokens(
+    *,
+    model,
+    dataloader,
+    accelerator: Accelerator,
+    samples,
+    label_token_ids: torch.Tensor,
+    labels: list[str],
+    letter_order: list[str],
+    label_prefix: str,
+    logit_adjust_cfg: dict | None,
+) -> list[dict[str, object]]:
+    from sft.label_token_trainer import _apply_label_logit_adjust, _choice_text, _forward_label_logits
+
+    model.eval()
+    gathered_pairs: list[tuple[int, int]] = []
+    with torch.no_grad():
+        for batch in dataloader:
+            logits = _forward_label_logits(model, batch, label_token_ids)
+            pred_ids = _apply_label_logit_adjust(logits, logit_adjust_cfg).argmax(dim=-1).to(torch.long)
+            pred_ids = accelerator.pad_across_processes(pred_ids, dim=0, pad_index=-1)
+            sample_indices = accelerator.pad_across_processes(
+                batch["sample_indices"],
+                dim=0,
+                pad_index=-1,
+            )
+            gathered_pred = accelerator.gather(pred_ids).cpu().tolist()
+            gathered_indices = accelerator.gather(sample_indices).cpu().tolist()
+            gathered_pairs.extend(
+                (int(sample_idx), int(pred_id))
+                for sample_idx, pred_id in zip(gathered_indices, gathered_pred)
+                if int(sample_idx) >= 0 and int(pred_id) >= 0
+            )
+
+    records: list[dict[str, object]] = []
+    seen: set[int] = set()
+    for sample_idx, pred_id in sorted(gathered_pairs):
+        if sample_idx in seen:
+            continue
+        seen.add(sample_idx)
+        sample = samples[sample_idx]
+        letter = letter_order[pred_id]
+        records.append(
+            {
+                "sample_idx": sample_idx,
+                "prompt": str(sample.prompt),
+                "target": str(sample.target),
+                "raw_output": f"{label_prefix}{_choice_text(label_prefix, letter)}",
+                "pred_id": pred_id,
+                "pred_label": labels[pred_id],
+                "gold_id": int(sample.gold_id),
+                "gold_label": str(sample.gold_label),
+                "gold_explain": str(sample.gold_explain),
+            }
+        )
+    return records
+
+
+def _save_prediction_only_artifacts(
+    *,
+    output_dir: Path,
+    split: str,
+    checkpoint: str,
+    label_schema: str,
+    prediction_records: list[dict[str, object]],
+    logit_adjust_cfg: dict | None,
+) -> dict[str, str]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    predictions_path = output_dir / f"{split}_predictions.jsonl"
+    with predictions_path.open("w", encoding="utf-8") as handle:
+        for record in prediction_records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    manifest_path = output_dir / "prediction_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "prediction_only": True,
+                "num_samples": len(prediction_records),
+                "num_labeled_samples": sum(int(record.get("gold_id", -1)) >= 0 for record in prediction_records),
+                "label_schema": label_schema,
+                "checkpoint": checkpoint,
+                "split": split,
+                "eval_backend": "label_token_logits",
+                "logit_adjust": logit_adjust_cfg or {"enabled": False},
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "predictions_path": str(predictions_path),
+        "manifest_path": str(manifest_path),
+    }
 
 
 if __name__ == "__main__":

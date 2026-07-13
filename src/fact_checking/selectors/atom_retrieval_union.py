@@ -10,6 +10,9 @@ from fact_checking.retrieval.mmr import maximal_marginal_relevance
 from fact_checking.selectors.question_decomp_retrieval import _compute_prediction_metrics
 
 
+ATOM_UNION_POOL_MODES = ("baseline_only", "atom_only", "union_no_mmr", "union_full")
+
+
 @dataclass(frozen=True)
 class AtomUnionSelectionParams:
     selector_top_k: int = 5
@@ -27,15 +30,21 @@ def build_atom_union_pool_row(
     atom_pool_row: dict[str, Any],
     candidate_vectors: Mapping[str, np.ndarray] | None = None,
     final_pool_size: int | None = None,
+    pool_mode: str = "union_full",
     params: AtomUnionSelectionParams | None = None,
 ) -> dict[str, Any]:
+    pool_mode = normalize_atom_union_pool_mode(pool_mode)
+    selection_params = params or AtomUnionSelectionParams()
     event_id = str(atom_pool_row.get("event_id") or baseline_row.get("event_id") or "")
     claim = str(atom_pool_row.get("claim") or baseline_row.get("claim") or "")
     label = str(atom_pool_row.get("label") or baseline_row.get("label") or "")
     gold_label = str(atom_pool_row.get("gold_label") or baseline_row.get("gold_label") or label)
     merged: dict[str, dict[str, Any]] = {}
 
-    for rank, candidate in enumerate(baseline_row.get("candidates") or [], start=1):
+    baseline_candidates = baseline_row.get("candidates") or []
+    if pool_mode == "atom_only":
+        baseline_candidates = []
+    for rank, candidate in enumerate(baseline_candidates, start=1):
         key = _candidate_key(candidate)
         if not key:
             continue
@@ -53,7 +62,10 @@ def build_atom_union_pool_row(
         item.setdefault("matched_atom_ids", [])
         merged[key] = item
 
-    for rank, candidate in enumerate(atom_pool_row.get("candidates") or atom_pool_row.get("merged_candidate_pool") or [], start=1):
+    atom_candidates = atom_pool_row.get("candidates") or atom_pool_row.get("merged_candidate_pool") or []
+    if pool_mode == "baseline_only":
+        atom_candidates = []
+    for rank, candidate in enumerate(atom_candidates, start=1):
         key = _candidate_key(candidate)
         if not key:
             continue
@@ -79,9 +91,21 @@ def build_atom_union_pool_row(
         item.setdefault("chunk_sent_indices", candidate.get("chunk_sent_indices"))
 
     candidates = list(merged.values())
-    candidates.sort(key=_union_pool_sort_key)
+    if final_pool_size is None:
+        candidates.sort(key=_union_pool_sort_key)
+    elif pool_mode == "baseline_only":
+        candidates.sort(key=lambda candidate: int(candidate.get("baseline_rank") or 10**9))
+    elif pool_mode == "atom_only":
+        candidates.sort(key=lambda candidate: int(candidate.get("atom_pool_rank") or 10**9))
+    else:
+        candidates.sort(
+            key=lambda candidate: (
+                -_atom_union_mmr_relevance(candidate, params=selection_params),
+                *_union_pool_sort_key(candidate),
+            )
+        )
     pool_size_before_mmr = len(candidates)
-    mmr_applied = final_pool_size is not None
+    mmr_applied = final_pool_size is not None and pool_mode == "union_full"
     if mmr_applied:
         if candidate_vectors is None:
             raise ValueError("candidate_vectors are required when final_pool_size is set.")
@@ -89,8 +113,10 @@ def build_atom_union_pool_row(
             candidates,
             candidate_vectors=candidate_vectors,
             top_k=int(final_pool_size),
-            params=params or AtomUnionSelectionParams(),
+            params=selection_params,
         )
+    elif final_pool_size is not None:
+        candidates = candidates[: int(final_pool_size)]
     for rank, candidate in enumerate(candidates, start=1):
         candidate["union_pool_rank"] = rank
         candidate["union_source"] = _union_source(candidate)
@@ -100,10 +126,22 @@ def build_atom_union_pool_row(
         "label": label,
         "gold_label": gold_label,
         "claim_atoms": list(atom_pool_row.get("claim_atoms") or []),
+        "pool_mode": pool_mode,
         "union_pool_size_before_mmr": pool_size_before_mmr,
         "union_mmr_applied": mmr_applied,
         "candidates": candidates,
     }
+
+
+def normalize_atom_union_pool_mode(pool_mode: str) -> str:
+    normalized = str(pool_mode or "union_full").strip().lower()
+    if normalized == "atom_route_only":
+        normalized = "atom_only"
+    if normalized not in ATOM_UNION_POOL_MODES:
+        raise ValueError(
+            f"Unsupported Atom-Union pool_mode={pool_mode!r}; expected one of {ATOM_UNION_POOL_MODES}."
+        )
+    return normalized
 
 
 def select_atom_union_mmr(

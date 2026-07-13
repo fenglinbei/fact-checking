@@ -13,9 +13,11 @@ import numpy as np
 
 from fact_checking.build.candidates import ChunkMMRSample, canonicalize_sentence
 from fact_checking.selectors.atom_retrieval_union import (
+    ATOM_UNION_POOL_MODES,
     AtomUnionSelectionParams,
     build_atom_union_pool_row,
     compute_atom_union_metrics,
+    normalize_atom_union_pool_mode,
     select_atom_union_rules,
 )
 from fact_checking.selectors.question_decomp_retrieval import oracle_selected_texts_by_event
@@ -42,6 +44,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--atom-max-hybrid-weight", type=float, default=0.01)
     p.add_argument("--chunk-cache-path", default=None)
     p.add_argument("--final-pool-size", type=int, default=None)
+    p.add_argument(
+        "--pool-mode",
+        default="union_full",
+        choices=[*ATOM_UNION_POOL_MODES, "atom_route_only"],
+        help="Candidate source ablation; atom_route_only is accepted as an alias for atom_only.",
+    )
     p.add_argument("--union-mmr-lambda", type=float, default=0.70)
     return p.parse_args()
 
@@ -61,8 +69,9 @@ def main() -> None:
         raise ValueError(f"Row count mismatch: baseline={len(baseline_rows)} atom_pool={len(atom_pool_rows)}")
     if args.final_pool_size is not None and int(args.final_pool_size) < 1:
         raise ValueError("--final-pool-size must be >= 1.")
-    if args.final_pool_size is not None and not args.chunk_cache_path:
-        raise ValueError("--chunk-cache-path is required when --final-pool-size is set.")
+    pool_mode = normalize_atom_union_pool_mode(args.pool_mode)
+    if args.final_pool_size is not None and pool_mode == "union_full" and not args.chunk_cache_path:
+        raise ValueError("--chunk-cache-path is required for union_full when --final-pool-size is set.")
 
     baseline_by_event = {str(row.get("event_id") or ""): row for row in baseline_rows}
     atom_pool_by_event = {str(row.get("event_id") or ""): row for row in atom_pool_rows}
@@ -79,7 +88,11 @@ def main() -> None:
         atom_max_hybrid_weight=float(args.atom_max_hybrid_weight),
         union_mmr_lambda=float(args.union_mmr_lambda),
     )
-    vectors_by_event = _load_candidate_vectors(args.chunk_cache_path) if args.chunk_cache_path else {}
+    vectors_by_event = (
+        _load_candidate_vectors(args.chunk_cache_path)
+        if args.chunk_cache_path and pool_mode == "union_full" and args.final_pool_size is not None
+        else {}
+    )
     union_rows: list[dict[str, Any]] = []
     rule_rows: dict[str, list[dict[str, Any]]] = {
         "atom_union_baseline_first_top5": [],
@@ -95,6 +108,7 @@ def main() -> None:
             atom_pool_row=atom_row,
             candidate_vectors=vectors_by_event.get(event_id),
             final_pool_size=int(args.final_pool_size) if args.final_pool_size is not None else None,
+            pool_mode=pool_mode,
             params=params,
         )
         selections = select_atom_union_rules(union_row, params=params)
@@ -117,6 +131,7 @@ def main() -> None:
                 "label": union_row.get("label", ""),
                 "gold_label": union_row.get("gold_label", ""),
                 "claim_atoms": union_row.get("claim_atoms") or [],
+                "pool_mode": pool_mode,
                 "union_pool_size_before_mmr": int(union_row.get("union_pool_size_before_mmr") or 0),
                 "union_pool_size": len(union_row.get("candidates") or []),
                 "union_mmr_applied": bool(union_row.get("union_mmr_applied")),
@@ -156,6 +171,7 @@ def main() -> None:
         "baseline_jsonl": str(args.baseline_jsonl),
         "atom_pool_jsonl": str(args.atom_pool_jsonl),
         "chunk_cache_path": str(args.chunk_cache_path or ""),
+        "pool_mode": pool_mode,
         "final_pool_size": int(args.final_pool_size) if args.final_pool_size is not None else None,
         "oracle_results": str(oracle_results),
         "output_dir": str(out_dir),

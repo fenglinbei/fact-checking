@@ -76,7 +76,7 @@ build:
 
 train:
   model_name_or_path: /data/models/Ministral-3-8B-Instruct-2512
-  deepspeed_config: configs/deepspeed_zero2_bsz1_ga4.json
+  deepspeed_config: configs/deepspeed/deepspeed_zero2_bsz1_ga4.json
   nproc_per_node: 4
 
 sft_train:
@@ -151,7 +151,7 @@ infer:
       - mistral
 
 eval:
-  splits: [val, test]
+  splits: [val]
   checkpoints: [best]
   run_tau_eval: "false"
   taus: [0.75]

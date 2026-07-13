@@ -1,0 +1,39 @@
+{
+  "annotator": "1349410043@qq.com",
+  "profile_name": "ZIJIE LIAO",
+  "projects": [
+    {
+      "id": 18,
+      "title": "[ZIJIE ONLY] Exp1-Atom-Quality",
+      "tasks": 257,
+      "migrated_annotations": 16,
+      "remaining": 241
+    },
+    {
+      "id": 19,
+      "title": "[ZIJIE ONLY] Exp2-Evidence-Map",
+      "tasks": 250,
+      "migrated_annotations": 12,
+      "remaining": 238
+    }
+  ],
+  "plan": {
+    "annotator": "1349410043@qq.com",
+    "projects": [
+      {
+        "title": "[ZIJIE ONLY] Exp1-Atom-Quality",
+        "source_project_id": 12,
+        "tasks": 257,
+        "annotations_to_migrate": 16,
+        "remaining": 241
+      },
+      {
+        "title": "[ZIJIE ONLY] Exp2-Evidence-Map",
+        "source_project_id": 13,
+        "tasks": 250,
+        "annotations_to_migrate": 12,
+        "remaining": 238
+      }
+    ]
+  }
+}
