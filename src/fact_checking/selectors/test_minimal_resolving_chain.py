@@ -8,7 +8,10 @@ from fact_checking.selectors.mrec_learned_marginal import (
     save_learned_marginal_weights,
 )
 from fact_checking.selectors.minimal_resolving_chain import (
+    MREC_SELECTION_POLICY_HARD_STRUCTURE,
+    MREC_SELECTION_POLICY_LEARNED_MARGINAL_ONE_SHOT,
     MREC_SELECTION_POLICY_MAP_QUALITY_GREEDY,
+    MREC_SELECTION_POLICY_RETRIEVAL_ORDER,
     MRECSelectorParams,
     build_mrec_trace_row,
 )
@@ -263,6 +266,167 @@ def test_learned_marginal_proxy_fills_single_atom_to_min_steps_with_diverse_evid
     assert len({step.get("source_group") for step in trace["mrec_steps"] if step.get("source_group")}) >= 5
     assert all("utility_score" in step for step in trace["mrec_steps"])
     assert trace["mrec_diagnostics"]["selection_policy"] == "learned_marginal_proxy"
+
+
+def test_retrieval_order_rebuilds_state_and_skips_duplicate_candidates() -> None:
+    row = _row(
+        claim_atoms=[{"atom_id": "A1", "text": "The city approved the project.", "importance": 1.0}],
+        candidates=[
+            _candidate(
+                "E-support",
+                relation="support",
+                atoms=["A1"],
+                text="The council approved the project.",
+                duplicate_group="D1",
+            ),
+            _candidate(
+                "E-support-duplicate",
+                relation="support",
+                atoms=["A1"],
+                text="The council approved the project.",
+                duplicate_group="D1",
+            ),
+            _candidate(
+                "E-refute",
+                relation="refute",
+                atoms=["A1"],
+                text="The council rejected the project.",
+                source_group="report-b",
+            ),
+        ],
+    )
+
+    trace = build_mrec_trace_row(
+        row,
+        params=MRECSelectorParams(
+            selection_policy=MREC_SELECTION_POLICY_RETRIEVAL_ORDER,
+            max_steps=3,
+            target_resolved_rate=1.1,
+        ),
+    )
+
+    assert validate_mrec_trace(trace) == []
+    assert [step["evidence_id"] for step in trace["mrec_steps"]] == ["E-support", "E-refute"]
+    assert [step["operation"] for step in trace["mrec_steps"]] == ["OPEN", "CONTRAST"]
+    assert [step["state_before"] for step in trace["mrec_steps"]] == ["U", "S"]
+    assert [step["state_after"] for step in trace["mrec_steps"]] == ["S", "C"]
+    assert [step["retrieval_rank"] for step in trace["mrec_steps"]] == [0, 2]
+    assert trace["mrec_diagnostics"]["selection_policy"] == MREC_SELECTION_POLICY_RETRIEVAL_ORDER
+
+
+def test_retrieval_order_applies_budget_before_stable_order() -> None:
+    row = _row(
+        claim_atoms=[{"atom_id": "A1", "text": "The city approved the project.", "importance": 1.0}],
+        candidates=[
+            _candidate(
+                "E-too-large",
+                relation="support",
+                atoms=["A1"],
+                text="one two three four five six",
+            ),
+            _candidate("E-fits", relation="support", atoms=["A1"], text="one two"),
+        ],
+    )
+
+    trace = build_mrec_trace_row(
+        row,
+        params=MRECSelectorParams(
+            selection_policy=MREC_SELECTION_POLICY_RETRIEVAL_ORDER,
+            max_steps=2,
+            token_budget=3,
+            target_resolved_rate=1.1,
+        ),
+    )
+
+    assert [step["evidence_id"] for step in trace["mrec_steps"]] == ["E-fits"]
+    assert trace["mrec_diagnostics"]["stop_reason"] == "token_budget_exhausted"
+
+
+def test_hard_structure_replays_structure_only_teacher_after_each_state() -> None:
+    row = _row(
+        claim_atoms=[
+            {"atom_id": "A1", "text": "The city approved the project.", "importance": 1.0},
+            {"atom_id": "A2", "text": "The vote occurred in 2024.", "importance": 1.0},
+        ],
+        candidates=[
+            _candidate("E-A1-first", relation="support", atoms=["A1"], text="The project was approved."),
+            _candidate("E-A1-second", relation="support", atoms=["A1"], text="Minutes confirm approval.", source_group="report-b"),
+            _candidate(
+                "E-A2-partial",
+                relation="support",
+                directness="partial",
+                atoms=["A2"],
+                text="A report dates the vote to 2024.",
+                source_group="report-c",
+            ),
+        ],
+    )
+    row["oracle_ordered_indices"] = [1, 2, 0]
+
+    trace = build_mrec_trace_row(
+        row,
+        params=MRECSelectorParams(
+            selection_policy=MREC_SELECTION_POLICY_HARD_STRUCTURE,
+            max_steps=3,
+            target_resolved_rate=1.1,
+        ),
+    )
+
+    assert validate_mrec_trace(trace) == []
+    assert [step["evidence_id"] for step in trace["mrec_steps"]] == [
+        "E-A1-first",
+        "E-A2-partial",
+        "E-A1-second",
+    ]
+    assert [step["operation"] for step in trace["mrec_steps"]] == ["OPEN", "OPEN", "CORROBORATE"]
+    assert all(step["structure_teacher_rank"] == 1 for step in trace["mrec_steps"])
+    assert trace["mrec_diagnostics"]["selection_policy"] == MREC_SELECTION_POLICY_HARD_STRUCTURE
+
+
+def test_learned_marginal_one_shot_freezes_initial_scores_while_stateful_rescores(tmp_path) -> None:
+    weights_path = tmp_path / "weights.json"
+    save_learned_marginal_weights(
+        weights_path,
+        LearnedMarginalWeights(
+            feature_weights={"resolution_delta": 10.0},
+            cost_weight=0.0,
+        ),
+    )
+    row = _row(
+        claim_atoms=[
+            {"atom_id": "A1", "text": "The city approved the project.", "importance": 1.0},
+            {"atom_id": "A2", "text": "The vote occurred in 2024.", "importance": 1.0},
+        ],
+        candidates=[
+            _candidate("E-A1-first", relation="support", atoms=["A1"], text="The project was approved."),
+            _candidate("E-A1-second", relation="support", atoms=["A1"], text="Minutes confirm approval.", source_group="report-b"),
+            _candidate("E-A2", relation="support", atoms=["A2"], text="The vote occurred in 2024.", source_group="report-c"),
+        ],
+    )
+    row["candidate_pool"][0]["map_confidence"] = 1.0
+    row["candidate_pool"][1]["map_confidence"] = 0.9
+    row["candidate_pool"][2]["map_confidence"] = 0.5
+
+    common = dict(
+        weight_file=str(weights_path),
+        min_steps=3,
+        max_steps=3,
+        target_resolved_rate=1.1,
+    )
+    stateful = build_mrec_trace_row(
+        row,
+        params=MRECSelectorParams(selection_policy="learned_marginal_proxy", **common),
+    )
+    one_shot = build_mrec_trace_row(
+        row,
+        params=MRECSelectorParams(selection_policy=MREC_SELECTION_POLICY_LEARNED_MARGINAL_ONE_SHOT, **common),
+    )
+
+    assert [step["evidence_id"] for step in stateful["mrec_steps"]] == ["E-A1-first", "E-A2", "E-A1-second"]
+    assert [step["evidence_id"] for step in one_shot["mrec_steps"]] == ["E-A1-first", "E-A1-second", "E-A2"]
+    assert all("utility_score_state" not in step for step in stateful["mrec_steps"])
+    assert all(step["utility_score_state"] == "initial_state_frozen" for step in one_shot["mrec_steps"])
+    assert one_shot["mrec_diagnostics"]["weight_fingerprint"] == stateful["mrec_diagnostics"]["weight_fingerprint"]
 
 
 def test_map_quality_greedy_orders_by_map_quality_without_learned_weights() -> None:

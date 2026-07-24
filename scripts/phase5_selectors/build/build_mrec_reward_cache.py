@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import sys
 import time
@@ -19,7 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from fact_checking.build.candidates import _build_training_row, _load_prompt_tokenizer  # noqa: E402
+from fact_checking.data.constants import letter_order_for_schema  # noqa: E402
 from fact_checking.data.io import load_split  # noqa: E402
 from fact_checking.selectors.minimal_resolving_chain import (  # noqa: E402
     MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
@@ -36,30 +37,81 @@ from fact_checking.selectors.mrec_learned_marginal import (  # noqa: E402
     extract_marginal_features,
     hard_state_to_soft_state,
 )
-from fact_checking.selectors.mrec_schema import build_mrec_step  # noqa: E402
-from fact_checking.selectors.verifier_proxy import (  # noqa: E402
-    load_label_token_ids,
-    sha256_file,
-    stable_fingerprint,
-)
-from fact_checking.selectors.verifier_scorer import (  # noqa: E402
-    LLMVerifierScorer,
-    VerifierScoreRequest,
-    compute_score_from_logprobs,
-)
-from scripts.phase5_selectors.build.build_trace_verifier_data import (  # noqa: E402
-    _apply_mrec_prompt_fields,
-    _prompt_cfg_for_trace_style,
-)
-
-
-RUN_VERSION = "mrec_learned_marginal_reward_cache_v0_2"
+from fact_checking.selectors.mrec_schema import build_initial_atom_states, build_mrec_step  # noqa: E402
+RUN_VERSION = "mrec_learned_marginal_reward_cache_v0_3"
+ROLLIN_POLICY_VERIFIER_UTILITY_GREEDY = "verifier_utility_greedy"
+SHARD_ASSIGNMENT = "sha256_event_id_mod"
 DEFAULT_TEACHER_RUN_DIR = (
     "outputs/sentence_trace_method/"
     "liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_top5_"
     "lora_ebs16_lr2em5_ep12_eval100_pat8_liarw/train"
 )
 DEFAULT_BASE_MODEL = "/data/models/Ministral-3-8B-Instruct-2512"
+
+
+def sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def stable_fingerprint(payload: Mapping[str, Any], *, length: int = 16) -> str:
+    blob = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[: int(length)]
+
+
+def load_label_token_ids(
+    run_dir: str | Path,
+    *,
+    label_prefix: str,
+    label_schema: str,
+) -> dict[str, int]:
+    meta_path = Path(run_dir) / "label_token_ce_meta.json"
+    if not meta_path.exists():
+        raise FileNotFoundError(f"Missing label token metadata: {meta_path}")
+    payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    if str(payload.get("label_prefix") or label_prefix) != str(label_prefix):
+        raise ValueError(
+            f"label_prefix mismatch: expected {label_prefix!r}, got {payload.get('label_prefix')!r}."
+        )
+    ids = {str(key): int(value) for key, value in dict(payload.get("label_token_ids") or {}).items()}
+    letters = letter_order_for_schema(str(payload.get("label_schema") or label_schema))
+    missing = [letter for letter in letters if letter not in ids]
+    if missing:
+        raise ValueError(f"label_token_ce_meta.json is missing label token ids for: {missing}")
+    return {letter: ids[letter] for letter in letters}
+
+
+def _load_prompt_tokenizer(model_name_or_path: str) -> Any:
+    from fact_checking.build.candidates import _load_prompt_tokenizer as impl
+
+    return impl(model_name_or_path)
+
+
+def _build_training_row(retrieval_row: Mapping[str, Any], tokenizer: Any, prompt_cfg: Mapping[str, Any]) -> dict[str, Any]:
+    from fact_checking.build.candidates import _build_training_row as impl
+
+    return impl(retrieval_row, tokenizer, prompt_cfg)
+
+
+def _apply_mrec_prompt_fields(**kwargs: Any) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    from scripts.phase5_selectors.build.build_trace_verifier_data import _apply_mrec_prompt_fields as impl
+
+    return impl(**kwargs)
+
+
+def _prompt_cfg_for_trace_style(prompt_cfg: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
+    from scripts.phase5_selectors.build.build_trace_verifier_data import _prompt_cfg_for_trace_style as impl
+
+    return impl(prompt_cfg, **kwargs)
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,12 +123,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default="liar_raw")
     parser.add_argument("--label-schema", default="liar6")
     parser.add_argument("--sample-limit", type=int, default=0)
+    parser.add_argument("--num-shards", type=int, default=1)
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument(
+        "--verify-input-only",
+        action="store_true",
+        help="Validate the utility-cache input contract and estimate scoring work without loading a teacher.",
+    )
     parser.add_argument("--candidate-top-n", type=int, default=20)
     parser.add_argument("--rollout-steps", type=int, default=10)
     parser.add_argument(
         "--rollin-policy",
         default=MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
-        choices=[MREC_SELECTION_POLICY_TRANSITION_V0_1, MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY],
+        choices=[
+            MREC_SELECTION_POLICY_TRANSITION_V0_1,
+            MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
+            ROLLIN_POLICY_VERIFIER_UTILITY_GREEDY,
+        ],
     )
     parser.add_argument("--rollin-weight-file", default="")
     parser.add_argument("--rollin-stop-threshold", type=float, default=0.0)
@@ -116,32 +179,102 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    _validate_execution_args(args)
     started_at = time.time()
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    records_path = out_dir / f"reward_records_{args.split}.jsonl"
-    raw_scores_path = out_dir / f"raw_teacher_scores_{args.split}.jsonl"
-    events_path = out_dir / f"reward_event_summaries_{args.split}.jsonl"
-    manifest_path = out_dir / f"manifest_{args.split}.json"
-    diagnostics_path = out_dir / f"diagnostics_{args.split}.json"
+    artifact_key = _artifact_key(
+        str(args.split),
+        num_shards=int(args.num_shards),
+        shard_index=int(args.shard_index),
+    )
+    records_path = out_dir / f"reward_records_{artifact_key}.jsonl"
+    raw_scores_path = out_dir / f"raw_teacher_scores_{artifact_key}.jsonl"
+    events_path = out_dir / f"reward_event_summaries_{artifact_key}.jsonl"
+    manifest_path = out_dir / f"manifest_{artifact_key}.json"
+    diagnostics_path = out_dir / f"diagnostics_{artifact_key}.json"
+    validation_path = out_dir / f"input_validation_{artifact_key}.json"
 
-    rows = _read_jsonl(Path(args.input), sample_limit=int(args.sample_limit))
-    raw_by_event = {
-        sample.event_id: sample
-        for sample in load_split(args.raw, dataset=str(args.dataset), label_schema=str(args.label_schema))
-    }
+    source_rows = _read_jsonl(Path(args.input), sample_limit=0)
+    sample_limit = int(args.sample_limit)
+    considered_rows = source_rows[:sample_limit] if sample_limit > 0 else source_rows
+    raw_by_event = _index_raw_samples(
+        load_split(args.raw, dataset=str(args.dataset), label_schema=str(args.label_schema))
+    )
+    validation = _validate_input_contract(considered_rows, raw_by_event=raw_by_event, args=args)
+    rows = _select_shard_rows(
+        considered_rows,
+        num_shards=int(args.num_shards),
+        shard_index=int(args.shard_index),
+    )
+    shard_plan = _shard_plan(considered_rows, args=args)
+    validation.update(
+        {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "run_version": RUN_VERSION,
+            "input": str(args.input),
+            "input_sha256": sha256_file(args.input),
+            "raw": str(args.raw),
+            "raw_sha256": sha256_file(args.raw),
+            "sample_limit": sample_limit,
+            "n_source_rows": len(source_rows),
+            "n_considered_rows": len(considered_rows),
+            "n_shard_rows": len(rows),
+            "shard": {
+                "assignment": SHARD_ASSIGNMENT,
+                "num_shards": int(args.num_shards),
+                "shard_index": int(args.shard_index),
+                "event_ids_fingerprint": _event_ids_fingerprint(rows),
+                "plan": shard_plan,
+            },
+        }
+    )
+    _write_json(validation_path, validation)
+    if bool(args.verify_input_only):
+        print(json.dumps(validation, ensure_ascii=False, indent=2, sort_keys=True))
+        print(f"Wrote input validation report: {validation_path}")
+        return 0
+
     checkpoint = _teacher_checkpoint(args)
     prompt_cfg = _prompt_cfg(args)
     tokenizer = _load_prompt_tokenizer(str(prompt_cfg["model_name_or_path"]))
     scorer = _init_scorer(args, checkpoint)
     checkpoint = dict(checkpoint)
     checkpoint["scoring_fingerprint"] = _scoring_fingerprint(args, scorer)
-    score_cache = _load_score_cache(raw_scores_path) if bool(args.resume) else {}
-    completed_events = _completed_event_ids(records_path) if bool(args.resume) else set()
+
+    run_contract = _run_contract(
+        args=args,
+        checkpoint=checkpoint,
+        prompt_cfg=prompt_cfg,
+        validation=validation,
+    )
+    run_fingerprint = stable_fingerprint(run_contract, length=24)
+    checkpoint["run_fingerprint"] = run_fingerprint
+    if bool(args.resume) and manifest_path.exists() and _is_strict_utility_mode(args):
+        _validate_resume_manifest(manifest_path, expected_run_fingerprint=run_fingerprint)
+    score_cache = (
+        _load_score_cache(
+            raw_scores_path,
+            expected_run_fingerprint=run_fingerprint if _is_strict_utility_mode(args) else "",
+        )
+        if bool(args.resume)
+        else {}
+    )
+    completed_events = (
+        _completed_utility_event_ids(
+            records_path,
+            events_path,
+            expected_run_fingerprint=run_fingerprint,
+        )
+        if bool(args.resume) and _is_strict_utility_mode(args)
+        else (_completed_event_ids(records_path) if bool(args.resume) else set())
+    )
 
     manifest = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "run_version": RUN_VERSION,
+        "run_fingerprint": run_fingerprint,
+        "run_contract": run_contract,
         "input": str(args.input),
         "raw": str(args.raw),
         "output_dir": str(out_dir),
@@ -158,6 +291,8 @@ def main() -> int:
             "cue_policy": str(args.cue_policy),
             "trace_prompt_style": str(args.trace_prompt_style),
             "prompt_max_length": int(args.prompt_max_length),
+            "num_shards": int(args.num_shards),
+            "shard_index": int(args.shard_index),
         },
         "teacher": {
             **checkpoint,
@@ -166,8 +301,11 @@ def main() -> int:
             "vllm_lora_mode": str(getattr(scorer, "vllm_lora_mode", args.vllm_lora_mode)),
         },
         "prompt_config": prompt_cfg,
+        "n_source_rows": len(source_rows),
+        "n_considered_rows": len(considered_rows),
         "n_input_rows": len(rows),
         "n_completed_events_at_start": len(completed_events),
+        "input_validation_path": str(validation_path),
         "raw_scores_path": str(raw_scores_path),
         "records_path": str(records_path),
         "event_summaries_path": str(events_path),
@@ -233,7 +371,13 @@ def main() -> int:
 
     diagnostics = {
         "run_version": RUN_VERSION,
+        "run_fingerprint": run_fingerprint,
         "split": str(args.split),
+        "shard": {
+            "assignment": SHARD_ASSIGNMENT,
+            "num_shards": int(args.num_shards),
+            "shard_index": int(args.shard_index),
+        },
         "counts": dict(stats),
         "delta_margin": _numeric_summary(delta_values),
         "elapsed_seconds": round(time.time() - started_at, 3),
@@ -258,6 +402,18 @@ def _build_event_reward_rows(
     score_cache: dict[str, dict[str, Any]],
     checkpoint: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    if str(args.rollin_policy) == ROLLIN_POLICY_VERIFIER_UTILITY_GREEDY:
+        return _build_verifier_utility_greedy_event_rows(
+            row,
+            sample=sample,
+            args=args,
+            tokenizer=tokenizer,
+            prompt_cfg=prompt_cfg,
+            scorer=scorer,
+            score_cache=score_cache,
+            checkpoint=checkpoint,
+        )
+
     rollin_trace = _build_rollin_trace(row, args=args)
     candidates = [dict(candidate) for candidate in rollin_trace.get("candidate_pool") or []]
     claim_atoms = [dict(atom) for atom in rollin_trace.get("claim_atoms") or []]
@@ -391,6 +547,211 @@ def _build_event_reward_rows(
     return reward_rows, event_summary, generated_score_rows
 
 
+def _build_verifier_utility_greedy_event_rows(
+    row: Mapping[str, Any],
+    *,
+    sample: Any,
+    args: argparse.Namespace,
+    tokenizer: Any,
+    prompt_cfg: dict[str, Any],
+    scorer: LLMVerifierScorer,
+    score_cache: dict[str, dict[str, Any]],
+    checkpoint: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    if str(args.split) == "test":
+        raise ValueError("verifier_utility_greedy is forbidden on test because it requires the gold label.")
+
+    candidates = _candidate_pool(row, candidate_top_n=int(args.candidate_top_n), token_cost_fn=None)
+    if not candidates:
+        raise ValueError(f"event_id={row.get('event_id')!r} has no candidates for verifier utility rollout.")
+    claim_atoms = _claim_atoms(row)
+    atom_by_id = _atom_by_id(claim_atoms)
+    atom_states = build_initial_atom_states(claim_atoms)
+    candidate_pool_fingerprint = _candidate_pool_fingerprint(candidates)
+    selected_order: list[int] = []
+    selected_steps: list[dict[str, Any]] = []
+    reward_rows: list[dict[str, Any]] = []
+    generated_score_rows: list[dict[str, Any]] = []
+    event_summary: dict[str, Any] = {
+        "event_id": str(row.get("event_id") or ""),
+        "split": str(args.split),
+        "gold_label": str(sample.label),
+        "n_candidates": len(candidates),
+        "rollin_policy": ROLLIN_POLICY_VERIFIER_UTILITY_GREEDY,
+        "candidate_pool_fingerprint": candidate_pool_fingerprint,
+        "run_fingerprint": str(checkpoint.get("run_fingerprint") or ""),
+        "step_summaries": [],
+    }
+
+    rollout_steps = min(int(args.rollout_steps), len(candidates))
+    for step in range(rollout_steps):
+        prefix_indices = list(selected_order)
+        prefix_steps = [dict(item) for item in selected_steps]
+        soft_state = hard_state_to_soft_state(atom_states)
+        selected_set = set(prefix_indices)
+        remaining = [idx for idx in range(len(candidates)) if idx not in selected_set]
+        if not remaining:
+            break
+
+        base_request = _score_request_for_indices(
+            row,
+            sample=sample,
+            candidates=candidates,
+            claim_atoms=claim_atoms,
+            selected_indices=prefix_indices,
+            mrec_steps=prefix_steps,
+            candidate_idx=None,
+            role="base",
+            step=step,
+            tokenizer=tokenizer,
+            prompt_cfg=prompt_cfg,
+            checkpoint=checkpoint,
+        )
+        after_requests: list[VerifierScoreRequest] = []
+        candidate_steps: dict[int, dict[str, Any]] = {}
+        candidate_features: dict[int, dict[str, float]] = {}
+        for idx in remaining:
+            candidate = candidates[idx]
+            candidate_step = _candidate_step(
+                candidate,
+                candidate_idx=idx,
+                step=step + 1,
+                claim_atoms=claim_atoms,
+                atom_by_id=atom_by_id,
+                atom_states=atom_states,
+                cue_policy=str(args.cue_policy),
+            )
+            candidate_steps[idx] = candidate_step
+            candidate_features[idx] = extract_marginal_features(
+                candidate,
+                selected_steps=prefix_steps,
+                soft_state=soft_state,
+                token_budget=None,
+                pool_max_token_cost=max([int(item.get("mrec_token_cost") or 0) for item in candidates] or [1]),
+            )
+            after_requests.append(
+                _score_request_for_indices(
+                    row,
+                    sample=sample,
+                    candidates=candidates,
+                    claim_atoms=claim_atoms,
+                    selected_indices=[*prefix_indices, idx],
+                    mrec_steps=[*prefix_steps, candidate_step],
+                    candidate_idx=idx,
+                    role="after",
+                    step=step,
+                    tokenizer=tokenizer,
+                    prompt_cfg=prompt_cfg,
+                    checkpoint=checkpoint,
+                )
+            )
+
+        requests = [base_request, *after_requests]
+        scored, new_score_rows = _score_requests(
+            requests,
+            scorer=scorer,
+            score_cache=score_cache,
+            strict=True,
+        )
+        generated_score_rows.extend(new_score_rows)
+        base_score = scored[base_request.cache_key]
+        delta_by_idx: dict[int, float] = {}
+        after_score_by_idx: dict[int, dict[str, Any]] = {}
+        for request in after_requests:
+            idx = int(request.metadata["candidate_idx"])
+            after_score = scored[request.cache_key]
+            delta = float(after_score["margin"]) - float(base_score["margin"])
+            if not math.isfinite(delta):
+                raise RuntimeError(
+                    f"Non-finite verifier utility for event_id={row.get('event_id')}, step={step}, candidate_idx={idx}."
+                )
+            delta_by_idx[idx] = delta
+            after_score_by_idx[idx] = after_score
+        if set(delta_by_idx) != set(remaining):
+            raise RuntimeError(
+                f"Incomplete verifier utility coverage for event_id={row.get('event_id')}, step={step}: "
+                f"expected={remaining}, scored={sorted(delta_by_idx)}."
+            )
+
+        winner_idx = min(remaining, key=lambda idx: (-delta_by_idx[idx], idx))
+        step_rows: list[dict[str, Any]] = []
+        for idx in remaining:
+            candidate = candidates[idx]
+            after_score = after_score_by_idx[idx]
+            step_rows.append(
+                {
+                    "event_id": str(row.get("event_id") or ""),
+                    "split": str(args.split),
+                    "step": int(step),
+                    "prefix_indices": [int(item) for item in prefix_indices],
+                    "prefix_size": int(len(prefix_indices)),
+                    "candidate_idx": int(idx),
+                    "selector_candidate_idx": int(idx),
+                    "candidate_uid": str(candidate.get("candidate_uid") or ""),
+                    "candidate_key": str(candidate.get("candidate_key") or ""),
+                    "evidence_id": str(candidate.get("evidence_id") or ""),
+                    "gold_label": str(sample.label),
+                    "base_margin": float(base_score["margin"]),
+                    "after_margin": float(after_score["margin"]),
+                    "delta_margin": float(delta_by_idx[idx]),
+                    "base_pred_label": str(base_score.get("pred_label") or ""),
+                    "after_pred_label": str(after_score.get("pred_label") or ""),
+                    "prediction_changed": bool(base_score.get("pred_label") != after_score.get("pred_label")),
+                    "utility_selected": bool(idx == winner_idx),
+                    "mrec_features": candidate_features[idx],
+                    "token_cost": int(candidate.get("mrec_token_cost") or 0),
+                    "prefix_token_cost": int(
+                        sum(int(candidates[prefix_idx].get("mrec_token_cost") or 0) for prefix_idx in prefix_indices)
+                    ),
+                    "candidate_text_preview": str(candidate.get("text") or candidate.get("evidence_text") or "")[:240],
+                    "teacher_model": str(checkpoint.get("base_model_name_or_path") or ""),
+                    "teacher_checkpoint": str(checkpoint.get("checkpoint_dir") or ""),
+                    "teacher_fingerprint": str(checkpoint.get("teacher_fingerprint") or ""),
+                    "scoring_fingerprint": str(checkpoint.get("scoring_fingerprint") or ""),
+                    "candidate_pool_fingerprint": candidate_pool_fingerprint,
+                    "run_fingerprint": str(checkpoint.get("run_fingerprint") or ""),
+                    "prompt_style": str(args.trace_prompt_style),
+                    "rollin_policy": ROLLIN_POLICY_VERIFIER_UTILITY_GREEDY,
+                    "reward_source": "verifier_utility_delta_margin",
+                }
+            )
+        reward_rows.extend(step_rows)
+        selected_order.append(winner_idx)
+        winner_step = candidate_steps[winner_idx]
+        selected_steps.append(winner_step)
+        atom_id = str(winner_step.get("atom_id") or "")
+        state_after = str(winner_step.get("state_after") or "")
+        if atom_id and state_after:
+            atom_states[atom_id] = state_after
+        event_summary["step_summaries"].append(
+            {
+                "step": int(step),
+                "prefix_indices": [int(item) for item in prefix_indices],
+                "remaining": int(len(remaining)),
+                "scored_candidate_indices": [int(item) for item in remaining],
+                "coverage_complete": True,
+                "selected_candidate_idx": int(winner_idx),
+                "selected_delta_margin": float(delta_by_idx[winner_idx]),
+                "delta_margin": _numeric_summary(list(delta_by_idx.values())),
+            }
+        )
+
+    event_summary["rollin_selected_indices"] = [int(item) for item in selected_order]
+    event_summary["n_reward_rows"] = len(reward_rows)
+    event_summary["expected_reward_rows"] = sum(
+        len(candidates) - step for step in range(len(selected_order))
+    )
+    event_summary["coverage_complete"] = bool(
+        event_summary["n_reward_rows"] == event_summary["expected_reward_rows"]
+    )
+    if not event_summary["coverage_complete"]:
+        raise RuntimeError(
+            f"Incomplete event coverage for event_id={row.get('event_id')}: "
+            f"expected={event_summary['expected_reward_rows']}, actual={event_summary['n_reward_rows']}."
+        )
+    return reward_rows, event_summary, generated_score_rows
+
+
 def _build_rollin_trace(row: Mapping[str, Any], *, args: argparse.Namespace) -> dict[str, Any]:
     params = MRECSelectorParams(
         candidate_top_n=int(args.candidate_top_n),
@@ -468,7 +829,11 @@ def _score_request_for_indices(
     prompt_cfg: dict[str, Any],
     checkpoint: dict[str, Any],
 ) -> VerifierScoreRequest:
+    from fact_checking.selectors.verifier_scorer import VerifierScoreRequest
+
     selected_candidates = [dict(candidates[idx]) for idx in selected_indices if 0 <= int(idx) < len(candidates)]
+    candidate_pool_fingerprint = _candidate_pool_fingerprint(candidates)
+    prompt_fingerprint = stable_fingerprint(prompt_cfg, length=16)
     trace = {
         "event_id": str(source_row.get("event_id") or ""),
         "claim": str(sample.claim),
@@ -497,14 +862,12 @@ def _score_request_for_indices(
         {
             "run_version": RUN_VERSION,
             "event_id": str(source_row.get("event_id") or ""),
-            "role": role,
-            "step": int(step),
-            "prefix_indices": [int(idx) for idx in selected_indices if candidate_idx is None or int(idx) != int(candidate_idx)],
             "selected_indices": [int(idx) for idx in selected_indices],
-            "candidate_idx": int(candidate_idx) if candidate_idx is not None else None,
             "teacher_fingerprint": checkpoint["teacher_fingerprint"],
             "scoring_fingerprint": str(checkpoint.get("scoring_fingerprint") or ""),
-            "prompt_fingerprint": stable_fingerprint(prompt_cfg, length=16),
+            "prompt_fingerprint": prompt_fingerprint,
+            "candidate_pool_fingerprint": candidate_pool_fingerprint,
+            "run_fingerprint": str(checkpoint.get("run_fingerprint") or ""),
         }
     )
     return VerifierScoreRequest(
@@ -520,6 +883,11 @@ def _score_request_for_indices(
             "step": int(step),
             "candidate_idx": int(candidate_idx) if candidate_idx is not None else None,
             "selected_indices": [int(idx) for idx in selected_indices],
+            "teacher_fingerprint": str(checkpoint.get("teacher_fingerprint") or ""),
+            "scoring_fingerprint": str(checkpoint.get("scoring_fingerprint") or ""),
+            "prompt_fingerprint": prompt_fingerprint,
+            "candidate_pool_fingerprint": candidate_pool_fingerprint,
+            "run_fingerprint": str(checkpoint.get("run_fingerprint") or ""),
         },
     )
 
@@ -529,18 +897,27 @@ def _score_requests(
     *,
     scorer: LLMVerifierScorer,
     score_cache: dict[str, dict[str, Any]],
+    strict: bool = False,
 ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    if strict and len({request.cache_key for request in requests}) != len(requests):
+        raise RuntimeError("Verifier score request cache keys are not unique within the scoring step.")
     out: dict[str, dict[str, Any]] = {}
     missing: list[VerifierScoreRequest] = []
     for request in requests:
         cached = score_cache.get(request.cache_key)
         if cached is not None:
+            if strict:
+                _validate_score_row(cached, request=request)
             out[request.cache_key] = dict(cached)
         else:
             missing.append(request)
     new_rows: list[dict[str, Any]] = []
     if missing:
         scores = scorer.score_batch(missing)
+        if strict and len(scores) != len(missing):
+            raise RuntimeError(
+                f"Verifier scorer returned {len(scores)} scores for {len(missing)} requests."
+            )
         for request, score in zip(missing, scores):
             row = {
                 "cache_key": request.cache_key,
@@ -550,10 +927,46 @@ def _score_requests(
                 "metadata": dict(request.metadata or {}),
                 **dict(score),
             }
+            if strict:
+                _validate_score_row(row, request=request)
             score_cache[request.cache_key] = row
             out[request.cache_key] = row
             new_rows.append(row)
+    if strict:
+        missing_keys = [request.cache_key for request in requests if request.cache_key not in out]
+        if missing_keys:
+            raise RuntimeError(f"Verifier score coverage is incomplete; missing cache keys: {missing_keys}")
     return out, new_rows
+
+
+def _validate_score_row(row: Mapping[str, Any], *, request: VerifierScoreRequest) -> None:
+    if str(row.get("cache_key") or "") != str(request.cache_key):
+        raise RuntimeError(f"Verifier score cache key mismatch for event_id={request.event_id}.")
+    if str(row.get("status") or "") != "completed":
+        raise RuntimeError(f"Verifier score is not completed for event_id={request.event_id}.")
+    metadata = row.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise RuntimeError(f"Verifier score metadata is missing for event_id={request.event_id}.")
+    for key in (
+        "teacher_fingerprint",
+        "scoring_fingerprint",
+        "prompt_fingerprint",
+        "candidate_pool_fingerprint",
+        "run_fingerprint",
+    ):
+        if str(metadata.get(key) or "") != str(request.metadata.get(key) or ""):
+            raise RuntimeError(
+                f"Verifier score {key} mismatch for event_id={request.event_id}: "
+                f"cached={metadata.get(key)!r}, expected={request.metadata.get(key)!r}."
+            )
+    margin = row.get("margin")
+    if not isinstance(margin, (int, float)) or not math.isfinite(float(margin)):
+        raise RuntimeError(f"Verifier score margin is missing or non-finite for event_id={request.event_id}.")
+    if not str(row.get("pred_label") or ""):
+        raise RuntimeError(f"Verifier predicted label is missing for event_id={request.event_id}.")
+    label_logprobs = row.get("label_logprobs")
+    if not isinstance(label_logprobs, Mapping) or not label_logprobs:
+        raise RuntimeError(f"Verifier label logprobs are missing for event_id={request.event_id}.")
 
 
 def _atom_states_after_prefix(initial: Mapping[str, str], prefix_steps: Sequence[Mapping[str, Any]]) -> dict[str, str]:
@@ -637,6 +1050,7 @@ class TransformersVerifierScorer:
             return []
 
         import torch
+        from fact_checking.selectors.verifier_scorer import compute_score_from_logprobs
 
         label_inputs: list[tuple[int, str, list[int], int]] = []
         for request_idx, request in enumerate(requests):
@@ -778,9 +1192,17 @@ def _scoring_fingerprint(args: argparse.Namespace, scorer: Any) -> str:
         payload["vllm_lora_mode"] = str(
             getattr(scorer, "vllm_lora_mode", getattr(args, "vllm_lora_mode", "dynamic"))
         )
+        payload["vllm_dtype"] = str(getattr(args, "vllm_dtype", "auto") or "auto")
+        payload["vllm_tokenizer_path"] = str(getattr(args, "vllm_tokenizer_path", "") or "")
         payload["vllm_tokenizer_mode"] = str(getattr(args, "vllm_tokenizer_mode", "auto") or "auto")
         payload["vllm_config_format"] = str(getattr(args, "vllm_config_format", "") or "")
         payload["vllm_load_format"] = str(getattr(args, "vllm_load_format", "") or "")
+        payload["vllm_max_model_len"] = int(getattr(args, "vllm_max_model_len", 0) or 0)
+    elif backend == "transformers":
+        payload["transformers_dtype"] = str(getattr(args, "transformers_dtype", "auto") or "auto")
+        payload["transformers_tokenizer_path"] = str(
+            getattr(args, "transformers_tokenizer_path", "") or ""
+        )
     return stable_fingerprint(payload, length=16)
 
 
@@ -955,6 +1377,8 @@ def _patch_vllm_mistral_common_tokenizer_kwargs() -> None:
 
 
 def _init_vllm_scorer(args: argparse.Namespace, checkpoint: Mapping[str, Any]) -> LLMVerifierScorer:
+    from fact_checking.selectors.verifier_scorer import LLMVerifierScorer
+
     for lib in ("vllm", "vllm.engine", "vllm.executor", "vllm.worker"):
         import logging
 
@@ -1064,20 +1488,293 @@ def _prompt_cfg(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
-def _load_score_cache(path: Path) -> dict[str, dict[str, Any]]:
+def _is_strict_utility_mode(args: argparse.Namespace) -> bool:
+    return str(args.rollin_policy) == ROLLIN_POLICY_VERIFIER_UTILITY_GREEDY
+
+
+def _validate_execution_args(args: argparse.Namespace) -> None:
+    num_shards = int(args.num_shards)
+    shard_index = int(args.shard_index)
+    if num_shards < 1:
+        raise ValueError(f"num_shards must be >= 1, got {num_shards}.")
+    if shard_index < 0 or shard_index >= num_shards:
+        raise ValueError(f"shard_index must be in [0, {num_shards}), got {shard_index}.")
+    if int(args.rollout_steps) < 1 and _is_strict_utility_mode(args):
+        raise ValueError("rollout_steps must be >= 1 for verifier_utility_greedy.")
+    if str(args.split) == "test" and _is_strict_utility_mode(args):
+        raise ValueError("verifier_utility_greedy is forbidden on test because it requires the gold label.")
+
+
+def _artifact_key(split: str, *, num_shards: int, shard_index: int) -> str:
+    if int(num_shards) == 1:
+        return str(split)
+    return f"{split}.shard-{int(shard_index):05d}-of-{int(num_shards):05d}"
+
+
+def _index_raw_samples(samples: Sequence[Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for sample in samples:
+        event_id = str(getattr(sample, "event_id", "") or "")
+        if not event_id:
+            raise ValueError("Raw split contains a sample without event_id.")
+        if event_id in out:
+            raise ValueError(f"Raw split contains duplicate event_id={event_id!r}.")
+        out[event_id] = sample
+    return out
+
+
+def _candidate_identity(candidate: Mapping[str, Any]) -> str:
+    for key in ("candidate_uid", "candidate_key", "canonical_text", "text", "evidence_text"):
+        value = str(candidate.get(key) or "").strip()
+        if value:
+            return f"{key}:{value}"
+    raise ValueError("Candidate has no stable identity field.")
+
+
+def _candidate_pool_fingerprint(candidates: Sequence[Mapping[str, Any]]) -> str:
+    return stable_fingerprint(
+        {"candidates": [dict(candidate) for candidate in candidates]},
+        length=24,
+    )
+
+
+def _event_ids_fingerprint(rows: Sequence[Mapping[str, Any]]) -> str:
+    return stable_fingerprint(
+        {"event_ids": [str(row.get("event_id") or "") for row in rows]},
+        length=24,
+    )
+
+
+def _shard_for_event_id(event_id: str, *, num_shards: int) -> int:
+    digest = hashlib.sha256(str(event_id).encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], byteorder="big", signed=False) % int(num_shards)
+
+
+def _select_shard_rows(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    num_shards: int,
+    shard_index: int,
+) -> list[dict[str, Any]]:
+    selected = [
+        dict(row)
+        for row in rows
+        if _shard_for_event_id(str(row.get("event_id") or ""), num_shards=int(num_shards)) == int(shard_index)
+    ]
+    if not selected:
+        raise ValueError(
+            f"Shard {shard_index}/{num_shards} contains no rows; reduce num_shards or choose a populated shard."
+        )
+    return selected
+
+
+def _event_score_counts(candidate_count: int, *, rollout_steps: int) -> dict[str, int]:
+    steps = min(max(int(rollout_steps), 0), max(int(candidate_count), 0))
+    reward_rows = sum(int(candidate_count) - step for step in range(steps))
+    return {
+        "rollout_steps": steps,
+        "reward_rows": reward_rows,
+        "logical_score_requests": reward_rows + steps,
+        "unique_teacher_scores": reward_rows + (1 if steps > 0 else 0),
+    }
+
+
+def _validate_input_contract(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    raw_by_event: Mapping[str, Any],
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    if not rows:
+        raise ValueError("Utility-cache input contains no rows after sample_limit.")
+    seen_event_ids: set[str] = set()
+    candidate_counts: list[int] = []
+    total_reward_rows = 0
+    total_logical_requests = 0
+    total_unique_scores = 0
+    for row_index, row in enumerate(rows):
+        event_id = str(row.get("event_id") or "")
+        if not event_id:
+            raise ValueError(f"Input row {row_index} has no event_id.")
+        if event_id in seen_event_ids:
+            raise ValueError(f"Input contains duplicate event_id={event_id!r}.")
+        seen_event_ids.add(event_id)
+        sample = raw_by_event.get(event_id)
+        if sample is None:
+            raise ValueError(f"Input event_id={event_id!r} is missing from the raw split.")
+        raw_label = str(getattr(sample, "label", "") or "").strip().lower()
+        if not raw_label:
+            raise ValueError(f"Raw sample event_id={event_id!r} has no gold label.")
+        for label_key in ("gold_label", "label"):
+            feature_label = str(row.get(label_key) or "").strip().lower()
+            if feature_label and feature_label != raw_label:
+                raise ValueError(
+                    f"Label mismatch for event_id={event_id!r}: raw={raw_label!r}, "
+                    f"{label_key}={feature_label!r}."
+                )
+        candidates = _candidate_pool(
+            row,
+            candidate_top_n=int(args.candidate_top_n),
+            token_cost_fn=None,
+        )
+        if not candidates:
+            raise ValueError(f"Input event_id={event_id!r} has no candidates after candidate_top_n.")
+        identities = [_candidate_identity(candidate) for candidate in candidates]
+        duplicates = sorted(identity for identity, count in Counter(identities).items() if count > 1)
+        if duplicates:
+            raise ValueError(
+                f"Input event_id={event_id!r} has duplicate candidates after candidate_top_n: {duplicates[:3]}."
+            )
+        candidate_counts.append(len(candidates))
+        counts = _event_score_counts(len(candidates), rollout_steps=int(args.rollout_steps))
+        total_reward_rows += counts["reward_rows"]
+        total_logical_requests += counts["logical_score_requests"]
+        total_unique_scores += counts["unique_teacher_scores"]
+    return {
+        "status": "validated",
+        "split": str(args.split),
+        "dataset": str(args.dataset),
+        "label_schema": str(args.label_schema),
+        "rollin_policy": str(args.rollin_policy),
+        "candidate_top_n": int(args.candidate_top_n),
+        "rollout_steps": int(args.rollout_steps),
+        "n_validated_rows": len(rows),
+        "event_ids_fingerprint": _event_ids_fingerprint(rows),
+        "candidate_count": {
+            "min": min(candidate_counts),
+            "max": max(candidate_counts),
+            "mean": float(sum(candidate_counts) / len(candidate_counts)),
+            "total": int(sum(candidate_counts)),
+        },
+        "estimated_reward_rows": int(total_reward_rows),
+        "estimated_logical_score_requests": int(total_logical_requests),
+        "estimated_unique_teacher_scores": int(total_unique_scores),
+        "checks": {
+            "event_ids_nonempty_unique": True,
+            "raw_rows_complete": True,
+            "gold_labels_nonempty_consistent": True,
+            "candidate_pools_nonempty": True,
+            "candidate_identities_nonempty_unique": True,
+            "test_gold_utility_forbidden": bool(str(args.split) != "test"),
+        },
+    }
+
+
+def _shard_plan(rows: Sequence[Mapping[str, Any]], *, args: argparse.Namespace) -> list[dict[str, Any]]:
+    plan: list[dict[str, Any]] = []
+    for shard_index in range(int(args.num_shards)):
+        shard_rows = [
+            row
+            for row in rows
+            if _shard_for_event_id(
+                str(row.get("event_id") or ""),
+                num_shards=int(args.num_shards),
+            )
+            == shard_index
+        ]
+        reward_rows = 0
+        logical_requests = 0
+        unique_scores = 0
+        for row in shard_rows:
+            candidate_count = len(
+                _candidate_pool(row, candidate_top_n=int(args.candidate_top_n), token_cost_fn=None)
+            )
+            counts = _event_score_counts(candidate_count, rollout_steps=int(args.rollout_steps))
+            reward_rows += counts["reward_rows"]
+            logical_requests += counts["logical_score_requests"]
+            unique_scores += counts["unique_teacher_scores"]
+        plan.append(
+            {
+                "shard_index": int(shard_index),
+                "n_events": len(shard_rows),
+                "event_ids_fingerprint": _event_ids_fingerprint(shard_rows),
+                "estimated_reward_rows": int(reward_rows),
+                "estimated_logical_score_requests": int(logical_requests),
+                "estimated_unique_teacher_scores": int(unique_scores),
+            }
+        )
+    return plan
+
+
+def _run_contract(
+    *,
+    args: argparse.Namespace,
+    checkpoint: Mapping[str, Any],
+    prompt_cfg: Mapping[str, Any],
+    validation: Mapping[str, Any],
+) -> dict[str, Any]:
+    shard = dict(validation.get("shard") or {})
+    return {
+        "run_version": RUN_VERSION,
+        "input_sha256": str(validation.get("input_sha256") or ""),
+        "raw_sha256": str(validation.get("raw_sha256") or ""),
+        "split": str(args.split),
+        "dataset": str(args.dataset),
+        "label_schema": str(args.label_schema),
+        "candidate_top_n": int(args.candidate_top_n),
+        "rollout_steps": int(args.rollout_steps),
+        "rollin_policy": str(args.rollin_policy),
+        "cue_policy": str(args.cue_policy),
+        "trace_prompt_style": str(args.trace_prompt_style),
+        "prompt_max_length": int(args.prompt_max_length),
+        "sample_limit": int(args.sample_limit),
+        "shard": {
+            "assignment": SHARD_ASSIGNMENT,
+            "num_shards": int(args.num_shards),
+            "shard_index": int(args.shard_index),
+            "event_ids_fingerprint": str(shard.get("event_ids_fingerprint") or ""),
+        },
+        "teacher_fingerprint": str(checkpoint.get("teacher_fingerprint") or ""),
+        "scoring_fingerprint": str(checkpoint.get("scoring_fingerprint") or ""),
+        "prompt_fingerprint": stable_fingerprint(dict(prompt_cfg), length=16),
+    }
+
+
+def _validate_resume_manifest(path: Path, *, expected_run_fingerprint: str) -> None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Cannot read resume manifest {path}: {exc}") from exc
+    actual = str(payload.get("run_fingerprint") or "")
+    if not actual or actual != str(expected_run_fingerprint):
+        raise RuntimeError(
+            f"Resume manifest fingerprint mismatch for {path}: actual={actual!r}, "
+            f"expected={expected_run_fingerprint!r}. Use a new output directory or --no-resume."
+        )
+
+
+def _load_score_cache(
+    path: Path,
+    *,
+    expected_run_fingerprint: str = "",
+) -> dict[str, dict[str, Any]]:
     cache: dict[str, dict[str, Any]] = {}
     if not path.exists():
         return cache
     with path.open(encoding="utf-8") as handle:
-        for line in handle:
+        for line_number, line in enumerate(handle, start=1):
             line = line.strip()
             if not line:
                 continue
             try:
                 row = json.loads(line)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
+                if expected_run_fingerprint:
+                    raise RuntimeError(f"Invalid JSON in strict score cache {path}:{line_number}.") from exc
                 continue
             key = str(row.get("cache_key") or "")
+            if expected_run_fingerprint:
+                metadata = row.get("metadata")
+                actual = str(metadata.get("run_fingerprint") or "") if isinstance(metadata, Mapping) else ""
+                if actual != str(expected_run_fingerprint):
+                    raise RuntimeError(
+                        f"Score-cache fingerprint mismatch at {path}:{line_number}: "
+                        f"actual={actual!r}, expected={expected_run_fingerprint!r}."
+                    )
+                if not key or row.get("status") != "completed":
+                    raise RuntimeError(f"Incomplete strict score-cache row at {path}:{line_number}.")
+                if key in cache:
+                    raise RuntimeError(f"Duplicate cache_key={key!r} in strict score cache {path}.")
             if key and row.get("status") == "completed":
                 cache[key] = row
     return cache
@@ -1100,6 +1797,74 @@ def _completed_event_ids(path: Path) -> set[str]:
             if event_id:
                 out.add(event_id)
     return out
+
+
+def _completed_utility_event_ids(
+    records_path: Path,
+    events_path: Path,
+    *,
+    expected_run_fingerprint: str,
+) -> set[str]:
+    if not records_path.exists() and not events_path.exists():
+        return set()
+    if not records_path.exists() or not events_path.exists():
+        raise RuntimeError(
+            "Strict verifier-utility resume requires both reward records and event summaries; "
+            f"records_exists={records_path.exists()}, summaries_exists={events_path.exists()}."
+        )
+
+    summaries: dict[str, dict[str, Any]] = {}
+    with events_path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"Invalid JSON in event summary {events_path}:{line_number}.") from exc
+            event_id = str(row.get("event_id") or "")
+            if not event_id:
+                raise RuntimeError(f"Missing event_id in event summary {events_path}:{line_number}.")
+            if event_id in summaries:
+                raise RuntimeError(f"Duplicate event summary for event_id={event_id!r} in {events_path}.")
+            if str(row.get("run_fingerprint") or "") != str(expected_run_fingerprint):
+                raise RuntimeError(f"Event-summary fingerprint mismatch for event_id={event_id!r}.")
+            if row.get("coverage_complete") is not True:
+                raise RuntimeError(f"Event summary is not coverage-complete for event_id={event_id!r}.")
+            summaries[event_id] = row
+
+    record_counts: Counter[str] = Counter()
+    with records_path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"Invalid JSON in reward records {records_path}:{line_number}.") from exc
+            event_id = str(row.get("event_id") or "")
+            if not event_id:
+                raise RuntimeError(f"Missing event_id in reward record {records_path}:{line_number}.")
+            if str(row.get("run_fingerprint") or "") != str(expected_run_fingerprint):
+                raise RuntimeError(f"Reward-record fingerprint mismatch for event_id={event_id!r}.")
+            record_counts[event_id] += 1
+
+    incomplete_events = sorted(set(record_counts) - set(summaries))
+    if incomplete_events:
+        raise RuntimeError(
+            "Reward records contain events without a completed summary; resume is fail-closed for: "
+            f"{incomplete_events[:5]}. Use a new output directory or --no-resume."
+        )
+    for event_id, summary in summaries.items():
+        expected = int(summary.get("n_reward_rows") or 0)
+        actual = int(record_counts.get(event_id, 0))
+        if actual != expected:
+            raise RuntimeError(
+                f"Reward-record coverage mismatch for event_id={event_id!r}: expected={expected}, actual={actual}."
+            )
+    return set(summaries)
 
 
 def _read_jsonl(path: Path, *, sample_limit: int) -> list[dict[str, Any]]:

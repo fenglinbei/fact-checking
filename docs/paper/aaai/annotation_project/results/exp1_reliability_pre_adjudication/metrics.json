@@ -1,0 +1,977 @@
+{
+  "analysis_status": "pre_adjudication",
+  "annotators": {
+    "a": {
+      "database_name": "Yulin Deng",
+      "label": "Yulin",
+      "project_id": 14,
+      "project_title": "[YULIN ONLY] Exp1-Atom-Quality"
+    },
+    "b": {
+      "database_name": "ZHIQIANG WEI",
+      "label": "Zhiqiang",
+      "project_id": 15,
+      "project_title": "[ZHIQIANG ONLY] Exp1-Atom-Quality"
+    }
+  },
+  "atom_level": {
+    "atomicity": {
+      "annotator_a_distribution": {
+        "no": 13,
+        "yes": 244
+      },
+      "annotator_a_positive_count": 244,
+      "annotator_a_positive_rate": 0.9494163424124513,
+      "annotator_b_distribution": {
+        "no": 32,
+        "yes": 225
+      },
+      "annotator_b_positive_count": 225,
+      "annotator_b_positive_rate": 0.8754863813229572,
+      "binary_disagreement_count": 29,
+      "both_negative_count": 8,
+      "both_positive_count": 220,
+      "by_dataset": {
+        "liar_raw": {
+          "annotator_a_distribution": {
+            "no": 6,
+            "yes": 131
+          },
+          "annotator_a_positive_count": 131,
+          "annotator_a_positive_rate": 0.9562043795620438,
+          "annotator_b_distribution": {
+            "no": 20,
+            "yes": 117
+          },
+          "annotator_b_positive_count": 117,
+          "annotator_b_positive_rate": 0.8540145985401459,
+          "binary_disagreement_count": 16,
+          "both_negative_count": 5,
+          "both_positive_count": 116,
+          "cohen_kappa": 0.34015653220951214,
+          "confusion_matrix": {
+            "no": {
+              "no": 5,
+              "yes": 1
+            },
+            "yes": {
+              "no": 15,
+              "yes": 116
+            }
+          },
+          "disagreement_count": 16,
+          "exact_agreement": 0.8832116788321168,
+          "exact_agreement_count": 121,
+          "gwet_ac1": 0.8589900289482151,
+          "minority_agreement": 0.38461538461538464,
+          "minority_label": "no",
+          "n": 137,
+          "negative_agreement": 0.38461538461538464,
+          "positive_agreement": 0.9354838709677419,
+          "positive_label": "yes",
+          "pre_adjudication_positive_lower_bound": 0.8467153284671532,
+          "pre_adjudication_positive_upper_bound": 0.9635036496350365
+        },
+        "rawfc": {
+          "annotator_a_distribution": {
+            "no": 7,
+            "yes": 113
+          },
+          "annotator_a_positive_count": 113,
+          "annotator_a_positive_rate": 0.9416666666666667,
+          "annotator_b_distribution": {
+            "no": 12,
+            "yes": 108
+          },
+          "annotator_b_positive_count": 108,
+          "annotator_b_positive_rate": 0.9,
+          "binary_disagreement_count": 13,
+          "both_negative_count": 3,
+          "both_positive_count": 104,
+          "cohen_kappa": 0.26136363636363646,
+          "confusion_matrix": {
+            "no": {
+              "no": 3,
+              "yes": 4
+            },
+            "yes": {
+              "no": 9,
+              "yes": 104
+            }
+          },
+          "disagreement_count": 13,
+          "exact_agreement": 0.8916666666666667,
+          "exact_agreement_count": 107,
+          "gwet_ac1": 0.8731758871590586,
+          "minority_agreement": 0.3157894736842105,
+          "minority_label": "no",
+          "n": 120,
+          "negative_agreement": 0.3157894736842105,
+          "positive_agreement": 0.9411764705882353,
+          "positive_label": "yes",
+          "pre_adjudication_positive_lower_bound": 0.8666666666666667,
+          "pre_adjudication_positive_upper_bound": 0.975
+        }
+      },
+      "claim_cluster_bootstrap_ci95": {
+        "annotator_a_positive_rate": {
+          "high": 0.9766536964980544,
+          "low": 0.9176459572593082,
+          "valid_replicates": 5000
+        },
+        "annotator_b_positive_rate": {
+          "high": 0.9149797570850202,
+          "low": 0.8319663521146163,
+          "valid_replicates": 5000
+        },
+        "cohen_kappa": {
+          "high": 0.49354870634922243,
+          "low": 0.1025849449290274,
+          "valid_replicates": 5000
+        },
+        "exact_agreement": {
+          "high": 0.9239543726235742,
+          "low": 0.8464730290456431,
+          "valid_replicates": 5000
+        },
+        "gwet_ac1": {
+          "high": 0.9124968122482624,
+          "low": 0.810429040335333,
+          "valid_replicates": 5000
+        }
+      },
+      "cohen_kappa": 0.3055995527811426,
+      "confusion_matrix": {
+        "no": {
+          "no": 8,
+          "yes": 5
+        },
+        "yes": {
+          "no": 24,
+          "yes": 220
+        }
+      },
+      "disagreement_count": 29,
+      "exact_agreement": 0.8871595330739299,
+      "exact_agreement_count": 228,
+      "gwet_ac1": 0.8657032425468272,
+      "minority_agreement": 0.35555555555555557,
+      "minority_label": "no",
+      "n": 257,
+      "negative_agreement": 0.35555555555555557,
+      "positive_agreement": 0.9381663113006397,
+      "positive_label": "yes",
+      "pre_adjudication_positive_lower_bound": 0.8560311284046692,
+      "pre_adjudication_positive_upper_bound": 0.9688715953307393
+    },
+    "faithfulness": {
+      "annotator_a_distribution": {
+        "no": 5,
+        "yes": 252
+      },
+      "annotator_a_positive_count": 252,
+      "annotator_a_positive_rate": 0.980544747081712,
+      "annotator_b_distribution": {
+        "no": 8,
+        "yes": 249
+      },
+      "annotator_b_positive_count": 249,
+      "annotator_b_positive_rate": 0.9688715953307393,
+      "binary_disagreement_count": 11,
+      "both_negative_count": 1,
+      "both_positive_count": 245,
+      "by_dataset": {
+        "liar_raw": {
+          "annotator_a_distribution": {
+            "no": 3,
+            "yes": 134
+          },
+          "annotator_a_positive_count": 134,
+          "annotator_a_positive_rate": 0.9781021897810219,
+          "annotator_b_distribution": {
+            "no": 7,
+            "yes": 130
+          },
+          "annotator_b_positive_count": 130,
+          "annotator_b_positive_rate": 0.948905109489051,
+          "binary_disagreement_count": 8,
+          "both_negative_count": 1,
+          "both_positive_count": 128,
+          "cohen_kappa": 0.17469879518072254,
+          "confusion_matrix": {
+            "no": {
+              "no": 1,
+              "yes": 2
+            },
+            "yes": {
+              "no": 6,
+              "yes": 128
+            }
+          },
+          "disagreement_count": 8,
+          "exact_agreement": 0.9416058394160584,
+          "exact_agreement_count": 129,
+          "gwet_ac1": 0.9371883775574531,
+          "minority_agreement": 0.2,
+          "minority_label": "no",
+          "n": 137,
+          "negative_agreement": 0.2,
+          "positive_agreement": 0.9696969696969697,
+          "positive_label": "yes",
+          "pre_adjudication_positive_lower_bound": 0.9343065693430657,
+          "pre_adjudication_positive_upper_bound": 0.9927007299270073
+        },
+        "rawfc": {
+          "annotator_a_distribution": {
+            "no": 2,
+            "yes": 118
+          },
+          "annotator_a_positive_count": 118,
+          "annotator_a_positive_rate": 0.9833333333333333,
+          "annotator_b_distribution": {
+            "no": 1,
+            "yes": 119
+          },
+          "annotator_b_positive_count": 119,
+          "annotator_b_positive_rate": 0.9916666666666667,
+          "binary_disagreement_count": 3,
+          "both_negative_count": 0,
+          "both_positive_count": 117,
+          "cohen_kappa": -0.011235955056181541,
+          "confusion_matrix": {
+            "no": {
+              "no": 0,
+              "yes": 2
+            },
+            "yes": {
+              "no": 1,
+              "yes": 117
+            }
+          },
+          "disagreement_count": 3,
+          "exact_agreement": 0.975,
+          "exact_agreement_count": 117,
+          "gwet_ac1": 0.974367190003204,
+          "minority_agreement": 0.0,
+          "minority_label": "no",
+          "n": 120,
+          "negative_agreement": 0.0,
+          "positive_agreement": 0.9873417721518988,
+          "positive_label": "yes",
+          "pre_adjudication_positive_lower_bound": 0.975,
+          "pre_adjudication_positive_upper_bound": 1.0
+        }
+      },
+      "claim_cluster_bootstrap_ci95": {
+        "annotator_a_positive_rate": {
+          "high": 0.996031746031746,
+          "low": 0.9635627530364372,
+          "valid_replicates": 5000
+        },
+        "annotator_b_positive_rate": {
+          "high": 0.9885507067599338,
+          "low": 0.943770948455476,
+          "valid_replicates": 5000
+        },
+        "cohen_kappa": {
+          "high": 0.4273197173873139,
+          "low": -0.02928281513020625,
+          "valid_replicates": 5000
+        },
+        "exact_agreement": {
+          "high": 0.9807692307692307,
+          "low": 0.9296875,
+          "valid_replicates": 5000
+        },
+        "gwet_ac1": {
+          "high": 0.9802409380193454,
+          "low": 0.9241967126839064,
+          "valid_replicates": 5000
+        }
+      },
+      "cohen_kappa": 0.13308800981294291,
+      "confusion_matrix": {
+        "no": {
+          "no": 1,
+          "yes": 4
+        },
+        "yes": {
+          "no": 7,
+          "yes": 245
+        }
+      },
+      "disagreement_count": 11,
+      "exact_agreement": 0.9571984435797666,
+      "exact_agreement_count": 246,
+      "gwet_ac1": 0.954978699685472,
+      "minority_agreement": 0.15384615384615385,
+      "minority_label": "no",
+      "n": 257,
+      "negative_agreement": 0.15384615384615385,
+      "positive_agreement": 0.9780439121756487,
+      "positive_label": "yes",
+      "pre_adjudication_positive_lower_bound": 0.953307392996109,
+      "pre_adjudication_positive_upper_bound": 0.9961089494163424
+    }
+  },
+  "claim_level": {
+    "claim_complexity": {
+      "annotator_a_distribution": {
+        "compound": 47,
+        "simple": 153
+      },
+      "annotator_b_distribution": {
+        "compound": 63,
+        "simple": 137
+      },
+      "by_dataset": {
+        "liar_raw": {
+          "annotator_a_distribution": {
+            "compound": 24,
+            "simple": 76
+          },
+          "annotator_b_distribution": {
+            "compound": 36,
+            "simple": 64
+          },
+          "cohen_kappa": 0.6722846441947565,
+          "confusion_matrix": {
+            "compound": {
+              "compound": 23,
+              "simple": 1
+            },
+            "simple": {
+              "compound": 13,
+              "simple": 63
+            }
+          },
+          "disagreement_count": 14,
+          "exact_agreement": 0.86,
+          "exact_agreement_count": 86,
+          "gwet_ac1": 0.7586206896551724,
+          "n": 100
+        },
+        "rawfc": {
+          "annotator_a_distribution": {
+            "compound": 23,
+            "simple": 77
+          },
+          "annotator_b_distribution": {
+            "compound": 27,
+            "simple": 73
+          },
+          "cohen_kappa": 0.680681213411389,
+          "confusion_matrix": {
+            "compound": {
+              "compound": 19,
+              "simple": 4
+            },
+            "simple": {
+              "compound": 8,
+              "simple": 69
+            }
+          },
+          "disagreement_count": 12,
+          "exact_agreement": 0.88,
+          "exact_agreement_count": 88,
+          "gwet_ac1": 0.808,
+          "n": 100
+        }
+      },
+      "cohen_kappa": 0.6765766886428659,
+      "confusion_matrix": {
+        "compound": {
+          "compound": 42,
+          "simple": 5
+        },
+        "simple": {
+          "compound": 21,
+          "simple": 132
+        }
+      },
+      "disagreement_count": 26,
+      "exact_agreement": 0.87,
+      "exact_agreement_count": 174,
+      "excluded_internal_conflict_claims": 0,
+      "gwet_ac1": 0.7837837837837837,
+      "n": 200
+    },
+    "complete_coverage": {
+      "annotator_a_distribution": {
+        "complete": 195,
+        "incomplete": 4
+      },
+      "annotator_a_positive_count": 195,
+      "annotator_a_positive_rate": 0.9798994974874372,
+      "annotator_b_distribution": {
+        "complete": 194,
+        "incomplete": 5
+      },
+      "annotator_b_positive_count": 194,
+      "annotator_b_positive_rate": 0.9748743718592965,
+      "binary_disagreement_count": 9,
+      "both_negative_count": 0,
+      "both_positive_count": 190,
+      "by_dataset": {
+        "liar_raw": {
+          "annotator_a_distribution": {
+            "complete": 97,
+            "incomplete": 3
+          },
+          "annotator_a_positive_count": 97,
+          "annotator_a_positive_rate": 0.97,
+          "annotator_b_distribution": {
+            "complete": 95,
+            "incomplete": 5
+          },
+          "annotator_b_positive_count": 95,
+          "annotator_b_positive_rate": 0.95,
+          "binary_disagreement_count": 8,
+          "both_negative_count": 0,
+          "both_positive_count": 92,
+          "cohen_kappa": -0.03896103896103752,
+          "confusion_matrix": {
+            "complete": {
+              "complete": 92,
+              "incomplete": 5
+            },
+            "incomplete": {
+              "complete": 3,
+              "incomplete": 0
+            }
+          },
+          "disagreement_count": 8,
+          "exact_agreement": 0.92,
+          "exact_agreement_count": 92,
+          "gwet_ac1": 0.9133448873483535,
+          "minority_agreement": 0.0,
+          "minority_label": "incomplete",
+          "n": 100,
+          "negative_agreement": 0.0,
+          "positive_agreement": 0.9583333333333334,
+          "positive_label": "complete",
+          "pre_adjudication_positive_lower_bound": 0.92,
+          "pre_adjudication_positive_upper_bound": 1.0
+        },
+        "rawfc": {
+          "annotator_a_distribution": {
+            "complete": 98,
+            "incomplete": 1
+          },
+          "annotator_a_positive_count": 98,
+          "annotator_a_positive_rate": 0.98989898989899,
+          "annotator_b_distribution": {
+            "complete": 99
+          },
+          "annotator_b_positive_count": 99,
+          "annotator_b_positive_rate": 1.0,
+          "binary_disagreement_count": 1,
+          "both_negative_count": 0,
+          "both_positive_count": 98,
+          "cohen_kappa": 0.0,
+          "confusion_matrix": {
+            "complete": {
+              "complete": 98,
+              "incomplete": 0
+            },
+            "incomplete": {
+              "complete": 1,
+              "incomplete": 0
+            }
+          },
+          "disagreement_count": 1,
+          "exact_agreement": 0.98989898989899,
+          "exact_agreement_count": 98,
+          "gwet_ac1": 0.9897964442154085,
+          "minority_agreement": 0.0,
+          "minority_label": "incomplete",
+          "n": 99,
+          "negative_agreement": 0.0,
+          "positive_agreement": 0.9949238578680203,
+          "positive_label": "complete",
+          "pre_adjudication_positive_lower_bound": 0.98989898989899,
+          "pre_adjudication_positive_upper_bound": 1.0
+        }
+      },
+      "claim_cluster_bootstrap_ci95": {
+        "annotator_a_positive_rate": {
+          "high": 0.9949748743718593,
+          "low": 0.9597989949748744,
+          "valid_replicates": 5000
+        },
+        "annotator_b_positive_rate": {
+          "high": 0.9949748743718593,
+          "low": 0.949748743718593,
+          "valid_replicates": 5000
+        },
+        "cohen_kappa": {
+          "high": -0.005050505050510882,
+          "low": -0.036814129541031464,
+          "valid_replicates": 4999
+        },
+        "exact_agreement": {
+          "high": 0.9798994974874372,
+          "low": 0.9246231155778895,
+          "valid_replicates": 5000
+        },
+        "gwet_ac1": {
+          "high": 0.9794914075180996,
+          "low": 0.9187279632982561,
+          "valid_replicates": 5000
+        }
+      },
+      "cohen_kappa": -0.022844089091948735,
+      "confusion_matrix": {
+        "complete": {
+          "complete": 190,
+          "incomplete": 5
+        },
+        "incomplete": {
+          "complete": 4,
+          "incomplete": 0
+        }
+      },
+      "definition": "complete iff completeness_missed=0; incomplete otherwise",
+      "disagreement_count": 9,
+      "exact_agreement": 0.9547738693467337,
+      "exact_agreement_count": 190,
+      "excluded_internal_conflict_claims": 1,
+      "gwet_ac1": 0.9526822631140937,
+      "minority_agreement": 0.0,
+      "minority_label": "incomplete",
+      "n": 199,
+      "negative_agreement": 0.0,
+      "positive_agreement": 0.9768637532133676,
+      "positive_label": "complete",
+      "pre_adjudication_positive_lower_bound": 0.9547738693467337,
+      "pre_adjudication_positive_upper_bound": 1.0
+    },
+    "completeness_ordinal": {
+      "annotator_a_distribution": {
+        "0": 195,
+        "1": 4
+      },
+      "annotator_b_distribution": {
+        "0": 194,
+        "1": 5
+      },
+      "by_dataset": {
+        "liar_raw": {
+          "annotator_a_distribution": {
+            "0": 97,
+            "1": 3
+          },
+          "annotator_b_distribution": {
+            "0": 95,
+            "1": 5
+          },
+          "cohen_kappa": -0.03896103896103752,
+          "confusion_matrix": {
+            "0": {
+              "0": 92,
+              "1": 5,
+              "2": 0,
+              "3+": 0
+            },
+            "1": {
+              "0": 3,
+              "1": 0,
+              "2": 0,
+              "3+": 0
+            },
+            "2": {
+              "0": 0,
+              "1": 0,
+              "2": 0,
+              "3+": 0
+            },
+            "3+": {
+              "0": 0,
+              "1": 0,
+              "2": 0,
+              "3+": 0
+            }
+          },
+          "disagreement_count": 8,
+          "exact_agreement": 0.92,
+          "exact_agreement_count": 92,
+          "gwet_ac1": 0.9178981937602628,
+          "linear_weighted_kappa": -0.038961038961038905,
+          "n": 100,
+          "within_one": 1.0,
+          "within_one_count": 100
+        },
+        "rawfc": {
+          "annotator_a_distribution": {
+            "0": 98,
+            "1": 1
+          },
+          "annotator_b_distribution": {
+            "0": 99
+          },
+          "cohen_kappa": 0.0,
+          "confusion_matrix": {
+            "0": {
+              "0": 98,
+              "1": 0,
+              "2": 0,
+              "3+": 0
+            },
+            "1": {
+              "0": 1,
+              "1": 0,
+              "2": 0,
+              "3+": 0
+            },
+            "2": {
+              "0": 0,
+              "1": 0,
+              "2": 0,
+              "3+": 0
+            },
+            "3+": {
+              "0": 0,
+              "1": 0,
+              "2": 0,
+              "3+": 0
+            }
+          },
+          "disagreement_count": 1,
+          "exact_agreement": 0.98989898989899,
+          "exact_agreement_count": 98,
+          "gwet_ac1": 0.9898650377928305,
+          "linear_weighted_kappa": 0.0,
+          "n": 99,
+          "within_one": 1.0,
+          "within_one_count": 99
+        }
+      },
+      "claim_cluster_bootstrap_ci95": {
+        "cohen_kappa": {
+          "high": -0.005050505050510882,
+          "low": -0.036814129541031464,
+          "valid_replicates": 4999
+        },
+        "exact_agreement": {
+          "high": 0.9798994974874372,
+          "low": 0.9246231155778895,
+          "valid_replicates": 5000
+        },
+        "gwet_ac1": {
+          "high": 0.9797652840740584,
+          "low": 0.9227554439944622,
+          "valid_replicates": 5000
+        },
+        "linear_weighted_kappa": {
+          "high": -0.005050505050477463,
+          "low": -0.03681412954103026,
+          "valid_replicates": 4999
+        },
+        "within_one": {
+          "high": 1.0,
+          "low": 1.0,
+          "valid_replicates": 5000
+        }
+      },
+      "cohen_kappa": -0.022844089091948735,
+      "confusion_matrix": {
+        "0": {
+          "0": 190,
+          "1": 5,
+          "2": 0,
+          "3+": 0
+        },
+        "1": {
+          "0": 4,
+          "1": 0,
+          "2": 0,
+          "3+": 0
+        },
+        "2": {
+          "0": 0,
+          "1": 0,
+          "2": 0,
+          "3+": 0
+        },
+        "3+": {
+          "0": 0,
+          "1": 0,
+          "2": 0,
+          "3+": 0
+        }
+      },
+      "disagreement_count": 9,
+      "exact_agreement": 0.9547738693467337,
+      "exact_agreement_count": 190,
+      "excluded_internal_conflict_claims": 1,
+      "gwet_ac1": 0.9540975203434356,
+      "linear_weighted_kappa": -0.02284408909195136,
+      "n": 199,
+      "within_one": 1.0,
+      "within_one_count": 199
+    },
+    "strict_all_criteria_pass": {
+      "annotator_a_distribution": {
+        "fail": 17,
+        "pass": 182
+      },
+      "annotator_a_positive_count": 182,
+      "annotator_a_positive_rate": 0.914572864321608,
+      "annotator_b_distribution": {
+        "fail": 37,
+        "pass": 162
+      },
+      "annotator_b_positive_count": 162,
+      "annotator_b_positive_rate": 0.8140703517587939,
+      "binary_disagreement_count": 36,
+      "both_negative_count": 9,
+      "both_positive_count": 154,
+      "by_dataset": {
+        "liar_raw": {
+          "annotator_a_distribution": {
+            "fail": 9,
+            "pass": 91
+          },
+          "annotator_a_positive_count": 91,
+          "annotator_a_positive_rate": 0.91,
+          "annotator_b_distribution": {
+            "fail": 24,
+            "pass": 76
+          },
+          "annotator_b_positive_count": 76,
+          "annotator_b_positive_rate": 0.76,
+          "binary_disagreement_count": 21,
+          "both_negative_count": 6,
+          "both_positive_count": 73,
+          "cohen_kappa": 0.26778242677824293,
+          "componentwise_confirmed_pass_count": 73,
+          "componentwise_possible_pass_count": 95,
+          "confusion_matrix": {
+            "fail": {
+              "fail": 6,
+              "pass": 3
+            },
+            "pass": {
+              "fail": 18,
+              "pass": 73
+            }
+          },
+          "disagreement_count": 21,
+          "exact_agreement": 0.79,
+          "exact_agreement_count": 79,
+          "gwet_ac1": 0.7101249223548899,
+          "minority_agreement": 0.36363636363636365,
+          "minority_label": "fail",
+          "n": 100,
+          "negative_agreement": 0.36363636363636365,
+          "positive_agreement": 0.874251497005988,
+          "positive_label": "pass",
+          "pre_adjudication_positive_lower_bound": 0.73,
+          "pre_adjudication_positive_upper_bound": 0.95
+        },
+        "rawfc": {
+          "annotator_a_distribution": {
+            "fail": 8,
+            "pass": 91
+          },
+          "annotator_a_positive_count": 91,
+          "annotator_a_positive_rate": 0.9191919191919192,
+          "annotator_b_distribution": {
+            "fail": 13,
+            "pass": 86
+          },
+          "annotator_b_positive_count": 86,
+          "annotator_b_positive_rate": 0.8686868686868687,
+          "binary_disagreement_count": 15,
+          "both_negative_count": 3,
+          "both_positive_count": 81,
+          "cohen_kappa": 0.20630678781400308,
+          "componentwise_confirmed_pass_count": 81,
+          "componentwise_possible_pass_count": 96,
+          "confusion_matrix": {
+            "fail": {
+              "fail": 3,
+              "pass": 5
+            },
+            "pass": {
+              "fail": 10,
+              "pass": 81
+            }
+          },
+          "disagreement_count": 15,
+          "exact_agreement": 0.8484848484848485,
+          "exact_agreement_count": 84,
+          "gwet_ac1": 0.8130311614730878,
+          "minority_agreement": 0.2857142857142857,
+          "minority_label": "fail",
+          "n": 99,
+          "negative_agreement": 0.2857142857142857,
+          "positive_agreement": 0.9152542372881356,
+          "positive_label": "pass",
+          "pre_adjudication_positive_lower_bound": 0.8181818181818182,
+          "pre_adjudication_positive_upper_bound": 0.9696969696969697
+        }
+      },
+      "claim_cluster_bootstrap_ci95": {
+        "annotator_a_positive_rate": {
+          "high": 0.949748743718593,
+          "low": 0.8743718592964824,
+          "valid_replicates": 5000
+        },
+        "annotator_b_positive_rate": {
+          "high": 0.864321608040201,
+          "low": 0.7587939698492462,
+          "valid_replicates": 5000
+        },
+        "cohen_kappa": {
+          "high": 0.4129793510324484,
+          "low": 0.07650898357655748,
+          "valid_replicates": 5000
+        },
+        "exact_agreement": {
+          "high": 0.8693467336683417,
+          "low": 0.7638190954773869,
+          "valid_replicates": 5000
+        },
+        "gwet_ac1": {
+          "high": 0.8397771372441668,
+          "low": 0.6750004343520336,
+          "valid_replicates": 5000
+        },
+        "pre_adjudication_positive_lower_bound": {
+          "high": 0.8341708542713567,
+          "low": 0.7135678391959799,
+          "valid_replicates": 5000
+        },
+        "pre_adjudication_positive_upper_bound": {
+          "high": 0.9849246231155779,
+          "low": 0.9296482412060302,
+          "valid_replicates": 5000
+        }
+      },
+      "cohen_kappa": 0.24494097807757187,
+      "componentwise_confirmed_pass_count": 154,
+      "componentwise_possible_pass_count": 191,
+      "confusion_matrix": {
+        "fail": {
+          "fail": 9,
+          "pass": 8
+        },
+        "pass": {
+          "fail": 28,
+          "pass": 154
+        }
+      },
+      "definition": "completeness=0 and every atom has faithfulness=yes and atomicity=yes",
+      "disagreement_count": 36,
+      "exact_agreement": 0.8190954773869347,
+      "exact_agreement_count": 163,
+      "excluded_internal_conflict_claims": 1,
+      "gwet_ac1": 0.7636657539669449,
+      "minority_agreement": 0.3333333333333333,
+      "minority_label": "fail",
+      "n": 199,
+      "negative_agreement": 0.3333333333333333,
+      "positive_agreement": 0.8953488372093024,
+      "positive_label": "pass",
+      "pre_adjudication_positive_lower_bound": 0.7738693467336684,
+      "pre_adjudication_positive_upper_bound": 0.9597989949748744,
+      "unit": "claim"
+    }
+  },
+  "methodology": {
+    "atom_key": [
+      "dataset",
+      "event_id",
+      "atom_id"
+    ],
+    "bootstrap": "95% percentile interval; dataset-stratified claim-cluster resampling",
+    "bootstrap_checkpoint_note": "completed-sample IAA is descriptive and does not substitute for calibration or running-checkpoint evidence",
+    "claim_conflict_policy": "exclude field-specific within-annotator conflicts; never majority vote",
+    "claim_key": [
+      "dataset",
+      "event_id"
+    ],
+    "gold_policy": "two-rater exact disagreements remain unresolved until independent adjudication",
+    "gold_resolution_protocol_version": "exp1-exact-gold-resolution-v1-20260717",
+    "study_scope": "claim atomization only; no inference to Evidence Map labels or downstream causality",
+    "writing_anchor": "writing_outline_v0.4.2_structure_only.md"
+  },
+  "quality_control": {
+    "atom_disagreement_claim_count": 36,
+    "atom_disagreement_count": 37,
+    "calibration_or_running_checkpoint_artifacts_in_analysis_input": false,
+    "claim_exact_disagreement_count": 31,
+    "completeness_exact_resolution_count": 9,
+    "extended_gold_resolution_records": 47,
+    "extended_gold_resolution_unique_claims": 39,
+    "protocol_adjudication_records": 37,
+    "protocol_adjudication_unique_claims": 36,
+    "protocol_completeness_adjudication_count": 0,
+    "unsubmitted_draft_count": 1,
+    "unsubmitted_draft_summaries": [
+      {
+        "atom_id": "A1",
+        "changed_fields": {
+          "claim_complexity": {
+            "draft": "compound",
+            "submitted": "simple"
+          }
+        },
+        "dataset": "rawfc",
+        "draft_missing_fields": [],
+        "draft_parse_error": null,
+        "draft_present_fields": [
+          "atomicity",
+          "claim_complexity",
+          "completeness_missed",
+          "faithfulness"
+        ],
+        "event_id": "269594",
+        "project_id": 14
+      }
+    ],
+    "within_annotator_claim_conflict_count": 1,
+    "within_annotator_claim_conflicts": [
+      {
+        "annotator": "Yulin",
+        "dataset": "rawfc",
+        "event_id": "198219",
+        "field": "completeness_missed",
+        "values_by_atom": {
+          "A1": "0",
+          "A2": "1"
+        }
+      }
+    ]
+  },
+  "schema_version": 2,
+  "snapshot": {
+    "analysis_input_sha256": "1308ab9c2d90fba6a10bd6cb47c4a901720bfb257ffd26e9ea7dc8e05490daf4",
+    "analysis_script_sha256": "b54657d9f4f76d7c57e45bc5c8efe5231c0c8a0cdc4b8cc33075b5ea9d34ea11",
+    "authoritative_claims_by_dataset": {
+      "liar_raw": 100,
+      "rawfc": 100
+    },
+    "authoritative_task_universe_atoms": 257,
+    "authoritative_task_universe_claims": 200,
+    "authoritative_task_universe_path": "/data/liaozijie/fact-checking/docs/paper/aaai/annotation_project/data/exp1_tasks_flat_zh.jsonl",
+    "authoritative_task_universe_sha256": "47da9da2b42c8df7edf830a4554bc321d739d9c818ec9ea0de9a5a34c7af0329",
+    "bootstrap_derived_seeds": {
+      "atomicity": 44,
+      "completeness": 45,
+      "faithfulness": 43,
+      "strict_all_criteria_pass": 46
+    },
+    "bootstrap_replicates": 5000,
+    "bootstrap_seed": 42,
+    "database_path": "/data/liaozijie/fact-checking/docs/paper/aaai/annotation_project/label_studio_data/label_studio.sqlite3",
+    "database_provenance_sha256": "bdca8decf890371e1b969b937a3c21d1a5230fa06ee9fd9ae5c7d7edd6eafb73",
+    "generated_at_utc": "2026-07-17T14:26:18.734861+00:00",
+    "paired_atoms": 257,
+    "paired_claims": 200,
+    "sqlite_quick_check": "ok",
+    "writing_anchor_path": "/data/liaozijie/fact-checking/docs/paper/aaai/writing_outline_v0.4.2_structure_only.md",
+    "writing_anchor_sha256": "c248f704645ee00ecf3faabce170d04c7e2857fc5fdedd25512cfbeccea0fb05"
+  }
+}

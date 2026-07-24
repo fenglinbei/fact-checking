@@ -1,0 +1,28 @@
+extends: learned_marginal_structure_only_fullpool_minmax5_10.yaml
+
+experiment:
+  name: liar_raw__ministral3_8b__atom_anchor_v0_2_retrieval_order_matched_fullpool_minmax5_10
+  case_suffix: __atom_anchor_v0_2_retrieval_order_matched_fullpool_minmax5_10
+  run_label: atom-anchor-v0.2-retrieval-order-matched-fullpool-minmax5-10
+  run_header_label: atom-anchor-v0.2-retrieval-order-matched-fullpool-minmax5-10-full
+
+trace:
+  output_root: outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_retrieval_order_matched_fullpool
+  weight_file: ""
+  selector_name: mrec_retrieval_order_v0_2_matched_fullpool
+  adaptive_policy: retrieval_order_v0_2
+  selection_policy: retrieval_order
+  splits: [train, val]
+
+eval:
+  splits: [val]
+  checkpoints: [checkpoint-800]
+  run_tau_eval: "false"
+
+swanlab:
+  experiment_name: liar_raw__ministral3_8b__atom_anchor_v0_2_retrieval_order_matched_fullpool_minmax5_10
+
+sentence_trace_method:
+  selector_name: mrec_retrieval_order_v0_2_matched_fullpool
+  adaptive_policy: retrieval_order_v0_2
+

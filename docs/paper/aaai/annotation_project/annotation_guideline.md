@@ -416,3 +416,100 @@ A: 填数字 1（漏掉 1 个断言）。在 notes 里可补充漏掉的断言�
 ---
 
 *指导书版本：v1.0。若标注过程中发现歧义需更新，在此记录版本号与变更内容。*
+
+---
+
+## 9. Exp3/Exp4：证据组织与状态转移双标
+
+本节只适用于新增的 LIAR-RAW trace-alignment 小规模实验。它与前述 Exp1/Exp2
+审计并行存在，不替代 Atomization 或 Evidence Map 审计。与第 4 节不同，本实验由
+两位非作者标注者独立双标，**不做作者仲裁**；所有主观分歧原样保留，不产生 gold。
+这里的 reasoning trace 仅指外显的证据选择顺序和 atom-state transition，不是模型
+latent chain-of-thought。
+
+### 9.1 通用规则
+
+1. 英文是权威文本，中文只用于辅助理解；若二者冲突，以英文为准并勾选
+   `data_issue=translation`（仅 preference 页面提供该字段）。
+2. 只依据页面展示的 claim 和 evidence，不上网、不调用外部知识，也不要猜测
+   A/B 或状态转移由哪个系统产生。
+3. 不与另一位标注者讨论具体题目，不查看对方项目或私有 key。
+4. 页面没有 confidence，也不要求找“最早已经充分”的证据前缀。
+5. pilot 只用于检查界面和说明，不进入论文统计；不得根据 pilot 的效果方向改变是否
+   开展正式实验。
+6. 必须等待管理员通知后再进入下一阶段：pilot preference → formal preference →
+   pilot transition → formal transition。Preference 全部完成前不得打开会显示状态的
+   Transition 项目。
+7. 页面标题中的 revision（如 `v1`）必须与管理员通知一致。若 pilot 后修改界面、
+   翻译或说明，管理员会递增 revision 并重新开放该 revision 的 pilot；旧 revision
+   只作审计，不得继续用于新 revision 的 formal 标注。
+
+### 9.2 Exp3 Preference：有序证据序列比较
+
+固定问题是：
+
+> 哪一个有序证据序列更能帮助独立事实核查者形成准确且有依据的判断？
+
+请比较完整的 Sequence A 与 Sequence B，综合考虑：
+
+- 证据是否与 claim 的关键核查点相关；
+- 是否包含形成有依据判断所需的支持、反驳、限定或必要背景；
+- 证据顺序是否帮助逐步建立、修正或核对判断；
+- 无关、重复或过早出现的背景是否妨碍核查。
+
+**不得按文风、流畅度、篇章美感或“说服力”选择。** 两侧使用同一中性展示格式；
+来源编号和 domain 只用于区分证据，不代表来源可信度排名。五级选项含义如下：
+
+| 提交值 | 含义 |
+|---|---|
+| `strongly_prefer_a` | A 在核查用途上明显优于 B |
+| `prefer_a` | A 略优于 B，但差距有限 |
+| `tie` | 两者对独立事实核查的帮助基本相当 |
+| `prefer_b` | B 略优于 A，但差距有限 |
+| `strongly_prefer_b` | B 在核查用途上明显优于 A |
+
+`data_issue` 与 `notes` 均为可选。仅对真实的数据/显示问题勾选
+`translation`、`missing_or_malformed_evidence`、`duplicate_evidence`、
+`source_or_format` 或 `other`；不要把“我更偏好另一侧”当作数据问题。若页面仍可判断，
+应照常提交偏好并在 notes 说明。后续排除规则会在解盲前统一冻结。
+
+### 9.3 Exp4 Transition：状态转移与边际贡献
+
+Transition 页面依次展示 focal atom、状态图例、此前同一 atom 的证据前缀、当前证据
+和 proposed before→after state。状态只表示当前外显证据组织下的摘要：
+
+| 状态 | 含义 |
+|---|---|
+| U | Unresolved：尚未形成支持、反驳或限定判断 |
+| S | Supported：当前证据总体支持 focal atom |
+| R | Refuted：当前证据总体反驳 focal atom |
+| Q | Qualified/mixed：存在限定、部分支持/反驳或混合信息 |
+| C | Conflict：支持与反驳证据发生冲突 |
+
+状态映射的固定口径为 support→S、refute→R、qualify/mixed→Q；insufficient、
+background、irrelevant 本身不改变 U。已有 S 与 R 相遇时产生 C。请分别回答两个
+互不替代的问题：
+
+**Transition validity**
+
+- `valid`：结合此前前缀，当前证据足以支撑 proposed 状态更新；对于 self-transition，
+  保持原状态也恰当。
+- `partially_valid`：证据与更新方向有关，但只能支持较弱/更有限的更新，或关键依据仍
+  不完整。
+- `invalid`：当前证据不能支撑 proposed 更新，或更合理的 after-state 明显不同。
+
+**Marginal contribution**
+
+- `clear`：相对此前前缀，当前证据增加了明确且影响判断的新信息；
+- `limited`：增加了一些相关信息、佐证或限定，但增量较小；
+- `none`：没有新增与判断相关的信息，主要是重复、无关或纯背景。
+
+Validity 与 marginal contribution 必须独立判断。例如，一个维持 S→S 的重复佐证可能
+是 `valid + limited`，也可能在完全重复时是 `valid + none`；不要因为状态未变化就自动
+判 invalid，也不要因为证据相关就自动判 clear。每个 claim 在正式 transition 样本中
+最多出现一个 focal step。
+
+---
+
+*指导书版本补充：v1.1（2026-07-24），新增 Exp3/Exp4 随机化、system-blind、
+double-annotated protocol；不改变既有 Exp1/Exp2 指导与其历史仲裁流程。*

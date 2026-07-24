@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -270,6 +271,288 @@ def test_atom_anchor_v0_2_fullpool_policy_wrapper_reads_yaml_config(tmp_path: Pa
     assert "-u SWANLAB_PROJECT" in output
     assert "TOKEN_BUDGET=1024" not in output
     assert "BUDGET_MAX_STEPS=100" not in output
+
+
+def test_structure_only_one_shot_matched_verifier_launcher_is_frozen_to_val_step800(
+    tmp_path: Path,
+) -> None:
+    output = _run_script(
+        "scripts/sentence_trace_method/run_liar_raw_ministral3_structure_only_one_shot_matched_verifier.sh",
+        {
+            "OUTPUT_ROOT": str(tmp_path / "outputs"),
+            "FORCE_BUILD": "true",
+            "FORCE_MREC_BUILD": "true",
+            "MODE": "full",
+        },
+    )
+
+    assert (
+        "MREC_POLICY_CONFIG=configs/experiment/mrec_v0.2/"
+        "learned_marginal_structure_only_one_shot_fullpool_minmax5_10.yaml"
+    ) in output
+    assert "--selection-policy learned_marginal_one_shot" in output
+    assert "--weight-file outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_structure_only/weights/weights.json" in output
+    assert "EXPECTED_SELECTOR_NAME=mrec_greedy_transition_v0_2_learned_marginal_structure_only_one_shot_fullpool" in output
+    assert "EVAL_SPLITS=val" in output
+    assert "VERIFIER_BUILD_SPLITS=train,val" in output
+    assert "--split test" not in output
+    assert "--test-trace" not in output
+    assert "--checkpoint checkpoint-800" in output
+    assert "--split val" in output
+    infer_lines = [line for line in output.splitlines() if "sft.label_token_infer" in line]
+    assert infer_lines
+    assert all("--split test" not in line for line in infer_lines)
+    assert "RUN_TAU_EVAL=false" in output
+
+
+def test_structure_only_matched_verifier_crossover_is_two_by_two_val_step800() -> None:
+    output = _run_script(
+        "scripts/phase5_selectors/eval/"
+        "run_structure_only_matched_verifier_crossover_step800.sh"
+    )
+
+    assert "split=val checkpoint=checkpoint-800" in output
+    assert "cells=one_shot__fixed5,stateful__fixed5" in output
+    assert output.count("--checkpoint checkpoint-800") == 2
+    assert output.count("--split val") >= 4
+    assert "--split test" not in output
+    assert "--checkpoint best" not in output
+    assert output.count("-m sft.hami_cuda_bootstrap infer") == 2
+    assert output.count(
+        "SFT_HAMI_BOOTSTRAP_TARGET_MODULE=sft.label_token_matrix_infer"
+    ) == 2
+    assert output.count("--unsafe-skip-equivalence-gate") == 2
+    assert "verifier_s" in output
+    assert "verifier_o" in output
+
+    contract = json.loads(
+        (
+            ROOT
+            / "configs/validation/"
+            "structure_only_matched_verifier_crossover_step800_v0_1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert contract["split"] == "val"
+    assert contract["checkpoint_contract"] == {
+        "checkpoint": "checkpoint-800",
+        "selection": "fixed_step",
+        "split": "val",
+        "test_allowed": False,
+        "best_alias_allowed": False,
+    }
+    assert [cell["cell_id"] for cell in contract["cells"]] == [
+        "one_shot__fixed5",
+        "stateful__fixed5",
+    ]
+
+
+def test_retrieval_stateful_matched_verifier_crossover_is_two_by_two_val_step800() -> None:
+    output = _run_script(
+        "scripts/phase5_selectors/eval/"
+        "run_retrieval_stateful_matched_verifier_crossover_step800.sh"
+    )
+
+    assert "split=val checkpoint=checkpoint-800" in output
+    assert "cells=retrieval__fixed5,stateful__fixed5" in output
+    assert output.count("--checkpoint checkpoint-800") == 2
+    assert output.count("--split val") >= 4
+    assert "--split test" not in output
+    assert "--checkpoint best" not in output
+    assert output.count("-m sft.hami_cuda_bootstrap infer") == 2
+    assert output.count(
+        "SFT_HAMI_BOOTSTRAP_TARGET_MODULE=sft.label_token_matrix_infer"
+    ) == 2
+    assert output.count("--unsafe-skip-equivalence-gate") == 2
+    assert "verifier_r" in output
+    assert "verifier_s" in output
+    assert "DRY_RUN_R_CHECKPOINT800_SHA256" in output
+
+    contract = json.loads(
+        (
+            ROOT
+            / "configs/validation/"
+            "retrieval_stateful_matched_verifier_crossover_step800_v0_1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert contract["split"] == "val"
+    assert contract["checkpoint_contract"] == {
+        "checkpoint": "checkpoint-800",
+        "selection": "fixed_step",
+        "split": "val",
+        "test_allowed": False,
+        "best_alias_allowed": False,
+    }
+    assert [cell["cell_id"] for cell in contract["cells"]] == [
+        "retrieval__fixed5",
+        "stateful__fixed5",
+    ]
+
+
+def test_retrieval_stateful_crossover_infer_fails_closed_without_vr_sha() -> None:
+    env = {
+        **os.environ,
+        "PYTHONPATH": f"{ROOT / 'src'}:{os.environ.get('PYTHONPATH', '')}",
+        "DRY_RUN": "false",
+        "PHASES": "infer",
+        "R_EXPECTED_ADAPTER_SHA256": "",
+    }
+    result = subprocess.run(
+        [
+            "bash",
+            str(
+                ROOT
+                / "scripts/phase5_selectors/eval/"
+                "run_retrieval_stateful_matched_verifier_crossover_step800.sh"
+            ),
+        ],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 2
+    assert "V_R checkpoint SHA is not pinned" in result.stderr
+    assert "accelerate launch" not in result.stdout
+
+
+def test_retrieval_stateful_crossover_preflight_discovers_stable_vr_sha(
+    tmp_path: Path,
+) -> None:
+    run_dirs: dict[str, Path] = {}
+    adapter_shas: dict[str, str] = {}
+    for verifier_id in ("r", "s"):
+        run_dir = tmp_path / f"verifier_{verifier_id}" / "train"
+        checkpoint_dir = run_dir / "checkpoint-800"
+        latest_state_dir = run_dir / "latest_state"
+        checkpoint_dir.mkdir(parents=True)
+        latest_state_dir.mkdir(parents=True)
+        (run_dir / "config.resolved.yaml").write_text(
+            "model_name_or_path: /tmp/frozen-model\n",
+            encoding="utf-8",
+        )
+        adapter_bytes = f"stable-{verifier_id}-adapter".encode()
+        (checkpoint_dir / "adapter_model.safetensors").write_bytes(adapter_bytes)
+        (checkpoint_dir / "adapter_config.json").write_text(
+            json.dumps(
+                {
+                    "base_model_name_or_path": "/tmp/frozen-model",
+                    "peft_type": "LORA",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (latest_state_dir / "trainer_state.json").write_text(
+            json.dumps({"global_step": 800}) + "\n",
+            encoding="utf-8",
+        )
+        run_dirs[verifier_id] = run_dir
+        adapter_shas[verifier_id] = hashlib.sha256(adapter_bytes).hexdigest()
+
+    env = {
+        **os.environ,
+        "PYTHONPATH": f"{ROOT / 'src'}:{os.environ.get('PYTHONPATH', '')}",
+        "DRY_RUN": "false",
+        "PHASES": "preflight",
+        "R_RUN_DIR": str(run_dirs["r"]),
+        "S_RUN_DIR": str(run_dirs["s"]),
+        "R_CONFIG": str(run_dirs["r"] / "config.resolved.yaml"),
+        "S_CONFIG": str(run_dirs["s"] / "config.resolved.yaml"),
+        "R_EXPECTED_ADAPTER_SHA256": "",
+        "S_EXPECTED_ADAPTER_SHA256": adapter_shas["s"],
+        "HAMI_SHARED_CACHE_ROOT": str(tmp_path / "hami"),
+    }
+    result = subprocess.run(
+        [
+            "bash",
+            str(
+                ROOT
+                / "scripts/phase5_selectors/eval/"
+                "run_retrieval_stateful_matched_verifier_crossover_step800.sh"
+            ),
+        ],
+        cwd=ROOT,
+        env=env,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert f"adapter_sha256={adapter_shas['r']}" in result.stderr
+    assert f"PIN_REQUIRED: R_EXPECTED_ADAPTER_SHA256={adapter_shas['r']}" in result.stderr
+    assert "accelerate launch" not in result.stdout
+
+
+def test_vo_retrieval_stateful_diagnostic_is_single_verifier_val_step800() -> None:
+    output = _run_script(
+        "scripts/phase5_selectors/eval/"
+        "run_vo_retrieval_stateful_diagnostic_step800.sh"
+    )
+
+    assert "split=val checkpoint=checkpoint-800 k=5 events=1234" in output
+    assert "cells=retrieval__fixed5,stateful__fixed5" in output
+    assert output.count("--checkpoint checkpoint-800") == 1
+    assert output.count("-m sft.hami_cuda_bootstrap infer") == 1
+    assert output.count("--unsafe-skip-equivalence-gate") == 1
+    assert output.count("SFT_HAMI_BOOTSTRAP_TARGET_MODULE=sft.label_token_matrix_infer") == 1
+    assert "--split test" not in output
+    assert "--checkpoint best" not in output
+    assert "single_verifier=true diagnostic_only=true" in output
+    assert (
+        "24e661e8efec049f19e4427a4488de57ce4dc7aec97e412315029412f8779aa3"
+        in output
+    )
+    assert "summarize_vo_retrieval_stateful_diagnostic.py" in output
+
+
+def test_vo_retrieval_stateful_diagnostic_blocks_active_vo_training(
+    tmp_path: Path,
+) -> None:
+    fake_run_dir = tmp_path / "vo_experiment" / "train"
+    train_config = fake_run_dir.parent / "train.resolved.yaml"
+    sleeper = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import time; time.sleep(30)",
+            "-m",
+            "sft.hami_cuda_bootstrap",
+            "--config",
+            str(train_config),
+        ]
+    )
+    try:
+        env = {
+            **os.environ,
+            "PYTHONPATH": f"{ROOT / 'src'}:{os.environ.get('PYTHONPATH', '')}",
+            "DRY_RUN": "false",
+            "PHASES": "infer",
+            "O_RUN_DIR": str(fake_run_dir),
+        }
+        result = subprocess.run(
+            [
+                "bash",
+                str(
+                    ROOT
+                    / "scripts/phase5_selectors/eval/"
+                    "run_vo_retrieval_stateful_diagnostic_step800.sh"
+                ),
+            ],
+            cwd=ROOT,
+            env=env,
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    finally:
+        sleeper.terminate()
+        sleeper.wait(timeout=5)
+
+    assert result.returncode == 2
+    assert "V_O training is still active" in result.stderr
+    assert "accelerate launch" not in result.stdout
 
 
 def test_selector_mechanism_s0_s4_wrapper_dry_run_expands_cases(tmp_path: Path) -> None:

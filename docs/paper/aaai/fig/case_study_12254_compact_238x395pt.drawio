@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-07-21T00:18:00.000Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="case-study-column" name="Case Study 238x395pt">
+    <mxGraphModel dx="820" dy="680" grid="1" gridSize="1" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="238" pageHeight="395" math="1" shadow="0" background="#FFFFFF">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Final single-column canvas: 238 x 395 pt; all visible type is at least 9 pt. -->
+        <mxCell id="frame" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=2;strokeWidth=0.5;fillColor=#f3f2f3;strokeColor=#aeb2b7;" vertex="1" parent="1">
+          <mxGeometry x="1" y="1" width="236" height="393" as="geometry"/>
+        </mxCell>
+        <mxCell id="title" value="Case Study: Claim → Visible Prefix" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;strokeWidth=0.7;fillColor=#124b8e;strokeColor=#124b8e;fontColor=#ffffff;fontFamily=Helvetica;fontSize=10.5;fontStyle=1;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="1" y="1" width="236" height="18" as="geometry"/>
+        </mxCell>
+
+        <!-- 1. Abridged claim and compact atom labels -->
+        <mxCell id="claim_panel" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=4;strokeWidth=0.7;fillColor=#f7f9fc;strokeColor=#0f4691;" vertex="1" parent="1">
+          <mxGeometry x="4" y="23" width="230" height="73" as="geometry"/>
+        </mxCell>
+        <mxCell id="badge_1" value="1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=0.5;fontFamily=Helvetica;fontSize=9;fontStyle=1;fontColor=#ffffff;fillColor=#0f4691;strokeColor=#0f4691;spacingTop=-1;" vertex="1" parent="1">
+          <mxGeometry x="9" y="27" width="12" height="12" as="geometry"/>
+        </mxCell>
+        <mxCell id="heading_1" value="Claim and Atoms" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=10;fontStyle=1;fontColor=#0f4691;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="25" y="25" width="130" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="claim" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#0f4691;&quot;&gt;CLAIM (abridged)&lt;/b&gt; · “Bush/Rubio made&lt;br&gt;Florida winner-take-all to deny Trump delegates.”&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#b7c5d8;fillColor=#ffffff;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;spacingTop=1;" vertex="1" parent="1">
+          <mxGeometry x="9" y="41" width="220" height="24" as="geometry"/>
+        </mxCell>
+        <mxCell id="atom_1" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#0f4691;&quot;&gt;A1 · policy&lt;/b&gt;&lt;br&gt;Florida winner-take-all setting&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#779ed5;fillColor=#f0f4fb;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=2;spacingTop=0;" vertex="1" parent="1">
+          <mxGeometry x="9" y="69" width="108" height="23" as="geometry"/>
+        </mxCell>
+        <mxCell id="atom_2" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#44267a;&quot;&gt;A2 · intent&lt;/b&gt;&lt;br&gt;deny Trump any gain&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#9c86c3;fillColor=#f7f3fb;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=2;spacingTop=0;" vertex="1" parent="1">
+          <mxGeometry x="121" y="69" width="108" height="23" as="geometry"/>
+        </mxCell>
+
+        <!-- 2. Five ordered, verifier-visible evidence units -->
+        <mxCell id="trace_panel" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=4;strokeWidth=0.7;fillColor=#f7fbfb;strokeColor=#187b87;" vertex="1" parent="1">
+          <mxGeometry x="4" y="100" width="230" height="193" as="geometry"/>
+        </mxCell>
+        <mxCell id="badge_2" value="2" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=0.5;fontFamily=Helvetica;fontSize=9;fontStyle=1;fontColor=#ffffff;fillColor=#187b87;strokeColor=#187b87;spacingTop=-1;" vertex="1" parent="1">
+          <mxGeometry x="9" y="104" width="12" height="12" as="geometry"/>
+        </mxCell>
+        <mxCell id="heading_2" value="Visible Trace (abr.)" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=10;fontStyle=1;fontColor=#09727f;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="25" y="102" width="90" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="rho_note" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:90%;text-align:right;color:#a45200;&quot;&gt;ρ=1 structural coverage&lt;br&gt;at t2; k&lt;sub&gt;min&lt;/sub&gt;=5 continues&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;fontFamily=Helvetica;fontSize=9;fontColor=#a45200;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="115" y="101" width="114" height="18" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tag_1" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;&quot;&gt;&lt;b&gt;t1&lt;/b&gt;&lt;br&gt;E01&lt;br&gt;&lt;span style=&quot;color:#187b87;&quot;&gt;OPEN&lt;/span&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#91bbc0;fillColor=#eaf5f6;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="9" y="122" width="37" height="31" as="geometry"/>
+        </mxCell>
+        <mxCell id="e01" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#65b340;&quot;&gt;A1 U→S&lt;/b&gt; · support/direct&lt;br&gt;&lt;i&gt;Winner-take-all could benefit&lt;br&gt;Bush/Rubio; Trump's facts were wrong.&lt;/i&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#c7dbba;fillColor=#ffffff;align=left;verticalAlign=middle;spacingLeft=6;spacingRight=2;spacingTop=0;" vertex="1" parent="1">
+          <mxGeometry x="49" y="122" width="180" height="31" as="geometry"/>
+        </mxCell>
+        <mxCell id="e01_stripe" value="" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=none;fillColor=#429d11;arcSize=20;" vertex="1" parent="1">
+          <mxGeometry x="49" y="124" width="3" height="27" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tag_2" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;&quot;&gt;&lt;b&gt;t2&lt;/b&gt;&lt;br&gt;E03&lt;br&gt;&lt;span style=&quot;color:#187b87;&quot;&gt;OPEN&lt;/span&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#91bbc0;fillColor=#eaf5f6;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="9" y="156" width="37" height="31" as="geometry"/>
+        </mxCell>
+        <mxCell id="e03" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#e65e61;&quot;&gt;A2 U→R&lt;/b&gt; · refute/direct&lt;br&gt;&lt;i&gt;Trump wrongly blamed Rubio and Bush for Florida's winner-take-all primary.&lt;/i&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#efb6b7;fillColor=#ffffff;align=left;verticalAlign=middle;spacingLeft=6;spacingRight=2;spacingTop=0;" vertex="1" parent="1">
+          <mxGeometry x="49" y="156" width="180" height="31" as="geometry"/>
+        </mxCell>
+        <mxCell id="e03_stripe" value="" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=none;fillColor=#ef4243;arcSize=20;" vertex="1" parent="1">
+          <mxGeometry x="49" y="158" width="3" height="27" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tag_3" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;&quot;&gt;&lt;b&gt;t3&lt;/b&gt;&lt;br&gt;E02&lt;br&gt;&lt;span style=&quot;color:#fd751e;&quot;&gt;CONTR.&lt;/span&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#e6b18d;fillColor=#fff5ed;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="9" y="190" width="37" height="31" as="geometry"/>
+        </mxCell>
+        <mxCell id="e02" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#f88b39;&quot;&gt;A2 R→Q&lt;/b&gt; · qualify/context&lt;br&gt;&lt;i&gt;Legislative leaders made the March 15 primary winner-take-all.&lt;/i&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#f0c39d;fillColor=#ffffff;align=left;verticalAlign=middle;spacingLeft=6;spacingRight=2;spacingTop=0;" vertex="1" parent="1">
+          <mxGeometry x="49" y="190" width="180" height="31" as="geometry"/>
+        </mxCell>
+        <mxCell id="e02_stripe" value="" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=none;fillColor=#fd751e;arcSize=20;" vertex="1" parent="1">
+          <mxGeometry x="49" y="192" width="3" height="27" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tag_4" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;&quot;&gt;&lt;b&gt;t4&lt;/b&gt;&lt;br&gt;E08&lt;br&gt;&lt;span style=&quot;color:#429d11;&quot;&gt;CORROB.&lt;/span&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#b5cf9f;fillColor=#f2f8ed;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="9" y="224" width="37" height="31" as="geometry"/>
+        </mxCell>
+        <mxCell id="e08" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#65b340;&quot;&gt;A1 S→S&lt;/b&gt; · support/partial&lt;br&gt;&lt;i&gt;Florida was one of a handful of winner-take-all primaries.&lt;/i&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#c7dbba;fillColor=#ffffff;align=left;verticalAlign=middle;spacingLeft=6;spacingRight=2;spacingTop=0;" vertex="1" parent="1">
+          <mxGeometry x="49" y="224" width="180" height="31" as="geometry"/>
+        </mxCell>
+        <mxCell id="e08_stripe" value="" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=none;fillColor=#429d11;arcSize=20;" vertex="1" parent="1">
+          <mxGeometry x="49" y="226" width="3" height="27" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tag_5" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;&quot;&gt;&lt;b&gt;t5&lt;/b&gt;&lt;br&gt;E06&lt;br&gt;&lt;span style=&quot;color:#2783f2;&quot;&gt;BRIDGE&lt;/span&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#9fc3e8;fillColor=#eef6fd;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="9" y="258" width="37" height="31" as="geometry"/>
+        </mxCell>
+        <mxCell id="e06" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#65b340;&quot;&gt;A1 S→S&lt;/b&gt; · background/context&lt;br&gt;&lt;i&gt;Rubio had to win&lt;br&gt;Florida's winner-take-all primary.&lt;/i&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#bdd7ef;fillColor=#ffffff;align=left;verticalAlign=middle;spacingLeft=6;spacingRight=2;spacingTop=0;" vertex="1" parent="1">
+          <mxGeometry x="49" y="258" width="180" height="31" as="geometry"/>
+        </mxCell>
+        <mxCell id="e06_stripe" value="" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=none;fillColor=#2783f2;arcSize=20;" vertex="1" parent="1">
+          <mxGeometry x="49" y="260" width="3" height="27" as="geometry"/>
+        </mxCell>
+
+        <!-- 3. Examples present in the audit trace but outside the visible prefix -->
+        <mxCell id="outside_panel" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=4;strokeWidth=0.7;fillColor=#f7f7f7;strokeColor=#9b9b9b;" vertex="1" parent="1">
+          <mxGeometry x="4" y="297" width="230" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="badge_3" value="3" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=0.5;fontFamily=Helvetica;fontSize=9;fontStyle=1;fontColor=#ffffff;fillColor=#7d7e7f;strokeColor=#7d7e7f;spacingTop=-1;" vertex="1" parent="1">
+          <mxGeometry x="9" y="301" width="12" height="12" as="geometry"/>
+        </mxCell>
+        <mxCell id="heading_3" value="Outside T&lt;sub&gt;vis&lt;/sub&gt; (still in T&lt;sub&gt;full&lt;/sub&gt;)" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=10;fontStyle=1;fontColor=#555657;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="25" y="299" width="204" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="e04_out" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:95%;text-align:center;&quot;&gt;&lt;b&gt;E04 · topic&lt;/b&gt;&lt;br&gt;&lt;i&gt;take down Jeb&lt;/i&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;dashed=1;strokeColor=#aaaeb1;fillColor=#fcfcfc;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="9" y="316" width="70" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="e07_out" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:95%;text-align:center;&quot;&gt;&lt;b&gt;E07 · lexical&lt;/b&gt;&lt;br&gt;&lt;i&gt;cannibalize&lt;/i&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;dashed=1;strokeColor=#aaaeb1;fillColor=#fcfcfc;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="82" y="316" width="70" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="e12_out" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:95%;text-align:center;&quot;&gt;&lt;b&gt;E12 · outcome&lt;/b&gt;&lt;br&gt;&lt;i&gt;Florida loss&lt;/i&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;dashed=1;strokeColor=#aaaeb1;fillColor=#fcfcfc;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="155" y="316" width="74" height="22" as="geometry"/>
+        </mxCell>
+
+        <!-- 4. Order-preserving audit-to-prompt projection and verdict -->
+        <mxCell id="projection_panel" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=7;strokeWidth=0.7;fillColor=#fbfafd;strokeColor=#7e57a8;" vertex="1" parent="1">
+          <mxGeometry x="4" y="346" width="230" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="badge_4" value="4" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=0.5;fontFamily=Helvetica;fontSize=9;fontStyle=1;fontColor=#ffffff;fillColor=#44267a;strokeColor=#44267a;spacingTop=-1;" vertex="1" parent="1">
+          <mxGeometry x="9" y="349" width="12" height="12" as="geometry"/>
+        </mxCell>
+        <mxCell id="heading_4" value="Audit-to-prompt Projection" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=10;fontStyle=1;fontColor=#44267a;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="25" y="347" width="204" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="projection" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#44267a;&quot;&gt;T&lt;sub&gt;full&lt;/sub&gt; (20) → T&lt;sub&gt;vis&lt;/sub&gt;=[E01,E03,&lt;/b&gt;&lt;br&gt;&lt;b style=&quot;color:#44267a;&quot;&gt;E02,E08,E06]&lt;/b&gt; · minmax(5,10)&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#a893cc;fillColor=#f6f1fb;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=2;spacingTop=0;" vertex="1" parent="1">
+          <mxGeometry x="9" y="363" width="163" height="19" as="geometry"/>
+        </mxCell>
+        <mxCell id="verdict" value="&lt;div style=&quot;font-family:Helvetica;font-size:9px;line-height:100%;text-align:center;&quot;&gt;&lt;b&gt;FALSE&lt;/b&gt;&lt;br&gt;gold FALSE&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#65b340;fillColor=#eef8ea;fontColor=#2f7518;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="176" y="363" width="53" height="19" as="geometry"/>
+        </mxCell>
+        <mxCell id="boundary_note" value="Ordered prefix, not proof chain · H&lt;sup&gt;5&lt;/sup&gt;=[S,Q]" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=9;fontColor=#67577b;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="9" y="383" width="220" height="10" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

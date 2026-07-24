@@ -38,6 +38,7 @@ def main() -> int:
     min_count = _int_or_default(prompt_evidence.get("min_evidence_count"), 0)
     max_count = _int_or_default(prompt_evidence.get("max_evidence_count"), 0)
     evidence_token_budget = prompt_evidence.get("evidence_token_budget")
+    prompt_token_budget = prompt_evidence.get("prompt_token_budget")
     max_length_guard = "off"
     if bool(guard.get("enabled", False)):
         max_length_guard = str(guard.get("on_violation") or "warn")
@@ -113,6 +114,9 @@ def main() -> int:
         "PROMPT_EVIDENCE_MIN_COUNT": str(min_count),
         "PROMPT_EVIDENCE_MAX_COUNT": str(max_count),
         "PROMPT_EVIDENCE_TOKEN_BUDGET": "" if evidence_token_budget is None else str(evidence_token_budget),
+        "PROMPT_EVIDENCE_PROMPT_TOKEN_BUDGET": (
+            "" if prompt_token_budget is None else str(prompt_token_budget)
+        ),
         "PROMPT_EVIDENCE_MAX_LENGTH_GUARD": max_length_guard,
         "TWO_PASS_DECISION_DIR": _get(two_pass, "decision_dir", ""),
         "TWO_PASS_CALIBRATION_FILE": _get(two_pass, "calibration_file", ""),

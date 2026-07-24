@@ -1,0 +1,479 @@
+{
+  "formal": {
+    "aligned_event_count": 1251,
+    "atom_parse_failed_event_count": 0,
+    "atom_parse_failed_event_ids": [],
+    "claim_disjoint": true,
+    "configured_excluded_event_count": 1,
+    "configured_excluded_event_ids": [
+      "7845.json"
+    ],
+    "eligible_event_count": 1250,
+    "main": {
+      "sampled_count": 120,
+      "strata": [
+        {
+          "complexity": "single",
+          "design_weight": 0.0432,
+          "label": "pants-fire",
+          "pool_size": 54,
+          "sampled_count": 10,
+          "stratum": "pants-fire|single"
+        },
+        {
+          "complexity": "multi",
+          "design_weight": 0.0256,
+          "label": "pants-fire",
+          "pool_size": 32,
+          "sampled_count": 10,
+          "stratum": "pants-fire|multi"
+        },
+        {
+          "complexity": "single",
+          "design_weight": 0.1464,
+          "label": "false",
+          "pool_size": 183,
+          "sampled_count": 10,
+          "stratum": "false|single"
+        },
+        {
+          "complexity": "multi",
+          "design_weight": 0.0528,
+          "label": "false",
+          "pool_size": 66,
+          "sampled_count": 10,
+          "stratum": "false|multi"
+        },
+        {
+          "complexity": "single",
+          "design_weight": 0.1048,
+          "label": "barely-true",
+          "pool_size": 131,
+          "sampled_count": 10,
+          "stratum": "barely-true|single"
+        },
+        {
+          "complexity": "multi",
+          "design_weight": 0.0632,
+          "label": "barely-true",
+          "pool_size": 79,
+          "sampled_count": 10,
+          "stratum": "barely-true|multi"
+        },
+        {
+          "complexity": "single",
+          "design_weight": 0.1296,
+          "label": "half-true",
+          "pool_size": 162,
+          "sampled_count": 10,
+          "stratum": "half-true|single"
+        },
+        {
+          "complexity": "multi",
+          "design_weight": 0.08,
+          "label": "half-true",
+          "pool_size": 100,
+          "sampled_count": 10,
+          "stratum": "half-true|multi"
+        },
+        {
+          "complexity": "single",
+          "design_weight": 0.1072,
+          "label": "mostly-true",
+          "pool_size": 134,
+          "sampled_count": 10,
+          "stratum": "mostly-true|single"
+        },
+        {
+          "complexity": "multi",
+          "design_weight": 0.0832,
+          "label": "mostly-true",
+          "pool_size": 104,
+          "sampled_count": 10,
+          "stratum": "mostly-true|multi"
+        },
+        {
+          "complexity": "single",
+          "design_weight": 0.1136,
+          "label": "true",
+          "pool_size": 142,
+          "sampled_count": 10,
+          "stratum": "true|single"
+        },
+        {
+          "complexity": "multi",
+          "design_weight": 0.0504,
+          "label": "true",
+          "pool_size": 63,
+          "sampled_count": 10,
+          "stratum": "true|multi"
+        }
+      ]
+    },
+    "namespace": "formal-test",
+    "order_only": {
+      "allocations": [
+        {
+          "complexity": "single",
+          "label": "pants-fire",
+          "pool_size": 40,
+          "sampled_count": 2
+        },
+        {
+          "complexity": "single",
+          "label": "false",
+          "pool_size": 160,
+          "sampled_count": 9
+        },
+        {
+          "complexity": "single",
+          "label": "barely-true",
+          "pool_size": 113,
+          "sampled_count": 7
+        },
+        {
+          "complexity": "single",
+          "label": "half-true",
+          "pool_size": 143,
+          "sampled_count": 8
+        },
+        {
+          "complexity": "single",
+          "label": "mostly-true",
+          "pool_size": 114,
+          "sampled_count": 7
+        },
+        {
+          "complexity": "single",
+          "label": "true",
+          "pool_size": 130,
+          "sampled_count": 7
+        },
+        {
+          "complexity": "multi",
+          "label": "pants-fire",
+          "pool_size": 18,
+          "sampled_count": 2
+        },
+        {
+          "complexity": "multi",
+          "label": "false",
+          "pool_size": 53,
+          "sampled_count": 6
+        },
+        {
+          "complexity": "multi",
+          "label": "barely-true",
+          "pool_size": 60,
+          "sampled_count": 7
+        },
+        {
+          "complexity": "multi",
+          "label": "half-true",
+          "pool_size": 83,
+          "sampled_count": 10
+        },
+        {
+          "complexity": "multi",
+          "label": "mostly-true",
+          "pool_size": 85,
+          "sampled_count": 10
+        },
+        {
+          "complexity": "multi",
+          "label": "true",
+          "pool_size": 43,
+          "sampled_count": 5
+        }
+      ],
+      "complexity_counts": {
+        "multi": 40,
+        "single": 40
+      },
+      "same_order_preexcluded_count_after_event_exclusions": 98,
+      "same_order_preexcluded_count_all_aligned": 98,
+      "sampled_count": 80
+    },
+    "overlap_counts": {
+      "main_order": 0,
+      "main_transition": 0,
+      "order_transition": 0
+    },
+    "transition": {
+      "change_operations": [
+        "CONTRAST",
+        "OPEN"
+      ],
+      "one_step_per_claim": true,
+      "operation_counts": {
+        "BRIDGE": 20,
+        "CONTRAST": 20,
+        "CORROBORATE": 10,
+        "FALLBACK": 10,
+        "OPEN": 40
+      },
+      "operation_eligible_claim_counts": {
+        "BRIDGE": 879,
+        "CONTRAST": 444,
+        "CORROBORATE": 250,
+        "FALLBACK": 355,
+        "OPEN": 841
+      },
+      "operation_quotas": {
+        "BRIDGE": 20,
+        "CONTRAST": 20,
+        "CORROBORATE": 10,
+        "FALLBACK": 10,
+        "OPEN": 40
+      },
+      "sampled_count": 100,
+      "self_transition_operations": [
+        "BRIDGE",
+        "CORROBORATE",
+        "FALLBACK"
+      ]
+    }
+  },
+  "k_summary": {
+    "k_selected_field": "evidence_count_before",
+    "k_visible_field": "evidence_count",
+    "test_k_selected_mean": 6.206235011990407,
+    "test_k_visible_mean": 5.957633892885691
+  },
+  "pilot": {
+    "aligned_event_count": 1274,
+    "atom_parse_failed_event_count": 0,
+    "atom_parse_failed_event_ids": [],
+    "claim_disjoint": true,
+    "configured_excluded_event_count": 0,
+    "configured_excluded_event_ids": [],
+    "eligible_event_count": 1274,
+    "main": {
+      "sampled_count": 20,
+      "strata": [
+        {
+          "complexity": "single",
+          "design_weight": 0.054945054945054944,
+          "label": "pants-fire",
+          "pool_size": 70,
+          "sampled_count": 2,
+          "stratum": "pants-fire|single"
+        },
+        {
+          "complexity": "multi",
+          "design_weight": 0.03532182103610675,
+          "label": "pants-fire",
+          "pool_size": 45,
+          "sampled_count": 2,
+          "stratum": "pants-fire|multi"
+        },
+        {
+          "complexity": "single",
+          "design_weight": 0.14678178963893249,
+          "label": "false",
+          "pool_size": 187,
+          "sampled_count": 2,
+          "stratum": "false|single"
+        },
+        {
+          "complexity": "multi",
+          "design_weight": 0.0565149136577708,
+          "label": "false",
+          "pool_size": 72,
+          "sampled_count": 2,
+          "stratum": "false|multi"
+        },
+        {
+          "complexity": "single",
+          "design_weight": 0.11773940345368916,
+          "label": "barely-true",
+          "pool_size": 150,
+          "sampled_count": 2,
+          "stratum": "barely-true|single"
+        },
+        {
+          "complexity": "multi",
+          "design_weight": 0.06750392464678179,
+          "label": "barely-true",
+          "pool_size": 86,
+          "sampled_count": 2,
+          "stratum": "barely-true|multi"
+        },
+        {
+          "complexity": "single",
+          "design_weight": 0.10832025117739404,
+          "label": "half-true",
+          "pool_size": 138,
+          "sampled_count": 2,
+          "stratum": "half-true|single"
+        },
+        {
+          "complexity": "multi",
+          "design_weight": 0.08320251177394035,
+          "label": "half-true",
+          "pool_size": 106,
+          "sampled_count": 2,
+          "stratum": "half-true|multi"
+        },
+        {
+          "complexity": "single",
+          "design_weight": 0.12323390894819466,
+          "label": "mostly-true",
+          "pool_size": 157,
+          "sampled_count": 1,
+          "stratum": "mostly-true|single"
+        },
+        {
+          "complexity": "multi",
+          "design_weight": 0.07378335949764521,
+          "label": "mostly-true",
+          "pool_size": 94,
+          "sampled_count": 1,
+          "stratum": "mostly-true|multi"
+        },
+        {
+          "complexity": "single",
+          "design_weight": 0.08398744113029827,
+          "label": "true",
+          "pool_size": 107,
+          "sampled_count": 1,
+          "stratum": "true|single"
+        },
+        {
+          "complexity": "multi",
+          "design_weight": 0.04866562009419152,
+          "label": "true",
+          "pool_size": 62,
+          "sampled_count": 1,
+          "stratum": "true|multi"
+        }
+      ]
+    },
+    "namespace": "pilot-val",
+    "order_only": {
+      "allocations": [
+        {
+          "complexity": "single",
+          "label": "pants-fire",
+          "pool_size": 63,
+          "sampled_count": 0
+        },
+        {
+          "complexity": "single",
+          "label": "false",
+          "pool_size": 171,
+          "sampled_count": 1
+        },
+        {
+          "complexity": "single",
+          "label": "barely-true",
+          "pool_size": 134,
+          "sampled_count": 1
+        },
+        {
+          "complexity": "single",
+          "label": "half-true",
+          "pool_size": 130,
+          "sampled_count": 1
+        },
+        {
+          "complexity": "single",
+          "label": "mostly-true",
+          "pool_size": 150,
+          "sampled_count": 1
+        },
+        {
+          "complexity": "single",
+          "label": "true",
+          "pool_size": 98,
+          "sampled_count": 1
+        },
+        {
+          "complexity": "multi",
+          "label": "pants-fire",
+          "pool_size": 41,
+          "sampled_count": 0
+        },
+        {
+          "complexity": "multi",
+          "label": "false",
+          "pool_size": 66,
+          "sampled_count": 1
+        },
+        {
+          "complexity": "multi",
+          "label": "barely-true",
+          "pool_size": 78,
+          "sampled_count": 1
+        },
+        {
+          "complexity": "multi",
+          "label": "half-true",
+          "pool_size": 97,
+          "sampled_count": 1
+        },
+        {
+          "complexity": "multi",
+          "label": "mostly-true",
+          "pool_size": 87,
+          "sampled_count": 1
+        },
+        {
+          "complexity": "multi",
+          "label": "true",
+          "pool_size": 54,
+          "sampled_count": 1
+        }
+      ],
+      "complexity_counts": {
+        "multi": 5,
+        "single": 5
+      },
+      "same_order_preexcluded_count_after_event_exclusions": 87,
+      "same_order_preexcluded_count_all_aligned": 87,
+      "sampled_count": 10
+    },
+    "overlap_counts": {
+      "main_order": 0,
+      "main_transition": 0,
+      "order_transition": 0
+    },
+    "transition": {
+      "change_operations": [
+        "CONTRAST",
+        "OPEN"
+      ],
+      "one_step_per_claim": true,
+      "operation_counts": {
+        "BRIDGE": 3,
+        "CONTRAST": 3,
+        "CORROBORATE": 2,
+        "FALLBACK": 1,
+        "OPEN": 6
+      },
+      "operation_eligible_claim_counts": {
+        "BRIDGE": 1097,
+        "CONTRAST": 566,
+        "CORROBORATE": 284,
+        "FALLBACK": 384,
+        "OPEN": 1032
+      },
+      "operation_quotas": {
+        "BRIDGE": 3,
+        "CONTRAST": 3,
+        "CORROBORATE": 2,
+        "FALLBACK": 1,
+        "OPEN": 6
+      },
+      "sampled_count": 15,
+      "self_transition_operations": [
+        "BRIDGE",
+        "CORROBORATE",
+        "FALLBACK"
+      ]
+    }
+  },
+  "pilot_excluded_from_paper_statistics": true,
+  "sample_seed": 20260724,
+  "schema_version": "evitrace_human_alignment_sampling_v1"
+}

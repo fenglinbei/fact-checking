@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-07-20T22:01:00.000Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="case-study-main" name="Case Study">
+    <mxGraphModel dx="960" dy="720" grid="1" gridSize="1" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="360" pageHeight="700" math="1" shadow="0" background="#FFFFFF">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Frame and section backgrounds -->
+        <mxCell id="frame" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=2;strokeWidth=0.5;fillColor=#f3f2f3;strokeColor=#aeb2b7;" vertex="1" parent="1">
+          <mxGeometry x="1" y="1" width="358" height="698" as="geometry"/>
+        </mxCell>
+        <mxCell id="title_bar" value="&lt;div style=&quot;font-family:Helvetica;font-size:12px;font-weight:700;color:#ffffff;&quot;&gt;Qualitative Case Study: Claim → Visible Evidence Prefix&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=0.7;arcSize=12;fillColor=#124b8e;strokeColor=#124b8e;fontColor=#ffffff;fontSize=12;fontStyle=1;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="1" y="1" width="358" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="panel_claim" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=4;strokeWidth=0.7;fillColor=#f7f9fc;strokeColor=#0f4691;" vertex="1" parent="1">
+          <mxGeometry x="7" y="27" width="346" height="136" as="geometry"/>
+        </mxCell>
+        <mxCell id="panel_trace" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=4;strokeWidth=0.7;fillColor=#f7fbfb;strokeColor=#187b87;" vertex="1" parent="1">
+          <mxGeometry x="7" y="171" width="346" height="292" as="geometry"/>
+        </mxCell>
+        <mxCell id="panel_projection" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=7;strokeWidth=0.7;fillColor=#fbfafd;strokeColor=#7e57a8;" vertex="1" parent="1">
+          <mxGeometry x="7" y="471" width="346" height="84" as="geometry"/>
+        </mxCell>
+        <mxCell id="panel_outside" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=4;strokeWidth=0.7;fillColor=#f7f7f7;strokeColor=#9b9b9b;" vertex="1" parent="1">
+          <mxGeometry x="7" y="563" width="346" height="130" as="geometry"/>
+        </mxCell>
+
+        <!-- Section 1: Claim and atoms -->
+        <mxCell id="badge_1" value="1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=0.5;fontSize=9;fontStyle=1;fontColor=#ffffff;fillColor=#0f4691;strokeColor=#0f4691;spacingTop=-1;" vertex="1" parent="1">
+          <mxGeometry x="14" y="34" width="14" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="heading_1" value="Claim and Verifiable Atoms" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=10;fontStyle=1;fontColor=#0f4691;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="33" y="32" width="300" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="claim_card" value="&lt;div style=&quot;font-family:Helvetica;font-size:8.5px;line-height:115%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#0f4691;&quot;&gt;CLAIM c&lt;/b&gt;&amp;nbsp; Says Jeb Bush and Marco Rubio had it set so that the winner takes everything, because they wanted to make sure that I didnt get anything in the Florida primary.&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#b7c5d8;fillColor=#ffffff;align=left;verticalAlign=middle;spacingLeft=5;spacingRight=5;spacingTop=1;" vertex="1" parent="1">
+          <mxGeometry x="14" y="53" width="332" height="36" as="geometry"/>
+        </mxCell>
+        <mxCell id="atom_a1" value="&lt;div style=&quot;font-family:Helvetica;font-size:8.2px;line-height:112%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#0f4691;&quot;&gt;A1 · policy&lt;/b&gt;&amp;nbsp; Jeb Bush and Marco Rubio had it set so that the winner takes everything in the Florida primary.&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#779ed5;fillColor=#f0f4fb;align=left;verticalAlign=middle;spacingLeft=5;spacingRight=5;spacingTop=1;" vertex="1" parent="1">
+          <mxGeometry x="14" y="94" width="332" height="28" as="geometry"/>
+        </mxCell>
+        <mxCell id="atom_a2" value="&lt;div style=&quot;font-family:Helvetica;font-size:8.2px;line-height:112%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#44267a;&quot;&gt;A2 · attribution&lt;/b&gt;&amp;nbsp; Jeb Bush and Marco Rubio wanted to make sure that I (the speaker) didn't get anything in the Florida primary.&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#9c86c3;fillColor=#f7f3fb;align=left;verticalAlign=middle;spacingLeft=5;spacingRight=5;spacingTop=1;" vertex="1" parent="1">
+          <mxGeometry x="14" y="127" width="332" height="28" as="geometry"/>
+        </mxCell>
+
+        <!-- Section 2: Visible trace -->
+        <mxCell id="badge_2" value="2" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=0.5;fontSize=9;fontStyle=1;fontColor=#ffffff;fillColor=#187b87;strokeColor=#187b87;spacingTop=-1;" vertex="1" parent="1">
+          <mxGeometry x="14" y="178" width="14" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="heading_2" value="Verifier-visible Evidence Trace" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=10;fontStyle=1;fontColor=#09727f;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="33" y="176" width="184" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="trace_note" value="shortened raw excerpts · observed relation states" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;fontFamily=Helvetica;fontSize=6.8;fontColor=#68747a;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="205" y="177" width="141" height="16" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="step_1" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.8px;line-height:105%;&quot;&gt;&lt;b&gt;t=1&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#187b87;&quot;&gt;OPEN&lt;/span&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#91bbc0;fillColor=#eaf5f6;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="14" y="197" width="22" height="46" as="geometry"/>
+        </mxCell>
+        <mxCell id="e01_card" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.6px;line-height:108%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#124b8e;&quot;&gt;E01 · R1 · OPEN&lt;/b&gt; · &lt;b style=&quot;color:#429d11;&quot;&gt;support&lt;/b&gt;/direct/.9 · &lt;b&gt;s=8.82&lt;/b&gt;&lt;br&gt;&lt;i&gt;“Republican official do hope a winner-take-all primary would benefit Bush or Rubio, but Trump get some of his key fact wrong.”&lt;/i&gt;&lt;br&gt;&lt;b&gt;A1: U→S&lt;/b&gt;&amp;nbsp; H: [U,U]→[S,U]&amp;nbsp; ρ=.50&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#c7dbba;fillColor=#ffffff;align=left;verticalAlign=top;spacingLeft=6;spacingRight=4;spacingTop=3;" vertex="1" parent="1">
+          <mxGeometry x="39" y="197" width="307" height="46" as="geometry"/>
+        </mxCell>
+        <mxCell id="e01_stripe" value="" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=none;fillColor=#429d11;arcSize=20;" vertex="1" parent="1">
+          <mxGeometry x="39" y="199" width="3" height="42" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="step_2" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.8px;line-height:105%;&quot;&gt;&lt;b&gt;t=2&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#187b87;&quot;&gt;OPEN&lt;/span&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#91bbc0;fillColor=#eaf5f6;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="14" y="247" width="22" height="46" as="geometry"/>
+        </mxCell>
+        <mxCell id="e03_card" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.6px;line-height:108%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#124b8e;&quot;&gt;E03 · R1 · OPEN&lt;/b&gt; · &lt;b style=&quot;color:#ef4243;&quot;&gt;refute&lt;/b&gt;/direct/.9 · &lt;b&gt;s=6.60&lt;/b&gt;&lt;br&gt;&lt;i&gt;“Donald Trump wrongly blame Marco Rubio and Jeb Bush for Florida's winner-take-all primary.”&lt;/i&gt;&lt;br&gt;&lt;b&gt;A2: U→R&lt;/b&gt;&amp;nbsp; H: [S,U]→[S,R]&amp;nbsp; ρ=1.00&amp;nbsp; &lt;b style=&quot;color:#d96500;&quot;&gt;continue: k&lt;sub&gt;min&lt;/sub&gt;=5&lt;/b&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#efb6b7;fillColor=#ffffff;align=left;verticalAlign=top;spacingLeft=6;spacingRight=4;spacingTop=3;" vertex="1" parent="1">
+          <mxGeometry x="39" y="247" width="307" height="46" as="geometry"/>
+        </mxCell>
+        <mxCell id="e03_stripe" value="" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=none;fillColor=#ef4243;arcSize=20;" vertex="1" parent="1">
+          <mxGeometry x="39" y="249" width="3" height="42" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="step_3" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.6px;line-height:105%;&quot;&gt;&lt;b&gt;t=3&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#fd751e;&quot;&gt;CONTRAST&lt;/span&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#e6b18d;fillColor=#fff5ed;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="14" y="297" width="22" height="46" as="geometry"/>
+        </mxCell>
+        <mxCell id="e02_card" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.6px;line-height:108%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#124b8e;&quot;&gt;E02 · R2 · CONTRAST&lt;/b&gt; · &lt;b style=&quot;color:#fd751e;&quot;&gt;qualify&lt;/b&gt;/context/.6 · &lt;b&gt;s=4.15&lt;/b&gt;&lt;br&gt;&lt;i&gt;“Republican legislative leader set the 2016 Florida primary for March 15—and make the primary winner-take-all …”&lt;/i&gt;&lt;br&gt;&lt;b&gt;A2: R→Q&lt;/b&gt;&amp;nbsp; H: [S,R]→[S,Q]&amp;nbsp; ρ=1.00&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#f0c39d;fillColor=#ffffff;align=left;verticalAlign=top;spacingLeft=6;spacingRight=4;spacingTop=3;" vertex="1" parent="1">
+          <mxGeometry x="39" y="297" width="307" height="46" as="geometry"/>
+        </mxCell>
+        <mxCell id="e02_stripe" value="" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=none;fillColor=#fd751e;arcSize=20;" vertex="1" parent="1">
+          <mxGeometry x="39" y="299" width="3" height="42" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="step_4" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.5px;line-height:105%;&quot;&gt;&lt;b&gt;t=4&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#429d11;&quot;&gt;CORROB.&lt;/span&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#b5cf9f;fillColor=#f2f8ed;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="14" y="347" width="22" height="46" as="geometry"/>
+        </mxCell>
+        <mxCell id="e08_card" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.6px;line-height:108%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#124b8e;&quot;&gt;E08 · R3 · CORROBORATE&lt;/b&gt; · &lt;b style=&quot;color:#429d11;&quot;&gt;support&lt;/b&gt;/partial/.6 · &lt;b&gt;s=3.22&lt;/b&gt;&lt;br&gt;&lt;i&gt;“Florida hold it primary on March 15 and be one of a handful of winner-take-all primary …”&lt;/i&gt;&lt;br&gt;&lt;b&gt;A1: S→S&lt;/b&gt;&amp;nbsp; H: [S,Q]→[S,Q]&amp;nbsp; ρ=1.00&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#c7dbba;fillColor=#ffffff;align=left;verticalAlign=top;spacingLeft=6;spacingRight=4;spacingTop=3;" vertex="1" parent="1">
+          <mxGeometry x="39" y="347" width="307" height="46" as="geometry"/>
+        </mxCell>
+        <mxCell id="e08_stripe" value="" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=none;fillColor=#429d11;arcSize=20;" vertex="1" parent="1">
+          <mxGeometry x="39" y="349" width="3" height="42" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="step_5" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.6px;line-height:105%;&quot;&gt;&lt;b&gt;t=5&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#2783f2;&quot;&gt;BRIDGE&lt;/span&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#9fc3e8;fillColor=#eef6fd;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="14" y="397" width="22" height="46" as="geometry"/>
+        </mxCell>
+        <mxCell id="e06_card" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.6px;line-height:108%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#124b8e;&quot;&gt;E06 · R4 · BRIDGE&lt;/b&gt; · &lt;b style=&quot;color:#2783f2;&quot;&gt;background&lt;/b&gt;/context/.5 · &lt;b&gt;s=3.03&lt;/b&gt;&lt;br&gt;&lt;i&gt;“If Rubio be to have any chance at all, George, he absolutely must win that winner-take-all Florida primary.”&lt;/i&gt;&lt;br&gt;&lt;b&gt;A1: S→S&lt;/b&gt;&amp;nbsp; H: [S,Q]→[S,Q]&amp;nbsp; ρ=1.00&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#bdd7ef;fillColor=#ffffff;align=left;verticalAlign=top;spacingLeft=6;spacingRight=4;spacingTop=3;" vertex="1" parent="1">
+          <mxGeometry x="39" y="397" width="307" height="46" as="geometry"/>
+        </mxCell>
+        <mxCell id="e06_stripe" value="" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=none;fillColor=#2783f2;arcSize=20;" vertex="1" parent="1">
+          <mxGeometry x="39" y="399" width="3" height="42" as="geometry"/>
+        </mxCell>
+        <mxCell id="trace_footer" value="ρ is structural coverage—not factual sufficiency. Selection continues to k&lt;sub&gt;min&lt;/sub&gt;=5." style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;strokeWidth=0.5;dashed=1;strokeColor=#e5a45b;fillColor=#fff8e8;fontFamily=Helvetica;fontSize=7.2;fontColor=#a45200;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="86" y="446" width="260" height="12" as="geometry"/>
+        </mxCell>
+
+        <!-- Section 3: Projection -->
+        <mxCell id="badge_3" value="3" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=0.5;fontSize=9;fontStyle=1;fontColor=#ffffff;fillColor=#44267a;strokeColor=#44267a;spacingTop=-1;" vertex="1" parent="1">
+          <mxGeometry x="14" y="478" width="14" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="heading_3" value="Audit-to-prompt Projection" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=10;fontStyle=1;fontColor=#44267a;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="33" y="476" width="150" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="projection_note" value="order preserving · not a proof/reasoning chain" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;fontFamily=Helvetica;fontSize=6.8;fontColor=#67577b;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="178" y="477" width="168" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="full_trace" value="&lt;div style=&quot;font-family:Helvetica;font-size:8px;text-align:left;&quot;&gt;&lt;b style=&quot;color:#44267a;&quot;&gt;FULL AUDIT TRACE&lt;/b&gt;&amp;nbsp; T&lt;sub&gt;full&lt;/sub&gt; = [E01, E03, E02, E08, E06, …]&amp;nbsp;&amp;nbsp; |T&lt;sub&gt;full&lt;/sub&gt;|=20&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#c9bde0;fillColor=#ffffff;align=left;verticalAlign=middle;spacingLeft=5;spacingRight=4;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="14" y="495" width="332" height="19" as="geometry"/>
+        </mxCell>
+        <mxCell id="projection_arrow" value="" style="endArrow=classicThin;html=1;rounded=1;startSize=3;endSize=3;targetPerimeterSpacing=0;sourcePerimeterSpacing=0;strokeWidth=0.7;endFill=1;curved=0;strokeColor=#7e57a8;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="180" y="514" as="sourcePoint"/>
+            <mxPoint x="180" y="532" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="projection_label" value="P&lt;sub&gt;minmax(5,10)&lt;/sub&gt;" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=#fbfafd;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=7.2;fontStyle=1;fontColor=#44267a;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="188" y="515" width="88" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="visible_prefix" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.8px;text-align:left;&quot;&gt;&lt;b style=&quot;color:#44267a;&quot;&gt;T&lt;sub&gt;vis&lt;/sub&gt;&lt;/b&gt; = [E01, E03, E02, E08, E06]&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#a893cc;fillColor=#f6f1fb;align=left;verticalAlign=middle;spacingLeft=5;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="14" y="533" width="244" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="verdict" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.7px;&quot;&gt;&lt;b&gt;FALSE&lt;/b&gt; · gold: false&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#65b340;fillColor=#eef8ea;fontColor=#2f7518;align=center;verticalAlign=middle;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="263" y="533" width="83" height="16" as="geometry"/>
+        </mxCell>
+
+        <!-- Section 4: Audit items outside visible prefix -->
+        <mxCell id="badge_4" value="4" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=0.5;fontSize=9;fontStyle=1;fontColor=#ffffff;fillColor=#7d7e7f;strokeColor=#7d7e7f;spacingTop=-1;" vertex="1" parent="1">
+          <mxGeometry x="14" y="570" width="14" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="heading_4" value="Other audit-trace items outside T&lt;sub&gt;vis&lt;/sub&gt;" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=10;fontStyle=1;fontColor=#555657;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="33" y="568" width="225" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="outside_note" value="inside T&lt;sub&gt;full&lt;/sub&gt;, not projected" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;fontFamily=Helvetica;fontSize=6.8;fontColor=#707274;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="239" y="569" width="107" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="e04_outside" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.5px;line-height:108%;text-align:left;&quot;&gt;&lt;b&gt;E04 · rank 6 · FALLBACK/irrelevant · topic-only&lt;/b&gt;&lt;br&gt;&lt;i&gt;“It’s be clear since Rubio declare his candidacy that … he would have to take down Jeb Bush.”&lt;/i&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;dashed=1;strokeColor=#aaaeb1;fillColor=#fcfcfc;align=left;verticalAlign=middle;spacingLeft=6;spacingRight=4;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="14" y="589" width="332" height="29" as="geometry"/>
+        </mxCell>
+        <mxCell id="e07_outside" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.5px;line-height:108%;text-align:left;&quot;&gt;&lt;b&gt;E07 · rank 16 · FALLBACK/irrelevant · lexical near-match&lt;/b&gt;&lt;br&gt;&lt;i&gt;“Rubio and Bush may well cannibalize one another’s vote … leave Trump to scoop up a win …”&lt;/i&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;dashed=1;strokeColor=#aaaeb1;fillColor=#fcfcfc;align=left;verticalAlign=middle;spacingLeft=6;spacingRight=4;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="14" y="622" width="332" height="29" as="geometry"/>
+        </mxCell>
+        <mxCell id="e12_outside" value="&lt;div style=&quot;font-family:Helvetica;font-size:7.5px;line-height:108%;text-align:left;&quot;&gt;&lt;b&gt;E12 · rank 18 · FALLBACK/irrelevant · outcome-only&lt;/b&gt;&lt;br&gt;&lt;i&gt;“He suspend his campaign … after lose the Florida Republican primary to … Donald Trump.”&lt;/i&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;dashed=1;strokeColor=#aaaeb1;fillColor=#fcfcfc;align=left;verticalAlign=middle;spacingLeft=6;spacingRight=4;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="14" y="655" width="332" height="29" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="case-study-source" name="Source Text (not for export)">
+    <mxGraphModel dx="1100" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1400" math="1" shadow="0" background="#FFFFFF">
+      <root>
+        <mxCell id="s0"/>
+        <mxCell id="s1" parent="s0"/>
+        <mxCell id="source_title" value="Case 12254 · Full Source Text (editing reference; do not export with the paper figure)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;strokeWidth=0.7;fillColor=#124b8e;strokeColor=#124b8e;fontColor=#ffffff;fontFamily=Helvetica;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="20" width="787" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="source_claim" value="&lt;div style=&quot;font-family:Helvetica;font-size:10px;line-height:125%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#0f4691;&quot;&gt;CLAIM c&lt;/b&gt;&lt;br&gt;Says Jeb Bush and Marco Rubio had it set so that the winner takes everything, because they wanted to make sure that I didnt get anything in the Florida primary.&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.7;strokeColor=#779ed5;fillColor=#f7f9fc;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="60" width="787" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="source_a1" value="&lt;div style=&quot;font-family:Helvetica;font-size:10px;line-height:125%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#0f4691;&quot;&gt;A1 · policy&lt;/b&gt;&lt;br&gt;Jeb Bush and Marco Rubio had it set so that the winner takes everything in the Florida primary.&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#779ed5;fillColor=#f0f4fb;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="126" width="787" height="52" as="geometry"/>
+        </mxCell>
+        <mxCell id="source_a2" value="&lt;div style=&quot;font-family:Helvetica;font-size:10px;line-height:125%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#44267a;&quot;&gt;A2 · attribution&lt;/b&gt;&lt;br&gt;Jeb Bush and Marco Rubio wanted to make sure that I (the speaker) didn't get anything in the Florida primary.&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#9c86c3;fillColor=#f7f3fb;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="186" width="787" height="58" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="source_selected_header" value="Verifier-visible prefix T&lt;sub&gt;vis&lt;/sub&gt; · five selected evidence units" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.7;fillColor=#187b87;strokeColor=#187b87;fontColor=#ffffff;fontFamily=Helvetica;fontSize=11;fontStyle=1;align=left;verticalAlign=middle;spacingLeft=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="258" width="787" height="24" as="geometry"/>
+        </mxCell>
+        <mxCell id="source_e01" value="&lt;div style=&quot;font-family:Helvetica;font-size:9.5px;line-height:122%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#124b8e;&quot;&gt;E01 · UID 17ad7f3baff7 · report 9371013 · OPEN · A1 · support/direct/.9 · score 8.8219&lt;/b&gt;&lt;br&gt;They have it set so that the winner take everything , because they want to make sure that I didnt get anything . Did Bush and Rubio set the Florida primary for winner-take-all because they want to prevent Trump from get any delegate ? . Republican official do hope a winner-take-all primary would benefit Bush or Rubio , but Trump get some of his key fact wrong .&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#c7dbba;fillColor=#ffffff;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="292" width="787" height="106" as="geometry"/>
+        </mxCell>
+        <mxCell id="source_e03" value="&lt;div style=&quot;font-family:Helvetica;font-size:9.5px;line-height:122%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#124b8e;&quot;&gt;E03 · UID 7498b55efc14 · report 9371013 · OPEN · A2 · refute/direct/.9 · score 6.5988&lt;/b&gt;&lt;br&gt;Donald Trump wrongly blame Marco Rubio and Jeb Bush for Florida 's winner-take-all primary . attorney have ask Justice Department to investigate Carnival cruise to Cuba » Donald Trump wrongly blame Marco Rubio and Jeb Bush for Florida 's winner-take-all primary Donald Trump have be on a tear accuse the Republican establishment of rig the system to hurt him , despite the fact that he lead the delegate count in the primary . One of the state where leader be out to get him be Florida , he say .&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#efb6b7;fillColor=#ffffff;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="406" width="787" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="source_e02" value="&lt;div style=&quot;font-family:Helvetica;font-size:9.5px;line-height:122%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#124b8e;&quot;&gt;E02 · UID 4690e7b733ff · report 9857592 · CONTRAST · A2 · qualify/context/.6 · score 4.1454&lt;/b&gt;&lt;br&gt;Marco Rubio would never run for president if his mentor , Jeb Bush , do ; and if either ran , he would be a lock to win Florida 's Republican presidential primary . That 's why , after Bush signal he be likely to run , Republican legislative leader set the 2016 Florida primary for March 15 — and make the primary winner-take-all , rather than a primary in which several candidate could divide the state 's 100 or so delegate proportionally . `` Can we get that gift back ? `` .&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#f0c39d;fillColor=#ffffff;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="534" width="787" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="source_e08" value="&lt;div style=&quot;font-family:Helvetica;font-size:9.5px;line-height:122%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#124b8e;&quot;&gt;E08 · UID 039ab597a480 · report 7521067 · CORROBORATE · A1 · support/partial/.6 · score 3.2164&lt;/b&gt;&lt;br&gt;Jeb Bush say Monday he intend to still be campaign when his home state hold election next month . `` I 'm totally confident I 'll be campaign in Florida , and I 'm confident I 'll do really well there with the best organization , `` Bush say in an interview on CNBC 's `` Squawk on the Street . Florida hold it primary on March 15 and be one of a handful of winner-take-all primary , which award all the state 's delegate to the first-place finisher . It 's that I 'm a leader , `` Bush say .&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#c7dbba;fillColor=#ffffff;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="662" width="787" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="source_e06" value="&lt;div style=&quot;font-family:Helvetica;font-size:9.5px;line-height:122%;text-align:left;&quot;&gt;&lt;b style=&quot;color:#124b8e;&quot;&gt;E06 · UID b41394f675d8 · report 8355161 · BRIDGE · A1 · background/context/.5 · score 3.0330&lt;/b&gt;&lt;br&gt;If Rubio be to have any chance at all , George , he absolutely must win that winner-take-all Florida primary .&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;strokeColor=#bdd7ef;fillColor=#ffffff;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="790" width="787" height="72" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="source_outside_header" value="Items in the full audit trace but outside T&lt;sub&gt;vis&lt;/sub&gt; · not projected to the verifier" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.7;fillColor=#7d7e7f;strokeColor=#7d7e7f;fontColor=#ffffff;fontFamily=Helvetica;fontSize=11;fontStyle=1;align=left;verticalAlign=middle;spacingLeft=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="878" width="787" height="24" as="geometry"/>
+        </mxCell>
+        <mxCell id="source_e04" value="&lt;div style=&quot;font-family:Helvetica;font-size:9.5px;line-height:122%;text-align:left;&quot;&gt;&lt;b&gt;E04 · step/rank 6 · Vox · FALLBACK · irrelevant · score .8879 · topic-only&lt;/b&gt;&lt;br&gt;It 's be clear since Rubio declare his candidacy that if he want to win the nomination , he would have to take down Jeb Bush . Rubio be a good campaigner , while Bush 's supporter be get cold foot Marco Rubio be an incredible political talent .&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;dashed=1;strokeColor=#aaaeb1;fillColor=#fcfcfc;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="912" width="787" height="92" as="geometry"/>
+        </mxCell>
+        <mxCell id="source_e07" value="&lt;div style=&quot;font-family:Helvetica;font-size:9.5px;line-height:122%;text-align:left;&quot;&gt;&lt;b&gt;E07 · step/rank 16 · Tampa Bay · FALLBACK · irrelevant · score −.1220 · lexical near-match&lt;/b&gt;&lt;br&gt;Contrary to the old conventional wisdom , Rubio do get into the race and another giant force emerge to threaten everybody 's plan . His name be Donald Trump , and Navarro acknowledge her fear that Trump could win Florida 's primary . Rubio and Bush may well cannibalize one another 's vote , she say , leave Trump to scoop up a win plurality of antiestablishment vote .&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;dashed=1;strokeColor=#aaaeb1;fillColor=#fcfcfc;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="1012" width="787" height="106" as="geometry"/>
+        </mxCell>
+        <mxCell id="source_e12" value="&lt;div style=&quot;font-family:Helvetica;font-size:9.5px;line-height:122%;text-align:left;&quot;&gt;&lt;b&gt;E12 · step/rank 18 · Wikipedia · FALLBACK · irrelevant · score −.1890 · outcome-only&lt;/b&gt;&lt;br&gt;Rubio unsuccessfully seek the Republican nomination for president of the United States in 2016 , win presidential primary in Minnesota , the District of Columbia , and Puerto Rico . He suspend his campaign for president on March 15 , 2016 , after lose the Florida Republican primary to the eventual winner of the presidential election , Donald Trump . During the 2016 Republican presidential primary campaign in which Rubio and Trump be opponent , Rubio be critical of Trump .&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.5;dashed=1;strokeColor=#aaaeb1;fillColor=#fcfcfc;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="1126" width="787" height="112" as="geometry"/>
+        </mxCell>
+        <mxCell id="source_footer" value="T&lt;sub&gt;full&lt;/sub&gt; contains 20 items. T&lt;sub&gt;vis&lt;/sub&gt; is the order-preserving minmax(5,10) prefix [E01,E03,E02,E08,E06]; evidence tokens=375; prompt tokens=787; was_truncated=false; verifier=false; gold=false." style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;strokeWidth=0.7;strokeColor=#7e57a8;fillColor=#fbfafd;fontFamily=Helvetica;fontSize=10;fontColor=#44267a;fontStyle=1;align=left;verticalAlign=middle;spacing=8;" vertex="1" parent="s1">
+          <mxGeometry x="20" y="1252" width="787" height="58" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,51 @@
+{
+  "adjudication_protocol_version": "exp1-exact-gold-resolution-v1-20260717",
+  "analysis_status": "final_adjudicated_gold",
+  "artifacts": {
+    "adjudication_annotations.jsonl": {
+      "bytes": 24809,
+      "line_count": 47,
+      "sha256": "ad03f9f5cd46f8a2009d36682cd17ba0f4a687b729aeb0d2aa84c83b76132ddf"
+    },
+    "gold_atom_annotations.jsonl": {
+      "bytes": 157936,
+      "line_count": 257,
+      "sha256": "0f772597f9c799a5ef7132ae99f67d8a074db3eab4b412bacc07b1146fd8a7f6"
+    },
+    "gold_claim_annotations.jsonl": {
+      "bytes": 125702,
+      "line_count": 200,
+      "sha256": "0843d98461ec6b9410553bd0033947779f3160729c4f3e0d2ad4a0295be2e36a"
+    },
+    "metrics.json": {
+      "bytes": 11110,
+      "line_count": 347,
+      "sha256": "2a1f394f3106a8c2750d3303d6117ec5d35fc055648cfb5dcce53f65f4b36e36"
+    },
+    "paper_insert_v0.4.2.md": {
+      "bytes": 5023,
+      "line_count": 31,
+      "sha256": "807e56180faaefb3c1cd6e8c010701d5f89c167d875d6f30b3f75b974e52d90a"
+    },
+    "report.md": {
+      "bytes": 4495,
+      "line_count": 62,
+      "sha256": "7d81ef8b7fdd2d30a99507af00d57ee13fd5c330659d3f0d303b43e4a5e6f94d"
+    }
+  },
+  "complete": true,
+  "expected_artifacts": [
+    "metrics.json",
+    "adjudication_annotations.jsonl",
+    "gold_atom_annotations.jsonl",
+    "gold_claim_annotations.jsonl",
+    "report.md",
+    "paper_insert_v0.4.2.md"
+  ],
+  "finalization_script_sha256": "af14ecd07f8f4defdb8f66df3cad4ef9c68da6d36108e28dc40f39c88ee1ce05",
+  "generation_id": "bd458e33349fbca3",
+  "published_at_utc": "2026-07-18T18:07:20.532754+00:00",
+  "schema_version": 1,
+  "source_analysis_input_sha256": "1308ab9c2d90fba6a10bd6cb47c4a901720bfb257ffd26e9ea7dc8e05490daf4",
+  "writing_anchor_sha256": "ec446edfe4069c75abd8b4a90cb6f5b0871bf5a48491cbfd6d6019621ee7b1b8"
+}

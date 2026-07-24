@@ -1,0 +1,54 @@
+<View>
+  <View name="meta" style="background:#f5f5f5;padding:8px 12px;border-radius:4px;margin-bottom:12px">
+    <Text name="meta_id" value="仲裁 ID: $adjudication_id  |  数据集: $dataset  |  样本: $event_id  |  Atom: $atom_id" />
+    <Text name="requested_label" value="本条只需仲裁：" style="font-size:12px;color:#666;margin-top:6px" />
+    <Text name="requested_fields" value="$fields_to_adjudicate_text" style="font-size:15px;font-weight:bold;color:#c62828" />
+  </View>
+
+  <View name="blind_notice" style="border-left:4px solid #ff9800;padding:8px 12px;margin-bottom:14px;background:#fff8e1">
+    <Text name="blind_notice_text" value="请独立判断，不查询 Yulin/Zhiqiang 的原标签。英文为准，中文仅辅助理解；只填写上方列出的待仲裁字段，其余字段留空。" style="font-size:12px;color:#7a4f00" />
+  </View>
+
+  <View name="claim_block" style="border-left:4px solid #2196F3;padding:8px 12px;margin-bottom:14px;background:#fafafa">
+    <Text name="claim_heading" value="Claim" style="font-size:14px;font-weight:bold;color:#1565c0" />
+    <Text name="claim" value="$claim" style="font-size:15px;line-height:1.6" />
+    <Text name="claim_zh_heading" value="中文辅助：" style="font-size:11px;color:#888;margin-top:5px" />
+    <Text name="claim_zh" value="$claim_zh" style="font-size:13px;line-height:1.5;color:#666" />
+  </View>
+
+  <View name="panorama_block" style="border-left:4px solid #9c27b0;padding:8px 12px;margin-bottom:14px;background:#faf7ff">
+    <Text name="panorama_heading" value="该 Claim 的全部 Atoms（上下文参考）" style="font-size:14px;font-weight:bold;color:#7b1fa2" />
+    <Text name="all_atoms_text" value="$all_atoms_text" style="font-size:13px;line-height:1.6;white-space:pre-wrap" />
+    <Text name="panorama_zh_heading" value="中文辅助：" style="font-size:11px;color:#888;margin-top:5px" />
+    <Text name="all_atoms_text_zh" value="$all_atoms_text_zh" style="font-size:12px;line-height:1.5;color:#666;white-space:pre-wrap" />
+  </View>
+
+  <View name="atom_block" style="border-left:4px solid #4caf50;padding:8px 12px;margin-bottom:14px;background:#f7fff7">
+    <Text name="atom_heading" value="待仲裁 Atom（类型: $atom_type）" style="font-size:14px;font-weight:bold;color:#2e7d32" />
+    <Text name="atom_prop" value="$proposition" style="font-size:15px;line-height:1.6" />
+    <Text name="prop_zh_heading" value="中文辅助：" style="font-size:11px;color:#888;margin-top:5px" />
+    <Text name="proposition_zh" value="$proposition_zh" style="font-size:13px;line-height:1.5;color:#666" />
+  </View>
+
+  <Repeater on="$questions" indexFlag="{{idx}}">
+    <View style="border:1px solid #e0e0e0;border-radius:6px;padding:10px 14px;margin-bottom:12px">
+      <Header value="$questions[{{idx}}].title" style="font-size:13px" />
+      <Text name="question_zh_{{idx}}" value="$questions[{{idx}}].question_zh" style="font-size:12px" />
+      <Text name="question_en_{{idx}}" value="$questions[{{idx}}].question_en" style="font-size:12px;color:#666;margin-top:4px" />
+      <Text name="criteria_{{idx}}" value="$questions[{{idx}}].criteria" style="font-size:12px;color:#555;margin-top:6px" />
+      <Choices name="decision_{{idx}}" toName="atom_prop" choice="single" required="true">
+        <Choice value="yes" hint="Yes / 是：符合上述判据" />
+        <Choice value="no" hint="No / 否：不符合上述判据" />
+      </Choices>
+    </View>
+  </Repeater>
+
+  <Header value="仲裁说明（可选）" style="font-size:12px" />
+  <TextArea name="notes" toName="atom_prop" rows="3" placeholder="建议对 no 或边界案例简要说明理由" />
+
+  <View name="confirm_block" style="background:#e8f5e9;padding:8px 12px;border-radius:4px;margin-top:12px">
+    <Choices name="review_complete" toName="atom_prop" choice="single" required="true">
+      <Choice value="confirmed" hint="我已独立完成上方列出的全部待仲裁字段，未查看 A/B 原标签" />
+    </Choices>
+  </View>
+</View>

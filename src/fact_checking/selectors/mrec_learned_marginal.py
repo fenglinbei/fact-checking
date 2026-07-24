@@ -12,6 +12,47 @@ from typing import Any, Mapping, Sequence
 WEIGHT_SCHEMA_VERSION = "mrec_learned_marginal_proxy_weights_v0_2"
 REWARD_WEIGHT_SCHEMA_VERSION = "mrec_learned_marginal_reward_weights_v0_2"
 SUPPORTED_WEIGHT_SCHEMA_VERSIONS = {WEIGHT_SCHEMA_VERSION, REWARD_WEIGHT_SCHEMA_VERSION}
+SUPERVISION_MODE_LEGACY_HYBRID = "legacy_hybrid"
+SUPERVISION_MODE_STRUCTURE_ONLY = "structure_only"
+SUPPORTED_PROXY_SUPERVISION_MODES = {
+    SUPERVISION_MODE_LEGACY_HYBRID,
+    SUPERVISION_MODE_STRUCTURE_ONLY,
+}
+_STRUCTURE_ONLY_CANDIDATE_FIELDS = (
+    "candidate_key",
+    "candidate_uid",
+    "evidence_id",
+    "selector_candidate_idx",
+    "candidate_idx",
+    "text",
+    "evidence_text",
+    "covered_atom_ids",
+    "map_relation",
+    "relation",
+    "map_directness",
+    "directness",
+    "map_confidence",
+    "evidence_map_quality_score",
+    "hybrid_score",
+    "baseline_hybrid_score",
+    "base_score",
+    "mrec_token_cost",
+    "token_cost",
+    "prompt_token_count",
+    "evidence_token_count",
+    "duplicate_group",
+    "source_group",
+    "source_report",
+    "report_id",
+    "source_id",
+)
+_STRUCTURE_ONLY_ALIGNMENT_FIELDS = (
+    "evidence_id",
+    "atom_id",
+    "relation",
+    "directness",
+    "confidence",
+)
 FEATURE_NAMES = (
     "resolution_delta",
     "entropy_reduction",
@@ -121,6 +162,14 @@ def initial_learned_marginal_weights() -> LearnedMarginalWeights:
         },
         cost_weight=0.2,
         metadata={"initialized_from": "hand_seed_v0_2"},
+    )
+
+
+def initial_neutral_learned_marginal_weights() -> LearnedMarginalWeights:
+    return LearnedMarginalWeights(
+        feature_weights={name: 1.0 for name in POSITIVE_FEATURE_NAMES},
+        cost_weight=1.0,
+        metadata={"initialized_from": "equal_weight_neutral_v0_1"},
     )
 
 
@@ -334,8 +383,14 @@ def rank_candidates_by_proxy(
     token_budget: int | None = None,
     pool_max_token_cost: int | None = None,
     map_ablation_mode: str = "full",
+    supervision_mode: str = SUPERVISION_MODE_LEGACY_HYBRID,
 ) -> list[int]:
-    oracle_rank = {str(key): idx for idx, key in enumerate(oracle_ordered_keys or []) if str(key)}
+    mode = _normalize_proxy_supervision_mode(supervision_mode)
+    oracle_rank = (
+        {str(key): idx for idx, key in enumerate(oracle_ordered_keys or []) if str(key)}
+        if mode == SUPERVISION_MODE_LEGACY_HYBRID
+        else {}
+    )
     has_oracle_hit = any(_candidate_key(candidate) in oracle_rank for candidate in candidates)
     rows: list[tuple[tuple[Any, ...], int]] = []
     for idx, candidate in enumerate(candidates):
@@ -382,6 +437,7 @@ def build_proxy_pairwise_preferences(
     token_budget: int | None = None,
     pool_max_token_cost: int | None = None,
     map_ablation_mode: str = "full",
+    supervision_mode: str = SUPERVISION_MODE_LEGACY_HYBRID,
 ) -> list[tuple[int, int]]:
     order = rank_candidates_by_proxy(
         candidates,
@@ -391,11 +447,43 @@ def build_proxy_pairwise_preferences(
         token_budget=token_budget,
         pool_max_token_cost=pool_max_token_cost,
         map_ablation_mode=map_ablation_mode,
+        supervision_mode=supervision_mode,
     )
+    return build_winner_vs_rest_preferences(order)
+
+
+def build_winner_vs_rest_preferences(order: Sequence[int]) -> list[tuple[int, int]]:
+    """Turn any supervision-specific order into the shared pairwise targets."""
     if len(order) < 2:
         return []
     best = int(order[0])
     return [(best, int(other)) for other in order[1:]]
+
+
+def build_structure_proxy_selected_record(
+    candidate: Mapping[str, Any],
+    *,
+    soft_state: Mapping[str, Mapping[str, float]],
+) -> dict[str, Any]:
+    """Expose the exact state-replay record used by the structure-only teacher."""
+    record = _proxy_selected_record(candidate, soft_state=soft_state)
+    pairs = _candidate_atom_pairs(candidate, soft_state)
+    pairs.sort(
+        key=lambda pair: (
+            -_directness_factor(pair.get("directness")),
+            -_clip01(
+                _float_or_default(
+                    pair.get("confidence"),
+                    _float_or_default(candidate.get("map_confidence"), 0.0),
+                )
+            ),
+            str(pair.get("atom_id") or ""),
+        )
+    )
+    if pairs:
+        record["directness"] = str(pairs[0].get("directness") or "")
+        record["confidence"] = pairs[0].get("confidence")
+    return record
 
 
 def train_learned_marginal_proxy_weights(
@@ -406,70 +494,154 @@ def train_learned_marginal_proxy_weights(
     candidate_top_n: int = 20,
     rollout_steps: int = 5,
     map_ablation_mode: str = "full",
+    supervision_mode: str = SUPERVISION_MODE_LEGACY_HYBRID,
 ) -> tuple[LearnedMarginalWeights, dict[str, Any]]:
+    mode = _normalize_proxy_supervision_mode(supervision_mode)
+    positive_features, negative_features, supervision_metrics = _collect_proxy_pairwise_features(
+        rows,
+        candidate_top_n=candidate_top_n,
+        rollout_steps=rollout_steps,
+        map_ablation_mode=map_ablation_mode,
+        supervision_mode=mode,
+    )
+    initial = (
+        initial_neutral_learned_marginal_weights()
+        if mode == SUPERVISION_MODE_STRUCTURE_ONLY
+        else initial_learned_marginal_weights()
+    )
+    metadata = {
+        "trained_from": "proxy_pairwise",
+        "pair_count": int(len(positive_features)),
+        "epochs": int(epochs),
+        "learning_rate": float(learning_rate),
+        "map_ablation_mode": str(map_ablation_mode),
+    }
+    if mode == SUPERVISION_MODE_STRUCTURE_ONLY:
+        metadata.update(
+            {
+                "supervision_mode": mode,
+                "supervision_fingerprint": supervision_metrics["supervision_fingerprint"],
+                "initialized_from": "equal_weight_neutral_v0_1",
+            }
+        )
+    learned, optimization_metrics = fit_pairwise_marginal_scorer(
+        positive_features,
+        negative_features,
+        initial_weights=initial,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        metadata=metadata,
+    )
+    metrics = dict(supervision_metrics)
+    metrics.update(optimization_metrics)
+    return learned, metrics
+
+
+def evaluate_learned_marginal_proxy_weights(
+    rows: Sequence[Mapping[str, Any]],
+    weights: LearnedMarginalWeights | Mapping[str, Any],
+    *,
+    candidate_top_n: int = 20,
+    rollout_steps: int = 5,
+    map_ablation_mode: str = "full",
+    supervision_mode: str = SUPERVISION_MODE_LEGACY_HYBRID,
+) -> dict[str, Any]:
+    mode = _normalize_proxy_supervision_mode(supervision_mode)
+    positive_features, negative_features, metrics = _collect_proxy_pairwise_features(
+        rows,
+        candidate_top_n=candidate_top_n,
+        rollout_steps=rollout_steps,
+        map_ablation_mode=map_ablation_mode,
+        supervision_mode=mode,
+    )
+    if mode == SUPERVISION_MODE_LEGACY_HYBRID:
+        correct = 0
+        scored_rows = 0
+        for row in rows:
+            candidates = _row_candidates(row, candidate_top_n=candidate_top_n)
+            if len(candidates) < 2:
+                continue
+            oracle_keys = _oracle_ordered_keys(row, candidates)
+            if not oracle_keys:
+                continue
+            soft_state = _initial_soft_state_from_row(row)
+            pool_max_token_cost = max([_token_cost(candidate) for candidate in candidates] or [1])
+            scores = [
+                score_marginal_features(
+                    extract_marginal_features(
+                        candidate,
+                        selected_steps=[],
+                        soft_state=soft_state,
+                        token_budget=None,
+                        pool_max_token_cost=pool_max_token_cost,
+                    ),
+                    weights,
+                )
+                for candidate in candidates
+            ]
+            best_idx = max(range(len(scores)), key=lambda idx: (scores[idx], -idx))
+            correct += int(_candidate_key(candidates[best_idx]) == oracle_keys[0])
+            scored_rows += 1
+        out = dict(metrics)
+        out.update(
+            {
+                "scored_row_count": int(scored_rows),
+                "scored_pair_count": 0,
+                "pair_accuracy": float(correct / scored_rows) if scored_rows else 0.0,
+                "evaluation_target": "legacy_oracle_first_key_top1",
+            }
+        )
+        return out
+
+    correct = 0
+    for positive, negative in zip(positive_features, negative_features):
+        positive_score = score_marginal_features(dict(zip(FEATURE_NAMES, positive)), weights)
+        negative_score = score_marginal_features(dict(zip(FEATURE_NAMES, negative)), weights)
+        correct += int(positive_score > negative_score)
+    out = dict(metrics)
+    out.update(
+        {
+            "scored_row_count": int(metrics["eligible_row_count"]),
+            "scored_pair_count": int(len(positive_features)),
+            "pair_accuracy": float(correct / len(positive_features)) if positive_features else 0.0,
+            "evaluation_target": "structure_winner_vs_rest",
+        }
+    )
+    return out
+
+
+def fit_pairwise_marginal_scorer(
+    positive_features: Sequence[Sequence[float]],
+    negative_features: Sequence[Sequence[float]],
+    *,
+    initial_weights: LearnedMarginalWeights,
+    epochs: int,
+    learning_rate: float,
+    metadata: Mapping[str, Any] | None = None,
+) -> tuple[LearnedMarginalWeights, dict[str, Any]]:
+    """Fit the shared positive-feature/cost pairwise scorer.
+
+    The supervision builder is deliberately outside this function so a future
+    utility-only implementation can reuse the exact optimizer and loss.
+    """
     import torch
     import torch.nn.functional as F
 
-    positive_features: list[list[float]] = []
-    negative_features: list[list[float]] = []
-    for row in rows:
-        candidates = _row_candidates(row, candidate_top_n=candidate_top_n)
-        if len(candidates) < 2:
-            continue
-        soft_state = _initial_soft_state_from_row(row)
-        selected_steps: list[dict[str, Any]] = []
-        remaining = list(range(len(candidates)))
-        oracle_keys = _oracle_ordered_keys(row, candidates)
-        pool_max_token_cost = max([_token_cost(candidate) for candidate in candidates] or [1])
-        for _ in range(max(1, int(rollout_steps))):
-            if len(remaining) < 2:
-                break
-            remaining_candidates = [candidates[idx] for idx in remaining]
-            preferences = build_proxy_pairwise_preferences(
-                remaining_candidates,
-                selected_steps=selected_steps,
-                soft_state=soft_state,
-                oracle_ordered_keys=oracle_keys,
-                token_budget=None,
-                pool_max_token_cost=pool_max_token_cost,
-                map_ablation_mode=map_ablation_mode,
-            )
-            if not preferences:
-                break
-            feature_cache = [
-                extract_marginal_features(
-                    candidate,
-                    selected_steps=selected_steps,
-                    soft_state=soft_state,
-                    token_budget=None,
-                    pool_max_token_cost=pool_max_token_cost,
-                    map_ablation_mode=map_ablation_mode,
-                )
-                for candidate in remaining_candidates
-            ]
-            for local_pos, local_neg in preferences:
-                positive_features.append(_feature_vector(feature_cache[local_pos]))
-                negative_features.append(_feature_vector(feature_cache[local_neg]))
-            winner_local = preferences[0][0]
-            winner_global = remaining[winner_local]
-            selected_record = _proxy_selected_record(candidates[winner_global], soft_state=soft_state)
-            selected_steps.append(selected_record)
-            if selected_record.get("atom_id"):
-                soft_state = update_soft_state_from_relation(
-                    soft_state,
-                    atom_id=str(selected_record.get("atom_id") or ""),
-                    relation=str(selected_record.get("relation") or ""),
-                )
-            remaining = [idx for idx in remaining if idx != winner_global]
-
+    if len(positive_features) != len(negative_features):
+        raise ValueError("positive and negative pairwise feature counts must match")
     pair_count = len(positive_features)
     if pair_count == 0:
-        weights = initial_learned_marginal_weights()
-        return weights, {"pair_count": 0, "final_loss": 0.0, "epochs": 0}
+        return initial_weights, {"pair_count": 0, "final_loss": 0.0, "epochs": 0}
+
+    expected_width = len(FEATURE_NAMES)
+    if any(len(row) != expected_width for row in positive_features) or any(
+        len(row) != expected_width for row in negative_features
+    ):
+        raise ValueError(f"pairwise feature vectors must have width {expected_width}")
 
     pos_tensor = torch.tensor(positive_features, dtype=torch.float32)
     neg_tensor = torch.tensor(negative_features, dtype=torch.float32)
-    initial = initial_learned_marginal_weights()
+    initial = initial_weights.normalized()
     theta = torch.nn.Parameter(torch.tensor([
         _inverse_softplus(float(initial.feature_weights.get(name, 0.0)))
         for name in POSITIVE_FEATURE_NAMES
@@ -494,15 +666,150 @@ def train_learned_marginal_proxy_weights(
             for idx, name in enumerate(POSITIVE_FEATURE_NAMES)
         },
         cost_weight=float(F.softplus(theta_cost).detach().cpu().item()),
-        metadata={
-            "trained_from": "proxy_pairwise",
-            "pair_count": int(pair_count),
-            "epochs": int(epochs),
-            "learning_rate": float(learning_rate),
-            "map_ablation_mode": str(map_ablation_mode),
-        },
+        schema_version=initial.schema_version,
+        bias=float(initial.bias),
+        metadata=dict(metadata or initial.metadata),
     )
     return learned, {"pair_count": int(pair_count), "final_loss": final_loss, "epochs": int(epochs)}
+
+
+def _collect_proxy_pairwise_features(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    candidate_top_n: int,
+    rollout_steps: int,
+    map_ablation_mode: str,
+    supervision_mode: str,
+) -> tuple[list[list[float]], list[list[float]], dict[str, Any]]:
+    mode = _normalize_proxy_supervision_mode(supervision_mode)
+    positive_features: list[list[float]] = []
+    negative_features: list[list[float]] = []
+    eligible_row_count = 0
+    candidate_count = 0
+    preference_step_count = 0
+    oracle_preference_step_count = 0
+    structure_preference_step_count = 0
+    oracle_read_row_count = 0
+    oracle_ordered_row_count = 0
+    oracle_hit_rows: set[int] = set()
+    digest = hashlib.sha1(mode.encode("utf-8"))
+
+    for row_index, row in enumerate(rows):
+        candidates = (
+            _structure_only_row_candidates(row, candidate_top_n=candidate_top_n)
+            if mode == SUPERVISION_MODE_STRUCTURE_ONLY
+            else _row_candidates(row, candidate_top_n=candidate_top_n)
+        )
+        candidate_count += len(candidates)
+        if len(candidates) < 2:
+            continue
+        eligible_row_count += 1
+        soft_state = _initial_soft_state_from_row(row)
+        selected_steps: list[dict[str, Any]] = []
+        remaining = list(range(len(candidates)))
+        if mode == SUPERVISION_MODE_LEGACY_HYBRID:
+            oracle_keys = _oracle_ordered_keys(row, candidates)
+            oracle_read_row_count += 1
+            oracle_ordered_row_count += int(bool(oracle_keys))
+        else:
+            oracle_keys = None
+        pool_max_token_cost = max([_token_cost(candidate) for candidate in candidates] or [1])
+        for step_index in range(max(1, int(rollout_steps))):
+            if len(remaining) < 2:
+                break
+            remaining_candidates = [candidates[idx] for idx in remaining]
+            has_oracle_hit = bool(
+                mode == SUPERVISION_MODE_LEGACY_HYBRID
+                and oracle_keys
+                and any(_candidate_key(candidate) in set(oracle_keys) for candidate in remaining_candidates)
+            )
+            preferences = build_proxy_pairwise_preferences(
+                remaining_candidates,
+                selected_steps=selected_steps,
+                soft_state=soft_state,
+                oracle_ordered_keys=oracle_keys,
+                token_budget=None,
+                pool_max_token_cost=pool_max_token_cost,
+                map_ablation_mode=map_ablation_mode,
+                supervision_mode=mode,
+            )
+            if not preferences:
+                break
+            preference_step_count += 1
+            oracle_preference_step_count += int(has_oracle_hit)
+            structure_preference_step_count += int(not has_oracle_hit)
+            if has_oracle_hit:
+                oracle_hit_rows.add(row_index)
+            feature_cache = [
+                extract_marginal_features(
+                    candidate,
+                    selected_steps=selected_steps,
+                    soft_state=soft_state,
+                    token_budget=None,
+                    pool_max_token_cost=pool_max_token_cost,
+                    map_ablation_mode=map_ablation_mode,
+                )
+                for candidate in remaining_candidates
+            ]
+            winner_local = int(preferences[0][0])
+            winner_global = remaining[winner_local]
+            for local_pos, local_neg in preferences:
+                positive = _feature_vector(feature_cache[local_pos])
+                negative = _feature_vector(feature_cache[local_neg])
+                positive_features.append(positive)
+                negative_features.append(negative)
+                digest.update(
+                    json.dumps(
+                        {
+                            "row_index": row_index,
+                            "step": step_index,
+                            "positive_index": remaining[local_pos],
+                            "negative_index": remaining[local_neg],
+                            "positive_features": positive,
+                            "negative_features": negative,
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                    + b"\n"
+                )
+            selected_record = _proxy_selected_record(candidates[winner_global], soft_state=soft_state)
+            selected_steps.append(selected_record)
+            if selected_record.get("atom_id"):
+                soft_state = update_soft_state_from_relation(
+                    soft_state,
+                    atom_id=str(selected_record.get("atom_id") or ""),
+                    relation=str(selected_record.get("relation") or ""),
+                )
+            remaining = [idx for idx in remaining if idx != winner_global]
+
+    metrics = {
+        "supervision_mode": mode,
+        "supervision_fingerprint": digest.hexdigest()[:12],
+        "row_count": int(len(rows)),
+        "eligible_row_count": int(eligible_row_count),
+        "candidate_count": int(candidate_count),
+        "preference_step_count": int(preference_step_count),
+        "pair_count": int(len(positive_features)),
+        "oracle_read_row_count": int(oracle_read_row_count),
+        "oracle_ordered_row_count": int(oracle_ordered_row_count),
+        "oracle_hit_row_count": int(len(oracle_hit_rows)),
+        "oracle_preference_step_count": int(oracle_preference_step_count),
+        "structure_preference_step_count": int(structure_preference_step_count),
+        "gold_label_read_count": 0,
+        "teacher_read_count": 0,
+        "utility_read_count": 0,
+        "reward_read_count": 0,
+    }
+    return positive_features, negative_features, metrics
+
+
+def _normalize_proxy_supervision_mode(value: str) -> str:
+    mode = str(value or "").strip().lower()
+    if mode not in SUPPORTED_PROXY_SUPERVISION_MODES:
+        supported = ", ".join(sorted(SUPPORTED_PROXY_SUPERVISION_MODES))
+        raise ValueError(f"unsupported proxy supervision_mode {value!r}; expected one of: {supported}")
+    return mode
 
 
 def train_learned_marginal_reward_weights(
@@ -779,6 +1086,38 @@ def _row_candidates(row: Mapping[str, Any], *, candidate_top_n: int) -> list[dic
         if not isinstance(raw, Mapping):
             continue
         candidate = dict(raw)
+        candidate.setdefault("selector_candidate_idx", idx)
+        candidate.setdefault("candidate_idx", idx)
+        candidate.setdefault("evidence_id", str(candidate.get("candidate_uid") or f"E{idx + 1:02d}"))
+        out.append(candidate)
+    return out
+
+
+def _structure_only_row_candidates(row: Mapping[str, Any], *, candidate_top_n: int) -> list[dict[str, Any]]:
+    """Project candidates onto deployment-time structural fields only."""
+    raw_candidates = row.get("candidate_pool") or row.get("candidates") or row.get("selected_candidates") or []
+    out: list[dict[str, Any]] = []
+    for idx, raw in enumerate(raw_candidates):
+        if int(candidate_top_n) > 0 and len(out) >= int(candidate_top_n):
+            break
+        if not isinstance(raw, Mapping):
+            continue
+        candidate = {
+            key: raw.get(key)
+            for key in _STRUCTURE_ONLY_CANDIDATE_FIELDS
+            if raw.get(key) is not None
+        }
+        raw_alignments = raw.get("candidate_atom_alignments")
+        if isinstance(raw_alignments, (list, tuple)):
+            candidate["candidate_atom_alignments"] = [
+                {
+                    key: alignment.get(key)
+                    for key in _STRUCTURE_ONLY_ALIGNMENT_FIELDS
+                    if alignment.get(key) is not None
+                }
+                for alignment in raw_alignments
+                if isinstance(alignment, Mapping)
+            ]
         candidate.setdefault("selector_candidate_idx", idx)
         candidate.setdefault("candidate_idx", idx)
         candidate.setdefault("evidence_id", str(candidate.get("candidate_uid") or f"E{idx + 1:02d}"))

@@ -1,0 +1,584 @@
+% Faithful English migration of the supplied Chinese draft.
+% Formatted with the unmodified official AAAI 2027 anonymous-submission style.
+\documentclass[letterpaper]{article}
+\usepackage[submission]{aaai2027}
+\usepackage[hyphens]{url}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+\urlstyle{rm}
+\def\UrlFont{\rm}
+\usepackage{natbib}
+\usepackage{caption}
+\frenchspacing
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{array}
+\usepackage{tabularx}
+
+\pdfinfo{
+/TemplateVersion (2027.1)
+}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\setcounter{secnumdepth}{0}
+
+\title{From Maps to Traces: Structure-Induced Evidence Organization for Fact Checking}
+\author{Anonymous Submission}
+\affiliations{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Fact checking over raw reports requires both retrieving relevant passages and organizing dispersed evidence into a claim-centered representation for verification. Existing methods often treat evidence organization as fixed preprocessing rather than exploiting its construction as a learning signal. We instead use organization as supervision: as a typed claim--evidence map evolves with an evidence prefix, its structural changes reveal how each candidate resolves claim atoms, expands coverage, and complements the current state. We propose \textbf{Map2Trace}, a \textbf{decompose--align--organize} framework that decomposes claims into verifiable atoms, builds a source-linked typed Evidence Map over an Atom-Union candidate pool, and converts map-induced state transitions into preferences for a state-conditioned selector. The selector is trained without fact labels, gold or teacher-provided evidence supervision, or verifier feedback, and yields both a compact verifier-facing prefix and an auditable selection trace. Under a shared matched verifier configuration, Map2Trace leads directly comparable methods on LIAR-RAW and remains competitive on RAWFC; it also obtains the best tabulated scores on both abstract-level metrics on the SciFact development split. LIAR-RAW ablations reveal substantial performance sensitivity to learned structural scoring and evidence order. An independent human audit further finds that 93.5\% of audited claims meet the strict joint requirements of faithfulness, atomicity, and complete coverage, supporting claim atomization as a reliable upstream input.
+\end{abstract}
+
+\begin{links}
+\link{Code and Artifacts}{ANONYMIZED_URL}
+\end{links}
+
+\section{Introduction}
+
+Automated fact checking has evolved from predicting veracity solely from claims or metadata to explicitly retrieving external evidence and jointly predicting a verdict. LIAR provides real-world political claims with fine-grained labels, but does not include gold evidence for retrieval \citep{Wang2017LIAR}; FEVER combines evidence-sentence retrieval with SUPPORTS/REFUTES/NOT-ENOUGH-INFO classification \citep{Thorne2018FEVER}; HoVer further extends verification to multi-hop reasoning across multiple documents \citep{Jiang2020HoVer}; and SciFact requires systems to identify evidence and determine stance jointly within a corpus of scientific abstracts \citep{Wadden2020SciFact}. In real-world settings, CofCED performs cascaded selection of reports and sentences from raw reports associated with a claim and introduces the LIAR-RAW and RAWFC datasets \citep{Yang2022CofCED}, whereas AVeriTeC extends the evidence source to the open Web \citep{Schlichtkrull2023AVeriTeC}. The development of these tasks requires systems not only to ``find relevant content,'' but also to decide which evidence the final verifier should see.
+
+Prior work has addressed evidence use from several directions. CofCED compresses raw reports with coarse-to-fine cascaded selectors \citep{Yang2022CofCED}; GEAR and KGAT propagate interactions among multiple evidence candidates through graph structures \citep{Zhou2019GEAR,Liu2019KGAT}; L-Defense and G-Defense generate competing explanations and graph-based defense structures, respectively \citep{Wang2024LDefense,Wang2026GDefense}; DelphiAgent derives verdicts through multi-agent feedback \citep{Xiong2025DelphiAgent}; and KG-CRAFT combines knowledge graphs with contrastive questions to organize multi-stage reasoning \citep{Lourenco2026KGCRAFT}. These systems process evidence in different ways before presenting it to the final verifier. However, the explicit \textbf{evidence unit--claim atom} correspondence and the construction path of the evidence set are not always preserved as first-class outputs. We therefore adopt a \textbf{decompose--align--organize} perspective and construct an explicitly observable and auditable evidence-selection pipeline for automated fact checking.
+
+Claim decomposition has been used to generate verifiable subquestions, construct programmatic verification steps, and improve the retrieval and verification of complex claims over open corpora \citep{Chen2022ClaimDecomp,Pan2023ProgramFC,Chen2023WildEvidence}. We embed claim decomposition into the entire evidence-selection pipeline, both as an upstream input and as the starting point of an auditable structure. The pipeline first produces independently verifiable claim atoms, then explicitly records the typed alignments between each evidence candidate and the atoms, and finally forms an atom-aware ordered evidence trace before verification.
+
+Sequential evidence selection also has substantial precedent. DQN-based evidence selection incorporates selected evidence into a sequential decision state \citep{Wan2021DQN}; natural-logic-guided retrieval updates a formal proof state from existing evidence and dynamically terminates retrieval \citep{Aly2022NaturalLogic}; studies of insufficient evidence directly examine when a verifier incorrectly treats incomplete input as sufficient \citep{Atanasova2022Insufficient}; and recent user-centric evidence ranking compares one-shot with incremental ranking and directly optimizes for complementary and sufficient information to appear earlier \citep{Alt2026EvidenceRanking}. In the raw-report setting, FFRR trains a retrieval policy using fine-grained feedback from a black-box LLM \citep{Zhang2024FFRR}. We instead investigate a different supervision boundary: whether structural changes in a typed Evidence Map across prefix states can serve as the primary signal, with map quality, retrieval relevance, and a frozen candidate index used only for deterministic tie-breaking, to automatically produce selector training preferences that do not depend on verdicts, gold evidence, or verifier feedback.
+
+To answer this question, we propose an atom-aware, structure-induced approach to evidence organization. Given a claim and its associated reports, the system sequentially performs claim atomization, claim-aware chunking, Atom-Union retrieval, and Evidence Map annotation. During training, structural gains at each rollout state determine a deterministic structure-induced ordering, and a nonnegative linear structural marginal score is learned from winner-vs-rest pairs. At inference time, the frozen selector accesses the full candidate pool and produces an audit ordering. The degree of evidence resolution and an evidence-capacity policy then determine the evidence prefix actually visible to the verifier, which is used to train the final verifier.
+
+Our main contributions are as follows:
+
+\begin{enumerate}
+\item We introduce an intermediate representation that organizes claim atoms, candidate--atom alignments, chunk identities, and stepwise map-induced state transitions into an auditable ordered evidence trace.
+\item We propose a structure-induced, state-conditioned selector that uses Evidence Map state transitions as its primary signal to reconstruct winner-vs-rest preferences and learns a prefix-dependent structural marginal score, without using fact labels, gold evidence traces, gold/teacher-provided evidence-order fields, or verifier feedback.
+\item We evaluate the method on LIAR-RAW, RAWFC, and SciFact and conduct detailed mechanism analyses to identify where the gains arise. For the LLM annotation process, independent double annotation and blinded adjudication by a third annotator establish the reliability of the annotations.
+\end{enumerate}
+
+\section{Related Work}
+
+\subsection{Fact Checking over Raw Reports}
+
+Raw-report fact checking operates on news reports that are relevant to a claim but have not yet been curated into a final explanation by human fact-checkers. CofCED first performs cascaded selection of explanatory sentences from the top-$K$ reports and introduces the LIAR-RAW and RAWFC datasets \citep{Yang2022CofCED}. DeReC uses dense sentence retrieval with a compact DeBERTa classifier, emphasizing the efficiency and scalability of retrieval in this setting \citep{Qazi2025DeReC}. Methods from the LLM era further reshape the evidence-to-verdict interface: L-Defense generates competing supporting and opposing explanations \citep{Wang2024LDefense}; RAFTS makes verdicts through retrieval and contrastive argumentation \citep{Yue2024RAFTS}; DelphiAgent reaches consensus through multi-role, multi-round feedback \citep{Xiong2025DelphiAgent}; and G-Defense and KG-CRAFT introduce a subclaim graph and knowledge-graph-guided contrastive reasoning, respectively \citep{Wang2026GDefense,Lourenco2026KGCRAFT}. FFRR trains a retrieval policy using fine-grained task feedback from a black-box LLM \citep{Zhang2024FFRR}. Most of these methods employ complex forms of evidence organization, such as graph-based or explanation-based reasoning, while approaches based on verifier feedback inevitably introduce a black box that impedes auditing. We therefore focus on raw evidence. In contrast to selector methods supervised by downstream feedback, we use structural state changes in a typed Evidence Map as the primary preference signal to construct a selector and obtain a verifier-facing ordering, while making the entire construction process strictly auditable.
+
+\subsection{Claim Decomposition and Structured Evidence}
+
+Claim decomposition is commonly used to reduce the difficulty of retrieving and verifying evidence for complex claims. Literal/implied subquestion generation transforms complex claims into answerable subquestions \citep{Chen2022ClaimDecomp}; ProgramFC represents a complex verification process as a program composed of multiple subtasks \citep{Pan2023ProgramFC}; and wild-evidence verification combines claim decomposition, two-stage retrieval, and claim-focused summaries to process open corpora \citep{Chen2023WildEvidence}. Meanwhile, GEAR, KGAT, G-Defense, and KG-CRAFT have demonstrated the role of graph structures in evidence aggregation, subclaim dependency modeling, and contrastive reasoning \citep{Zhou2019GEAR,Liu2019KGAT,Wang2026GDefense,Lourenco2026KGCRAFT}. We also use an Evidence Map, but for a different purpose: rather than performing verdict reasoning, the map serves as a typed intermediate representation for evidence selection. It explicitly links claim atoms, evidence units, and source spans, and computes structural changes for each prefix state.
+
+\subsection{Sequential Evidence Ordering and Sufficiency}
+
+Prior work has studied iterative evidence selection, compact evidence sets, and sufficient prefixes. DQN-based selection formulates precise evidence search as a sequential decision problem \citep{Wan2021DQN}; natural-logic-guided retrieval selects subsequent documents and determines when to stop according to the proof state induced by retrieved evidence \citep{Aly2022NaturalLogic}; insufficient-evidence analysis shows that verifiers may not reliably recognize missing information \citep{Atanasova2022Insufficient}. User-centric evidence ranking more directly studies complementary evidence and early sufficient prefixes, showing that incremental ranking and one-shot ranking have different capabilities \citep{Alt2026EvidenceRanking}.
+
+Together, these studies show that the contribution of an evidence candidate depends on the currently selected context. Our distinction lies in the source of supervision: our selector does not depend on gold evidence, verdict-conditioned rewards, or other downstream feedback. Instead, it uses state transitions in a typed claim--evidence map over a fixed candidate pool as the primary signal, with map quality, retrieval relevance, and a frozen candidate index used for deterministic tie-breaking, thereby producing prefix-dependent structural selection preferences.
+
+\section{Methodology}
+
+\subsection{Overview}
+
+The overall method is illustrated in Figure~\ref{fig:framework}.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.98\textwidth]{AAAI-FC-main.pdf}
+\caption{Structure-induced, label- and verifier-independent evidence
+organization. Claim atoms and source-linked evidence units are fused into an
+Atom-Union candidate pool and aligned through a typed Evidence Map.
+Prefix-conditioned map transitions induce winner-vs-rest preferences, which
+are distilled into a continuous state-conditioned selector without verdict
+labels, gold evidence order, or verifier feedback. The frozen selector produces
+a source-linked full-pool-access audit ordering; a separate capacity and
+context policy exposes only an order-preserving prefix to the label-token
+verifier. Gold labels are used solely for downstream verifier training.}
+\label{fig:framework}
+\end{figure*}
+
+Given a claim $c$ and a set of associated reports $\mathcal R$, the overall method comprises three layers:
+
+\begin{enumerate}
+\item \textbf{Upstream input construction.} The upstream modules perform claim decomposition, evidence-chunk segmentation, and candidate-pool construction to provide inputs to map construction and the selector. The resulting upstream artifacts are the claim atoms $\mathcal A=\{a_i\}_{i=1}^{m}$, evidence units $\mathcal U=\{u_j\}$, and the Atom-Union candidate pool $\mathcal C$.
+\item \textbf{Structure-induced evidence organization.} To organize the evidence, the method first constructs a typed Evidence Map that records candidate--atom relations. Based on the atoms covered by the current prefix, existing relations, and redundancy, the algorithm re-induces winner-vs-rest preferences at each rollout state and trains a structural marginal scorer. At inference time, the frozen scorer incrementally updates the structural state and reranks the full candidate pool, ultimately producing an ordered trace $\mathcal T$ once the resolution-rate and evidence-capacity constraints are met.
+\item \textbf{Downstream verification.} The claim, atom cues, and evidence text from the ordered trace $\mathcal T$ are rendered into a prompt used to fine-tune an LLM verifier. The final outputs are the veracity label $y$ for claim $c$ and the ordered trace $\mathcal T$.
+\end{enumerate}
+
+\subsection{Task Definition}
+
+Given a claim $c$, a set of associated reports $\mathcal R$, and a discrete label space $\mathcal Y$, the system must predict its veracity label $y\in\mathcal Y$. The reports yield a candidate evidence set $\mathcal C=\{u_j\}_{j=1}^{n}$. Let $\mathcal A$ denote the set of structural units in the decomposed claim, let $M$ denote the typed alignments between candidates and structural units, and let $p$ map each candidate to its report and source span. An input instance for evidence organization can therefore be written as
+
+\[
+\mathcal X=(c,\mathcal A,\mathcal C,M,p).
+\]
+
+We define the following sequential objective:
+
+\[
+\begin{aligned}
+J(\pi)
+&=\sum_{t=1}^{L}\gamma_t\,
+\Delta_{\mathrm{str}}\!\left(u_{\pi_t}\mid \mathcal T_{<t},\mathcal X\right),\\
+\gamma_1&\ge\gamma_2\ge\cdots\ge 0.
+\end{aligned}
+\]
+
+where $\mathcal T=(u_{\pi_1},\ldots,u_{\pi_L})$ is the ordered evidence trace, and $\Delta_{\mathrm{str}}$ denotes the structural marginal contribution of a candidate relative to the existing prefix. Construction of the trace $\mathcal T$ terminates subject to the resolution-rate threshold $\rho_{\mathrm{target}}$ and the evidence budget $(k_{\min}, k_{\max})$. A downstream policy then projects $\mathcal T$ into the verifier-visible prefix $\mathcal T^{\mathrm{vis}}$ according to the token budget, yielding the final prediction
+
+\[
+\mathcal T^{\mathrm{vis}}=P_B(\mathcal T),
+\qquad
+\hat y=\arg\max_{y\in\mathcal Y}
+p_{\theta_{\mathrm{ver}}}(y\mid c,\mathcal A,\mathcal T^{\mathrm{vis}}).
+\]
+
+\subsection{Upstream Input Construction}
+
+\subsubsection{Claim Atomization.}
+
+Claim decomposition has been used to generate verification subquestions and construct complex claim-verification procedures \citep{Chen2022ClaimDecomp,Pan2023ProgramFC,Chen2023WildEvidence}. We adopt this idea to use the claim atoms to define a bounded state space for subsequent retrieval and selection. The atomizer reads only the claim, without accessing external reports or fact labels, and follows independence and completeness constraints: it must not introduce facts beyond the claim, and each atom must be a semantically complete proposition. The module obtains atoms and queries through constrained structured generation. In our implementation, an LLM performs the atomization; detailed invocation parameters and prompts are reported in the appendix.
+
+\subsubsection{Claim-aware Evidence Chunking.}
+
+As a supporting upstream module, chunking segments each report into evidence units $u_j=[s_a,\ldots,s_b]$. The objective is to preserve local context while avoiding the delivery of large amounts of irrelevant text to the retriever and map annotator. Rather than operating strictly at the sentence level, the chunker places boundaries around spans that may contain multiple sentences while accounting for semantic completeness and relevance to the claim.
+
+Specifically, we jointly model semantic shifts and changes in claim relevance between adjacent sentences as a boundary signal, and select local peaks above an adaptive threshold as split points:
+
+\[
+\begin{aligned}
+    b_i=&w_{\mathrm{sem}}\!\left[1-\cos(\mathbf h_i,\mathbf h_{i+1})\right]+w_{\mathrm{rel}}\!\left|r(s_i,c)-r(s_{i+1},c)\right|,\\
+    i\in&\mathcal B_{\mathrm{split}}\iff b_i\ge \mu_b+\lambda\sigma_b\ \land\ b_i\ge\max(b_{i-1},b_{i+1}).
+\end{aligned}
+\]
+
+Here, $\mathbf h_i$ is the semantic representation of sentence $s_i$, $r(s_i,c)$ is the relevance of the sentence to claim $c$, and $\mathcal B_{\mathrm{split}}$ is the set of selected split boundaries. Intuitively, an evidence-unit boundary is placed where adjacent sentences exhibit a substantial semantic shift or change in claim relevance and that change forms a local peak.
+
+\subsubsection{Atom-Union Candidate Pool Construction.}
+
+Atom-Union is designed to balance global relevance to the original claim with fine-grained atom coverage, while constraining the candidate pool to a bounded and controllable size before Evidence Map annotation and subsequent selection. To unify the claim-level route and atom-level routes, we represent the original claim $c$ and atom queries $\{q_i\}_{i=1}^{m}$ as query views
+\[
+x\in\mathcal Q=\{c,q_1,\ldots,q_m\}.
+\]
+For any query view $x$ and evidence unit $u_j$, we define a unified multi-signal retrieval score:
+\[
+\begin{aligned}
+s(x,u_j)
+={}&\beta_1\,\operatorname{norm}\!\left(\cos(e_x,e_{u_j})\right)\\
++&\beta_2\,\operatorname{norm}\!\left(\operatorname{LexF1}(x,u_j)\right)\\
++&\beta_3\,\operatorname{norm}\!\left(\operatorname{BM25}(x,u_j)\right).
+\end{aligned}
+\]
+Here, $\operatorname{norm}(\cdot)$ denotes score normalization within the current retrieval route, and $e_x$ and $e_{u_j}$ are dense representations of the query and evidence unit, respectively. BM25 follows the classical probabilistic relevance framework \citep{Robertson2009BM25}.
+
+Using this unified scoring function, the claim-level route and atom-level routes apply the same retrieval strategy to retrieve globally relevant evidence units:
+
+\[
+\begin{aligned}
+\mathcal B &= \operatorname{TopK}_{k_b}\{u_j:s(c,u_j)\},\\
+R_i &= \operatorname{TopK}_{k_a}\{u_j:s(q_i,u_j)\}.
+\end{aligned}
+\]
+
+The system then uses reciprocal rank fusion to aggregate the different atom routes \citep{Cormack2009RRF}:
+\[
+\mathcal A_{\mathrm{route}}
+=
+\operatorname{RRF}(R_1,\ldots,R_m).
+\]
+Finally, it merges the atom-level aggregate with the claim-level pool, deduplicates candidates by a stable text/source key, and applies maximal marginal relevance to balance candidate relevance and diversity \citep{Goldstein1998MMR}:
+\[
+\mathcal C
+=
+\operatorname{MMR}\!\left(
+\operatorname{Dedup}
+\left(
+\mathcal B\cup\mathcal A_{\mathrm{route}}
+\right)
+\right).
+\]
+
+The claim-level route preserves global relevance to the complete claim, whereas the atom-level routes supplement coverage of fine-grained subpropositions. Together, they form the Atom-Union candidate pool $\mathcal C$ used by the Evidence Map and selector.
+
+\subsection{Evidence Organization}
+
+\subsubsection{Typed Evidence Map.}
+
+Graph-structured evidence representations have been used for multi-evidence aggregation and subclaim reasoning \citep{Zhou2019GEAR,Liu2019KGAT,Wang2026GDefense,Lourenco2026KGCRAFT}. The Evidence Map in this work serves a different purpose: rather than performing verdict-oriented message passing, it provides typed states for candidate selection. For each candidate--atom pair,
+
+\[
+M(u_j,a_i)=(r_{ij},d_{ij},c_{ij}),
+\]
+
+the relation type satisfies
+
+\[
+\begin{aligned}
+r_{ij}\in\{&\text{support},\text{refute},\text{qualify},\\
+             &\text{background},\text{irrelevant}\}.
+\end{aligned}
+\]
+
+Here, $d_{ij}$ denotes ordinal directness, and $c_{ij}\in[0,1]$ is the map annotator's self-reported confidence. Relation, directness, and confidence are generated by a constrained LLM annotator. This process undergoes a consistency check through a human-alignment experiment and can therefore provide annotations with a degree of reliability.
+
+\subsubsection{Structure-Induced Preferences.}
+
+We use changes in Evidence Map states as the primary signal for inducing preferences. The map-induced state of each atom is denoted by $h_i^{(t)}$, which takes a value in $\{U,S,R,Q,C\}$ and is initialized as $U$; the overall state is $H^{(t)}=\{h_i^{(t)}\}_{i=1}^{m}$. These states describe evidence acquisition progress, respectively recording whether an atom remains uncovered or whether support, refute, qualify, or mutually conflicting map relations have been observed.
+
+To train the subsequent selector, we select candidate evidence according to the magnitude of its structural gain. Specifically, evidence that can change the map-induced states of more atoms is given higher priority as a positive preference. At each prefix state, the highest-priority candidate is chosen as the winner and paired with all remaining candidates to form winner-vs-rest pairs:
+
+\[
+\mathcal P_t=\{(u_t^+,u^-):u^-\in\mathcal C_t\setminus\{u_t^+\}\}.
+\]
+
+After selecting the winner, we update the structural state and the prefix before generating preferences for the next round. Consequently, the preference relation of the same candidate can change with the prefix. This procedure does not access verdict labels, gold/teacher-provided evidence-order fields, or verifier feedback.
+
+\textbf{State-Conditioned Selector.}
+
+The rules used to select evidence preference pairs serve only to construct pairwise preference constraints; they do not directly act as the final ranking policy. Lexicographic rules express clear structural priorities, but their decision boundaries are rigid: once a higher-priority condition is triggered, other signals, including coverage, relation novelty, redundancy, source diversity, and evidence cost, cannot readily be traded off jointly.
+
+We therefore distill the discrete rule-based preferences into a continuous, state-conditioned structural scorer. While preserving the direction imposed by structural supervision, this scorer jointly weights multiple weak signals and re-estimates each candidate's marginal contribution after every prefix update.
+
+Specifically, each candidate at state $t$ is mapped to several groups of structural marginal features:
+
+\[
+\phi^{(t)}(u)=\left[
+\begin{gathered}
+\phi_{\mathrm{state}},\ \phi_{\mathrm{coverage/relation}},\
+\ \phi_{\mathrm{novelty}},\\
+\phi_{\mathrm{quality}},\ \phi_{\mathrm{retrieval}},\
+\ \phi_{\mathrm{cost}}
+\end{gathered}
+\right].
+\]
+
+These feature groups respectively characterize progress in the current structural state, information about new atoms and relations, source and textual novelty, map-annotation quality, retrieval relevance, and context cost. In practice, we construct a 12-dimensional structural marginal feature vector, yielding the following utility function:
+
+\[
+S_\theta^{\mathrm{str}}(u\mid\mathcal T_{<t},H^{(t)})
+=b+\sum_{\ell\ne\mathrm{cost}}w_\ell\phi_\ell^{(t)}(u)
+-w_c\phi_{\mathrm{cost}}^{(t)}(u),
+\]
+
+where $w_\ell=\operatorname{softplus}(\theta_\ell)$ and $w_c=\operatorname{softplus}(\theta_c)$, ensuring that the directions of the non-cost features remain interpretable. All positive-feature weights and the cost weight start from an equal-weight neutral initialization.
+
+The parameters are learned with the standard pairwise logistic ranking objective \citep{Burges2005RankNet}:
+
+\[
+\begin{aligned}
+\mathcal L(\theta)
+&={}\frac{1}{|\mathcal P|}
+\sum_{(u^+,u^-)\in\mathcal P}\\
+&\quad\log\!\left(1+\exp\!\left[
+-S_\theta^{\mathrm{str}}(u^+)+S_\theta^{\mathrm{str}}(u^-)
+\right]\right).
+\end{aligned}
+\]
+
+\subsubsection{Evidence Ordering.}
+
+After training, we fix $S_\theta^{\mathrm{str}}$ and re-extract state-dependent features for the remaining candidates at every step:
+
+\[
+u_t=\arg\max_{u\in\mathcal C_t}
+S_\theta^{\mathrm{str}}(u\mid\mathcal T_{<t},H^{(t)}).
+\]
+
+After selecting $u_t$, the system updates the atom states, observed relations, source coverage, and novelty statistics, and then recomputes the scores for the next step, thereby incrementally constructing an Evidence Trace. We use a target-resolution-aware min--max policy to determine when Trace construction should stop. Specifically, the resolved-atom rate at step \(t\) is defined as
+
+\[
+\rho_t=\frac{1}{|\mathcal A|}\sum_{a_i\in\mathcal A}
+\mathbb{I}\!\left[h_i^{(t)}\in\{S,R,Q,C\}\right],
+\]
+
+and the state is defined as target\_resolved when $\rho_t\ge\rho_{\mathrm{target}}$. To avoid premature stopping on the basis of only a few evidence units, the min--max policy retains at least $k_{\min}$ evidence units. After reaching this lower bound, it stops at the first position satisfying target\_resolved; otherwise, it continues until $k_{\max}$ or the end of the audited sequence is reached.
+
+\subsection{Downstream Verification}
+
+\subsubsection{Verifier Rendering and Prediction.}
+
+In addition to the claim, the verifier prompt renderer outputs only a short atom cue and the original evidence text for each visible step. To prevent a small number of exceptionally long evidence units from expanding the prompt without bound, we apply a token-budget policy, $\mathcal T^{\mathrm{vis}}=P_B(\mathcal T)$; content exceeding the token budget is softly truncated at evidence-unit boundaries. The verifier maps labels to single-token answer choices. Given the label set $\mathcal Y=\{y_1,\ldots,y_C\}$ and a mapping $g:\mathcal Y\rightarrow\{A,B,\ldots\}$, the training objective is
+
+\[
+\mathcal L_{\mathrm{ver}}=-\sum_n
+\log p_{\theta_{\mathrm{ver}}}\left(g(y_n)\mid
+\operatorname{Render}(c_n,\mathcal A_n,\mathcal T_n^{\mathrm{vis}})\right).
+\]
+
+The verifier is implemented as a parameter-efficiently adapted autoregressive language model; LoRA reduces fine-tuning cost through low-rank updates \citep{Hu2022LoRA}. The specific backbone, checkpoint, rendering style, and training hyperparameters are reported together in the Experiments section.
+
+\section{Experiments}
+
+\subsection{Research Questions}
+
+Our experiments address six research questions:
+
+\begin{itemize}
+\item \textbf{RQ1:} How does the proposed Map2Trace method perform on LIAR-RAW and RAWFC relative to comparable baselines for the same task?
+\item \textbf{RQ2:} Can Map2Trace be applied to SciFact, which differs in both its label taxonomy and evidence sources?
+\item \textbf{RQ3:} Which components account for the principal gains in the complete pipeline?
+\item \textbf{RQ4:} To what extent does each field in the Map annotations affect the final results?
+\item \textbf{RQ5:} How do evidence capacity and different truncation strategies affect verification performance and context cost?
+\item \textbf{RQ6:} Are the results produced by LLM-based annotation reliable, and how consistent are they with human annotations?
+\end{itemize}
+
+\subsection{Datasets and Evaluation Protocol}
+
+\textbf{LIAR-RAW} \citep{Yang2022CofCED} contains 12.8K real-world political claims, six fine-grained labels, and the raw reports associated with the claims. \textbf{RAWFC}, also introduced by \citep{Yang2022CofCED}, contains three-way labeled claims from Snopes and their associated raw reports \citep{Yang2022CofCED}. We use the official splits and report test accuracy and macro-P/R/F1.
+
+\textbf{SciFact} \citep{Wadden2020SciFact} contains 1.4K expert-written claims, 5,183 scientific abstracts, abstract-level stance annotations, and sentence-level rationale annotations. Because the complete official test set has not been publicly released, we report results on the development split.
+
+\subsection{Implementation Details}
+
+\textbf{LLM-based structural annotation.} Both atom decomposition and Evidence Map structural annotation are performed through a unified LLM API using \texttt{\detokenize{deepseek-v4-flash}} \citep{DeepSeekAI2026V4}. We disable thinking mode, set \textbf{temperature} to 0 and \textbf{top-$p$} to 1.0, and limit the maximum output to 2,048 tokens. We freeze all annotation artifacts and provide them in full in an anonymous repository for strict reproducibility.
+
+\textbf{Retrieval and selector.} For LIAR-RAW and RAWFC, we use \texttt{BAAI/bge-base-en-v1.5} \citep{Xiao2023BGE} as the dense retrieval encoder. SciFact uses the same dense encoder for open-corpus retrieval. Preference training performs a 5-step rollout over the top-20 candidates for each example and runs for 30 epochs with a learning rate of 0.05, starting from an equal-weight neutral initialization. At inference time, audit ordering instead accesses the full candidate pool after deduplication and validity checks.
+
+\textbf{Verifier and context policy.} All three datasets use Ministral-3-8B-Instruct-2512 \citep{MistralAI2025Ministral3} with a LoRA verifier. The maximum full-input length is 1,024 tokens. The verifier makes deterministic decisions from the logits of candidate label tokens, without a generative sampling temperature or thinking mode. Training uses 4-GPU ZeRO-2, BF16, a per-device batch size of 1, gradient accumulation of 4, a learning rate of $2\times10^{-5}$, evaluation and checkpoint saving every 100 steps, patience of 12, AdamW, weight decay of 0.01, a warmup ratio of 0.03, a cosine-with-restarts scheduler, and LoRA with $r=16$, $\alpha=32$, dropout of 0.1, applied to the attention and MLP projections.
+
+\subsection{Claim Atomization Reliability Study}
+
+To audit claim atomization as an upstream input, we sample 100 claims each from the LIAR-RAW and RAWFC validation data, using a mixture of 70\% random sampling and 30\% hard-case prioritization, yielding 257 atoms. Two annotators independently assess faithfulness, atomicity, and completeness. A third annotator, blinded to the A/B labels, independently adjudicates all exact mismatches on the primary dimensions as well as one within-claim conflict.
+
+\begin{table}[t]
+\centering
+{\small
+\setlength{\tabcolsep}{1.5pt}
+\begin{tabularx}{\columnwidth}{@{}Y l r r r r@{}}
+\toprule
+\textbf{Dimension} & \textbf{Gold $N$} & \textbf{Pass} & \textbf{Exact} & \textbf{$\kappa$} & \textbf{AC1} \\
+\midrule
+Faithfulness & 257 atoms & 99.22\% & 95.72\% & 0.133 & 0.955 \\
+Atomicity & 257 atoms & 95.72\% & 88.72\% & 0.306 & 0.866 \\
+Complete coverage & 200 claims & 99.00\% & 95.48\% & -0.023 & 0.953 \\
+\bottomrule
+\end{tabularx}
+}
+\caption{Human reliability results for claim atomization.}
+\label{tab:atom-reliability}
+\end{table}
+
+Table~\ref{tab:atom-reliability} shows that, on the audited LIAR-RAW/RAWFC sample, the LLM-based claim atomization closely aligns with independent human quality judgments. In the final human gold annotations, 99.22\% of the atoms are judged faithful, 95.72\% satisfy the atomicity requirement of expressing a single, independently verifiable proposition, and 99.00\% of the claims achieve complete atom coverage. The corresponding dataset-stratified, claim-cluster bootstrap 95\% intervals are 98.02\%--100.00\%, 92.80\%--98.12\%, and 97.50\%--100.00\%, respectively. Even under the stricter requirement that all atoms of a claim simultaneously pass both faithfulness and atomicity while completely covering the original claim, 187/200 (93.50\%) claims still achieve a strict pass. This experiment therefore supports treating the current atomization as a high-quality, reliable upstream structural input for subsequent retrieval and Evidence Map construction.
+
+\subsection{Evidence Map Annotation Reliability Study (Exp2; Placeholder)}
+
+\textbf{Placeholder note.} Exp2 will independently audit the \texttt{\detokenize{relation}}, \texttt{\detokenize{directness}}, and \texttt{\detokenize{confidence}} annotations for candidate--atom pairs in the Evidence Map. The current version reserves only the placement of the results and the reporting protocol. No numerical values will be inserted, and neither the results nor contribution claims of this paper will be extended on this basis, until formal double annotation, disagreement adjudication, and artifact auditing have been completed.
+
+\begin{table}[t]
+\centering
+{\small
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabularx}{\columnwidth}{@{}l Y@{}}
+\toprule
+\textbf{Field} & \textbf{Planned audit} \\
+\midrule
+Relation & Human Cohen's $\kappa$; LLM overall/per-relation accuracy; confusion matrix. \\
+Directness & Human Spearman $\rho$; LLM ordinal agreement (TBD); ordinal error analysis. \\
+Confidence & Human target definition TBD; LLM comparison and calibration/ECE target TBD. \\
+\bottomrule
+\end{tabularx}
+}
+\caption{Planned Evidence Map annotation reliability study (Exp2).}
+\label{tab:map-reliability-placeholder}
+\end{table}
+
+Table note: Exp2 measures the reliability of the structural annotations themselves, whereas the RQ4 component ablation measures the sensitivity of downstream results to the map signals; these are not the same question. \texttt{\detokenize{gold_confidence}} records the human annotator's self-reported confidence. Before results are entered, the target for its comparison with LLM confidence and the calibration objective must be frozen separately; it must not be equated with factual gold in advance.
+
+\subsection{Main Results}
+
+This section evaluates the proposed method on LIAR-RAW, RAWFC, and SciFact. We first compare verification performance in the raw-report setting and then report full-pipeline results on SciFact to examine the applicability of our method to scientific fact-checking.
+
+\begin{table*}[t]
+\centering
+{\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabularx}{0.97\textwidth}{Y *{3}{r} @{\hspace{10pt}} *{3}{r}}
+\toprule
+\textbf{Method} & \multicolumn{3}{c}{\textbf{LIAR-RAW}} & \multicolumn{3}{c}{\textbf{RAWFC}} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+& \textbf{P} & \textbf{R} & \textbf{F1} & \textbf{P} & \textbf{R} & \textbf{F1} \\
+\midrule
+\multicolumn{7}{l}{\textbf{Original associated-report setting}} \\
+\addlinespace[1pt]
+CofCED \citep{Yang2022CofCED} & 29.48 & 29.55 & 28.93 & 52.99 & 50.99 & 51.07 \\
+L-Defense \citep{Wang2024LDefense} & 30.55 & 32.20 & 30.53 & 61.72 & 61.01 & 61.20 \\
+G-Defense \citep{Wang2026GDefense} & 34.17 & 32.37 & 32.49 & 66.29 & 65.49 & 65.50 \\
+DeReC \citep{Qazi2025DeReC} & \underline{35.94} & 32.24 & 33.13 & 65.58 & 64.56 & 64.60 \\
+FFRR \citep{Zhang2024FFRR} & 34.50 & \underline{32.60} & \underline{33.50} & 56.50 & 57.40 & 57.00 \\
+FactLLaMAKnow \citep{Cheung2023FactLLaMA} & 32.46 & 32.05 & 30.44 & 56.11 & 55.50 & 55.65 \\
+DelphiAgent \citep{Xiong2025DelphiAgent} & 31.33 & 28.36 & 28.36 & \underline{68.05} & \underline{68.03} & \underline{68.04} \\
+\textbf{Map2Trace (Ours)} & \textbf{38.37} & \textbf{35.87} & \textbf{36.66} & \textbf{69.09} & \textbf{69.06} & \textbf{69.00} \\
+\midrule
+\multicolumn{7}{l}{\textbf{External evidence setting}} \\
+\addlinespace[1pt]
+HiSS \citep{Zhang2023HiSS} & 46.80 & 31.30 & 37.50 & 53.40 & \underline{54.40} & 53.90 \\
+RAFTS \citep{Yue2024RAFTS} & \underline{47.10} & \underline{37.90} & \underline{42.00} & \underline{62.80} & 52.60 & 57.30 \\
+AFEV \citep{Zheng2025AFEV} & \textbf{48.20} & \textbf{40.30} & \textbf{43.90} & \textbf{63.30} & \textbf{57.60} & \underline{60.20} \\
+RAV \citep{Shukla2025RAV} & -- & -- & 29.33 & -- & -- & \textbf{67.53} \\
+\bottomrule
+\end{tabularx}
+}
+\caption{Published comparisons on LIAR-RAW and RAWFC, grouped by evidence setting. \textit{Original associated-report setting} restricts evidence to the raw reports paired with each benchmark claim, whereas \textit{External evidence setting} supplements or replaces these reports with web-retrieved knowledge, external corpora, or gold/author-written evidence.}
+\label{tab:liar-raw-rawfc-main-result}
+\end{table*}
+
+\begin{table}[t]
+\centering
+{\small
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabularx}{\columnwidth}{@{}Y r r@{}}
+\toprule
+\textbf{Method} & \shortstack{\textbf{Abstract}\\\textbf{Label-only}} & \shortstack{\textbf{Abstract}\\\textbf{Label+Rationale}} \\
+\midrule
+VeriSci \citep{Wadden2020SciFact} & 52.10 & 50.00 \\
+ParagraphJoint \citep{Li2021ParagraphJoint} & 65.10 & 59.90 \\
+PrunE \citep{Fang2025PrunE} & 63.21 & 60.10 \\
+QMUL-SDS \citep{Zeng2021QMULSDS} & 63.40 & 61.10 \\
+VerT5erini \citep{Pradeep2021VerT5erini} & 65.07 & 61.72 \\
+ARSJoint \citep{Zhang2021ARSJoint} & \underline{66.70} & 62.40 \\
+RerrFact \citep{Rana2022RerrFact} & 64.59 & \underline{64.02} \\
+\textbf{Map2Trace (Ours)} & \textbf{71.98} & \textbf{64.78} \\
+\bottomrule
+\end{tabularx}
+}
+\caption{SciFact full-pipeline results on the official development split. All values are micro-F1 percentages computed with the official scorer. Abstract-level metrics evaluate document-level label prediction with or without rationale requirements.}
+\label{tab:scifact-results}
+\end{table}
+
+Table~\ref{tab:liar-raw-rawfc-main-result} shows that, in the directly comparable associated-report setting, Map2Trace achieves macro-F1 scores of 36.66 and 69.00 on LIAR-RAW and RAWFC, respectively, outperforming the comparable methods in the same original associated-report setting. Compared with methods in the external evidence setting, which introduce additional evidence, Map2Trace lags behind on LIAR-RAW but retains an advantage on RAWFC. This finding suggests that the key evidence for RAWFC may be easier to locate within the raw reports. It also shows that, with only a simple evidence organization method, Map2Trace can outperform most more complex methods, such as the agent-based DelphiAgent. Table~\ref{tab:scifact-results} shows strong SciFact results on both abstract-level metrics. However, because the complete test split was unavailable, the set of comparable methods is limited, and the persuasiveness of these metrics should be strengthened by subsequently evaluating Map2Trace on the test split.
+
+\subsection{Selector Mechanism Ablation}
+
+To answer RQ3 and identify the sources of component-level gains, this ablation examines the necessity of the individual components of the evidence selection mechanism, including the source of the candidate pool, whether learning is used, and the evidence order. Because the RAWFC and SciFact test/validation sets are small and therefore susceptible to noise, all experiments are conducted on the larger LIAR-RAW dataset using the same verifier training configuration as the main method (Ministral-3-8B + LoRA). The variants are defined as follows:
+
+\begin{itemize}
+\item \textbf{S0 no evidence}: The verifier receives no evidence and observes only the claim, providing a performance lower bound.
+\item \textbf{S1 Random}: Evidence is selected at random from the unretrieved raw evidence pool.
+\item \textbf{S2 Baseline pool only}: The selector uses only the baseline candidate pool produced from the raw claim.
+\item \textbf{S3 Atom route only}: Only the candidate pool produced by the atom routes is used, without the baseline pool, to test the necessity of the union.
+\item \textbf{S4 no selector}: The complete Atom-Union pool is used, but candidates are ranked only by their original retrieval scores without the selector.
+\item \textbf{S5 no learned}: A complete map-driven greedy chain is constructed, but the selector weights are manually specified rather than learned.
+\item \textbf{S6 Shuffle}: The trace produced by the learned selector in the main method is shuffled to test the value of evidence ordering.
+\end{itemize}
+
+\begin{table}[t]
+\centering
+{\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\columnwidth}{@{}Y r r@{}}
+\toprule
+\textbf{Variant} & \textbf{Acc.} & \textbf{Macro-F1} \\
+\midrule
+S0 no evidence & 30.70 & 31.02 \\
+S1 Random & 31.25 & 31.68 \\
+S2 Baseline pool only & 33.81 & 34.51 \\
+S3 Atom route only & 31.15 & 32.11 \\
+S4 no selector & \underline{35.01} & \underline{35.37} \\
+S5 no learned & 34.85 & 34.92 \\
+S6 Shuffle & 31.7 & 32.90 \\
+\textbf{Full} & \textbf{35.97} & \textbf{36.66} \\
+\bottomrule
+\end{tabularx}
+}
+\caption{Selector-mechanism ablation on LIAR-RAW.}
+\label{tab:selector-ablation}
+\end{table}
+
+Table~\ref{tab:selector-ablation} reports verifier performance for each ablation setting on LIAR-RAW. The S0--S3 results show that evidence itself, as well as processed evidence, can already yield effective performance. S4 and S5 further demonstrate that organizing the evidence can improve performance. However, without learning, the purely map-driven greedy chain performs worse than S4, which relies only on evidence relevance. The reason is that the map itself provides only relational information; without scoring by a utility function that incorporates retrieval scores, the available information is insufficient. This result also demonstrates the necessity of the learning process. S6 further indicates that unordered evidence incurs a large performance loss relative to ordered evidence. Although an optimal evidence set would intuitively be unordered, the constraints of current attention-based verifiers make it necessary to consider evidence order rather than evidence selection alone.
+
+\subsubsection{Evidence Map Ablation}
+
+The atom--evidence map is the structured intermediate representation used by the selector, and multiple marginal features depend on it. The atom-state transitions in the greedy chain and the minmax truncation position $K^\ast$ are also driven by relation and directness. To answer RQ4, this ablation removes each of the three map signals in turn and examines its contribution to the final verification decision.
+
+The experiment is conducted on the larger LIAR-RAW dataset. All variants share exactly the same configuration as the main method and differ only in the map signals provided as input; the selector weights are retrained over the corresponding degraded feature sets. The variants are defined as follows:
+
+\begin{itemize}
+\item \textbf{no relation}: The relation $r_{ij}$ of every pair is degraded to background, so an atom never enters state $S$, $R$, or $Q$.
+\item \textbf{no directness}: Directness $d_{ij}$ is degraded to a neutral level, reducing the resolution gain $\delta(d)$ and preventing directness from independently triggering a state transition.
+\item \textbf{no confidence}: Confidence $c_{ij}$ is forced to 1.0, rendering the $\max(c,0.5)$ clipping ineffective and artificially amplifying the resolution gain.
+\item \textbf{no map}: All of $r$, $d$, and $c$ are degraded, the 6 map-related features are set to zero, and the selector relies only on retrieval and text novelty.
+\end{itemize}
+
+\begin{table}[t]
+\centering
+{\small
+\setlength{\tabcolsep}{1.5pt}
+\begin{tabularx}{\columnwidth}{@{}Y r r r r r@{}}
+\toprule
+\textbf{Variant} & \textbf{Acc.} & \textbf{M-F1} & \textbf{$\bar\rho$} & \textbf{$\bar{K^\ast}$} & \textbf{$K^\ast{=}5$} \\
+\midrule
+\textbf{full map (Ours)} & \textbf{35.97} & \textbf{36.66} & 0.774 & 6.23 & 68.9\% \\
+no relation & \underline{35.25} & \underline{35.53} & 0.000 & 9.69 & 0.8\% \\
+no directness & 34.37 & 34.16 & 0.000 & 9.69 & 0.8\% \\
+no confidence & 33.01 & 33.19 & 0.774 & 6.23 & 68.6\% \\
+no map & 33.57 & 34.32 & 0.000 & 9.69 & 0.8\% \\
+\bottomrule
+\end{tabularx}
+}
+\caption{Evidence Map ablation on LIAR-RAW.}
+\label{tab:map-ablation}
+\end{table}
+
+Table~\ref{tab:map-ablation} reports verifier performance on LIAR-RAW, together with the average atom resolution rate $\bar\rho$ and average evidence capacity $\bar{K^\ast}$ after minmax truncation for each variant. The value of $\bar{K^\ast}$ directly reflects how the map controls evidence capacity: the higher the resolution rate, the more examples terminate early at $k_{\min}{=}5$. Several observations follow from the ablation results. The full map outperforms no map, demonstrating that LLM-generated structured annotations provide the selector with useful signals beyond the retrieval score. Relation, directness, and confidence provide gains of different magnitudes. Notably, although no relation is numerically close to the full map, its evidence capacity increases by 50\%. This result suggests that the core value of the map lies in allowing the selector to attain equal or better verification performance with less evidence and lower context cost, rather than merely creating a larger final-F1 gap. This efficiency advantage is particularly important under restricted evidence budgets or in settings that are sensitive to long-context noise.
+
+\subsubsection{Evidence Capacity Sensitivity}
+
+Different stopping policies for evidence construction produce Evidence Traces with different lengths and distributions. To investigate the effects of these policies and answer RQ5, each policy is applied consistently when constructing the training, validation, and test prompts, and a separate verifier is trained for each policy using the same training configuration. All experiments are conducted on LIAR-RAW.
+
+We compare the following three classes of policies:
+
+\begin{itemize}
+\item \textbf{fixed-$k$}: Trace construction stops after the $k$th item, where $k\in\{3,5,7,9\}$.
+\item \textbf{minmax$(k_{\min},k_{\max})$}: At least $k_{\min}$ items are retained. Thereafter, construction stops when $\rho_t$ reaches $\rho_{\mathrm{target}}$; otherwise, it continues until $k_{\max}$ is reached. We use $(k_{\min},k_{\max})\in\{(3,8),(3,10),(5,10),(5,12),(7,12)\}$.
+\item \textbf{budget-$B$}: The longest prefix whose cumulative evidence-side token cost does not exceed budget $B$ is retained, where $B\in\{512,768,1024\}$.
+\end{itemize}
+
+\begin{table}[b]
+\centering
+{\small
+\setlength{\tabcolsep}{1.2pt}
+\begin{tabularx}{\columnwidth}{@{}Y r r r r r@{}}
+\toprule
+\textbf{Policy} & \textbf{Acc.} & \textbf{M-F1} & \textbf{$\bar{K^\ast}$} & \textbf{$\bar{T}_{\mathrm{prompt}}$} & \textbf{Trunc.} \\
+\midrule
+fixed $k{=}3$ & 33.17 & 34.12 & 2.99 & 436.33 & 0.00\% \\
+fixed $k{=}5$ & 33.25 & 33.91 & 4.95 & 603.45 & 0.16\% \\
+fixed $k{=}7$ & 34.13 & 34.03 & 6.84 & 751.29 & 3.60\% \\
+fixed $k{=}9$ & 34.77 & 34.81 & 8.36 & 867.65 & 25.18\% \\
+minmax $(3,8)$ & 33.17 & 33.84 & 4.24 & 540.19 & 4.16\% \\
+minmax $(3,10)$ & 33.57 & 33.86 & 4.54 & 562.51 & 12.07\% \\
+\textbf{minmax $(5,10)$} & \textbf{35.97} & \textbf{36.66} & 5.96 & 677.90 & 12.15\% \\
+minmax $(5,12)$ & 35.17 & 35.22 & 6.07 & 686.65 & 20.62\% \\
+minmax $(7,12)$ & 33.25 & 34.50 & 7.47 & 798.46 & 22.70\% \\
+budget $B{=}512$ & 35.01 & 36.05 & 9.17 & 923.07 & 30.46\% \\
+budget $B{=}768$ & 34.05 & 34.93 & 9.47 & 949.29 & 93.37\% \\
+budget $B{=}1024$ & 34.45 & 35.03 & 9.47 & 949.29 & 93.45\% \\
+\bottomrule
+\end{tabularx}
+}
+\caption{Verifier-visible prefix-policy sensitivity on the LIAR-RAW test set. Accuracy and Macro-F1 are percentages.}
+\label{tab:prefix-policy}
+\end{table}
+
+Table~\ref{tab:prefix-policy} reports accuracy, Macro-F1, and the actual context cost on the LIAR-RAW test set ($n{=}1251$). The quantity $\bar{K^\ast}$ is the average number of evidence units actually received by the verifier after the context guard, and $\bar{T}_{\mathrm{prompt}}$ is the average number of tokenizer tokens in the complete input prompt excluding the target. The prompt truncation rate is the percentage of examples for which trailing evidence from the intended prefix produced by the policy is removed by the common 1,024-token guard.
+
+The capacity experiment yields several key observations: (1) increasing a fixed capacity does not produce consistent Macro-F1 gains, as enlarging the fixed prefix continuously increases context cost without guaranteeing a corresponding improvement in Macro-F1; and (2) structure-conditioned stopping offers a more favorable performance--cost trade-off. Compared with the best-performing fixed configuration, $k{=}9$, minmax$(5,10)$ is numerically higher by 1.85 Macro-F1 points while using an average of 2.40 fewer evidence units and 189.75 fewer prompt tokens. Compared with budget-$B{=}512$, it is numerically higher by 0.61 Macro-F1 points while using an average of 3.22 fewer evidence units and 245.17 fewer prompt tokens.
+
+\section{Limitations}
+
+First, claim decomposition does not always reliably improve fact-checking performance. Incorrect decomposition, omitted qualifiers, or excessive fragmentation may still propagate to retrieval and the Evidence Map \citep{Hu2025DecompositionDilemmas}. To audit and quantify this risk, we conducted independent double annotation by two annotators and blinded adjudication by a third annotator over 200 claims and 257 atoms. The pass rates in the final human gold annotations were 99.22\% for faithfulness, 95.72\% for atomicity, and 99.00\% for complete coverage. These results show that, within the audited sample in this study, the atomization artifacts align closely with human quality judgments and identify atomicity as the primary residual risk. Because the sample contains equal-sized samples from two validation sets and oversamples difficult examples, this conclusion cannot be generalized to claim that claim decomposition is universally reliable, nor does it demonstrate that decomposition causally improves downstream verification.
+
+Second, the Evidence Map still depends on an LLM API, and Exp1 covers only claim atomization; its findings cannot be extrapolated to validate the relation, directness, or confidence annotations. The independent double annotation, adjudication, and calibration analysis for Exp2 remain to be completed. Frozen caches, prompt/schema hashes, call dates, and invocation metadata improve reproducibility and artifact-level auditability, but they do not make these structured annotations equivalent to human gold supervision.
+
+Third, source linkage is not equivalent to source credibility. Although a trace can be linked back to its original report and span, we do not assess the credibility of news sources or prevent multiple reports from copying the same false information. The recall ceiling of the upstream candidate pool likewise constrains all downstream selection.
+
+Fourth, the map-induced covered-atom rate is a structural proxy and is not equivalent to evidence sufficiency in a human or logical sense. Prior work has shown that a verifier may still make high-confidence predictions when evidence is missing \citep{Atanasova2022Insufficient}. We use the covered-atom rate only as a proxy for prefix projection and draw no empirical conclusion about its relationship with truthfulness, sufficiency, or downstream performance.
+
+Fifth, the ordered evidence trace is an inspectable artifact of the system construction process and does not automatically reveal the causal basis of the verifier's decision. Research on rationales and explanations distinguishes readability, sufficiency, comprehensiveness, and faithfulness \citep{Lei2016Rationalizing,DeYoung2020ERASER,Jacovi2020Faithfulness}, and these metrics may themselves be affected by distribution shifts and optimization objectives \citep{Hsia2024Goodhart}. We do not present the audit trace as an explanation of the model's reasoning.
+
+Finally, greedy state-conditioned ordering does not guarantee a globally shortest or globally optimal trace. Our mechanism evidence comes only from fixed-$K$ validation diagnostics over two seeds, while the training distributions of the verifier and the input organization change simultaneously; it therefore does not support claims of significance, causality, universal ordering benefits, or robust co-adaptation. The main-results tables report a single canonical run for each dataset and provide neither multi-seed means nor variances. The SciFact results are obtained on the official development split, which is also used for checkpoint selection, and thus support only a descriptive claim about the applicability of the method in the corresponding scientific fact-checking setting. Precise sentence-level evidence localization remains substantially weaker than abstract-level verification.
+
+\section{Conclusion}
+
+This work investigates how to explicitly construct an atom-indexed, source-linked evidence trace before the final fact-checking decision. The method connects claim atomization, Atom-Union retrieval, and a typed Evidence Map, using map-induced state transitions as the primary preference signal; map quality, retrieval relevance, and frozen candidate indices are used only for deterministic tie-breaking, without accessing verdict labels, gold/teacher-provided evidence orders, or verifier feedback. The learned state-conditioned structural scorer accesses the complete candidate pool and produces a full-pool-access audit ordering, after which an independent prefix policy produces verifier-visible evidence. Independent double annotation and third-annotator adjudication in Exp1 show that 99.22\%, 95.72\%, and 99.00\% of the generated atoms pass the final human gold judgments for faithfulness, atomicity, and complete coverage, respectively. These findings indicate that, within the audited scope of this study, automatic atomization aligns closely with human quality judgments and can serve as a reliable upstream input for subsequent structure construction; this evidence covers only claim atomization and does not validate the relation, directness, or confidence fields of the Evidence Map. Test-set evaluation on LIAR-RAW and RAWFC, official-development evaluation on SciFact, and two-seed fixed-$K$ diagnostics on LIAR-RAW jointly support the feasibility of this selector-supervision boundary across different fact-checking settings. The crossover also indicates that the direction and magnitude of the organization effect vary with the verifier training distribution and training seed. The system retains a source-linked evidence-organization artifact that can be traced back to its sources, but we do not equate this artifact with a faithful explanation of the verifier or claim a universal ordering advantage.
+
+\bibliography{references}
+
+\end{document}

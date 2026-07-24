@@ -1,0 +1,229 @@
+{
+  "adjudication": {
+    "confidence_field_count": 0,
+    "exact_gold_recommended": {
+      "additional_unique_pairs_vs_protocol": 3,
+      "definition": "Any relation mismatch plus any directness mismatch.",
+      "directness_field_count": 86,
+      "field_decision_count": 207,
+      "overlap_pair_count": 82,
+      "relation_field_count": 121,
+      "unique_pair_count": 125
+    },
+    "guideline_protocol": {
+      "both_pair_count": 7,
+      "definition": "Any relation mismatch plus directness ordinal gap of at least two.",
+      "directness_field_count": 8,
+      "directness_only_pair_count": 1,
+      "field_decision_count": 129,
+      "overlap_pair_count": 7,
+      "relation_field_count": 121,
+      "relation_only_pair_count": 114,
+      "unique_pair_count": 122,
+      "unique_pairs_by_dataset": {
+        "liar_raw": 54,
+        "rawfc": 68
+      }
+    }
+  },
+  "agreement": {
+    "confidence": {
+      "absolute_gap_distribution": {
+        "0.0": 165,
+        "0.2": 83,
+        "0.4": 2
+      },
+      "adjudicated": false,
+      "annotator_a_mean": 0.8496,
+      "annotator_b_mean": 0.8647999999999999,
+      "disagreement_count": 85,
+      "exact_agreement": 0.66,
+      "exact_agreement_count": 165,
+      "n": 250,
+      "pearson_r": -0.025271239181682368,
+      "reason": "Annotator self-confidence is not a gold target in guideline v1.0.",
+      "spearman_rho": -0.019931169466648815
+    },
+    "directness": {
+      "absolute_gap_distribution": {
+        "0": 164,
+        "1": 78,
+        "2": 7,
+        "3": 1
+      },
+      "annotator_a_distribution": {
+        "context": 41,
+        "direct": 83,
+        "none": 58,
+        "partial": 68
+      },
+      "annotator_b_distribution": {
+        "context": 59,
+        "direct": 46,
+        "none": 44,
+        "partial": 101
+      },
+      "cohen_kappa": 0.541020002988707,
+      "confusion_matrix": {
+        "context": {
+          "context": 30,
+          "direct": 1,
+          "none": 5,
+          "partial": 5
+        },
+        "direct": {
+          "context": 1,
+          "direct": 43,
+          "none": 1,
+          "partial": 38
+        },
+        "none": {
+          "context": 17,
+          "direct": 0,
+          "none": 37,
+          "partial": 4
+        },
+        "partial": {
+          "context": 11,
+          "direct": 2,
+          "none": 1,
+          "partial": 54
+        }
+      },
+      "disagreement_count": 86,
+      "exact_agreement": 0.656,
+      "exact_agreement_count": 164,
+      "gwet_ac1": 0.543852080777078,
+      "linear_weighted_kappa": 0.6838223547579745,
+      "n": 250,
+      "spearman_rho": 0.8165016045345844
+    },
+    "relation": {
+      "annotator_a_distribution": {
+        "background": 42,
+        "insufficient": 22,
+        "irrelevant": 59,
+        "qualify": 44,
+        "refute": 13,
+        "support": 70
+      },
+      "annotator_b_distribution": {
+        "background": 59,
+        "insufficient": 77,
+        "irrelevant": 43,
+        "qualify": 21,
+        "refute": 12,
+        "support": 38
+      },
+      "cohen_kappa": 0.418839215384911,
+      "confusion_matrix": {
+        "background": {
+          "background": 31,
+          "insufficient": 5,
+          "irrelevant": 4,
+          "mixed": 0,
+          "qualify": 1,
+          "refute": 0,
+          "support": 1
+        },
+        "insufficient": {
+          "background": 7,
+          "insufficient": 11,
+          "irrelevant": 1,
+          "mixed": 0,
+          "qualify": 3,
+          "refute": 0,
+          "support": 0
+        },
+        "irrelevant": {
+          "background": 17,
+          "insufficient": 3,
+          "irrelevant": 38,
+          "mixed": 0,
+          "qualify": 1,
+          "refute": 0,
+          "support": 0
+        },
+        "mixed": {
+          "background": 0,
+          "insufficient": 0,
+          "irrelevant": 0,
+          "mixed": 0,
+          "qualify": 0,
+          "refute": 0,
+          "support": 0
+        },
+        "qualify": {
+          "background": 2,
+          "insufficient": 34,
+          "irrelevant": 0,
+          "mixed": 0,
+          "qualify": 5,
+          "refute": 0,
+          "support": 3
+        },
+        "refute": {
+          "background": 1,
+          "insufficient": 0,
+          "irrelevant": 0,
+          "mixed": 0,
+          "qualify": 2,
+          "refute": 10,
+          "support": 0
+        },
+        "support": {
+          "background": 1,
+          "insufficient": 24,
+          "irrelevant": 0,
+          "mixed": 0,
+          "qualify": 9,
+          "refute": 2,
+          "support": 34
+        }
+      },
+      "disagreement_count": 121,
+      "exact_agreement": 0.516,
+      "exact_agreement_count": 129,
+      "gwet_ac1": 0.4402121950467261,
+      "linear_weighted_kappa": 0.584722794659473,
+      "n": 250
+    }
+  },
+  "analysis_type": "exp2_pre_adjudication_double_annotation",
+  "authoritative_inputs": {
+    "llm_fields_hidden_from_tasks": true,
+    "llm_labels_path": "/data/liaozijie/fact-checking/docs/paper/aaai/annotation_project/data/exp2_llm_labels.jsonl",
+    "llm_labels_sha256": "5ac4715fdd3b441b9fc327eb953e2be4abac6b6e88a8ea2c68ef15f27221a7b2",
+    "semantic_pair_count": 250,
+    "tasks_path": "/data/liaozijie/fact-checking/docs/paper/aaai/annotation_project/data/exp2_tasks_zh.jsonl",
+    "tasks_sha256": "6d91869aa618af5a2ba58b5826535823f521938019f94a48f7c9986cbdab44e8"
+  },
+  "data_issues": {
+    "fatal_issue_count": 0,
+    "redundant_identical_active_completion_count": 1
+  },
+  "generated_at_utc": "2026-07-19T15:00:47.558840+00:00",
+  "projects": [
+    {
+      "active_completion_count": 251,
+      "annotator_email": "1849812973@qq.com",
+      "cancelled_completion_count": 0,
+      "draft_count": 0,
+      "project_id": 16,
+      "semantic_annotation_count": 250,
+      "task_count": 250,
+      "title": "[YULIN ONLY] Exp2-Evidence-Map"
+    },
+    {
+      "active_completion_count": 250,
+      "annotator_email": "3180643570@qq.com",
+      "cancelled_completion_count": 0,
+      "draft_count": 0,
+      "project_id": 17,
+      "semantic_annotation_count": 250,
+      "task_count": 250,
+      "title": "[ZHIQIANG ONLY] Exp2-Evidence-Map"
+    }
+  ],
+  "sqlite_quick_check": "ok"
+}

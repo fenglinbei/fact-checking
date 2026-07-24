@@ -5,10 +5,13 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
 from fact_checking.selectors.mrec_learned_marginal import (
+    SUPERVISION_MODE_STRUCTURE_ONLY,
+    build_structure_proxy_selected_record,
     extract_marginal_features,
     hard_state_to_soft_state,
     learned_marginal_weight_fingerprint,
     load_learned_marginal_weights,
+    rank_candidates_by_proxy,
     score_marginal_features,
     update_soft_state_from_relation,
 )
@@ -27,10 +30,16 @@ MREC_SELECTOR_NAME = "mrec_greedy_transition_v0_1"
 MREC_SELECTOR_NAME_V0_2_LEARNED_MARGINAL_PROXY = "mrec_greedy_transition_v0_2_learned_marginal_proxy"
 MREC_SELECTOR_NAME_V0_2_LEARNED_MARGINAL_REWARD = "mrec_greedy_transition_v0_2_learned_marginal_reward"
 MREC_SELECTOR_NAME_V0_2_MAP_QUALITY_GREEDY = "mrec_greedy_transition_v0_2_map_quality_greedy"
+MREC_SELECTOR_NAME_V0_2_RETRIEVAL_ORDER = "mrec_greedy_transition_v0_2_retrieval_order"
+MREC_SELECTOR_NAME_V0_2_HARD_STRUCTURE = "mrec_greedy_transition_v0_2_hard_structure"
+MREC_SELECTOR_NAME_V0_2_LEARNED_MARGINAL_ONE_SHOT = "mrec_greedy_transition_v0_2_learned_marginal_one_shot"
 MREC_SELECTION_POLICY_TRANSITION_V0_1 = "transition_v0_1"
 MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY = "learned_marginal_proxy"
 MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD = "learned_marginal_reward"
 MREC_SELECTION_POLICY_MAP_QUALITY_GREEDY = "map_quality_greedy"
+MREC_SELECTION_POLICY_RETRIEVAL_ORDER = "retrieval_order"
+MREC_SELECTION_POLICY_HARD_STRUCTURE = "hard_structure"
+MREC_SELECTION_POLICY_LEARNED_MARGINAL_ONE_SHOT = "learned_marginal_one_shot"
 FALLBACK_CUE = "Verify the main factual claim."
 
 _RESOLVING_STATES = {"S", "R", "Q", "C"}
@@ -49,6 +58,9 @@ _SELECTION_POLICIES = {
     MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
     MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD,
     MREC_SELECTION_POLICY_MAP_QUALITY_GREEDY,
+    MREC_SELECTION_POLICY_RETRIEVAL_ORDER,
+    MREC_SELECTION_POLICY_HARD_STRUCTURE,
+    MREC_SELECTION_POLICY_LEARNED_MARGINAL_ONE_SHOT,
 }
 
 
@@ -157,8 +169,20 @@ def _select_mrec_steps(
     params: MRECSelectorParams,
 ) -> dict[str, Any]:
     policy = _normalize_selection_policy(params.selection_policy)
-    if policy in {MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY, MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD}:
+    if policy in {
+        MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
+        MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD,
+        MREC_SELECTION_POLICY_LEARNED_MARGINAL_ONE_SHOT,
+    }:
         return _select_learned_marginal_steps(
+            candidates,
+            claim_atoms=claim_atoms,
+            atom_by_id=atom_by_id,
+            initial_atom_states=initial_atom_states,
+            params=params,
+        )
+    if policy in {MREC_SELECTION_POLICY_RETRIEVAL_ORDER, MREC_SELECTION_POLICY_HARD_STRUCTURE}:
+        return _select_structure_or_retrieval_steps(
             candidates,
             claim_atoms=claim_atoms,
             atom_by_id=atom_by_id,
@@ -337,6 +361,18 @@ def _select_learned_marginal_steps(
     min_steps = max(int(params.min_steps), 0)
     max_steps = _effective_max_steps(params.max_steps, len(candidates))
     pool_max_token_cost = max([int(candidate.get("mrec_token_cost") or 0) for candidate in candidates] or [1])
+    one_shot_scores: dict[int, tuple[float, dict[str, float]]] = {}
+    if policy == MREC_SELECTION_POLICY_LEARNED_MARGINAL_ONE_SHOT:
+        for idx, candidate in enumerate(candidates):
+            features = extract_marginal_features(
+                candidate,
+                selected_steps=[],
+                soft_state=soft_state,
+                token_budget=params.token_budget,
+                pool_max_token_cost=pool_max_token_cost,
+                map_ablation_mode=str(params.map_ablation_mode),
+            )
+            one_shot_scores[idx] = (score_marginal_features(features, weights), features)
 
     while len(steps) < max_steps:
         target_met = _resolved_rate(atom_states) >= float(params.target_resolved_rate)
@@ -351,15 +387,18 @@ def _select_learned_marginal_steps(
             if params.token_budget is not None and total_token_cost + token_cost > int(params.token_budget):
                 skipped_by_budget = True
                 continue
-            features = extract_marginal_features(
-                candidate,
-                selected_steps=steps,
-                soft_state=soft_state,
-                token_budget=params.token_budget,
-                pool_max_token_cost=pool_max_token_cost,
-                map_ablation_mode=str(params.map_ablation_mode),
-            )
-            score = score_marginal_features(features, weights)
+            if policy == MREC_SELECTION_POLICY_LEARNED_MARGINAL_ONE_SHOT:
+                score, features = one_shot_scores[idx]
+            else:
+                features = extract_marginal_features(
+                    candidate,
+                    selected_steps=steps,
+                    soft_state=soft_state,
+                    token_budget=params.token_budget,
+                    pool_max_token_cost=pool_max_token_cost,
+                    map_ablation_mode=str(params.map_ablation_mode),
+                )
+                score = score_marginal_features(features, weights)
             evaluation = _evaluate_candidate_transition(
                 candidate,
                 atom_states=atom_states,
@@ -431,6 +470,8 @@ def _select_learned_marginal_steps(
         step["utility_score"] = float(pick.get("utility_score") or 0.0)
         step["utility_features"] = dict(pick.get("utility_features") or {})
         step["selection_policy"] = policy
+        if policy == MREC_SELECTION_POLICY_LEARNED_MARGINAL_ONE_SHOT:
+            step["utility_score_state"] = "initial_state_frozen"
         _copy_step_metadata(step, candidate)
         steps.append(step)
         selected_indices.add(idx)
@@ -463,6 +504,157 @@ def _select_learned_marginal_steps(
         "stop_reason": stop_reason,
         "rejected": rejected,
         "weight_fingerprint": weight_fingerprint,
+    }
+
+
+def _select_structure_or_retrieval_steps(
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    claim_atoms: list[dict[str, Any]],
+    atom_by_id: dict[str, dict[str, Any]],
+    initial_atom_states: dict[str, str],
+    params: MRECSelectorParams,
+) -> dict[str, Any]:
+    policy = _normalize_selection_policy(params.selection_policy)
+    if policy not in {MREC_SELECTION_POLICY_RETRIEVAL_ORDER, MREC_SELECTION_POLICY_HARD_STRUCTURE}:
+        raise ValueError(f"unsupported fixed-contract selection policy: {policy!r}")
+
+    atom_states = dict(initial_atom_states)
+    soft_state = hard_state_to_soft_state(atom_states)
+    structure_selected_steps: list[dict[str, Any]] = []
+    selected_indices: set[int] = set()
+    selected_duplicate_groups: set[str] = set()
+    selected_texts: set[str] = set()
+    steps: list[dict[str, Any]] = []
+    total_token_cost = 0
+    stop_reason = ""
+    min_steps = max(int(params.min_steps), 0)
+    max_steps = _effective_max_steps(params.max_steps, len(candidates))
+    pool_max_token_cost = max([int(candidate.get("mrec_token_cost") or 0) for candidate in candidates] or [1])
+
+    while len(steps) < max_steps:
+        target_met = _resolved_rate(atom_states) >= float(params.target_resolved_rate)
+        eligible_indices: list[int] = []
+        skipped_by_budget = False
+        for idx, candidate in enumerate(candidates):
+            if idx in selected_indices:
+                continue
+            if _is_duplicate_candidate(candidate, selected_duplicate_groups, selected_texts):
+                continue
+            token_cost = int(candidate.get("mrec_token_cost") or 0)
+            if params.token_budget is not None and total_token_cost + token_cost > int(params.token_budget):
+                skipped_by_budget = True
+                continue
+            eligible_indices.append(idx)
+
+        if not eligible_indices:
+            if skipped_by_budget:
+                stop_reason = "token_budget_exhausted"
+            elif target_met and len(steps) >= min_steps:
+                stop_reason = "min_steps_satisfied" if min_steps > 0 else "target_resolution_reached"
+            elif steps:
+                stop_reason = "no_valid_transition"
+            else:
+                stop_reason = "fallback_only" if params.allow_fallback else "no_valid_transition"
+            break
+
+        structure_record: dict[str, Any] | None = None
+        if policy == MREC_SELECTION_POLICY_HARD_STRUCTURE:
+            eligible_candidates = [candidates[idx] for idx in eligible_indices]
+            structure_order = rank_candidates_by_proxy(
+                eligible_candidates,
+                selected_steps=structure_selected_steps,
+                soft_state=soft_state,
+                token_budget=params.token_budget,
+                pool_max_token_cost=pool_max_token_cost,
+                map_ablation_mode=str(params.map_ablation_mode),
+                supervision_mode=SUPERVISION_MODE_STRUCTURE_ONLY,
+            )
+            idx = eligible_indices[int(structure_order[0])]
+            candidate = candidates[idx]
+            structure_record = build_structure_proxy_selected_record(candidate, soft_state=soft_state)
+            evaluation = _evaluate_structure_teacher_candidate(
+                candidate,
+                selected_record=structure_record,
+                atom_states=atom_states,
+                atom_by_id=atom_by_id,
+                cue_policy=str(params.cue_policy),
+            )
+        else:
+            idx = eligible_indices[0]
+            candidate = candidates[idx]
+            evaluation = _evaluate_candidate_transition(
+                candidate,
+                atom_states=atom_states,
+                atom_by_id=atom_by_id,
+                cue_policy=str(params.cue_policy),
+                map_ablation_mode=str(params.map_ablation_mode),
+            )
+            if not evaluation:
+                evaluation = _fallback_candidate_evaluation(
+                    candidate,
+                    claim_atoms=claim_atoms,
+                    atom_states=atom_states,
+                    cue_policy=str(params.cue_policy),
+                )
+
+        token_cost = int(candidate.get("mrec_token_cost") or 0)
+        step_candidate = evaluation.get("step_candidate")
+        if not isinstance(step_candidate, Mapping):
+            step_candidate = candidate
+        step = build_mrec_step(
+            step=len(steps) + 1,
+            candidate=step_candidate,
+            atom_id=str(evaluation["atom_id"]),
+            atom_text=str(evaluation["atom_text"]),
+            state_before=str(evaluation["state_before"]),
+            state_after=str(evaluation["state_after"]),
+            operation=str(evaluation["operation"]),
+            cue_text=str(evaluation["cue_text"]),
+            cue_source=str(evaluation["cue_source"]),
+            transition_reason=str(evaluation["transition_reason"]),
+            token_cost=token_cost,
+        )
+        step["post_target_fill"] = bool(target_met)
+        step["selection_policy"] = policy
+        if policy == MREC_SELECTION_POLICY_HARD_STRUCTURE:
+            step["structure_teacher_rank"] = 1
+        else:
+            step["retrieval_rank"] = int(idx)
+        _copy_step_metadata(step, candidate)
+        steps.append(step)
+        selected_indices.add(idx)
+        total_token_cost += token_cost
+        if step.get("atom_id"):
+            atom_states[str(step["atom_id"])] = str(step["state_after"])
+        if structure_record is not None:
+            structure_selected_steps.append(structure_record)
+            if structure_record.get("atom_id"):
+                soft_state = update_soft_state_from_relation(
+                    soft_state,
+                    atom_id=str(structure_record.get("atom_id") or ""),
+                    relation=str(structure_record.get("relation") or ""),
+                )
+        _attach_trace_state(
+            step,
+            atom_states=atom_states,
+            total_token_cost=total_token_cost,
+            target_resolved_rate=float(params.target_resolved_rate),
+        )
+        duplicate_group = _compact(candidate.get("duplicate_group") or "")
+        if duplicate_group:
+            selected_duplicate_groups.add(duplicate_group)
+        selected_texts.add(_normalize_text(candidate.get("text") or candidate.get("evidence_text") or ""))
+
+    if not stop_reason:
+        stop_reason = "reached_max_steps" if len(steps) >= max_steps else "no_valid_transition"
+
+    rejected = _rejection_counts(candidates, selected_indices=selected_indices, selected_steps=steps)
+    return {
+        "steps": steps,
+        "atom_states_final": atom_states,
+        "stop_reason": stop_reason,
+        "rejected": rejected,
     }
 
 
@@ -588,6 +780,52 @@ def _select_map_quality_greedy_steps(
         "atom_states_final": atom_states,
         "stop_reason": stop_reason,
         "rejected": rejected,
+    }
+
+
+def _evaluate_structure_teacher_candidate(
+    candidate: Mapping[str, Any],
+    *,
+    selected_record: Mapping[str, Any],
+    atom_states: dict[str, str],
+    atom_by_id: dict[str, dict[str, Any]],
+    cue_policy: str,
+) -> dict[str, Any]:
+    atom_id = str(selected_record.get("atom_id") or "")
+    if not atom_id or atom_id not in atom_states:
+        return _fallback_candidate_evaluation(
+            candidate,
+            claim_atoms=list(atom_by_id.values()),
+            atom_states=atom_states,
+            cue_policy=cue_policy,
+        )
+
+    relation = str(selected_record.get("relation") or "")
+    directness = str(selected_record.get("directness") or candidate.get("map_directness") or "none").lower()
+    relation_state = _state_for_relation(relation)
+    before = atom_states.get(atom_id, "U")
+    teacher_transition_directness = (
+        "direct" if before == "U" and relation_state in {"S", "R", "Q"} else directness
+    )
+    operation = _operation_for_transition(before, relation_state, teacher_transition_directness)
+    after = _state_after(before, relation_state, operation)
+    atom = atom_by_id.get(atom_id, {})
+    cue = _choose_cue(candidate, atom=atom, cue_policy=cue_policy)
+    step_candidate = dict(candidate)
+    step_candidate["covered_atom_ids"] = [atom_id]
+    step_candidate["map_relation"] = relation
+    step_candidate["map_directness"] = directness
+    step_candidate["map_confidence"] = selected_record.get("confidence", candidate.get("map_confidence"))
+    return {
+        "operation": operation,
+        "atom_id": atom_id,
+        "atom_text": _compact(atom.get("proposition") or atom.get("text") or ""),
+        "state_before": before,
+        "state_after": after,
+        "cue_text": cue["cue_text"],
+        "cue_source": cue["cue_source"],
+        "transition_reason": _transition_reason(operation, before, after, atom_id),
+        "step_candidate": step_candidate,
     }
 
 

@@ -1,0 +1,37 @@
+{
+  "adjudication_protocol_version": "exp1-exact-gold-resolution-v1-20260717",
+  "artifacts": {
+    "atom_tasks.jsonl": {
+      "rows": 37,
+      "sha256": "875de7a29631992a5abee431960b3787dac1fd141288e94b491f28c8fa2127c7"
+    },
+    "completeness_tasks.jsonl": {
+      "rows": 10,
+      "sha256": "5cedaec440c7046a4ae1d09163da512738f9ddc041427ef156ec50c645630a41"
+    }
+  },
+  "blinding": {
+    "contains_rater_labels": false,
+    "forbidden_keys_checked_recursively": [
+      "annotator_a",
+      "annotator_b",
+      "disagreements"
+    ]
+  },
+  "complete": true,
+  "config_sha256": {
+    "atom": "0469ddcd9ba943f21b3f0e939723ddb2e7b6f252ae40b00be19a39caee0c263d",
+    "completeness": "39e082ff98050f5ad77023524a823a88be924eb3cab5ce293cb4528726501a6c"
+  },
+  "counts": {
+    "atom": 37,
+    "completeness": 10,
+    "total": 47
+  },
+  "generated_at_utc": "2026-07-17T14:33:56.799187+00:00",
+  "schema_version": 1,
+  "source_analysis_input_sha256": "1308ab9c2d90fba6a10bd6cb47c4a901720bfb257ffd26e9ea7dc8e05490daf4",
+  "source_blind_queue_sha256": "05f4850c5d3e2c52539f82f4879da063d6b80531749b34ecd025d51615057eed",
+  "source_reliability_generation_id": "e279b11544c2837a",
+  "source_universe_sha256": "47da9da2b42c8df7edf830a4554bc321d739d9c818ec9ea0de9a5a34c7af0329"
+}

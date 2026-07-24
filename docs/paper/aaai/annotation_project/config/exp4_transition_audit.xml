@@ -1,0 +1,74 @@
+<!--
+  Small-scale human evaluation: blinded transition audit.
+
+  Public input fields only:
+    blind_task_id, claim_en, claim_zh, focal_atom_en, focal_atom_zh,
+    state_legend_html, prior_evidence_html, current_evidence_html,
+    proposed_transition
+
+  Submitted fields:
+    transition_validity (required), marginal_contribution (required)
+-->
+<View>
+  <View name="task_meta" style="background:#f5f5f5;padding:8px 12px;border-radius:4px;margin-bottom:12px">
+    <Text name="task_id" value="Blind task ID: $blind_task_id" style="font-size:12px;color:#666" />
+  </View>
+
+  <View name="instruction" style="border-left:4px solid #607d8b;padding:10px 14px;margin-bottom:14px;background:#fafafa">
+    <Text name="instruction_title" value="Transition audit / 状态转移审计" style="font-size:14px;font-weight:bold;color:#37474f" />
+    <Text name="instruction_en" value="Use the English text as authoritative. Assess whether the current evidence justifies the proposed state update for the focal proposition, and how much new decision-relevant information it adds beyond the prior prefix." style="font-size:14px;line-height:1.6" />
+    <Text name="instruction_zh" value="英文为权威文本，中文仅作辅助。请判断当前证据是否足以支撑该原子命题的 proposed 状态更新，以及相对此前证据前缀新增了多少与判断相关的信息。" style="font-size:13px;line-height:1.5;color:#666;margin-top:5px" />
+  </View>
+
+  <View name="claim_block" style="border:1px solid #d9d9d9;padding:10px 14px;border-radius:5px;margin-bottom:12px;background:#fff">
+    <Text name="claim_heading" value="Claim" style="font-size:14px;font-weight:bold;color:#333" />
+    <Text name="claim_en" value="$claim_en" style="font-size:15px;line-height:1.65" />
+    <Text name="claim_zh_heading" value="中文辅助：" style="font-size:11px;color:#888;margin-top:5px" />
+    <Text name="claim_zh" value="$claim_zh" style="font-size:13px;line-height:1.5;color:#666" />
+  </View>
+
+  <View name="focal_atom_block" style="border:1px solid #d9d9d9;padding:10px 14px;border-radius:5px;margin-bottom:12px;background:#fff">
+    <Text name="focal_atom_heading" value="Focal proposition / 当前原子命题" style="font-size:14px;font-weight:bold;color:#333" />
+    <Text name="focal_atom_en" value="$focal_atom_en" style="font-size:15px;line-height:1.65" />
+    <Text name="focal_atom_zh_heading" value="中文辅助：" style="font-size:11px;color:#888;margin-top:5px" />
+    <Text name="focal_atom_zh" value="$focal_atom_zh" style="font-size:13px;line-height:1.5;color:#666" />
+  </View>
+
+  <View name="state_legend_block" style="border:1px solid #d9d9d9;padding:10px 14px;border-radius:5px;margin-bottom:12px;background:#fafafa">
+    <Text name="state_legend_heading" value="State legend / 状态图例" style="font-size:14px;font-weight:bold;color:#333" />
+    <HyperText name="state_legend" value="$state_legend_html" />
+  </View>
+
+  <View name="prior_evidence_block" style="border:1px solid #bdbdbd;padding:12px 14px;border-radius:5px;margin-bottom:12px;background:#fff">
+    <Header value="Earlier evidence for this proposition / 此前同一原子命题的证据前缀" style="font-size:14px" />
+    <HyperText name="prior_evidence" value="$prior_evidence_html" />
+  </View>
+
+  <View name="current_evidence_block" style="border:1px solid #bdbdbd;padding:12px 14px;border-radius:5px;margin-bottom:12px;background:#fff">
+    <Header value="Current evidence / 当前证据" style="font-size:14px" />
+    <HyperText name="current_evidence" value="$current_evidence_html" />
+  </View>
+
+  <View name="transition_block" style="border:2px solid #757575;padding:10px 14px;border-radius:5px;margin-bottom:18px;background:#fafafa;text-align:center">
+    <Text name="transition_heading" value="Proposed state update / Proposed 状态更新" style="font-size:13px;font-weight:bold;color:#444" />
+    <Text name="proposed_transition" value="$proposed_transition" style="font-size:18px;font-weight:bold;line-height:1.7" />
+  </View>
+
+  <Header value="1. Transition validity / 状态转移有效性" style="font-size:15px" />
+  <Text name="validity_help" value="Does the current evidence, interpreted together with the prior prefix, justify the proposed before-to-after update?" style="font-size:12px;color:#666;margin-bottom:5px" />
+  <Choices name="transition_validity" toName="proposed_transition" choice="single" required="true">
+    <Choice value="valid" alias="Valid / 有效" />
+    <Choice value="partially_valid" alias="Partially valid / 部分有效" />
+    <Choice value="invalid" alias="Invalid / 无效" />
+  </Choices>
+
+  <View name="question_gap" style="height:14px" />
+
+  <Header value="2. Marginal contribution / 边际贡献" style="font-size:15px" />
+  <Text name="contribution_help" value="Relative to the prior prefix, how much new information useful for deciding this proposition does the current evidence add?" style="font-size:12px;color:#666;margin-bottom:5px" />
+  <Choices name="marginal_contribution" toName="current_evidence" choice="single" required="true">
+    <Choice value="clear" alias="Clear / 明确贡献" />
+    <Choice value="limited" alias="Limited / 有限贡献" />
+    <Choice value="none" alias="None / 无贡献" />
+  </Choices>
+</View>

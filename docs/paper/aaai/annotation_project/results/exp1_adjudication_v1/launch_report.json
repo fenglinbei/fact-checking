@@ -1,0 +1,43 @@
+{
+  "adjudicator": {
+    "email": "1349410043@qq.com",
+    "id": 3
+  },
+  "admin": {
+    "email": "admin@annotation.local",
+    "id": 1
+  },
+  "applied_at_utc": "2026-07-17T14:39:01.716711+00:00",
+  "database": "/data/liaozijie/fact-checking/docs/paper/aaai/annotation_project/label_studio_data/label_studio.sqlite3",
+  "database_quick_check": "ok",
+  "database_quick_check_after": "ok",
+  "marker": "exp1-exact-gold-adjudication-v1-20260717",
+  "prepared_manifest_sha256": "5d25cd2d040f880762675a479888bd44ee27d6ee09624395303b8e7ff1c1513c",
+  "projects": [
+    {
+      "annotations": 0,
+      "config_sha256": "0469ddcd9ba943f21b3f0e939723ddb2e7b6f252ae40b00be19a39caee0c263d",
+      "id": 20,
+      "key": "atom",
+      "labeled_tasks": 0,
+      "path": "/projects/20/data",
+      "task_data_sha256": "919cc0653127f63db8bb6ff111092ed6a15d4c3d65a7da4ca7c5c1c54ebd968d",
+      "tasks": 37,
+      "title": "[ZIJIE ONLY] Exp1-Atom-Adjudication-v1"
+    },
+    {
+      "annotations": 0,
+      "config_sha256": "39e082ff98050f5ad77023524a823a88be924eb3cab5ce293cb4528726501a6c",
+      "id": 21,
+      "key": "completeness",
+      "labeled_tasks": 0,
+      "path": "/projects/21/data",
+      "task_data_sha256": "96d9c49ac14a1b89def78e13716a45829d282851b4b5ba6bf85913eb29c7c042",
+      "tasks": 10,
+      "title": "[ZIJIE ONLY] Exp1-Completeness-Adjudication-v1"
+    }
+  ],
+  "protocol_version": "exp1-exact-gold-resolution-v1-20260717",
+  "source_analysis_input_sha256": "1308ab9c2d90fba6a10bd6cb47c4a901720bfb257ffd26e9ea7dc8e05490daf4",
+  "state": "created"
+}

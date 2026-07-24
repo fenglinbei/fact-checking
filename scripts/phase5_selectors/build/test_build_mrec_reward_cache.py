@@ -312,3 +312,263 @@ def test_patch_vllm_mistral_common_tokenizer_skips_cached_wrapper(monkeypatch) -
 
     assert fake_tokenizer_module.get_cached_tokenizer(mistral_tokenizer) is mistral_tokenizer
     assert fake_tokenizer_module.get_cached_tokenizer(other_tokenizer) == ("cached", other_tokenizer)
+
+
+def _utility_args(**overrides):
+    values = {
+        "candidate_top_n": 20,
+        "rollout_steps": 2,
+        "rollin_policy": module.ROLLIN_POLICY_VERIFIER_UTILITY_GREEDY,
+        "cue_policy": "atom_proposition",
+        "trace_prompt_style": "mrec_min",
+        "split": "train",
+        "dataset": "liar_raw",
+        "label_schema": "liar6",
+        "sample_limit": 0,
+        "num_shards": 1,
+        "shard_index": 0,
+        "verify_input_only": False,
+    }
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+def _utility_row() -> dict[str, object]:
+    return {
+        "event_id": "event-1",
+        "claim": "claim",
+        "gold_label": "false",
+        "label": "false",
+        "claim_atoms": [{"atom_id": "A1", "text": "claim"}],
+        "candidate_pool": [
+            {"candidate_uid": "u0", "candidate_key": "c0", "text": "evidence zero"},
+            {"candidate_uid": "u1", "candidate_key": "c1", "text": "evidence one"},
+            {"candidate_uid": "u2", "candidate_key": "c2", "text": "evidence two"},
+        ],
+    }
+
+
+def _patch_prompt_building(monkeypatch) -> None:
+    monkeypatch.setattr(
+        module,
+        "_apply_mrec_prompt_fields",
+        lambda *, claim, candidates, trace: (claim, candidates, {}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_build_training_row",
+        lambda retrieval_row, tokenizer, prompt_cfg: {
+            "prompt": "prompt",
+            "target": "",
+            "gold_label": retrieval_row["label"],
+            "gold_id": 0,
+            "prompt_token_count": 1,
+            "evidence_count": len(retrieval_row["candidates"]),
+        },
+    )
+
+
+class _PrefixMarginScorer:
+    def __init__(self, *, drop_last: bool = False) -> None:
+        self.drop_last = drop_last
+        self.requested_prefixes: list[tuple[int, ...]] = []
+        self.margin_by_prefix = {
+            (): 0.0,
+            (0,): 1.0,
+            (1,): 3.0,
+            (2,): 2.0,
+            (1, 0): 4.0,
+            (1, 2): 8.0,
+        }
+
+    def score_batch(self, requests):
+        self.requested_prefixes.extend(tuple(request.metadata["selected_indices"]) for request in requests)
+        rows = [
+            {
+                "margin": self.margin_by_prefix[tuple(request.metadata["selected_indices"])],
+                "pred_label": "false",
+                "label_logprobs": {"A": -1.0, "B": -2.0},
+            }
+            for request in requests
+        ]
+        return rows[:-1] if self.drop_last else rows
+
+
+def test_verifier_utility_greedy_scores_all_remaining_and_uses_argmax_delta(monkeypatch) -> None:
+    _patch_prompt_building(monkeypatch)
+    scorer = _PrefixMarginScorer()
+    sample = types.SimpleNamespace(event_id="event-1", claim="claim", label="false", explain="")
+
+    reward_rows, summary, score_rows = module._build_event_reward_rows(
+        _utility_row(),
+        sample=sample,
+        args=_utility_args(),
+        tokenizer=object(),
+        prompt_cfg={"label_schema": "liar6"},
+        scorer=scorer,
+        score_cache={},
+        checkpoint={
+            "teacher_fingerprint": "teacher",
+            "scoring_fingerprint": "scorer",
+            "run_fingerprint": "run",
+        },
+    )
+
+    assert summary["rollin_selected_indices"] == [1, 2]
+    assert summary["coverage_complete"] is True
+    assert summary["n_reward_rows"] == summary["expected_reward_rows"] == 5
+    assert [row["candidate_idx"] for row in reward_rows if row["step"] == 0] == [0, 1, 2]
+    assert [row["candidate_idx"] for row in reward_rows if row["step"] == 1] == [0, 2]
+    assert [row["candidate_idx"] for row in reward_rows if row["utility_selected"]] == [1, 2]
+    assert scorer.requested_prefixes == [(), (0,), (1,), (2,), (1, 0), (1, 2)]
+    assert len(score_rows) == 6
+
+
+def test_verifier_utility_greedy_fails_closed_when_any_candidate_score_is_missing(monkeypatch) -> None:
+    _patch_prompt_building(monkeypatch)
+    sample = types.SimpleNamespace(event_id="event-1", claim="claim", label="false", explain="")
+
+    with pytest.raises(RuntimeError, match="returned 3 scores for 4 requests"):
+        module._build_event_reward_rows(
+            _utility_row(),
+            sample=sample,
+            args=_utility_args(),
+            tokenizer=object(),
+            prompt_cfg={"label_schema": "liar6"},
+            scorer=_PrefixMarginScorer(drop_last=True),
+            score_cache={},
+            checkpoint={
+                "teacher_fingerprint": "teacher",
+                "scoring_fingerprint": "scorer",
+                "run_fingerprint": "run",
+            },
+        )
+
+
+def test_verifier_utility_greedy_rejects_test_gold_utility() -> None:
+    with pytest.raises(ValueError, match="forbidden on test"):
+        module._validate_execution_args(_utility_args(split="test"))
+
+
+def test_sha256_event_sharding_is_deterministic_and_disjoint() -> None:
+    rows = [{"event_id": f"event-{idx}"} for idx in range(30)]
+    shards = [
+        module._select_shard_rows(rows, num_shards=4, shard_index=idx)
+        for idx in range(4)
+    ]
+    event_sets = [{row["event_id"] for row in shard} for shard in shards]
+
+    assert set().union(*event_sets) == {row["event_id"] for row in rows}
+    assert sum(len(event_set) for event_set in event_sets) == len(rows)
+    assert module._select_shard_rows(rows, num_shards=4, shard_index=2) == shards[2]
+
+
+def test_verify_input_only_returns_before_teacher_initialization(tmp_path: Path, monkeypatch) -> None:
+    input_path = tmp_path / "features.jsonl"
+    raw_path = tmp_path / "raw.json"
+    input_path.write_text(json.dumps(_utility_row()) + "\n", encoding="utf-8")
+    raw_path.write_text("[]\n", encoding="utf-8")
+    args = _utility_args(
+        input=str(input_path),
+        raw=str(raw_path),
+        output_dir=str(tmp_path / "out"),
+        verify_input_only=True,
+    )
+    monkeypatch.setattr(module, "parse_args", lambda: args)
+    monkeypatch.setattr(
+        module,
+        "load_split",
+        lambda *unused_args, **unused_kwargs: [
+            types.SimpleNamespace(event_id="event-1", claim="claim", label="false", explain="")
+        ],
+    )
+    monkeypatch.setattr(
+        module,
+        "_teacher_checkpoint",
+        lambda unused_args: (_ for _ in ()).throw(AssertionError("teacher must not initialize")),
+    )
+    monkeypatch.setattr(
+        module,
+        "_load_prompt_tokenizer",
+        lambda unused_path: (_ for _ in ()).throw(AssertionError("tokenizer must not initialize")),
+    )
+    monkeypatch.setattr(
+        module,
+        "_init_scorer",
+        lambda unused_args, unused_checkpoint: (_ for _ in ()).throw(AssertionError("scorer must not initialize")),
+    )
+
+    assert module.main() == 0
+    report = json.loads((tmp_path / "out" / "input_validation_train.json").read_text(encoding="utf-8"))
+    assert report["status"] == "validated"
+    assert report["estimated_reward_rows"] == 5
+    assert report["estimated_unique_teacher_scores"] == 6
+    assert report["checks"]["candidate_identities_nonempty_unique"] is True
+
+
+def test_score_cache_key_changes_when_candidate_pool_changes(monkeypatch) -> None:
+    _patch_prompt_building(monkeypatch)
+    sample = types.SimpleNamespace(event_id="event-1", claim="claim", label="false", explain="")
+    common = {
+        "source_row": {"event_id": "event-1"},
+        "sample": sample,
+        "claim_atoms": [],
+        "selected_indices": [0],
+        "mrec_steps": [],
+        "candidate_idx": 0,
+        "role": "after",
+        "step": 0,
+        "tokenizer": object(),
+        "prompt_cfg": {"label_schema": "liar6"},
+        "checkpoint": {
+            "teacher_fingerprint": "teacher",
+            "scoring_fingerprint": "scorer",
+            "run_fingerprint": "run",
+        },
+    }
+    first = module._score_request_for_indices(
+        **common,
+        candidates=[{"candidate_uid": "u0", "candidate_key": "c0", "text": "first"}],
+    )
+    second = module._score_request_for_indices(
+        **common,
+        candidates=[{"candidate_uid": "u0", "candidate_key": "c0", "text": "changed"}],
+    )
+
+    assert first.cache_key != second.cache_key
+
+
+def test_strict_score_cache_rejects_run_fingerprint_mismatch(tmp_path: Path) -> None:
+    cache_path = tmp_path / "raw_teacher_scores_train.jsonl"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "cache_key": "key",
+                "status": "completed",
+                "metadata": {"run_fingerprint": "old-run"},
+                "margin": 1.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="fingerprint mismatch"):
+        module._load_score_cache(cache_path, expected_run_fingerprint="new-run")
+
+
+def test_strict_resume_rejects_partial_event_without_summary(tmp_path: Path) -> None:
+    records_path = tmp_path / "reward_records_train.jsonl"
+    events_path = tmp_path / "reward_event_summaries_train.jsonl"
+    records_path.write_text(
+        json.dumps({"event_id": "event-1", "run_fingerprint": "run"}) + "\n",
+        encoding="utf-8",
+    )
+    events_path.write_text("", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="without a completed summary"):
+        module._completed_utility_event_ids(
+            records_path,
+            events_path,
+            expected_run_fingerprint="run",
+        )

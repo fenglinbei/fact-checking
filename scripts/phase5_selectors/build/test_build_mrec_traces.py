@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 
+import pytest
+
 from fact_checking.selectors.mrec_learned_marginal import (
     LearnedMarginalWeights,
     REWARD_WEIGHT_SCHEMA_VERSION,
@@ -175,3 +177,69 @@ def test_build_mrec_trace_manifest_records_reward_policy_and_weight_fingerprint(
     assert manifest["selector_name"] == "mrec_greedy_transition_v0_2_learned_marginal_reward"
     assert manifest["params"]["selection_policy"] == "learned_marginal_reward"
     assert manifest["weight_fingerprint"] == trace["mrec_diagnostics"]["weight_fingerprint"]
+
+
+@pytest.mark.parametrize(
+    ("selection_policy", "adaptive_policy", "requires_weights"),
+    [
+        ("retrieval_order", "retrieval_order_v0_2", False),
+        ("hard_structure", "hard_structure_v0_2", False),
+        ("learned_marginal_one_shot", "learned_marginal_one_shot_v0_2", True),
+    ],
+)
+def test_build_mrec_trace_exposes_mechanism_gate_runtime_policies(
+    tmp_path,
+    selection_policy: str,
+    adaptive_policy: str,
+    requires_weights: bool,
+) -> None:
+    weights_path = tmp_path / "weights.json"
+    if requires_weights:
+        save_learned_marginal_weights(weights_path, initial_learned_marginal_weights())
+    params = MRECSelectorParams(
+        selection_policy=selection_policy,
+        weight_file=str(weights_path) if requires_weights else "",
+        selector_name=f"mrec_{selection_policy}",
+        candidate_top_n=20,
+        min_steps=1,
+        max_steps=1,
+    )
+    row = {
+        "event_id": "evt-1",
+        "claim": "The city approved the project.",
+        "gold_label": "true",
+        "claim_atoms": [{"atom_id": "A1", "text": "The city approved the project.", "importance": 1.0}],
+        "candidate_pool": [
+            {
+                "candidate_idx": 0,
+                "evidence_id": "E1",
+                "candidate_uid": "E1",
+                "text": "The city council approved the project.",
+                "covered_atom_ids": ["A1"],
+                "map_relation": "support",
+                "map_directness": "direct",
+                "map_confidence": 0.9,
+                "evidence_map_quality_score": 0.8,
+            }
+        ],
+    }
+
+    trace = _build_trace(row, params=params, source_selector_name="source")
+    manifest = _manifest(
+        args=argparse.Namespace(
+            output_dir=str(tmp_path),
+            split="val",
+            sample_limit=0,
+            source_selector_name="source",
+        ),
+        input_path=tmp_path / "input.jsonl",
+        params=params,
+        n_input_rows=1,
+        n_trace_rows=1,
+    )
+
+    assert trace["adaptive_policy"] == adaptive_policy
+    assert trace["mrec_diagnostics"]["selection_policy"] == selection_policy
+    assert manifest["adaptive_policy"] == adaptive_policy
+    assert manifest["params"]["selection_policy"] == selection_policy
+    assert bool(manifest["weight_fingerprint"]) is requires_weights

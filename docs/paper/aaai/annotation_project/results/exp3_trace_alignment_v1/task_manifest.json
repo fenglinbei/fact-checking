@@ -1,0 +1,806 @@
+{
+  "analysis_boundaries": {
+    "earliest_sufficient_prefix_collected": false,
+    "matched_evidence_count_only": true,
+    "matched_token_budget_claimed": false,
+    "order_only_same_text_and_length": true,
+    "pilot_included_in_paper_statistics": false
+  },
+  "annotation_complete": false,
+  "artifact_audit": {
+    "canonical_test_event_alignment_1251": true,
+    "excluded_test_event_ids": [
+      "7845.json"
+    ],
+    "test": {
+      "candidate_identity_unique": true,
+      "compared_with_current_rank_function": true,
+      "event_count": 1251,
+      "evitrace_candidate_count": 23030,
+      "k_selected_field": "evidence_count_before",
+      "k_selected_mean": 6.206235011990407,
+      "k_visible_field": "evidence_count",
+      "k_visible_mean": 5.957633892885691,
+      "s4_candidate_count": 23118,
+      "s4_order_difference_count": 0,
+      "s4_order_exact_match": true,
+      "s4_pool_extra_events": 73,
+      "same_order_count": 98,
+      "split": "test",
+      "unique_event_count": 1251
+    },
+    "test_atom_parse": {
+      "exact_expected_failure_set": true,
+      "parse_failed_event_ids": [
+        "7845.json"
+      ],
+      "path": "outputs/selectors/atom_anchor/liar_raw_abc_v0_1/01_claim_atoms/claim_atoms_test.jsonl",
+      "rows": 1251,
+      "sha256": "85815c18e4e3b0f55f8cbfe8bf84926885b385a3e0432caddb1cba807fcbde3c"
+    },
+    "val": {
+      "candidate_identity_unique": true,
+      "compared_with_current_rank_function": false,
+      "event_count": 1274,
+      "evitrace_candidate_count": 23221,
+      "k_selected_field": "evidence_count_before",
+      "k_selected_mean": 6.1938775510204085,
+      "k_visible_field": "evidence_count",
+      "k_visible_mean": 5.937205651491365,
+      "s4_candidate_count": 23287,
+      "s4_order_difference_count": 0,
+      "s4_order_exact_match": true,
+      "s4_pool_extra_events": 59,
+      "same_order_count": 87,
+      "split": "val",
+      "unique_event_count": 1274
+    }
+  },
+  "artifact_sha256": {
+    "test_build": "7499006f339a54b84220174a8fd392f6c5e7afa1aa35b94d648762b7f6860a7f",
+    "test_evitrace": "aaa8574d915026100c435b7adfb99cb52e890ab98e21783aff69abb3627f79fa",
+    "test_s4": "67d740002d0543724707281a34cc1adce6ad2628efda25ac83b84d9ab58a6705",
+    "val_build": "060055f5087b1de8da20711e2416789bde5477a8c6a4b18e42331a74b435c174",
+    "val_evitrace": "01d66e246ba5fa79fb6fd3dad8ea7a03f39320f9a8a6e95086ba9a735f3deddf",
+    "val_s4": "6869f41bd7fc1ded26fde4581a97be08343fe42e0560990c8d3d6d18cb4734a1"
+  },
+  "artifacts": {
+    "blinding_key": {
+      "path": "private/blinding_key.jsonl",
+      "rows": 230,
+      "sha256": "230d8b56d6de7808fea2c0d6484e552150213a6a617f245c2d7aa2288b44c1cd",
+      "visibility": "private"
+    },
+    "pilot_preference_tasks": {
+      "path": "pilot_preference_tasks.jsonl",
+      "rows": 30,
+      "sha256": "5b57188659524253382e882c8f7eddcfdc189343cd8d06acd96a130f96d74daf",
+      "visibility": "public"
+    },
+    "pilot_transition_tasks": {
+      "path": "pilot_transition_tasks.jsonl",
+      "rows": 15,
+      "sha256": "13849577ee1728cb63886a7eadb6b60da3c7df82564f1d37cf62ef789b9d2c49",
+      "visibility": "public"
+    },
+    "preference_tasks": {
+      "path": "preference_tasks.jsonl",
+      "rows": 200,
+      "sha256": "811ea0bbc5f401bcdec71b04edc0c2c68dbcea1bb9f3a4558e5ff8ea90c5d598",
+      "visibility": "public"
+    },
+    "sampling_stats": {
+      "path": "sampling_stats.json",
+      "sha256": "f5605ebb8eaf35a17df9c4fd5e298a22f45cfea1df07d0ca2e034fa34499a29e",
+      "visibility": "public"
+    },
+    "transition_key": {
+      "path": "private/transition_key.jsonl",
+      "rows": 115,
+      "sha256": "f482e0fdd879c31cbfb9b28f4999e55ff79a2a35167a12c0f8742681c54ad7ac",
+      "visibility": "private"
+    },
+    "transition_tasks": {
+      "path": "transition_tasks.jsonl",
+      "rows": 100,
+      "sha256": "ca15e1ca8bc947aeb8e4936773cc99fca92d8f444ded15ab9def90804b7ca524",
+      "visibility": "public"
+    },
+    "translation_cache": {
+      "path": "docs/paper/aaai/annotation_project/results/exp3_trace_alignment_v1/translation_cache.jsonl",
+      "rows": 2395,
+      "sha256": "4433cc0c70f32b2912dd404367a004e3224361adbbf4acc86064df7cb6aac747",
+      "visibility": "public"
+    },
+    "translation_inventory": {
+      "path": "translation_inventory.jsonl",
+      "rows": 2395,
+      "sha256": "0ec6b56f8af7f7cb2ca8f67939c3f85d927b3996d91ec2435c2654873e0333f2",
+      "visibility": "public"
+    },
+    "translation_requests": {
+      "path": "translation_requests.jsonl",
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "visibility": "public"
+    }
+  },
+  "blinding": {
+    "annotator_order_keys": [
+      "annotator_1",
+      "annotator_2"
+    ],
+    "double_annotated": true,
+    "method_side_mapping_public": false,
+    "private_key_paths": {
+      "preference": "private/blinding_key.jsonl",
+      "transition": "private/transition_key.jsonl"
+    },
+    "system_blind": true
+  },
+  "complete": true,
+  "config_paths": {
+    "preference": "docs/paper/aaai/annotation_project/config/exp3_trace_preference.xml",
+    "transition": "docs/paper/aaai/annotation_project/config/exp4_transition_audit.xml"
+  },
+  "config_sha256": {
+    "preference": "197d086aae64ec20dd953802c18267625f4b6993e6498688f253ed1c18cbf9f7",
+    "transition": "98bdaee695fb8a3fcb9ccf7d9c25910c1590591787ca8af49f90ddc5b23bd0d5"
+  },
+  "counts": {
+    "blinding_key": 230,
+    "formal_preference": 200,
+    "formal_transition": 100,
+    "main": 120,
+    "order_only": 80,
+    "pilot_preference": 30,
+    "pilot_transition": 15,
+    "transition": 100,
+    "transition_key": 115,
+    "translation_inventory": 2395,
+    "translation_requests": 0
+  },
+  "created_at_utc": "2026-07-24T10:15:13.328140+00:00",
+  "leakage_checks": {
+    "check_cue_absent": true,
+    "html_escaped": true,
+    "method_specific_projection_absent": true,
+    "preference_public_exact_field_whitelist": true,
+    "transition_public_exact_field_whitelist": true,
+    "translation_cache_reused_by_exact_english_text": true
+  },
+  "outputs": {
+    "docs/paper/aaai/annotation_project/results/exp3_trace_alignment_v1/translation_cache.jsonl": {
+      "rows": 2395,
+      "sha256": "4433cc0c70f32b2912dd404367a004e3224361adbbf4acc86064df7cb6aac747",
+      "visibility": "public"
+    },
+    "pilot_preference_tasks.jsonl": {
+      "rows": 30,
+      "sha256": "5b57188659524253382e882c8f7eddcfdc189343cd8d06acd96a130f96d74daf",
+      "visibility": "public"
+    },
+    "pilot_transition_tasks.jsonl": {
+      "rows": 15,
+      "sha256": "13849577ee1728cb63886a7eadb6b60da3c7df82564f1d37cf62ef789b9d2c49",
+      "visibility": "public"
+    },
+    "preference_tasks.jsonl": {
+      "rows": 200,
+      "sha256": "811ea0bbc5f401bcdec71b04edc0c2c68dbcea1bb9f3a4558e5ff8ea90c5d598",
+      "visibility": "public"
+    },
+    "private/blinding_key.jsonl": {
+      "rows": 230,
+      "sha256": "230d8b56d6de7808fea2c0d6484e552150213a6a617f245c2d7aa2288b44c1cd",
+      "visibility": "private"
+    },
+    "private/transition_key.jsonl": {
+      "rows": 115,
+      "sha256": "f482e0fdd879c31cbfb9b28f4999e55ff79a2a35167a12c0f8742681c54ad7ac",
+      "visibility": "private"
+    },
+    "sampling_stats.json": {
+      "sha256": "f5605ebb8eaf35a17df9c4fd5e298a22f45cfea1df07d0ca2e034fa34499a29e",
+      "visibility": "public"
+    },
+    "transition_tasks.jsonl": {
+      "rows": 100,
+      "sha256": "ca15e1ca8bc947aeb8e4936773cc99fca92d8f444ded15ab9def90804b7ca524",
+      "visibility": "public"
+    },
+    "translation_inventory.jsonl": {
+      "rows": 2395,
+      "sha256": "0ec6b56f8af7f7cb2ca8f67939c3f85d927b3996d91ec2435c2654873e0333f2",
+      "visibility": "public"
+    },
+    "translation_requests.jsonl": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "visibility": "public"
+    }
+  },
+  "private_key_commitments": {
+    "blind_seed_sha256": "8a71af4648ca685f62e810587cb8a48f8173f024cbbea596a7105cc6afb9f91d",
+    "blinding_key_sha256": "230d8b56d6de7808fea2c0d6484e552150213a6a617f245c2d7aa2288b44c1cd",
+    "transition_key_sha256": "f482e0fdd879c31cbfb9b28f4999e55ff79a2a35167a12c0f8742681c54ad7ac"
+  },
+  "public_schema": {
+    "preference": [
+      "blind_task_id",
+      "claim_en",
+      "claim_zh",
+      "sequence_a_html",
+      "sequence_b_html"
+    ],
+    "transition": [
+      "blind_task_id",
+      "claim_en",
+      "claim_zh",
+      "current_evidence_html",
+      "focal_atom_en",
+      "focal_atom_zh",
+      "prior_evidence_html",
+      "proposed_transition",
+      "state_legend_html"
+    ]
+  },
+  "requested_counts": {
+    "n_main": 120,
+    "n_order": 80,
+    "n_pilot_main": 20,
+    "n_pilot_order": 10,
+    "n_pilot_transition": 15,
+    "n_transition": 100
+  },
+  "sample_seed": 20260724,
+  "sampling": {
+    "formal": {
+      "aligned_event_count": 1251,
+      "atom_parse_failed_event_count": 0,
+      "atom_parse_failed_event_ids": [],
+      "claim_disjoint": true,
+      "configured_excluded_event_count": 1,
+      "configured_excluded_event_ids": [
+        "7845.json"
+      ],
+      "eligible_event_count": 1250,
+      "main": {
+        "sampled_count": 120,
+        "strata": [
+          {
+            "complexity": "single",
+            "design_weight": 0.0432,
+            "label": "pants-fire",
+            "pool_size": 54,
+            "sampled_count": 10,
+            "stratum": "pants-fire|single"
+          },
+          {
+            "complexity": "multi",
+            "design_weight": 0.0256,
+            "label": "pants-fire",
+            "pool_size": 32,
+            "sampled_count": 10,
+            "stratum": "pants-fire|multi"
+          },
+          {
+            "complexity": "single",
+            "design_weight": 0.1464,
+            "label": "false",
+            "pool_size": 183,
+            "sampled_count": 10,
+            "stratum": "false|single"
+          },
+          {
+            "complexity": "multi",
+            "design_weight": 0.0528,
+            "label": "false",
+            "pool_size": 66,
+            "sampled_count": 10,
+            "stratum": "false|multi"
+          },
+          {
+            "complexity": "single",
+            "design_weight": 0.1048,
+            "label": "barely-true",
+            "pool_size": 131,
+            "sampled_count": 10,
+            "stratum": "barely-true|single"
+          },
+          {
+            "complexity": "multi",
+            "design_weight": 0.0632,
+            "label": "barely-true",
+            "pool_size": 79,
+            "sampled_count": 10,
+            "stratum": "barely-true|multi"
+          },
+          {
+            "complexity": "single",
+            "design_weight": 0.1296,
+            "label": "half-true",
+            "pool_size": 162,
+            "sampled_count": 10,
+            "stratum": "half-true|single"
+          },
+          {
+            "complexity": "multi",
+            "design_weight": 0.08,
+            "label": "half-true",
+            "pool_size": 100,
+            "sampled_count": 10,
+            "stratum": "half-true|multi"
+          },
+          {
+            "complexity": "single",
+            "design_weight": 0.1072,
+            "label": "mostly-true",
+            "pool_size": 134,
+            "sampled_count": 10,
+            "stratum": "mostly-true|single"
+          },
+          {
+            "complexity": "multi",
+            "design_weight": 0.0832,
+            "label": "mostly-true",
+            "pool_size": 104,
+            "sampled_count": 10,
+            "stratum": "mostly-true|multi"
+          },
+          {
+            "complexity": "single",
+            "design_weight": 0.1136,
+            "label": "true",
+            "pool_size": 142,
+            "sampled_count": 10,
+            "stratum": "true|single"
+          },
+          {
+            "complexity": "multi",
+            "design_weight": 0.0504,
+            "label": "true",
+            "pool_size": 63,
+            "sampled_count": 10,
+            "stratum": "true|multi"
+          }
+        ]
+      },
+      "namespace": "formal-test",
+      "order_only": {
+        "allocations": [
+          {
+            "complexity": "single",
+            "label": "pants-fire",
+            "pool_size": 40,
+            "sampled_count": 2
+          },
+          {
+            "complexity": "single",
+            "label": "false",
+            "pool_size": 160,
+            "sampled_count": 9
+          },
+          {
+            "complexity": "single",
+            "label": "barely-true",
+            "pool_size": 113,
+            "sampled_count": 7
+          },
+          {
+            "complexity": "single",
+            "label": "half-true",
+            "pool_size": 143,
+            "sampled_count": 8
+          },
+          {
+            "complexity": "single",
+            "label": "mostly-true",
+            "pool_size": 114,
+            "sampled_count": 7
+          },
+          {
+            "complexity": "single",
+            "label": "true",
+            "pool_size": 130,
+            "sampled_count": 7
+          },
+          {
+            "complexity": "multi",
+            "label": "pants-fire",
+            "pool_size": 18,
+            "sampled_count": 2
+          },
+          {
+            "complexity": "multi",
+            "label": "false",
+            "pool_size": 53,
+            "sampled_count": 6
+          },
+          {
+            "complexity": "multi",
+            "label": "barely-true",
+            "pool_size": 60,
+            "sampled_count": 7
+          },
+          {
+            "complexity": "multi",
+            "label": "half-true",
+            "pool_size": 83,
+            "sampled_count": 10
+          },
+          {
+            "complexity": "multi",
+            "label": "mostly-true",
+            "pool_size": 85,
+            "sampled_count": 10
+          },
+          {
+            "complexity": "multi",
+            "label": "true",
+            "pool_size": 43,
+            "sampled_count": 5
+          }
+        ],
+        "complexity_counts": {
+          "multi": 40,
+          "single": 40
+        },
+        "same_order_preexcluded_count_after_event_exclusions": 98,
+        "same_order_preexcluded_count_all_aligned": 98,
+        "sampled_count": 80
+      },
+      "overlap_counts": {
+        "main_order": 0,
+        "main_transition": 0,
+        "order_transition": 0
+      },
+      "transition": {
+        "change_operations": [
+          "CONTRAST",
+          "OPEN"
+        ],
+        "one_step_per_claim": true,
+        "operation_counts": {
+          "BRIDGE": 20,
+          "CONTRAST": 20,
+          "CORROBORATE": 10,
+          "FALLBACK": 10,
+          "OPEN": 40
+        },
+        "operation_eligible_claim_counts": {
+          "BRIDGE": 879,
+          "CONTRAST": 444,
+          "CORROBORATE": 250,
+          "FALLBACK": 355,
+          "OPEN": 841
+        },
+        "operation_quotas": {
+          "BRIDGE": 20,
+          "CONTRAST": 20,
+          "CORROBORATE": 10,
+          "FALLBACK": 10,
+          "OPEN": 40
+        },
+        "sampled_count": 100,
+        "self_transition_operations": [
+          "BRIDGE",
+          "CORROBORATE",
+          "FALLBACK"
+        ]
+      }
+    },
+    "k_summary": {
+      "k_selected_field": "evidence_count_before",
+      "k_visible_field": "evidence_count",
+      "test_k_selected_mean": 6.206235011990407,
+      "test_k_visible_mean": 5.957633892885691
+    },
+    "pilot": {
+      "aligned_event_count": 1274,
+      "atom_parse_failed_event_count": 0,
+      "atom_parse_failed_event_ids": [],
+      "claim_disjoint": true,
+      "configured_excluded_event_count": 0,
+      "configured_excluded_event_ids": [],
+      "eligible_event_count": 1274,
+      "main": {
+        "sampled_count": 20,
+        "strata": [
+          {
+            "complexity": "single",
+            "design_weight": 0.054945054945054944,
+            "label": "pants-fire",
+            "pool_size": 70,
+            "sampled_count": 2,
+            "stratum": "pants-fire|single"
+          },
+          {
+            "complexity": "multi",
+            "design_weight": 0.03532182103610675,
+            "label": "pants-fire",
+            "pool_size": 45,
+            "sampled_count": 2,
+            "stratum": "pants-fire|multi"
+          },
+          {
+            "complexity": "single",
+            "design_weight": 0.14678178963893249,
+            "label": "false",
+            "pool_size": 187,
+            "sampled_count": 2,
+            "stratum": "false|single"
+          },
+          {
+            "complexity": "multi",
+            "design_weight": 0.0565149136577708,
+            "label": "false",
+            "pool_size": 72,
+            "sampled_count": 2,
+            "stratum": "false|multi"
+          },
+          {
+            "complexity": "single",
+            "design_weight": 0.11773940345368916,
+            "label": "barely-true",
+            "pool_size": 150,
+            "sampled_count": 2,
+            "stratum": "barely-true|single"
+          },
+          {
+            "complexity": "multi",
+            "design_weight": 0.06750392464678179,
+            "label": "barely-true",
+            "pool_size": 86,
+            "sampled_count": 2,
+            "stratum": "barely-true|multi"
+          },
+          {
+            "complexity": "single",
+            "design_weight": 0.10832025117739404,
+            "label": "half-true",
+            "pool_size": 138,
+            "sampled_count": 2,
+            "stratum": "half-true|single"
+          },
+          {
+            "complexity": "multi",
+            "design_weight": 0.08320251177394035,
+            "label": "half-true",
+            "pool_size": 106,
+            "sampled_count": 2,
+            "stratum": "half-true|multi"
+          },
+          {
+            "complexity": "single",
+            "design_weight": 0.12323390894819466,
+            "label": "mostly-true",
+            "pool_size": 157,
+            "sampled_count": 1,
+            "stratum": "mostly-true|single"
+          },
+          {
+            "complexity": "multi",
+            "design_weight": 0.07378335949764521,
+            "label": "mostly-true",
+            "pool_size": 94,
+            "sampled_count": 1,
+            "stratum": "mostly-true|multi"
+          },
+          {
+            "complexity": "single",
+            "design_weight": 0.08398744113029827,
+            "label": "true",
+            "pool_size": 107,
+            "sampled_count": 1,
+            "stratum": "true|single"
+          },
+          {
+            "complexity": "multi",
+            "design_weight": 0.04866562009419152,
+            "label": "true",
+            "pool_size": 62,
+            "sampled_count": 1,
+            "stratum": "true|multi"
+          }
+        ]
+      },
+      "namespace": "pilot-val",
+      "order_only": {
+        "allocations": [
+          {
+            "complexity": "single",
+            "label": "pants-fire",
+            "pool_size": 63,
+            "sampled_count": 0
+          },
+          {
+            "complexity": "single",
+            "label": "false",
+            "pool_size": 171,
+            "sampled_count": 1
+          },
+          {
+            "complexity": "single",
+            "label": "barely-true",
+            "pool_size": 134,
+            "sampled_count": 1
+          },
+          {
+            "complexity": "single",
+            "label": "half-true",
+            "pool_size": 130,
+            "sampled_count": 1
+          },
+          {
+            "complexity": "single",
+            "label": "mostly-true",
+            "pool_size": 150,
+            "sampled_count": 1
+          },
+          {
+            "complexity": "single",
+            "label": "true",
+            "pool_size": 98,
+            "sampled_count": 1
+          },
+          {
+            "complexity": "multi",
+            "label": "pants-fire",
+            "pool_size": 41,
+            "sampled_count": 0
+          },
+          {
+            "complexity": "multi",
+            "label": "false",
+            "pool_size": 66,
+            "sampled_count": 1
+          },
+          {
+            "complexity": "multi",
+            "label": "barely-true",
+            "pool_size": 78,
+            "sampled_count": 1
+          },
+          {
+            "complexity": "multi",
+            "label": "half-true",
+            "pool_size": 97,
+            "sampled_count": 1
+          },
+          {
+            "complexity": "multi",
+            "label": "mostly-true",
+            "pool_size": 87,
+            "sampled_count": 1
+          },
+          {
+            "complexity": "multi",
+            "label": "true",
+            "pool_size": 54,
+            "sampled_count": 1
+          }
+        ],
+        "complexity_counts": {
+          "multi": 5,
+          "single": 5
+        },
+        "same_order_preexcluded_count_after_event_exclusions": 87,
+        "same_order_preexcluded_count_all_aligned": 87,
+        "sampled_count": 10
+      },
+      "overlap_counts": {
+        "main_order": 0,
+        "main_transition": 0,
+        "order_transition": 0
+      },
+      "transition": {
+        "change_operations": [
+          "CONTRAST",
+          "OPEN"
+        ],
+        "one_step_per_claim": true,
+        "operation_counts": {
+          "BRIDGE": 3,
+          "CONTRAST": 3,
+          "CORROBORATE": 2,
+          "FALLBACK": 1,
+          "OPEN": 6
+        },
+        "operation_eligible_claim_counts": {
+          "BRIDGE": 1097,
+          "CONTRAST": 566,
+          "CORROBORATE": 284,
+          "FALLBACK": 384,
+          "OPEN": 1032
+        },
+        "operation_quotas": {
+          "BRIDGE": 3,
+          "CONTRAST": 3,
+          "CORROBORATE": 2,
+          "FALLBACK": 1,
+          "OPEN": 6
+        },
+        "sampled_count": 15,
+        "self_transition_operations": [
+          "BRIDGE",
+          "CORROBORATE",
+          "FALLBACK"
+        ]
+      }
+    },
+    "pilot_excluded_from_paper_statistics": true,
+    "sample_seed": 20260724,
+    "schema_version": "evitrace_human_alignment_sampling_v1"
+  },
+  "schema_version": "evitrace_human_alignment_task_manifest_v1",
+  "side_balance": {
+    "formal": {
+      "main": {
+        "evitrace_on_a": 60,
+        "evitrace_on_b": 60
+      },
+      "order_only": {
+        "evitrace_on_a": 40,
+        "evitrace_on_b": 40
+      }
+    },
+    "pilot": {
+      "main": {
+        "evitrace_on_a": 10,
+        "evitrace_on_b": 10
+      },
+      "order_only": {
+        "evitrace_on_a": 5,
+        "evitrace_on_b": 5
+      }
+    }
+  },
+  "source_artifacts": {
+    "test_build": {
+      "path": "outputs/sentence_trace_method/liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10/build/build_test.jsonl",
+      "rows": 1251,
+      "sha256": "7499006f339a54b84220174a8fd392f6c5e7afa1aa35b94d648762b7f6860a7f"
+    },
+    "test_evitrace": {
+      "path": "outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy_fullpool/selection_trace_test.jsonl",
+      "rows": 1251,
+      "sha256": "aaa8574d915026100c435b7adfb99cb52e890ab98e21783aff69abb3627f79fa"
+    },
+    "test_s4": {
+      "path": "outputs/selectors/selector_mechanism_ablation_chunking/liar_raw_abc_selector_mech_s4_atom_union_source_score_ordered_test/selection_trace_test.jsonl",
+      "rows": 1251,
+      "sha256": "67d740002d0543724707281a34cc1adce6ad2628efda25ac83b84d9ab58a6705"
+    },
+    "val_build": {
+      "path": "outputs/sentence_trace_method/liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax5_10/build/build_val.jsonl",
+      "rows": 1274,
+      "sha256": "060055f5087b1de8da20711e2416789bde5477a8c6a4b18e42331a74b435c174"
+    },
+    "val_evitrace": {
+      "path": "outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_proxy_fullpool/selection_trace_val.jsonl",
+      "rows": 1274,
+      "sha256": "01d66e246ba5fa79fb6fd3dad8ea7a03f39320f9a8a6e95086ba9a735f3deddf"
+    },
+    "val_s4": {
+      "path": "outputs/selectors/selector_mechanism_ablation_chunking/liar_raw_abc_selector_mech_s4_atom_union_source_score_ordered_val/selection_trace_val.jsonl",
+      "rows": 1274,
+      "sha256": "6869f41bd7fc1ded26fde4581a97be08343fe42e0560990c8d3d6d18cb4734a1"
+    }
+  },
+  "status": "prepared_and_frozen",
+  "token_count": {
+    "definition": "sum over clean evidence items of encode(text, add_special_tokens=False); order-invariant by construction",
+    "kind": "huggingface_tokenizer",
+    "tokenizer_path": "/data/models/Ministral-3-8B-Instruct-2512"
+  },
+  "translation_cache": {
+    "complete": true,
+    "content_sha256": "001d6c45c048d37dc68e72ecd2eaa50dda63d8018613f29d6f8fb3b7ff20db23",
+    "entry_count": 2395,
+    "miss_count": 0,
+    "network_used": false,
+    "path": "docs/paper/aaai/annotation_project/results/exp3_trace_alignment_v1/translation_cache.jsonl",
+    "source_file_sha256": "4433cc0c70f32b2912dd404367a004e3224361adbbf4acc86064df7cb6aac747"
+  }
+}

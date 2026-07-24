@@ -60,6 +60,7 @@ FORCE_LORA_CONFIG="${FORCE_LORA_CONFIG:-false}"
 FORCE_TRAIN="${FORCE_TRAIN:-false}"
 FORCE_EVAL="${FORCE_EVAL:-false}"
 EVAL_SPLITS="${EVAL_SPLITS:-val,test}"
+VERIFIER_BUILD_SPLITS="${VERIFIER_BUILD_SPLITS:-train,val,test}"
 CHECKPOINTS="${CHECKPOINTS:-best}"
 TRACE_PROMPT_STYLE="${TRACE_PROMPT_STYLE:-mrec_min}"
 EVIDENCE_TEXT_MODE="${EVIDENCE_TEXT_MODE:-full}"
@@ -87,6 +88,8 @@ TEST_RAW="${TEST_RAW:-$DEFAULT_TEST_RAW}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 NUM_MACHINES="${NUM_MACHINES:-1}"
 MIXED_PRECISION="${MIXED_PRECISION:-bf16}"
+MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-}"
+SFT_TRAIN_MODULE="${SFT_TRAIN_MODULE:-sft.label_token_trainer}"
 DEEPSPEED_CONFIG="${DEEPSPEED_CONFIG:-configs/deepspeed_zero2_bsz1_ga4.json}"
 SAVE_LATEST_TRAIN_STATE="${SAVE_LATEST_TRAIN_STATE:-true}"
 RESUME_LATEST_TRAIN_STATE="${RESUME_LATEST_TRAIN_STATE:-$SAVE_LATEST_TRAIN_STATE}"
@@ -240,13 +243,14 @@ validate_prompt_input_ids() {
   if [[ "$REQUIRE_PROMPT_INPUT_IDS" != "true" || "$DRY_RUN" == "true" ]]; then
     return 0
   fi
-  "$PYTHON_BIN" - "$CASE_ROOT" <<'PY'
+  "$PYTHON_BIN" - "$CASE_ROOT" "$VERIFIER_BUILD_SPLITS" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 case_root = Path(sys.argv[1])
-for split in ("train", "val", "test"):
+expected_splits = [item.strip() for item in sys.argv[2].split(",") if item.strip()]
+for split in expected_splits:
     path = case_root / "build" / f"build_{split}.jsonl"
     with path.open(encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, start=1):
@@ -254,11 +258,53 @@ for split in ("train", "val", "test"):
             ids = row.get("prompt_input_ids")
             if not isinstance(ids, list) or not ids:
                 raise SystemExit(f"{path}:{line_no} missing prompt_input_ids")
+report_path = case_root / "build" / "build_report.json"
+report = json.loads(report_path.read_text(encoding="utf-8"))
+built_splits = sorted(str(item) for item in report.get("built_splits") or [])
+if built_splits != sorted(expected_splits):
+    raise SystemExit(
+        f"{report_path}: built_splits={built_splits!r}, expected={sorted(expected_splits)!r}"
+    )
 print(f"prompt_input_ids ok: {case_root / 'build'}")
 PY
 }
 
+validate_verifier_build_splits() {
+  local raw_split split has_train=false has_val=false
+  IFS=',' read -r -a verifier_split_array <<< "$VERIFIER_BUILD_SPLITS"
+  for raw_split in "${verifier_split_array[@]}"; do
+    split="${raw_split// /}"
+    [[ -z "$split" ]] && continue
+    case "$split" in
+      train) has_train=true ;;
+      val) has_val=true ;;
+      test) ;;
+      *)
+        printf 'Unsupported VERIFIER_BUILD_SPLITS entry: %s\n' "$split" >&2
+        exit 2
+        ;;
+    esac
+  done
+  if [[ "$has_train" != "true" || "$has_val" != "true" ]]; then
+    printf 'VERIFIER_BUILD_SPLITS must include train and val: %s\n' "$VERIFIER_BUILD_SPLITS" >&2
+    exit 2
+  fi
+}
+
+verifier_build_includes() {
+  local wanted="$1" raw_split split
+  IFS=',' read -r -a verifier_split_array <<< "$VERIFIER_BUILD_SPLITS"
+  for raw_split in "${verifier_split_array[@]}"; do
+    split="${raw_split// /}"
+    if [[ "$split" == "$wanted" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 build_verifier_data() {
+  validate_verifier_build_splits
   if [[ "$FORCE_BUILD" != "true" && -f "${CASE_ROOT}/train.resolved.yaml" && -f "${CASE_ROOT}/build/build_report.json" ]]; then
     if [[ "$FORCE_BUILD" == "auto" ]]; then
       if validate_prompt_input_ids; then
@@ -274,7 +320,14 @@ build_verifier_data() {
   fi
   require_path "${TRACE_ROOT}/selection_trace_train.jsonl" "train MREC trace"
   require_path "${TRACE_ROOT}/selection_trace_val.jsonl" "val MREC trace"
-  require_path "${TRACE_ROOT}/selection_trace_test.jsonl" "test MREC trace"
+  local test_args=()
+  if verifier_build_includes test; then
+    require_path "${TRACE_ROOT}/selection_trace_test.jsonl" "test MREC trace"
+    test_args+=(
+      --test-trace "${TRACE_ROOT}/selection_trace_test.jsonl"
+      --test-raw "$TEST_RAW"
+    )
+  fi
   local prompt_evidence_args=()
   if [[ -n "${PROMPT_EVIDENCE_POLICY:-}" ]]; then
     prompt_evidence_args+=(--prompt-evidence-policy "$PROMPT_EVIDENCE_POLICY")
@@ -288,6 +341,11 @@ build_verifier_data() {
   if [[ -n "${PROMPT_EVIDENCE_TOKEN_BUDGET:-}" ]]; then
     prompt_evidence_args+=(--prompt-evidence-token-budget "$PROMPT_EVIDENCE_TOKEN_BUDGET")
   fi
+  if [[ -n "${PROMPT_EVIDENCE_PROMPT_TOKEN_BUDGET:-}" ]]; then
+    prompt_evidence_args+=(
+      --prompt-evidence-prompt-token-budget "$PROMPT_EVIDENCE_PROMPT_TOKEN_BUDGET"
+    )
+  fi
   if [[ -n "${PROMPT_EVIDENCE_MAX_LENGTH_GUARD:-}" ]]; then
     prompt_evidence_args+=(--prompt-evidence-max-length-guard "$PROMPT_EVIDENCE_MAX_LENGTH_GUARD")
   fi
@@ -295,10 +353,9 @@ build_verifier_data() {
     --config "$CONFIG_PATH" \
     --train-trace "${TRACE_ROOT}/selection_trace_train.jsonl" \
     --val-trace "${TRACE_ROOT}/selection_trace_val.jsonl" \
-    --test-trace "${TRACE_ROOT}/selection_trace_test.jsonl" \
     --train-raw "$TRAIN_RAW" \
     --val-raw "$VAL_RAW" \
-    --test-raw "$TEST_RAW" \
+    "${test_args[@]}" \
     --dataset "$DATASET" \
     --label-schema "$LABEL_SCHEMA" \
     --output-dir "$CASE_ROOT" \
@@ -354,6 +411,10 @@ train_lora() {
     return 0
   fi
   check_distributed_device_request
+  local port_args=()
+  if [[ -n "$MAIN_PROCESS_PORT" ]]; then
+    port_args+=(--main_process_port "$MAIN_PROCESS_PORT")
+  fi
   run_cmd env \
     -u SWANLAB_PROJECT \
     SAVE_LATEST_TRAIN_STATE="$SAVE_LATEST_TRAIN_STATE" \
@@ -361,10 +422,11 @@ train_lora() {
     "$ACCELERATE_BIN" launch \
     --num_processes "$NPROC_PER_NODE" \
     --num_machines "$NUM_MACHINES" \
+    "${port_args[@]}" \
     --mixed_precision "$MIXED_PRECISION" \
     --use_deepspeed \
     --deepspeed_config_file "$DEEPSPEED_CONFIG" \
-    -m sft.label_token_trainer \
+    -m "$SFT_TRAIN_MODULE" \
     --config "${TRAIN_CASE_ROOT}/train.resolved.yaml"
 }
 
@@ -379,7 +441,7 @@ eval_lora() {
     for checkpoint in "${checkpoint_array[@]}"; do
       checkpoint="${checkpoint// /}"
       [[ -z "$checkpoint" ]] && continue
-      metrics_path="${TRAIN_CASE_ROOT}/eval/${split}/${checkpoint}/metrics.json"
+      metrics_path="${TRAIN_CASE_ROOT}/eval/${split}/${checkpoint}/label_token/metrics.json"
       if [[ -f "$metrics_path" && "$FORCE_EVAL" != "true" ]]; then
         printf '[%s] eval exists: %s; set FORCE_EVAL=true to rerun.\n' "$RUN_LABEL" "$metrics_path"
         continue
@@ -409,9 +471,9 @@ run_tau_eval() {
     bash scripts/sentence_trace_method/run_lora_label_token_logit_adjust_eval_only.sh
 }
 
-printf '[%s] CASE_NAME=%s CASE_SUFFIX=%s DATASET=%s LABEL_SCHEMA=%s ATOM_ANCHOR_ROOT=%s TRACE_ROOT=%s QUALITY_AUDIT_MODE=%s MODE=%s FINETUNE_MODE=%s TRACE_PROMPT_STYLE=%s EVIDENCE_TEXT_MODE=%s TRACE_TOP_K=%s EXPECTED_SELECTOR_NAME=%s TRAIN_CASE_ROOT=%s LORA_ROOT=%s EVAL_SPLITS=%s RUN_TAU_EVAL=%s REQUIRE_PROMPT_INPUT_IDS=%s SFT_LEARNING_RATE=%s SFT_NUM_TRAIN_EPOCHS=%s SFT_EVAL_STEPS=%s SFT_SAVE_STEPS=%s SFT_EARLY_STOPPING_PATIENCE=%s DEEPSPEED_CONFIG=%s NPROC_PER_NODE=%s CLASS_WEIGHTS=%s CUDA_VISIBLE_DEVICES=%s\n' \
+printf '[%s] CASE_NAME=%s CASE_SUFFIX=%s DATASET=%s LABEL_SCHEMA=%s ATOM_ANCHOR_ROOT=%s TRACE_ROOT=%s QUALITY_AUDIT_MODE=%s MODE=%s FINETUNE_MODE=%s TRACE_PROMPT_STYLE=%s EVIDENCE_TEXT_MODE=%s TRACE_TOP_K=%s EXPECTED_SELECTOR_NAME=%s TRAIN_CASE_ROOT=%s LORA_ROOT=%s VERIFIER_BUILD_SPLITS=%s EVAL_SPLITS=%s RUN_TAU_EVAL=%s REQUIRE_PROMPT_INPUT_IDS=%s SFT_LEARNING_RATE=%s SFT_NUM_TRAIN_EPOCHS=%s SFT_EVAL_STEPS=%s SFT_SAVE_STEPS=%s SFT_EARLY_STOPPING_PATIENCE=%s DEEPSPEED_CONFIG=%s NPROC_PER_NODE=%s MAIN_PROCESS_PORT=%s SFT_TRAIN_MODULE=%s CLASS_WEIGHTS=%s CUDA_VISIBLE_DEVICES=%s\n' \
   "$RUN_HEADER_LABEL" \
-  "$CASE_NAME" "$CASE_SUFFIX" "$DATASET" "$LABEL_SCHEMA" "$ATOM_ANCHOR_ROOT" "$TRACE_ROOT" "$QUALITY_AUDIT_MODE" "$MODE" "$FINETUNE_MODE" "$TRACE_PROMPT_STYLE" "$EVIDENCE_TEXT_MODE" "$TRACE_TOP_K" "$EXPECTED_SELECTOR_NAME" "$TRAIN_CASE_ROOT" "$LORA_ROOT" "$EVAL_SPLITS" "$RUN_TAU_EVAL" "$REQUIRE_PROMPT_INPUT_IDS" "$SFT_LEARNING_RATE" "$SFT_NUM_TRAIN_EPOCHS" "$SFT_EVAL_STEPS" "$SFT_SAVE_STEPS" "$SFT_EARLY_STOPPING_PATIENCE" "$DEEPSPEED_CONFIG" "$NPROC_PER_NODE" "$CLASS_WEIGHTS" "${CUDA_VISIBLE_DEVICES:-<unset>}"
+  "$CASE_NAME" "$CASE_SUFFIX" "$DATASET" "$LABEL_SCHEMA" "$ATOM_ANCHOR_ROOT" "$TRACE_ROOT" "$QUALITY_AUDIT_MODE" "$MODE" "$FINETUNE_MODE" "$TRACE_PROMPT_STYLE" "$EVIDENCE_TEXT_MODE" "$TRACE_TOP_K" "$EXPECTED_SELECTOR_NAME" "$TRAIN_CASE_ROOT" "$LORA_ROOT" "$VERIFIER_BUILD_SPLITS" "$EVAL_SPLITS" "$RUN_TAU_EVAL" "$REQUIRE_PROMPT_INPUT_IDS" "$SFT_LEARNING_RATE" "$SFT_NUM_TRAIN_EPOCHS" "$SFT_EVAL_STEPS" "$SFT_SAVE_STEPS" "$SFT_EARLY_STOPPING_PATIENCE" "$DEEPSPEED_CONFIG" "$NPROC_PER_NODE" "${MAIN_PROCESS_PORT:-<auto>}" "$SFT_TRAIN_MODULE" "$CLASS_WEIGHTS" "${CUDA_VISIBLE_DEVICES:-<unset>}"
 
 case "$MODE" in
   check)

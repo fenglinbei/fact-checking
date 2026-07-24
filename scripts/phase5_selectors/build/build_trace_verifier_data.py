@@ -18,6 +18,8 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from fact_checking.build.candidates import _build_training_row, _load_prompt_tokenizer
+from fact_checking.build.prompts import build_system_message, truncate_single_evidence_to_budget
+from sft.runtime.model_loading import is_mistral_common_tokenizer
 
 load_prompt_tokenizer = _load_prompt_tokenizer
 build_training_row = _build_training_row
@@ -54,6 +56,7 @@ PROMPT_EVIDENCE_POLICIES = (
     "fixed_topk",
     "minmax",
     "budget",
+    "prompt_budget",
     "state_budget",
     "two_pass_uncertainty",
 )
@@ -110,6 +113,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--prompt-evidence-min-count", type=int, default=None)
     p.add_argument("--prompt-evidence-max-count", type=int, default=None)
     p.add_argument("--prompt-evidence-token-budget", type=int, default=None)
+    p.add_argument("--prompt-evidence-prompt-token-budget", type=int, default=None)
     p.add_argument("--prompt-evidence-max-length-guard", default=None, choices=("off", "warn", "error"))
     p.add_argument("--allow-empty-evidence", action="store_true")
     p.add_argument("--forbid-prompt-truncation", action="store_true")
@@ -446,55 +450,47 @@ def _build_split(
             skipped["no_selected_evidence"] += 1
             continue
         candidates = _apply_evidence_text_mode(candidates, evidence_text_mode)
-
-        qec_payload: dict[str, Any] | None = None
-        mrec_payload: dict[str, Any] | None = None
-        if trace_prompt_style == "trace_lite":
-            claim, candidates = _apply_trace_lite_prompt_fields(
-                claim=sample.claim,
+        if str(prompt_evidence["policy"]) == "prompt_budget":
+            (
+                selected_indices,
+                candidates,
+                claim,
+                qec_payload,
+                mrec_payload,
+                training_row,
+                prompt_evidence_decision,
+            ) = _fit_prompt_budget_prefix(
+                sample=sample,
+                trace=trace,
                 candidates=candidates,
-                claim_atoms=trace.get("claim_atoms") or [],
+                selected_indices=selected_indices,
+                tokenizer=tokenizer,
+                prompt_cfg=prompt_cfg_for_style,
+                prompt_evidence=prompt_evidence,
+                prompt_evidence_decision=prompt_evidence_decision,
+                trace_prompt_style=trace_prompt_style,
+                label_schema=label_schema,
+                allow_unlabeled=split == "test" and not bool(sample.label),
             )
-        elif trace_prompt_style in {"qec_min", "qec_map"}:
-            claim, candidates, qec_payload = _apply_qec_prompt_fields(
-                claim=sample.claim,
-                candidates=candidates,
-                claim_atoms=trace.get("claim_atoms") or [],
-                chain_steps=trace.get("chain_steps") or [],
-                style=trace_prompt_style,
-            )
-        elif trace_prompt_style == "mrec_min":
-            claim, candidates, mrec_payload = _apply_mrec_prompt_fields(
+        else:
+            claim, candidates, qec_payload, mrec_payload = _apply_trace_prompt_style(
                 claim=sample.claim,
                 candidates=candidates,
                 trace=trace,
+                trace_prompt_style=trace_prompt_style,
             )
-        else:
-            claim = sample.claim
-
-        retrieval_row = {
-            "event_id": sample.event_id,
-            "claim": claim,
-            "label": sample.label,
-            "label_schema": label_schema,
-            "explain": sample.explain,
-            "candidates": candidates,
-        }
-        sample_metadata = getattr(sample, "metadata", {}) or {}
-        if "coverage_label" in sample_metadata:
-            retrieval_row["coverage_label"] = sample_metadata["coverage_label"]
-        if "coverage_score" in sample_metadata:
-            retrieval_row["coverage_score"] = sample_metadata["coverage_score"]
-        if "coverage_version" in sample_metadata:
-            retrieval_row["coverage_version"] = sample_metadata["coverage_version"]
-        if "coverage" in sample_metadata:
-            retrieval_row["coverage"] = sample_metadata["coverage"]
-        training_row = build_training_row(
-            retrieval_row,
-            tokenizer,
-            prompt_cfg_for_style,
-            allow_unlabeled=split == "test" and not bool(sample.label),
-        )
+            retrieval_row = _retrieval_row_from_sample(
+                sample,
+                claim=claim,
+                candidates=candidates,
+                label_schema=label_schema,
+            )
+            training_row = build_training_row(
+                retrieval_row,
+                tokenizer,
+                prompt_cfg_for_style,
+                allow_unlabeled=split == "test" and not bool(sample.label),
+            )
         if forbid_prompt_truncation and (
             bool(training_row.get("was_truncated"))
             or bool(training_row.get("evidence_text_truncated"))
@@ -686,6 +682,382 @@ def _apply_evidence_text_mode(
     return rendered
 
 
+def _apply_trace_prompt_style(
+    *,
+    claim: str,
+    candidates: list[dict[str, Any]],
+    trace: dict[str, Any],
+    trace_prompt_style: str,
+) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None]:
+    qec_payload: dict[str, Any] | None = None
+    mrec_payload: dict[str, Any] | None = None
+    if trace_prompt_style == "trace_lite":
+        claim, candidates = _apply_trace_lite_prompt_fields(
+            claim=claim,
+            candidates=candidates,
+            claim_atoms=trace.get("claim_atoms") or [],
+        )
+    elif trace_prompt_style in {"qec_min", "qec_map"}:
+        claim, candidates, qec_payload = _apply_qec_prompt_fields(
+            claim=claim,
+            candidates=candidates,
+            claim_atoms=trace.get("claim_atoms") or [],
+            chain_steps=trace.get("chain_steps") or [],
+            style=trace_prompt_style,
+        )
+    elif trace_prompt_style == "mrec_min":
+        claim, candidates, mrec_payload = _apply_mrec_prompt_fields(
+            claim=claim,
+            candidates=candidates,
+            trace=trace,
+        )
+    return str(claim), candidates, qec_payload, mrec_payload
+
+
+def _retrieval_row_from_sample(
+    sample: Any,
+    *,
+    claim: str,
+    candidates: list[dict[str, Any]],
+    label_schema: str,
+) -> dict[str, Any]:
+    retrieval_row = {
+        "event_id": sample.event_id,
+        "claim": claim,
+        "label": sample.label,
+        "label_schema": label_schema,
+        "explain": sample.explain,
+        "candidates": candidates,
+    }
+    sample_metadata = getattr(sample, "metadata", {}) or {}
+    for key in ("coverage_label", "coverage_score", "coverage_version", "coverage"):
+        if key in sample_metadata:
+            retrieval_row[key] = sample_metadata[key]
+    return retrieval_row
+
+
+def _fit_prompt_budget_prefix(
+    *,
+    sample: Any,
+    trace: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    selected_indices: list[int],
+    tokenizer: Any,
+    prompt_cfg: dict[str, Any],
+    prompt_evidence: dict[str, Any],
+    prompt_evidence_decision: dict[str, Any],
+    trace_prompt_style: str,
+    label_schema: str,
+    allow_unlabeled: bool,
+) -> tuple[
+    list[int],
+    list[dict[str, Any]],
+    str,
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+    dict[str, Any],
+    dict[str, Any],
+]:
+    requested_budget = int(prompt_evidence.get("prompt_token_budget") or 0)
+    if requested_budget <= 0:
+        raise ValueError("prompt_budget requires a positive prompt_token_budget")
+    if not candidates or not selected_indices:
+        raise ValueError("prompt_budget requires at least one selected evidence item")
+    if len(candidates) != len(selected_indices):
+        raise ValueError(
+            "prompt_budget candidate/index alignment failed before fitting: "
+            f"candidates={len(candidates)}, selected_indices={len(selected_indices)}"
+        )
+
+    considered_count = len(candidates)
+    minimum_count = max(1, int(prompt_evidence.get("min_evidence_count") or 1))
+    minimum_count = min(minimum_count, considered_count)
+    exact_prompt_cfg = {**dict(prompt_cfg), "auto_length": False}
+    rendered_cache: dict[
+        int,
+        tuple[
+            str,
+            list[dict[str, Any]],
+            dict[str, Any] | None,
+            dict[str, Any] | None,
+            dict[str, Any],
+        ],
+    ] = {}
+
+    def render_prefix(
+        count: int,
+    ) -> tuple[
+        str,
+        list[dict[str, Any]],
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+        dict[str, Any],
+    ]:
+        count = int(count)
+        if count in rendered_cache:
+            return rendered_cache[count]
+        claim, rendered_candidates, qec_payload, mrec_payload = _apply_trace_prompt_style(
+            claim=sample.claim,
+            candidates=candidates[:count],
+            trace=trace,
+            trace_prompt_style=trace_prompt_style,
+        )
+        retrieval_row = _retrieval_row_from_sample(
+            sample,
+            claim=claim,
+            candidates=rendered_candidates,
+            label_schema=label_schema,
+        )
+        training_row = build_training_row(
+            retrieval_row,
+            tokenizer,
+            exact_prompt_cfg,
+            allow_unlabeled=allow_unlabeled,
+        )
+        rendered_cache[count] = (
+            claim,
+            rendered_candidates,
+            qec_payload,
+            mrec_payload,
+            training_row,
+        )
+        return rendered_cache[count]
+
+    full_render = render_prefix(considered_count)
+    target_token_reserve = _prompt_target_token_reserve(full_render[-1])
+    effective_budget = _effective_prompt_token_budget(
+        requested_budget=requested_budget,
+        target_token_reserve=target_token_reserve,
+        max_length_guard=dict(prompt_evidence.get("max_length_guard") or {}),
+    )
+
+    partial_evidence = False
+    if int(full_render[-1].get("prompt_token_count") or 0) <= effective_budget:
+        final_count = considered_count
+        final_render = full_render
+        stop_reason = str(prompt_evidence_decision.get("stop_reason") or "end_of_trace")
+    else:
+        minimum_render = render_prefix(minimum_count)
+        if int(minimum_render[-1].get("prompt_token_count") or 0) <= effective_budget:
+            best_count = minimum_count
+            left = minimum_count + 1
+            right = considered_count - 1
+            while left <= right:
+                middle = (left + right) // 2
+                middle_render = render_prefix(middle)
+                if int(middle_render[-1].get("prompt_token_count") or 0) <= effective_budget:
+                    best_count = middle
+                    left = middle + 1
+                else:
+                    right = middle - 1
+            final_count = best_count
+            final_render = render_prefix(final_count)
+            next_render = render_prefix(final_count + 1)
+            if int(next_render[-1].get("prompt_token_count") or 0) <= effective_budget:
+                raise ValueError(
+                    "prompt_budget prefix search did not return the largest fitting prefix: "
+                    f"selected_count={final_count}, next_prompt_token_count="
+                    f"{next_render[-1].get('prompt_token_count')}, budget={effective_budget}"
+                )
+            stop_reason = "prompt_token_budget_exhausted"
+        elif minimum_count > 1:
+            raise ValueError(
+                "prompt_token_budget cannot fit min_evidence_count whole evidence items: "
+                f"min_evidence_count={minimum_count}, budget={effective_budget}, "
+                f"prompt_token_count={minimum_render[-1].get('prompt_token_count')}"
+            )
+        else:
+            claim, rendered_candidates, qec_payload, mrec_payload, _ = minimum_render
+            first_text = str(rendered_candidates[0].get("text") or "")
+            kept_texts, _, _, _, evidence_text_truncated = truncate_single_evidence_to_budget(
+                claim=claim,
+                evidence_text=first_text,
+                tokenizer=tokenizer,
+                system_msg=build_system_message(prompt_cfg.get("system_prompt"), label_schema),
+                output_mode=str(prompt_cfg.get("output_mode", "label_only")).strip().lower(),
+                label_format=str(prompt_cfg.get("label_format", "name")).strip().lower(),
+                label_schema=label_schema,
+                budget=effective_budget,
+                chat_template=(
+                    prompt_cfg.get("chat_template")
+                    if isinstance(prompt_cfg.get("chat_template"), dict)
+                    else None
+                ),
+            )
+            if not kept_texts or not str(kept_texts[0]).strip():
+                raise ValueError(
+                    "prompt_token_budget is too small to retain a non-empty first evidence item "
+                    f"after rendering the fixed verifier prompt: budget={effective_budget}"
+                )
+            truncated_candidate = dict(rendered_candidates[0])
+            truncated_candidate["text"] = str(kept_texts[0])
+            retrieval_row = _retrieval_row_from_sample(
+                sample,
+                claim=claim,
+                candidates=[truncated_candidate],
+                label_schema=label_schema,
+            )
+            training_row = build_training_row(
+                retrieval_row,
+                tokenizer,
+                exact_prompt_cfg,
+                allow_unlabeled=allow_unlabeled,
+            )
+            training_row["was_truncated"] = True
+            training_row["evidence_text_truncated"] = bool(evidence_text_truncated)
+            final_count = 1
+            final_render = (
+                claim,
+                [truncated_candidate],
+                qec_payload,
+                mrec_payload,
+                training_row,
+            )
+            partial_evidence = True
+            stop_reason = "prompt_token_budget_single_evidence_truncated"
+
+    claim, rendered_candidates, qec_payload, mrec_payload, training_row = final_render
+    final_indices = [int(idx) for idx in selected_indices[:final_count]]
+    decision = dict(prompt_evidence_decision)
+    decision.update(
+        {
+            "selected_indices": final_indices,
+            "selected_count_before_prompt_truncation": int(final_count),
+            "selected_token_cost": _prompt_evidence_total_token_cost(trace, final_indices),
+            "stop_reason": stop_reason,
+            "prompt_token_budget": int(requested_budget),
+            "effective_prompt_token_budget": int(effective_budget),
+            "selected_prompt_token_count": int(training_row.get("prompt_token_count") or 0),
+            "target_token_reserve": int(target_token_reserve),
+            "partial_evidence": bool(partial_evidence),
+            "considered_count": int(considered_count),
+        }
+    )
+    _validate_prompt_budget_training_row(
+        training_row,
+        tokenizer=tokenizer,
+        selected_indices=final_indices,
+        rendered_candidates=rendered_candidates,
+        qec_payload=qec_payload,
+        mrec_payload=mrec_payload,
+        requested_budget=requested_budget,
+        effective_budget=effective_budget,
+        target_token_reserve=target_token_reserve,
+        max_length_guard=dict(prompt_evidence.get("max_length_guard") or {}),
+        partial_evidence=partial_evidence,
+    )
+    return (
+        final_indices,
+        rendered_candidates,
+        claim,
+        qec_payload,
+        mrec_payload,
+        training_row,
+        decision,
+    )
+
+
+def _prompt_target_token_reserve(row: dict[str, Any]) -> int:
+    return max(
+        0,
+        int(
+            row.get("target_token_count")
+            or row.get("inference_target_token_reserve")
+            or 0
+        ),
+    )
+
+
+def _effective_prompt_token_budget(
+    *,
+    requested_budget: int,
+    target_token_reserve: int,
+    max_length_guard: dict[str, Any],
+) -> int:
+    effective_budget = int(requested_budget)
+    effective_max_length = int(max_length_guard.get("effective_max_length") or 0)
+    reserve_tokens = max(0, int(max_length_guard.get("reserve_tokens") or 0))
+    if effective_max_length > 0:
+        context_budget = effective_max_length - reserve_tokens - int(target_token_reserve)
+        if context_budget <= 0:
+            raise ValueError(
+                "no verifier prompt capacity remains after target/context reserves: "
+                f"effective_max_length={effective_max_length}, reserve_tokens={reserve_tokens}, "
+                f"target_token_reserve={target_token_reserve}"
+            )
+        effective_budget = min(effective_budget, context_budget)
+    if effective_budget <= 0:
+        raise ValueError(f"invalid effective prompt token budget: {effective_budget}")
+    return int(effective_budget)
+
+
+def _validate_prompt_budget_training_row(
+    row: dict[str, Any],
+    *,
+    tokenizer: Any,
+    selected_indices: list[int],
+    rendered_candidates: list[dict[str, Any]],
+    qec_payload: dict[str, Any] | None,
+    mrec_payload: dict[str, Any] | None,
+    requested_budget: int,
+    effective_budget: int,
+    target_token_reserve: int,
+    max_length_guard: dict[str, Any],
+    partial_evidence: bool,
+) -> None:
+    prompt_token_count = int(row.get("prompt_token_count") or 0)
+    prompt_input_ids = row.get("prompt_input_ids")
+    if is_mistral_common_tokenizer(tokenizer) and not isinstance(prompt_input_ids, list):
+        raise ValueError("MistralCommon prompt_budget rows require prompt_input_ids")
+    if isinstance(prompt_input_ids, list) and len(prompt_input_ids) != prompt_token_count:
+        raise ValueError(
+            "prompt_input_ids length differs from prompt_token_count: "
+            f"ids={len(prompt_input_ids)}, count={prompt_token_count}"
+        )
+    if prompt_token_count > int(requested_budget):
+        raise ValueError(
+            f"final verifier prompt has {prompt_token_count} tokens, exceeding requested budget={requested_budget}"
+        )
+    if prompt_token_count > int(effective_budget):
+        raise ValueError(
+            f"final verifier prompt has {prompt_token_count} tokens, exceeding effective budget={effective_budget}"
+        )
+
+    expected_count = len(selected_indices)
+    if len(rendered_candidates) != expected_count:
+        raise ValueError(
+            "prompt_budget rendered candidate/index mismatch: "
+            f"candidates={len(rendered_candidates)}, selected_indices={expected_count}"
+        )
+    if int(row.get("evidence_count") or 0) != expected_count:
+        raise ValueError(
+            "prompt_budget evidence_count/index mismatch: "
+            f"evidence_count={row.get('evidence_count')}, selected_indices={expected_count}"
+        )
+    if isinstance(qec_payload, dict) and len(qec_payload.get("steps") or []) != expected_count:
+        raise ValueError("prompt_budget QEC steps do not align with final evidence prefix")
+    if isinstance(mrec_payload, dict) and len(mrec_payload.get("steps") or []) != expected_count:
+        raise ValueError("prompt_budget MREC steps do not align with final evidence prefix")
+
+    if partial_evidence:
+        if not bool(row.get("was_truncated")) or not bool(row.get("evidence_text_truncated")):
+            raise ValueError("partial prompt_budget evidence must be explicitly marked as truncated")
+    elif bool(row.get("was_truncated")) or bool(row.get("evidence_text_truncated")):
+        raise ValueError("whole-prefix prompt_budget selection must not use implicit prompt truncation")
+
+    effective_max_length = int(max_length_guard.get("effective_max_length") or 0)
+    reserve_tokens = max(0, int(max_length_guard.get("reserve_tokens") or 0))
+    if (
+        effective_max_length > 0
+        and prompt_token_count + int(target_token_reserve) + reserve_tokens > effective_max_length
+    ):
+        raise ValueError(
+            "prompt plus target/context reserve exceeds effective max length: "
+            f"prompt={prompt_token_count}, target_reserve={target_token_reserve}, "
+            f"reserve_tokens={reserve_tokens}, effective_max_length={effective_max_length}"
+        )
+
+
 def _resolve_prompt_evidence_config(
     cfg: dict[str, Any],
     *,
@@ -701,6 +1073,8 @@ def _resolve_prompt_evidence_config(
         raw["max_evidence_count"] = int(args.prompt_evidence_max_count)
     if args.prompt_evidence_token_budget is not None:
         raw["evidence_token_budget"] = int(args.prompt_evidence_token_budget)
+    if args.prompt_evidence_prompt_token_budget is not None:
+        raw["prompt_token_budget"] = int(args.prompt_evidence_prompt_token_budget)
 
     guard = dict(raw.get("max_length_guard") or {})
     if args.prompt_evidence_max_length_guard is not None:
@@ -748,11 +1122,30 @@ def _normalize_prompt_evidence_config(
     token_budget = _int_or_none(raw.get("evidence_token_budget"))
     if token_budget is not None and token_budget <= 0:
         token_budget = None
+    prompt_token_budget = _int_or_none(raw.get("prompt_token_budget"))
+    if prompt_token_budget is not None and prompt_token_budget <= 0:
+        prompt_token_budget = None
+    if policy == "prompt_budget":
+        if prompt_token_budget is None:
+            raise ValueError(
+                "prompt_evidence.policy=prompt_budget requires a positive prompt_token_budget."
+            )
+        if token_budget is not None:
+            raise ValueError(
+                "prompt_evidence.policy=prompt_budget must not set evidence_token_budget; "
+                "use prompt_token_budget for the final verifier-visible prompt cap."
+            )
+        min_count = max(1, min_count)
+    elif prompt_token_budget is not None:
+        raise ValueError(
+            "prompt_evidence.prompt_token_budget is only valid with policy=prompt_budget."
+        )
 
     guard = _normalize_max_length_guard(
         dict(raw.get("max_length_guard") or {}),
         prompt_cfg=prompt_cfg,
         evidence_token_budget=token_budget,
+        prompt_token_budget=prompt_token_budget,
     )
     state_budget = _normalize_state_budget_config(
         dict(raw.get("state_budget") or {}),
@@ -766,6 +1159,7 @@ def _normalize_prompt_evidence_config(
         "min_evidence_count": int(min_count),
         "max_evidence_count": int(max_count),
         "evidence_token_budget": token_budget,
+        "prompt_token_budget": prompt_token_budget,
         "max_length_guard": guard,
         "state_budget": state_budget,
         "two_pass_uncertainty": two_pass_uncertainty,
@@ -777,6 +1171,7 @@ def _normalize_max_length_guard(
     *,
     prompt_cfg: dict[str, Any],
     evidence_token_budget: int | None,
+    prompt_token_budget: int | None,
 ) -> dict[str, Any]:
     enabled = bool(raw.get("enabled", False))
     build_prompt_max_length = int(
@@ -788,7 +1183,18 @@ def _normalize_max_length_guard(
     positive_lengths = [value for value in (build_prompt_max_length, sft_train_max_length) if value > 0]
     effective_max_length = min(positive_lengths) if positive_lengths else 0
     reserve_tokens = max(0, _int_or_default(raw.get("reserve_tokens"), 0))
-    effective_prompt_budget = max(0, int(effective_max_length) - reserve_tokens) if effective_max_length > 0 else 0
+    context_prompt_budget = (
+        max(0, int(effective_max_length) - reserve_tokens)
+        if effective_max_length > 0
+        else 0
+    )
+    effective_prompt_budget = context_prompt_budget
+    if prompt_token_budget is not None:
+        effective_prompt_budget = (
+            min(int(prompt_token_budget), context_prompt_budget)
+            if context_prompt_budget > 0
+            else int(prompt_token_budget)
+        )
     on_violation = str(raw.get("on_violation") or "warn").strip().lower()
     if on_violation not in {"warn", "error"}:
         raise ValueError(f"unsupported prompt_evidence.max_length_guard.on_violation: {on_violation!r}")
@@ -799,6 +1205,7 @@ def _normalize_max_length_guard(
         "sft_train_max_length": int(sft_train_max_length),
         "effective_max_length": int(effective_max_length),
         "reserve_tokens": int(reserve_tokens),
+        "context_prompt_budget": int(context_prompt_budget),
         "effective_prompt_budget": int(effective_prompt_budget),
         "config_conflict": bool(
             build_prompt_max_length > 0
@@ -806,9 +1213,11 @@ def _normalize_max_length_guard(
             and build_prompt_max_length != sft_train_max_length
         ),
         "config_budget_conflict": bool(
-            evidence_token_budget is not None
-            and effective_prompt_budget > 0
-            and int(evidence_token_budget) > effective_prompt_budget
+            (prompt_token_budget if prompt_token_budget is not None else evidence_token_budget)
+            is not None
+            and context_prompt_budget > 0
+            and int(prompt_token_budget if prompt_token_budget is not None else evidence_token_budget)
+            > context_prompt_budget
         ),
     }
 
@@ -867,6 +1276,7 @@ def _public_prompt_evidence_config(config: dict[str, Any]) -> dict[str, Any]:
         "min_evidence_count": int(config.get("min_evidence_count") or 0),
         "max_evidence_count": int(config.get("max_evidence_count") or 0),
         "evidence_token_budget": config.get("evidence_token_budget"),
+        "prompt_token_budget": config.get("prompt_token_budget"),
         "max_length_guard": dict(config.get("max_length_guard") or {}),
         "state_budget": dict(config.get("state_budget") or {}),
         "two_pass_uncertainty": dict(config.get("two_pass_uncertainty") or {}),
@@ -939,10 +1349,17 @@ def _select_prompt_evidence_indices(
             stop_reason="selected_set_exhausted",
         )
 
-    if policy in {"prefix_topk", "fixed_topk"}:
+    if policy in {"prefix_topk", "fixed_topk", "prompt_budget"}:
         limit = max_count if max_count > 0 else len(ordered_indices)
         selected = list(ordered_indices[:limit])
-        stop_reason = "top_k" if policy == "prefix_topk" else "max_evidence_count"
+        if policy == "prefix_topk":
+            stop_reason = "top_k"
+        elif policy == "fixed_topk":
+            stop_reason = "max_evidence_count"
+        elif len(selected) < len(ordered_indices):
+            stop_reason = "max_evidence_count"
+        else:
+            stop_reason = "end_of_trace"
         return _prompt_evidence_decision(
             selected,
             policy=policy,
@@ -1168,7 +1585,6 @@ def _prompt_evidence_decision(
 
 
 def _prompt_evidence_row_fields(config: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:
-    del config
     fields = {
         "prompt_evidence_policy": str(decision["policy"]),
         "prompt_evidence_min_count": int(decision["min_evidence_count"]),
@@ -1180,6 +1596,33 @@ def _prompt_evidence_row_fields(config: dict[str, Any], decision: dict[str, Any]
         "prompt_evidence_selected_token_cost": int(decision["selected_token_cost"]),
         "prompt_evidence_stop_reason": str(decision["stop_reason"]),
     }
+    if str(decision.get("policy") or "") == "prompt_budget":
+        fields.update(
+            {
+                "prompt_evidence_prompt_token_budget": int(
+                    decision.get("prompt_token_budget")
+                    or config.get("prompt_token_budget")
+                    or 0
+                ),
+                "prompt_evidence_effective_prompt_token_budget": int(
+                    decision.get("effective_prompt_token_budget") or 0
+                ),
+                "prompt_evidence_selected_prompt_token_count": int(
+                    decision.get("selected_prompt_token_count") or 0
+                ),
+                "prompt_evidence_target_token_reserve": int(
+                    decision.get("target_token_reserve") or 0
+                ),
+                "prompt_evidence_partial_evidence": bool(
+                    decision.get("partial_evidence", False)
+                ),
+                "prompt_evidence_considered_count": int(
+                    decision.get("considered_count")
+                    or decision.get("selected_count_before_prompt_truncation")
+                    or 0
+                ),
+            }
+        )
     if decision.get("state_budget") is not None:
         fields["prompt_evidence_state_budget"] = dict(decision.get("state_budget") or {})
     two_pass = decision.get("two_pass_uncertainty")

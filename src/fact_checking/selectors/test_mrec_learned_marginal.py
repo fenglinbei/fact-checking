@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 from fact_checking.selectors.mrec_learned_marginal import (
     LearnedMarginalWeights,
     REWARD_WEIGHT_SCHEMA_VERSION,
+    SUPERVISION_MODE_LEGACY_HYBRID,
+    SUPERVISION_MODE_STRUCTURE_ONLY,
+    build_winner_vs_rest_preferences,
     evaluate_learned_marginal_reward_weights,
+    evaluate_learned_marginal_proxy_weights,
     extract_marginal_features,
     initial_learned_marginal_weights,
+    initial_neutral_learned_marginal_weights,
+    learned_marginal_weight_fingerprint,
     rank_candidates_by_proxy,
     score_marginal_features,
     train_learned_marginal_proxy_weights,
@@ -142,6 +150,130 @@ def test_train_learned_marginal_proxy_weights_scores_oracle_above_noise() -> Non
 
     assert metrics["pair_count"] > 0
     assert score_marginal_features(direct_features, weights) > score_marginal_features(noise_features, weights)
+
+
+def test_structure_only_is_invariant_to_oracle_gold_teacher_and_utility_poison() -> None:
+    clean = [
+        {
+            "event_id": "case-structure",
+            "claim_atoms": [{"atom_id": "A1", "text": "The city approved the project."}],
+            "candidate_pool": [
+                _candidate("E-noise", key="doc:noise", relation="irrelevant", atoms=[], retrieval=0.99),
+                _candidate("E-direct", key="doc:direct", relation="support", atoms=["A1"], retrieval=0.1),
+                _candidate("E-partial", key="doc:partial", relation="support", atoms=["A1"], directness="partial"),
+            ],
+        }
+    ]
+    poisoned = deepcopy(clean)
+    poisoned[0].update(
+        {
+            "gold_label": "POISON",
+            "label": "POISON",
+            "oracle_ordered_keys": ["doc:noise"],
+            "oracle_ordered_indices": [0],
+            "teacher_margin": 999.0,
+            "utility_scores": {"doc:noise": 999.0},
+            "verifier_reward": 999.0,
+        }
+    )
+    for candidate in poisoned[0]["candidate_pool"]:
+        candidate.update(
+            {
+                "oracle_selected": candidate["candidate_key"] == "doc:noise",
+                "gold_label": "POISON",
+                "teacher_score": 999.0,
+                "utility": 999.0,
+                "delta_margin": 999.0,
+                "verifier_reward": 999.0,
+            }
+        )
+
+    clean_weights, clean_metrics = train_learned_marginal_proxy_weights(
+        clean,
+        epochs=5,
+        learning_rate=0.1,
+        rollout_steps=2,
+        supervision_mode=SUPERVISION_MODE_STRUCTURE_ONLY,
+    )
+    poison_weights, poison_metrics = train_learned_marginal_proxy_weights(
+        poisoned,
+        epochs=5,
+        learning_rate=0.1,
+        rollout_steps=2,
+        supervision_mode=SUPERVISION_MODE_STRUCTURE_ONLY,
+    )
+
+    assert clean_metrics == poison_metrics
+    assert clean_metrics["supervision_fingerprint"] == poison_metrics["supervision_fingerprint"]
+    assert clean_metrics["oracle_read_row_count"] == 0
+    assert clean_metrics["gold_label_read_count"] == 0
+    assert clean_metrics["teacher_read_count"] == 0
+    assert clean_metrics["utility_read_count"] == 0
+    assert clean_metrics["reward_read_count"] == 0
+    assert clean_metrics["oracle_preference_step_count"] == 0
+    assert clean_metrics["structure_preference_step_count"] > 0
+    assert clean_weights.to_json_dict() == poison_weights.to_json_dict()
+    assert learned_marginal_weight_fingerprint(clean_weights) == learned_marginal_weight_fingerprint(poison_weights)
+
+
+def test_structure_only_uses_neutral_initialization_and_has_nonempty_validation_metrics() -> None:
+    neutral = initial_neutral_learned_marginal_weights()
+    assert set(neutral.feature_weights.values()) == {1.0}
+    assert neutral.cost_weight == 1.0
+
+    rows = [
+        {
+            "claim_atoms": [{"atom_id": "A1"}],
+            "candidate_pool": [
+                _candidate("E-noise", relation="irrelevant", atoms=[], retrieval=0.9),
+                _candidate("E-direct", relation="support", atoms=["A1"], retrieval=0.1),
+            ],
+        }
+    ]
+    weights, _ = train_learned_marginal_proxy_weights(
+        rows,
+        epochs=3,
+        supervision_mode=SUPERVISION_MODE_STRUCTURE_ONLY,
+    )
+    metrics = evaluate_learned_marginal_proxy_weights(
+        rows,
+        weights,
+        supervision_mode=SUPERVISION_MODE_STRUCTURE_ONLY,
+    )
+
+    assert metrics["scored_row_count"] == 1
+    assert metrics["scored_pair_count"] == 1
+    assert metrics["pair_accuracy"] == 1.0
+    assert metrics["oracle_read_row_count"] == 0
+
+
+def test_default_proxy_training_matches_explicit_legacy_hybrid_mode() -> None:
+    rows = [
+        {
+            "claim_atoms": [{"atom_id": "A1"}],
+            "oracle_ordered_keys": ["doc:noise"],
+            "candidate_pool": [
+                _candidate("E-direct", key="doc:direct", relation="support", atoms=["A1"]),
+                _candidate("E-noise", key="doc:noise", relation="irrelevant", atoms=[]),
+            ],
+        }
+    ]
+
+    default_weights, default_metrics = train_learned_marginal_proxy_weights(rows, epochs=3)
+    legacy_weights, legacy_metrics = train_learned_marginal_proxy_weights(
+        rows,
+        epochs=3,
+        supervision_mode=SUPERVISION_MODE_LEGACY_HYBRID,
+    )
+
+    assert default_weights.to_json_dict() == legacy_weights.to_json_dict()
+    assert default_metrics == legacy_metrics
+    assert default_metrics["oracle_preference_step_count"] > 0
+
+
+def test_winner_vs_rest_preferences_are_supervision_agnostic() -> None:
+    assert build_winner_vs_rest_preferences([2, 0, 1]) == [(2, 0), (2, 1)]
+    assert build_winner_vs_rest_preferences([]) == []
 
 
 def test_initial_learned_marginal_weights_are_interpretable_positive_weights() -> None:

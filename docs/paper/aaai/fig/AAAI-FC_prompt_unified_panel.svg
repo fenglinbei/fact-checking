@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="556" height="1596" viewBox="646 85 139 399">
+  <style>.mono, .mono text { font-family: "DejaVu Sans Mono", monospace; }</style>
+  <rect x="646" y="85" width="139" height="399" rx="4" fill="#fefefe" stroke="#c8c8c8" stroke-width="0.7"/>
+  <text x="715.5" y="99" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="11" font-weight="700">Verifier</text>
+
+  <path d="M633 280.5 H651" fill="none" stroke="#5b5e64" stroke-width="2"/>
+  <path d="M651 277 L657 280.5 L651 284 Z" fill="#5b5e64"/>
+
+  <rect x="653" y="108" width="125" height="235" rx="5" fill="#fbfafd" stroke="#7e57a8" stroke-width="0.9"/>
+  <text x="659" y="121" font-family="Courier New,Consolas,monospace" font-size="7" font-weight="700" fill="#4b2385">Prompt template</text>
+
+  <g class="mono" font-size="6" fill="#17131d">
+    <text x="659" y="135" font-weight="700">INSTRUCTION:</text>
+    <text x="659" y="143">Predict the fact-check label</text>
+    <text x="659" y="151">from the claim and ordered</text>
+    <text x="659" y="159">evidence trace.</text>
+
+    <text x="659" y="175" font-weight="700">LABELS: {A, ..., F}</text>
+
+    <text x="659" y="191" font-weight="700">CLAIM:</text>
+    <text x="659" y="199">{claim c}</text>
+
+    <text x="659" y="215" font-weight="700">ORDERED EVIDENCE TRACE:</text>
+    <text x="659" y="225">[1] Check: {atom cue aᵢ}</text>
+    <text x="665" y="233">{evidence uⱼ}</text>
+    <text x="659" y="243">[2] Check: {atom cue aₖ}</text>
+    <text x="665" y="251">{evidence uₗ}</text>
+    <text x="659" y="261">[3] Check: {atom cue aₘ}</text>
+    <text x="665" y="269">{evidence uₙ}</text>
+    <text x="659" y="279">...</text>
+
+    <text x="659" y="295" font-weight="700">OUTPUT:</text>
+    <text x="659" y="305">Label:</text>
+  </g>
+
+  <rect x="655" y="351" width="48" height="17" rx="3" fill="#fff7e8" stroke="#d99a2b" stroke-width="0.7" stroke-dasharray="3 2"/>
+  <text x="679" y="362" text-anchor="middle" font-family="Courier New,Consolas,monospace" font-size="6" fill="#8a5a05">gold label y</text>
+  <text x="741" y="362" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="6" fill="#6f5a95">instruction tuning</text>
+
+  <path d="M716 343 V376" fill="none" stroke="#6f5a95" stroke-width="1.2"/>
+  <path d="M712.5 373 L716 379 L719.5 373 Z" fill="#6f5a95"/>
+  <path d="M679 368 V377" fill="none" stroke="#d99a2b" stroke-width="0.9" stroke-dasharray="3 2"/>
+  <path d="M676 374 L679 379 L682 374 Z" fill="#d99a2b"/>
+  <text x="684" y="375" font-family="Helvetica,Arial,sans-serif" font-size="5" fill="#8a5a05">CE</text>
+
+  <rect x="660" y="378" width="111" height="45" rx="4" fill="#f3eef9" stroke="#4b2385" stroke-width="0.9"/>
+  <text x="715.5" y="397" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="8" font-weight="700" fill="#4b2385">Verifier Vφ</text>
+  <text x="715.5" y="410" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="6" fill="#4b2385">score label tokens A–F</text>
+
+  <path d="M715.5 423 V439" fill="none" stroke="#4f9d46" stroke-width="1.2"/>
+  <path d="M712 436 L715.5 442 L719 436 Z" fill="#4f9d46"/>
+  <rect x="660" y="441" width="111" height="32" rx="4" fill="#f4faf1" stroke="#4f9d46" stroke-width="0.9"/>
+  <text x="715.5" y="453" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="7" font-weight="700" fill="#216e2b">Output label</text>
+  <text x="715.5" y="465" text-anchor="middle" font-family="Courier New,Consolas,monospace" font-size="6" fill="#216e2b">ŷ = argmaxᵧ logitφ(y | P)</text>
+</svg>

@@ -1,0 +1,70 @@
+<View>
+  <View name="meta" style="background:#f5f5f5;padding:8px 12px;border-radius:4px;margin-bottom:12px">
+    <Text name="meta_id" value="仲裁 ID: $adjudication_id  |  数据集: $dataset  |  样本: $event_id  |  Atom: $atom_id  |  Evidence: $evidence_id" />
+    <Text name="requested_label" value="本条只需仲裁：" style="font-size:12px;color:#666;margin-top:6px" />
+    <Text name="requested_fields" value="$fields_to_adjudicate_text" style="font-size:15px;font-weight:bold;color:#c62828" />
+  </View>
+
+  <View name="blind_notice" style="border-left:4px solid #ff9800;padding:8px 12px;margin-bottom:14px;background:#fff8e1">
+    <Text name="blind_notice_text" value="请独立判断，不查询 Yulin/Zhiqiang 的原标签，也不要尝试猜测 LLM 标签。只依据本页英文 evidence 与 atom；中文仅辅助理解。" style="font-size:12px;color:#7a4f00" />
+  </View>
+
+  <View name="claim_block" style="border-left:4px solid #2196F3;padding:8px 12px;margin-bottom:14px;background:#fafafa">
+    <Text name="claim_heading" value="Claim（声明）" style="font-size:14px;font-weight:bold;color:#1565c0" />
+    <Text name="claim" value="$claim" style="font-size:15px;line-height:1.6" />
+    <Text name="claim_zh_heading" value="中文辅助：" style="font-size:11px;color:#888;margin-top:5px" />
+    <Text name="claim_zh" value="$claim_zh" style="font-size:13px;line-height:1.5;color:#666" />
+  </View>
+
+  <View name="atom_block" style="border-left:4px solid #4caf50;padding:8px 12px;margin-bottom:14px;background:#f7fff7">
+    <Text name="atom_heading" value="Atom（原子命题）$atom_id" style="font-size:14px;font-weight:bold;color:#2e7d32" />
+    <Text name="atom_prop" value="$atom_proposition" style="font-size:15px;line-height:1.6" />
+    <Text name="atom_zh_heading" value="中文辅助：" style="font-size:11px;color:#888;margin-top:5px" />
+    <Text name="atom_prop_zh" value="$atom_proposition_zh" style="font-size:13px;line-height:1.5;color:#666" />
+  </View>
+
+  <View name="evidence_block" style="border-left:4px solid #ff9800;padding:8px 12px;margin-bottom:16px;background:#fff8e1">
+    <Text name="evidence_heading" value="Evidence（证据）$evidence_id" style="font-size:14px;font-weight:bold;color:#e65100" />
+    <Text name="evidence" value="$evidence_text" style="font-size:15px;line-height:1.7" />
+    <Text name="evidence_zh_heading" value="中文辅助：" style="font-size:11px;color:#888;margin-top:5px" />
+    <Text name="evidence_zh" value="$evidence_text_zh" style="font-size:13px;line-height:1.5;color:#666" />
+  </View>
+
+  <Repeater on="$relation_questions" indexFlag="{{idx}}">
+    <View style="border:1px solid #d7e8ff;border-radius:6px;padding:10px 14px;margin-bottom:12px;background:#f7fbff">
+      <Header value="$relation_questions[{{idx}}].title" style="font-size:14px" />
+      <Text name="relation_prompt_{{idx}}" value="$relation_questions[{{idx}}].question" style="font-size:12px;color:#555;margin-bottom:6px" />
+      <Choices name="relation_decision_{{idx}}" toName="evidence" choice="single" required="true">
+        <Choice value="support" hint="证据足以支持 atom 为真" />
+        <Choice value="refute" hint="证据明确证明 atom 为假" />
+        <Choice value="qualify" hint="部分支持或反驳，或添加限定条件" />
+        <Choice value="mixed" hint="证据内部同时含支持与反驳成分" />
+        <Choice value="insufficient" hint="语义相关，但信息不足以判断真值" />
+        <Choice value="background" hint="仅提供背景，不直接涉及 atom 真值" />
+        <Choice value="irrelevant" hint="与 atom 没有语义关联" />
+      </Choices>
+    </View>
+  </Repeater>
+
+  <Repeater on="$directness_questions" indexFlag="{{idx}}">
+    <View style="border:1px solid #d8edd8;border-radius:6px;padding:10px 14px;margin-bottom:12px;background:#f7fff7">
+      <Header value="$directness_questions[{{idx}}].title" style="font-size:14px" />
+      <Text name="directness_prompt_{{idx}}" value="$directness_questions[{{idx}}].question" style="font-size:12px;color:#555;margin-bottom:6px" />
+      <Choices name="directness_decision_{{idx}}" toName="evidence" choice="single" required="true">
+        <Choice value="direct" hint="证据直接陈述 atom 真值，可直接判断对错" />
+        <Choice value="partial" hint="证据间接涉及 atom，需推理才能联系" />
+        <Choice value="context" hint="证据仅提供背景上下文" />
+        <Choice value="none" hint="证据与 atom 无直接关联" />
+      </Choices>
+    </View>
+  </Repeater>
+
+  <Header value="仲裁说明（可选）" style="font-size:12px" />
+  <TextArea name="notes" toName="evidence" rows="3" placeholder="建议对边界案例简要说明理由" />
+
+  <View name="confirm_block" style="background:#e8f5e9;padding:8px 12px;border-radius:4px;margin-top:12px">
+    <Choices name="review_complete" toName="evidence" choice="single" required="true">
+      <Choice value="confirmed" hint="我已独立完成本页显示的全部待仲裁字段，未查看 A/B 或 LLM 原标签" />
+    </Choices>
+  </View>
+</View>

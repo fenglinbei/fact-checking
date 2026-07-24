@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import math
 import os
 import shutil
 import signal
+import time
 from pathlib import Path
 from typing import Any
 
@@ -376,6 +378,125 @@ def _read_latest_state_meta(state_dir: Path) -> dict[str, Any] | None:
     return meta
 
 
+_RETIRED_CLEANUP_BACKOFF_SECONDS = (0.25, 0.5, 1.0, 2.0, 4.0)
+_RETRYABLE_RETIRED_CLEANUP_ERRNOS = {errno.ENOTEMPTY, errno.EBUSY, errno.ESTALE}
+
+
+def _retired_directory(path: Path) -> Path:
+    return path.with_name(f".{path.name.lstrip('.')}.retired")
+
+
+def _legacy_retired_directories(path: Path) -> list[Path]:
+    patterns = {
+        f".{path.name}.retired-*",
+        f".{path.name.lstrip('.')}.retired-*",
+    }
+    return sorted({candidate for pattern in patterns for candidate in path.parent.glob(pattern)})
+
+
+def _retire_directory(path: Path) -> Path:
+    retired = _retired_directory(path)
+    if retired.exists():
+        raise FileExistsError(f"Retired directory slot is occupied: {retired}")
+    path.rename(retired)
+    return retired
+
+
+def _cleanup_retired_directory(path: Path, *, active_logger) -> bool:
+    for attempt in range(len(_RETIRED_CLEANUP_BACKOFF_SECONDS) + 1):
+        try:
+            shutil.rmtree(path)
+            if not path.exists():
+                return True
+            raise OSError(errno.ENOTEMPTY, "retired directory is still visible after cleanup", str(path))
+        except OSError as exc:
+            if isinstance(exc, FileNotFoundError) and not path.exists():
+                return True
+            retryable = isinstance(exc, FileNotFoundError) or exc.errno in _RETRYABLE_RETIRED_CLEANUP_ERRNOS
+            if retryable and attempt < len(_RETIRED_CLEANUP_BACKOFF_SECONDS):
+                time.sleep(_RETIRED_CLEANUP_BACKOFF_SECONDS[attempt])
+                continue
+            active_logger.warning(
+                "[checkpoint] could not remove retired state directory %s; "
+                "leaving it for later cleanup: %s",
+                path,
+                exc,
+            )
+            return False
+
+
+def _reclaim_retired_directories(path: Path, *, active_logger) -> bool:
+    reclaimed = True
+    candidates = [_retired_directory(path), *_legacy_retired_directories(path)]
+    for retired in candidates:
+        if retired.exists() and not _cleanup_retired_directory(retired, active_logger=active_logger):
+            reclaimed = False
+    return reclaimed
+
+
+def _broadcast_main_process_bool(value: bool, *, accelerator: Accelerator) -> bool:
+    if int(getattr(accelerator, "num_processes", 1)) <= 1:
+        return bool(value)
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        raise RuntimeError("Distributed latest-state decision requires an initialized process group.")
+    payload: list[bool | None] = [bool(value) if accelerator.is_main_process else None]
+    torch.distributed.broadcast_object_list(payload, src=0)
+    return bool(payload[0])
+
+
+def _prepare_latest_state_staging(
+    *,
+    state_dir: Path,
+    tmp_state_dir: Path,
+    active_logger,
+) -> bool:
+    state_reclaimed = _reclaim_retired_directories(state_dir, active_logger=active_logger)
+    tmp_reclaimed = _reclaim_retired_directories(tmp_state_dir, active_logger=active_logger)
+    if not (state_reclaimed and tmp_reclaimed):
+        active_logger.warning(
+            "[checkpoint] skipping latest-state save because a fixed retired slot could not be reclaimed; "
+            "the published state was left unchanged."
+        )
+        return False
+    if tmp_state_dir.exists():
+        retired_tmp_state_dir = _retire_directory(tmp_state_dir)
+        if not _cleanup_retired_directory(retired_tmp_state_dir, active_logger=active_logger):
+            active_logger.warning(
+                "[checkpoint] skipping latest-state save because stale staging state could not be reclaimed; "
+                "the published state was left unchanged."
+            )
+            return False
+    tmp_state_dir.mkdir(parents=True, exist_ok=True)
+    return True
+
+
+def _publish_latest_state_directory(
+    *,
+    tmp_state_dir: Path,
+    state_dir: Path,
+    active_logger,
+) -> bool:
+    try:
+        retired_state_dir = _retire_directory(state_dir) if state_dir.exists() else None
+    except OSError as exc:
+        active_logger.warning(
+            "[checkpoint] latest-state replacement skipped because the published state could not be retired: %s",
+            exc,
+        )
+        return False
+    try:
+        tmp_state_dir.rename(state_dir)
+    except OSError as exc:
+        if retired_state_dir is not None and not state_dir.exists():
+            retired_state_dir.rename(state_dir)
+        active_logger.warning(
+            "[checkpoint] latest-state replacement failed; the previously published state was restored: %s",
+            exc,
+        )
+        return False
+    return True
+
+
 def _install_stop_signal_handlers(active_logger) -> dict[str, Any]:
     stop_request: dict[str, Any] = {"requested": False, "signal": None}
 
@@ -410,23 +531,30 @@ def _save_latest_training_state(
     active_logger,
     enabled: bool,
     completed: bool = False,
-) -> None:
+) -> bool:
     if not enabled:
-        return
+        return False
 
     state_dir = _latest_state_dir(output_dir, train_cfg)
     tmp_state_dir = state_dir.with_name(f".{state_dir.name}.tmp")
 
     accelerator.wait_for_everyone()
+    ready_to_save = False
     if accelerator.is_main_process:
-        if tmp_state_dir.exists():
-            shutil.rmtree(tmp_state_dir)
-        tmp_state_dir.mkdir(parents=True, exist_ok=True)
+        ready_to_save = _prepare_latest_state_staging(
+            state_dir=state_dir,
+            tmp_state_dir=tmp_state_dir,
+            active_logger=active_logger,
+        )
+    ready_to_save = _broadcast_main_process_bool(ready_to_save, accelerator=accelerator)
     accelerator.wait_for_everyone()
+    if not ready_to_save:
+        return False
 
     accelerator.save_state(str(tmp_state_dir))
     accelerator.wait_for_everyone()
 
+    published = False
     if accelerator.is_main_process:
         meta = {
             "completed": bool(completed),
@@ -439,11 +567,18 @@ def _save_latest_training_state(
         }
         meta_path = _latest_state_meta_path(tmp_state_dir)
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-        if state_dir.exists():
-            shutil.rmtree(state_dir)
-        tmp_state_dir.rename(state_dir)
-        active_logger.info("[checkpoint] latest training state saved to %s", state_dir)
+        published = _publish_latest_state_directory(
+            tmp_state_dir=tmp_state_dir,
+            state_dir=state_dir,
+            active_logger=active_logger,
+        )
+        if published:
+            active_logger.info("[checkpoint] latest training state saved to %s", state_dir)
+        _reclaim_retired_directories(state_dir, active_logger=active_logger)
+        _reclaim_retired_directories(tmp_state_dir, active_logger=active_logger)
+    published = _broadcast_main_process_bool(published, accelerator=accelerator)
     accelerator.wait_for_everyone()
+    return published
 
 
 def _load_latest_training_state(
@@ -498,14 +633,38 @@ def _write_training_complete(
             encoding="utf-8",
         )
         if _bool_cfg(train_cfg.get("cleanup_latest_state_on_complete", True), default=True):
-            for path in (
+            cleanup_paths = (
                 _latest_state_dir(output_dir, train_cfg),
                 _latest_state_dir(output_dir, train_cfg).with_name(
                     f".{_latest_state_dir(output_dir, train_cfg).name}.tmp"
                 ),
-            ):
+            )
+            reclaimed_paths = {
+                path: _reclaim_retired_directories(path, active_logger=active_logger) for path in cleanup_paths
+            }
+            retired_cleanup_paths: list[Path] = []
+            for path in cleanup_paths:
                 if path.exists():
-                    shutil.rmtree(path)
+                    if not reclaimed_paths[path]:
+                        active_logger.warning(
+                            "[checkpoint] leaving completed-run state at %s because an earlier retired state "
+                            "could not be reclaimed.",
+                            path,
+                        )
+                        continue
+                    retired_path = _retired_directory(path)
+                    if retired_path.exists():
+                        active_logger.warning(
+                            "[checkpoint] leaving completed-run state at %s because fixed retired slot %s "
+                            "could not be reclaimed.",
+                            path,
+                            retired_path,
+                        )
+                        continue
+                    _retire_directory(path)
+                    retired_cleanup_paths.append(path)
+            for path in retired_cleanup_paths:
+                if _reclaim_retired_directories(path, active_logger=active_logger):
                     active_logger.info("[checkpoint] removed completed-run latest state: %s", path)
     accelerator.wait_for_everyone()
 
@@ -1448,7 +1607,7 @@ def main() -> None:
             break
 
     if interrupted:
-        _save_latest_training_state(
+        latest_state_saved = _save_latest_training_state(
             accelerator=accelerator,
             output_dir=output_dir,
             train_cfg=train_cfg,
@@ -1462,7 +1621,17 @@ def main() -> None:
             enabled=save_latest_state,
         )
         if accelerator.is_main_process:
-            active_logger.warning("[signal] exiting after saving latest training state at global_step=%d", global_step)
+            if latest_state_saved:
+                active_logger.warning(
+                    "[signal] exiting after saving latest training state at global_step=%d",
+                    global_step,
+                )
+            else:
+                active_logger.warning(
+                    "[signal] exiting without replacing latest training state at global_step=%d; "
+                    "any previously published state remains available.",
+                    global_step,
+                )
         try:
             accelerator.end_training()
         except Exception as exc:

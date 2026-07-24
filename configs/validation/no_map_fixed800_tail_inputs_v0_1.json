@@ -1,0 +1,36 @@
+{
+  "schema_version": "no-map-fixed800-input-contract-v0.1",
+  "effective_seed": 42,
+  "weight_fingerprint": "9d8270fd98f6",
+  "selector_name": "mrec_greedy_transition_v0_2_learned_marginal_structure_only_no_map_fullpool",
+  "weights": {
+    "file": "outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_structure_only_no_map/weights/weights.json",
+    "sha256": "e93e1016523f148f8639f694f6c3a3c26cb76582bdbd633cb7392d70a39c2759",
+    "manifest": "outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_structure_only_no_map/weights/manifest.json",
+    "manifest_sha256": "b5b0276decb6784df8e4fa02d93f3015260e507c2b6f664f2059521635594a22"
+  },
+  "traces": {
+    "root": "outputs/selectors/atom_anchor/liar_raw_abc_v0_1/05_mrec_v0_2_learned_marginal_structure_only_no_map_fullpool",
+    "splits": {
+      "train": {"rows": 10065, "sha256": "4d8fd0cc111012f90261cfac93e9e254fafef3b2f71e1751230ba731835d1640"},
+      "val": {"rows": 1274, "sha256": "2f6f581d58a81049b2f3c6c80af1c927d8a7e75855b3b858c19f5ce1d902e901"},
+      "test": {"rows": 1251, "sha256": "67e0c5c04278be18ace2678232cd90c481d6e78da7d19b52a4733b16e3dfb551"}
+    }
+  },
+  "builds": {
+    "base_root": "outputs/sentence_trace_method/liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_structure_only_no_map_fullpool_minmax5_10",
+    "run_root": "outputs/sentence_trace_method/liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_structure_only_no_map_fullpool_minmax5_10_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw",
+    "splits": {
+      "train": {"rows": 10065, "sha256": "7a5b8026cef8e0d1eb16f6a4a098ce7cef85ef1c8ec0a98d12537252d1baa84b"},
+      "val": {"rows": 1274, "sha256": "974b27e8e20b2c7d73ab2ebbb1ab714a68ace1fc5f4a0f74b66c2f75630ff0a3"},
+      "test": {"rows": 1251, "sha256": "440a0177b4662e7d34f167788a99d4c23ea01850d13470cdc3bcc4dbe728474a"}
+    }
+  },
+  "training_prompt_policy": {
+    "policy": "minmax",
+    "min_evidence_count": 5,
+    "max_evidence_count": 10
+  },
+  "standard_clean_results_audit_slot_mutable": false,
+  "note": "This freezes the clean natural-K no-map training inputs. The fixed-K=5 diagnostic is materialized separately and must not mutate the standard clean-results audit slot."
+}

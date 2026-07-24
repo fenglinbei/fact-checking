@@ -16,9 +16,12 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from fact_checking.selectors.minimal_resolving_chain import (  # noqa: E402
+    MREC_SELECTION_POLICY_HARD_STRUCTURE,
+    MREC_SELECTION_POLICY_LEARNED_MARGINAL_ONE_SHOT,
     MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
     MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD,
     MREC_SELECTION_POLICY_MAP_QUALITY_GREEDY,
+    MREC_SELECTION_POLICY_RETRIEVAL_ORDER,
     MREC_SELECTION_POLICY_TRANSITION_V0_1,
     MREC_SELECTOR_NAME,
     MRECSelectorParams,
@@ -38,6 +41,9 @@ MREC_ADAPTIVE_POLICY = "minimal_resolving_chain_v0_1"
 MREC_LEARNED_MARGINAL_ADAPTIVE_POLICY = "learned_marginal_proxy_v0_2"
 MREC_LEARNED_MARGINAL_REWARD_ADAPTIVE_POLICY = "learned_marginal_reward_v0_2"
 MREC_MAP_QUALITY_GREEDY_ADAPTIVE_POLICY = "map_quality_greedy_v0_2"
+MREC_RETRIEVAL_ORDER_ADAPTIVE_POLICY = "retrieval_order_v0_2"
+MREC_HARD_STRUCTURE_ADAPTIVE_POLICY = "hard_structure_v0_2"
+MREC_LEARNED_MARGINAL_ONE_SHOT_ADAPTIVE_POLICY = "learned_marginal_one_shot_v0_2"
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,6 +70,9 @@ def parse_args() -> argparse.Namespace:
             MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
             MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD,
             MREC_SELECTION_POLICY_MAP_QUALITY_GREEDY,
+            MREC_SELECTION_POLICY_RETRIEVAL_ORDER,
+            MREC_SELECTION_POLICY_HARD_STRUCTURE,
+            MREC_SELECTION_POLICY_LEARNED_MARGINAL_ONE_SHOT,
         ],
     )
     parser.add_argument("--weight-file", default="")
@@ -87,8 +96,9 @@ def main() -> int:
     if str(args.selection_policy) in {
         MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
         MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD,
+        MREC_SELECTION_POLICY_LEARNED_MARGINAL_ONE_SHOT,
     } and not str(args.weight_file or ""):
-        raise SystemExit("--weight-file is required when --selection-policy learned_marginal_proxy/reward is used.")
+        raise SystemExit("--weight-file is required for learned-marginal selection policies.")
 
     params = MRECSelectorParams(
         candidate_top_n=int(args.candidate_top_n),
@@ -263,6 +273,12 @@ def _summarize_traces(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _adaptive_policy_for_params(params: MRECSelectorParams) -> str:
+    if str(params.selection_policy) == MREC_SELECTION_POLICY_RETRIEVAL_ORDER:
+        return MREC_RETRIEVAL_ORDER_ADAPTIVE_POLICY
+    if str(params.selection_policy) == MREC_SELECTION_POLICY_HARD_STRUCTURE:
+        return MREC_HARD_STRUCTURE_ADAPTIVE_POLICY
+    if str(params.selection_policy) == MREC_SELECTION_POLICY_LEARNED_MARGINAL_ONE_SHOT:
+        return MREC_LEARNED_MARGINAL_ONE_SHOT_ADAPTIVE_POLICY
     if str(params.selection_policy) == MREC_SELECTION_POLICY_MAP_QUALITY_GREEDY:
         return MREC_MAP_QUALITY_GREEDY_ADAPTIVE_POLICY
     if str(params.selection_policy) == MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD:
@@ -276,6 +292,7 @@ def _weight_fingerprint_for_params(params: MRECSelectorParams) -> str:
     if str(params.selection_policy) not in {
         MREC_SELECTION_POLICY_LEARNED_MARGINAL_PROXY,
         MREC_SELECTION_POLICY_LEARNED_MARGINAL_REWARD,
+        MREC_SELECTION_POLICY_LEARNED_MARGINAL_ONE_SHOT,
     }:
         return ""
     return learned_marginal_weight_fingerprint(params.weight_file or None)

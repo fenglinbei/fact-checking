@@ -16,6 +16,9 @@ SSH_HOST="dig"
 
 CHECK_INTERVAL=30
 TUNNEL_CHECK_INTERVAL=120
+SSH_CONNECT_TIMEOUT=15
+TUNNEL_CURL_TIMEOUT=15
+TUNNEL_FAILURE_THRESHOLD=3
 
 PID_FILE="/tmp/ls_keepalive.pid"
 mkdir -p "$LS_DATA_DIR"
@@ -58,6 +61,7 @@ start_tunnel() {
     nohup /usr/bin/autossh -M 0 -N \
         -R "${TUNNEL_REMOTE_PORT}:127.0.0.1:${TUNNEL_LOCAL_PORT}" "$SSH_HOST" \
         -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+        -o ConnectTimeout="$SSH_CONNECT_TIMEOUT" -o Compression=yes \
         -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=no \
         >> "$LS_DATA_DIR/tunnel.log" 2>&1 &
     TUNNEL_PID=$!
@@ -88,14 +92,15 @@ check_tunnel_process() {
 }
 
 check_tunnel_connectivity() {
-    local result
-    result=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$SSH_HOST" \
-        "curl -sI --max-time 5 http://127.0.0.1:$TUNNEL_REMOTE_PORT/ 2>&1 | head -4" 2>/dev/null)
-    echo "$result" | grep -q "WSGIServer"
+    ssh -o ConnectTimeout="$SSH_CONNECT_TIMEOUT" -o BatchMode=yes "$SSH_HOST" \
+        "code=\$(curl -sS -o /dev/null --max-time $TUNNEL_CURL_TIMEOUT -w '%{http_code}' \
+        http://127.0.0.1:$TUNNEL_REMOTE_PORT/) && case \"\$code\" in [23][0-9][0-9]) exit 0 ;; *) exit 1 ;; esac" \
+        >/dev/null 2>&1
 }
 
 log "===== 保活脚本启动 (PID=$$) ====="
 last_tunnel_check=0
+tunnel_failure_count=0
 
 while true; do
     now=$(date +%s)
@@ -106,8 +111,9 @@ while true; do
         continue
     fi
     if ! check_tunnel_process; then
-        log "autossh 不存在，重启隧道"
-        ssh -o ConnectTimeout=5 -o BatchMode=yes "$SSH_HOST" \
+        log "autossh 不存在，立即重启隧道（连续失败计数重置为 0）"
+        tunnel_failure_count=0
+        ssh -o ConnectTimeout="$SSH_CONNECT_TIMEOUT" -o BatchMode=yes "$SSH_HOST" \
             "for pid in \$(lsof -ti :$TUNNEL_REMOTE_PORT 2>/dev/null); do kill -9 \$pid 2>/dev/null; done" \
             2>/dev/null
         start_tunnel
@@ -116,16 +122,22 @@ while true; do
     fi
     if [ $((now - last_tunnel_check)) -ge $TUNNEL_CHECK_INTERVAL ]; then
         if ! check_tunnel_connectivity; then
-            log "隧道连通性失败，重建"
-            kill "$(cat /tmp/ls_tunnel.pid 2>/dev/null)" 2>/dev/null
-            sleep 2
-            ssh -o ConnectTimeout=5 -o BatchMode=yes "$SSH_HOST" \
-                "for pid in \$(lsof -ti :$TUNNEL_REMOTE_PORT 2>/dev/null); do kill -9 \$pid 2>/dev/null; done" \
-                2>/dev/null
-            start_tunnel
-            sleep 5
+            tunnel_failure_count=$((tunnel_failure_count + 1))
+            log "隧道连通性失败（连续 $tunnel_failure_count/$TUNNEL_FAILURE_THRESHOLD 次）"
+            if [ "$tunnel_failure_count" -ge "$TUNNEL_FAILURE_THRESHOLD" ]; then
+                log "隧道连通性连续失败达到阈值，重建"
+                kill "$(cat /tmp/ls_tunnel.pid 2>/dev/null)" 2>/dev/null
+                sleep 2
+                ssh -o ConnectTimeout="$SSH_CONNECT_TIMEOUT" -o BatchMode=yes "$SSH_HOST" \
+                    "for pid in \$(lsof -ti :$TUNNEL_REMOTE_PORT 2>/dev/null); do kill -9 \$pid 2>/dev/null; done" \
+                    2>/dev/null
+                start_tunnel
+                tunnel_failure_count=0
+                sleep 5
+            fi
         else
-            log "隧道连通性正常"
+            log "隧道连通性正常（连续失败计数 $tunnel_failure_count -> 0）"
+            tunnel_failure_count=0
         fi
         last_tunnel_check=$now
     fi

@@ -1,0 +1,199 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="680" viewBox="0 0 1600 680" role="img" aria-labelledby="title desc">
+  <title id="title">Structure-induced, label- and verifier-independent evidence organization</title>
+  <desc id="desc">A three-layer AAAI main figure. Claim-conditioned upstream construction produces an Atom-Union pool. Typed Evidence Map transitions generate prefix-state preferences that are distilled into a state-conditioned scorer. The scorer outputs an audit ordering, and a separate order-preserving prefix is rendered for a label-token verifier.</desc>
+  <defs>
+    <style>
+      .h34 { font: 700 34px Helvetica, Arial, sans-serif; }
+      .h31 { font: 700 31px Helvetica, Arial, sans-serif; }
+      .t29 { font: 29px Helvetica, Arial, sans-serif; fill: #1f2937; }
+      .b29 { font: 700 29px Helvetica, Arial, sans-serif; fill: #1f2937; }
+      .i29 { font: italic 29px Helvetica, Arial, sans-serif; fill: #374151; }
+      .center { text-anchor: middle; dominant-baseline: middle; }
+      .left { text-anchor: start; dominant-baseline: middle; }
+      .card { fill: #ffffff; stroke-width: 2.5; }
+      .data { fill: none; stroke: #4b5563; stroke-width: 3; marker-end: url(#arrow-data); }
+      .sup { fill: none; stroke: #6f5a95; stroke-width: 3; stroke-dasharray: 8 6; marker-end: url(#arrow-purple); }
+      .labelsup { fill: none; stroke: #285f8f; stroke-width: 3; stroke-dasharray: 8 6; marker-end: url(#arrow-blue); }
+    </style>
+    <marker id="arrow-data" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M1,1 L9,5 L1,9 Z" fill="#4b5563"/></marker>
+    <marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M1,1 L9,5 L1,9 Z" fill="#6f5a95"/></marker>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M1,1 L9,5 L1,9 Z" fill="#285f8f"/></marker>
+  </defs>
+
+  <rect width="1600" height="680" fill="#ffffff"/>
+
+  <!-- Three conceptual layers -->
+  <rect x="20" y="20" width="310" height="630" rx="18" fill="#f7fafe" stroke="#285f8f" stroke-width="3"/>
+  <rect x="350" y="20" width="850" height="630" rx="18" fill="#fffaf3" stroke="#9a4d08" stroke-width="3"/>
+  <rect x="1220" y="20" width="360" height="630" rx="18" fill="#f5fbf8" stroke="#1f684f" stroke-width="3"/>
+
+  <text x="40" y="50" class="h34 left" fill="#244e78">A  Upstream</text>
+  <text x="50" y="82" class="b29 left" fill="#244e78">input construction</text>
+  <text x="370" y="55" class="h34 left" fill="#7a3d07">B  Structure-induced evidence organization</text>
+  <text x="1240" y="49" class="h31 left" fill="#1f684f">C  Prefix projection</text>
+  <text x="1270" y="82" class="b29 left" fill="#1f684f">&amp; verification</text>
+
+  <!-- Upstream data flow, including claim-conditioned chunking -->
+  <path d="M100 182 V235" class="data"/>
+  <path d="M250 182 V235" class="data"/>
+  <path d="M165 151 H175 V212 H250 V235" class="data"/>
+  <text x="190" y="203" class="b29 center">c</text>
+  <path d="M100 343 V370 H125 V395" class="data"/>
+  <path d="M250 343 V370 H225 V395" class="data"/>
+
+  <!-- Atom-Union to map carries the original claim and structured inputs -->
+  <path d="M315 482 H340 V397 H375" class="data"/>
+
+  <!-- Downstream flow -->
+  <path d="M1400 355 V380" class="data"/>
+  <path d="M1400 500 V525" class="data"/>
+  <path d="M1345 610 V595" class="labelsup"/>
+  <path d="M1500 560 H1521 V606" class="data"/>
+
+  <!-- A. Upstream cards -->
+  <rect x="35" y="120" width="130" height="62" rx="12" class="card" stroke="#285f8f"/>
+  <rect x="180" y="120" width="145" height="62" rx="12" class="card" stroke="#285f8f"/>
+  <text x="100" y="151" class="b29 center">Claim c</text>
+  <text x="250" y="151" class="b29 center">Reports</text>
+
+  <rect x="35" y="235" width="130" height="108" rx="12" class="card" stroke="#285f8f"/>
+  <rect x="180" y="235" width="145" height="108" rx="12" class="card" stroke="#285f8f"/>
+  <text x="100" y="274" class="t29 center">Atomize</text>
+  <text x="100" y="310" class="t29 center">c → A, qᵢ</text>
+  <text x="250" y="274" class="t29 center">Chunk R,c</text>
+  <text x="250" y="310" class="t29 center">U, p(u)</text>
+
+  <rect x="35" y="395" width="280" height="175" rx="14" fill="#eaf2f8" stroke="#285f8f" stroke-width="3"/>
+  <text x="175" y="430" class="h31 center" fill="#244e78">Atom-Union C</text>
+  <text x="175" y="470" class="t29 center">c, A, C</text>
+  <text x="175" y="507" class="t29 center">RRF · dedup · MMR</text>
+  <text x="175" y="542" class="t29 center">source ID p(u)</text>
+  <text x="175" y="592" class="i29 center">candidate pool</text>
+  <text x="175" y="622" class="i29 center">≠ final order</text>
+
+  <!-- B. Selector supervision exclusions -->
+  <rect x="375" y="92" width="180" height="50" rx="10" fill="#f2edf8" stroke="#6f5a95" stroke-width="2.5"/>
+  <rect x="565" y="92" width="280" height="50" rx="10" fill="#f2edf8" stroke="#6f5a95" stroke-width="2.5"/>
+  <rect x="855" y="92" width="320" height="50" rx="10" fill="#f2edf8" stroke="#6f5a95" stroke-width="2.5"/>
+  <text x="465" y="117" class="b29 center" fill="#4f3f70">No verdict y</text>
+  <text x="705" y="117" class="b29 center" fill="#4f3f70">No gold order</text>
+  <text x="1015" y="117" class="b29 center" fill="#4f3f70">No verifier feedback</text>
+
+  <!-- B1. Typed Evidence Map -->
+  <rect x="375" y="160" width="310" height="255" rx="12" class="card" stroke="#9a4d08" stroke-width="3"/>
+  <text x="530" y="193" class="b29 center" fill="#7a3d07">Typed Evidence Map</text>
+  <text x="530" y="228" class="t29 center">M(u,a) = (r,d,conf.)</text>
+  <!-- Relations are drawn after the map card and before its nodes. -->
+  <path d="M452 291 L555 284" fill="none" stroke="#1f684f" stroke-width="3"/>
+  <path d="M452 291 L555 349" fill="none" stroke="#6f5a95" stroke-width="3" stroke-dasharray="3 3"/>
+  <path d="M452 356 L555 349" fill="none" stroke="#9b2c2c" stroke-width="3" stroke-dasharray="8 6"/>
+  <text x="505" y="279" class="b29 center" fill="#1f684f">S</text>
+  <text x="512" y="326" class="b29 center" fill="#4f3f70">Q</text>
+  <text x="505" y="359" class="b29 center" fill="#7a2020">R</text>
+  <circle cx="426" cy="291" r="26" fill="#eaf2f8" stroke="#285f8f" stroke-width="2.5"/>
+  <circle cx="426" cy="356" r="26" fill="#eaf2f8" stroke="#285f8f" stroke-width="2.5"/>
+  <text x="426" y="291" class="b29 center">a₁</text>
+  <text x="426" y="356" class="b29 center">a₂</text>
+  <rect x="555" y="260" width="105" height="48" rx="8" fill="#fff3e4" stroke="#9a4d08" stroke-width="2.5"/>
+  <rect x="555" y="325" width="105" height="48" rx="8" fill="#fff3e4" stroke="#9a4d08" stroke-width="2.5"/>
+  <text x="608" y="284" class="t29 center">u₁ 2:4</text>
+  <text x="608" y="349" class="t29 center">u₂ 1:7</text>
+  <rect x="395" y="378" width="270" height="38" rx="8" fill="#f2edf8" stroke="#6f5a95" stroke-width="2.5"/>
+  <text x="530" y="397" class="b29 center" fill="#4f3f70">H⁽ᵗ⁾={hᵢ⁽ᵗ⁾}  ≠ y</text>
+
+  <!-- B2. Prefix-state preference rollout -->
+  <rect x="710" y="160" width="465" height="255" rx="12" fill="#fcfafe" stroke="#6f5a95" stroke-width="3" stroke-dasharray="8 6"/>
+  <text x="943" y="193" class="h31 center" fill="#4f3f70">Prefix-state preference rollout</text>
+  <!-- Training connectors sit above the outer card but below the inner nodes. -->
+  <path d="M685 276 H725" class="sup"/>
+  <path d="M855 276 H870" class="sup"/>
+  <path d="M990 276 H1010" class="sup"/>
+  <path d="M930 317 V350" class="sup"/>
+  <path d="M760 374 H705 V276 H725" class="sup"/>
+  <rect x="725" y="235" width="130" height="82" rx="10" class="card" stroke="#6f5a95"/>
+  <rect x="870" y="235" width="120" height="82" rx="10" class="card" stroke="#6f5a95"/>
+  <rect x="1010" y="235" width="140" height="82" rx="10" fill="#f2edf8" stroke="#6f5a95" stroke-width="2.5"/>
+  <text x="790" y="261" class="t29 center">Structure</text>
+  <text x="790" y="291" class="t29 center">priority</text>
+  <text x="930" y="261" class="t29 center">Winner</text>
+  <text x="930" y="291" class="t29 center">vs. rest</text>
+  <text x="1080" y="261" class="b29 center" fill="#4f3f70">Pairwise</text>
+  <text x="1080" y="291" class="b29 center" fill="#4f3f70">distill θ</text>
+  <rect x="760" y="350" width="350" height="48" rx="8" fill="#ffffff" stroke="#6f5a95" stroke-width="2.5" stroke-dasharray="8 6"/>
+  <text x="935" y="374" class="t29 center" fill="#4f3f70">update H,T → next t</text>
+
+  <!-- B3. State-conditioned full-pool evidence ordering -->
+  <rect x="375" y="435" width="800" height="150" rx="12" class="card" stroke="#9a4d08" stroke-width="3"/>
+  <text x="775" y="462" class="b29 center" fill="#7a3d07">State-conditioned full-pool-access evidence ordering</text>
+  <!-- Inference connectors sit above the outer card but below the inner nodes. -->
+  <path d="M1080 317 V330 H1165 V480 H640 V500" class="sup"/>
+  <path d="M530 416 V425 H385 V533 H390" class="data"/>
+  <path d="M500 533 H520" class="data"/>
+  <path d="M760 533 H785" class="data"/>
+  <path d="M910 533 H925" class="data"/>
+  <path d="M950 577 V586 H445 V565" fill="none" stroke="#6f5a95" stroke-width="3" marker-end="url(#arrow-purple)"/>
+  <rect x="390" y="500" width="110" height="65" rx="10" fill="#fff3e4" stroke="#9a4d08" stroke-width="2.5"/>
+  <rect x="520" y="500" width="240" height="65" rx="10" fill="#f2edf8" stroke="#6f5a95" stroke-width="2.5"/>
+  <rect x="785" y="500" width="125" height="65" rx="10" fill="#fff3e4" stroke="#9a4d08" stroke-width="2.5"/>
+  <rect x="925" y="487" width="230" height="90" rx="10" fill="#fff3e4" stroke="#9a4d08" stroke-width="2.5"/>
+  <text x="445" y="533" class="b29 center">Cₜ,H⁽ᵗ⁾</text>
+  <text x="640" y="520" class="b29 center">frozen Sθˢᵗʳ(u)</text>
+  <text x="640" y="548" class="b29 center">| T&lt;t,H⁽ᵗ⁾</text>
+  <text x="848" y="533" class="b29 center">Select uₜ</text>
+  <text x="1040" y="520" class="t29 center">add/remove uₜ</text>
+  <text x="1040" y="555" class="t29 center">update H⁽ᵗ⁺¹⁾</text>
+
+  <!-- Full audit artifact -->
+  <rect x="375" y="595" width="800" height="48" rx="10" fill="#f2edf8" stroke="#6f5a95" stroke-width="3"/>
+  <!-- The ordering emits a separate audit artifact; draw this edge above the audit card. -->
+  <path d="M1040 577 V595" class="data"/>
+  <text x="443" y="619" class="h31 center" fill="#4f3f70">Tᵃᵘᵈⁱᵗ</text>
+  <rect x="505" y="601" width="105" height="36" rx="8" fill="#ffffff" stroke="#6f5a95" stroke-width="2"/>
+  <rect x="620" y="601" width="105" height="36" rx="8" fill="#ffffff" stroke="#6f5a95" stroke-width="2"/>
+  <rect x="735" y="601" width="105" height="36" rx="8" fill="#ffffff" stroke="#6f5a95" stroke-width="2"/>
+  <text x="558" y="619" class="t29 center">[1] u₂</text>
+  <text x="673" y="619" class="t29 center">[2] u₅</text>
+  <text x="788" y="619" class="t29 center">[3] …</text>
+  <text x="1000" y="619" class="t29 center" fill="#4f3f70">source · ΔH · score</text>
+
+  <!-- C1. Prefix projection: the first five are visible, tail remains in the audit trace -->
+  <rect x="1240" y="110" width="320" height="245" rx="12" class="card" stroke="#1f684f" stroke-width="3"/>
+  <!-- Projection connector is above both outer cards; prefix content is drawn next. -->
+  <path d="M1175 619 H1210 V232 H1240" class="data"/>
+  <text x="1400" y="141" class="h31 center" fill="#1f684f">Prefix projection</text>
+  <g>
+    <rect x="1252" y="175" width="44" height="44" rx="8" fill="#eaf7f1" stroke="#1f684f" stroke-width="2.5"/>
+    <rect x="1302" y="175" width="44" height="44" rx="8" fill="#eaf7f1" stroke="#1f684f" stroke-width="2.5"/>
+    <rect x="1352" y="175" width="44" height="44" rx="8" fill="#eaf7f1" stroke="#1f684f" stroke-width="2.5"/>
+    <rect x="1402" y="175" width="44" height="44" rx="8" fill="#eaf7f1" stroke="#1f684f" stroke-width="2.5"/>
+    <rect x="1452" y="175" width="44" height="44" rx="8" fill="#eaf7f1" stroke="#1f684f" stroke-width="2.5"/>
+    <rect x="1502" y="175" width="44" height="44" rx="8" fill="#f3f4f6" stroke="#5b6573" stroke-width="2.5"/>
+    <text x="1274" y="197" class="b29 center">u₂</text>
+    <text x="1324" y="197" class="b29 center">u₅</text>
+    <text x="1374" y="197" class="b29 center">u₁</text>
+    <text x="1424" y="197" class="b29 center">u₄</text>
+    <text x="1474" y="197" class="b29 center">u₇</text>
+    <text x="1524" y="197" class="b29 center" fill="#374151">…</text>
+  </g>
+  <line x1="1499" y1="166" x2="1499" y2="228" stroke="#1f684f" stroke-width="3" stroke-dasharray="6 5"/>
+  <text x="1400" y="248" class="b29 center" fill="#1f684f">Tᵛⁱˢ = Tᵃᵘᵈⁱᵗ₁:K*</text>
+  <rect x="1250" y="275" width="82" height="36" rx="8" fill="#f5fbf8" stroke="#70aa95" stroke-width="2"/>
+  <rect x="1340" y="275" width="82" height="36" rx="8" fill="#f5fbf8" stroke="#70aa95" stroke-width="2"/>
+  <rect x="1430" y="275" width="112" height="36" rx="8" fill="#f5fbf8" stroke="#70aa95" stroke-width="2"/>
+  <text x="1291" y="293" class="t29 center">count</text>
+  <text x="1381" y="293" class="t29 center">cover</text>
+  <text x="1486" y="293" class="t29 center">context</text>
+  <text x="1400" y="335" class="b29 center" fill="#1f684f">prefix · fixed order</text>
+
+  <!-- C2. Verifier-visible input and prediction -->
+  <rect x="1240" y="380" width="320" height="120" rx="12" class="card" stroke="#1f684f" stroke-width="3"/>
+  <text x="1400" y="408" class="h31 center">Verifier input</text>
+  <text x="1400" y="443" class="t29 center">claim + atom cues</text>
+  <text x="1400" y="478" class="t29 center">raw text; metadata out</text>
+  <rect x="1240" y="525" width="320" height="70" rx="12" fill="#eaf7f1" stroke="#1f684f" stroke-width="3"/>
+  <text x="1400" y="560" class="h31 center">Label-token verifier</text>
+  <rect x="1245" y="610" width="200" height="34" rx="8" fill="#eaf2f8" stroke="#285f8f" stroke-width="2.5" stroke-dasharray="8 6"/>
+  <text x="1345" y="627" class="t29 center" fill="#244e78">gold y [train]</text>
+  <circle cx="1521" cy="627" r="21" fill="#1f684f" stroke="#174d3b" stroke-width="2.5"/>
+  <text x="1521" y="627" class="h34 center" fill="#ffffff">ŷ</text>
+</svg>

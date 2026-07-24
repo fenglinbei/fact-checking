@@ -1,0 +1,22 @@
+We compare three capacity policies over a shared evidence ordering: fixed-$k$
+uses a fixed evidence count, minmax$(k_{\min},k_{\max})$ allows
+structure-conditioned stopping within a bounded range, and budget-$B$ limits
+the verifier-visible context by tokens.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{evidence_capacity_sensitivity.pdf}
+  \caption{Evidence-capacity sensitivity on the LIAR-RAW test set
+  ($n{=}1{,}251$). Points show Macro-F1 against the mean prompt tokens presented
+  to the verifier; higher Macro-F1 with fewer prompt tokens is preferable.
+  Colors, markers, and lines distinguish fixed-$k$, minmax, and budget policies. Point labels
+  identify the exact setting: F$k$ denotes fixed-$k$, M$a$--$b$ denotes
+  minmax$(a,b)$, and B$n$ denotes token budget $n$. Lines are visual guides
+  rather than fitted trends. The blue star marks the best observed
+  configuration, minmax$(5,10)$.}
+  \label{fig:capacity-sensitivity}
+\end{figure}
+
+Minmax$(5,10)$ provides the best observed operating point, reaching 36.66
+Macro-F1 with 677.90 mean prompt tokens; longer prompts do not consistently
+improve verification performance.

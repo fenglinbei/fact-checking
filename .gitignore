@@ -68,6 +68,8 @@ cover/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+docs/paper/aaai/annotation_project/label_studio_data/backups/*.sqlite3
+docs/paper/aaai/annotation_project/results/exp3_trace_alignment_v1/private/
 
 # Flask stuff:
 instance/

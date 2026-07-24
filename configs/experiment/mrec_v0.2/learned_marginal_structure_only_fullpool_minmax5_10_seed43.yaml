@@ -1,0 +1,19 @@
+extends: learned_marginal_structure_only_fullpool_minmax5_10.yaml
+
+experiment:
+  name: liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_structure_only_fullpool_minmax5_10_seed43
+  case_suffix: __atom_anchor_v0_2_learned_marginal_structure_only_fullpool_minmax5_10_seed43
+  run_label: atom-anchor-v0.2-structure-only-fullpool-minmax5-10-seed43
+  run_header_label: atom-anchor-v0.2-structure-only-fullpool-minmax5-10-seed43-full
+
+sft_train:
+  seed: 43
+
+eval:
+  splits: [val]
+  checkpoints: [checkpoint-800]
+  run_tau_eval: "false"
+
+swanlab:
+  experiment_name: liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_structure_only_fullpool_minmax5_10_seed43
+

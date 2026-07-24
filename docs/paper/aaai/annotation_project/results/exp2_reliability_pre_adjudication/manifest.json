@@ -1,0 +1,50 @@
+{
+  "artifacts": {
+    "annotations_a.jsonl": {
+      "bytes": 69182,
+      "line_count": 250,
+      "sha256": "a210bdd49575edf966456b2491a6bf37b7ca585e2c44c5788dd6783e6dba92d5"
+    },
+    "annotations_b.jsonl": {
+      "bytes": 69578,
+      "line_count": 250,
+      "sha256": "1d6723a9ea5164ff7771f3ce0755de4e39f4d15257995eb1b3c31971afebd747"
+    },
+    "data_issues.jsonl": {
+      "bytes": 341,
+      "line_count": 1,
+      "sha256": "d4fd063fa1df6f962d41c52d185481565da709b35b03ab2d9102e69dd270901a"
+    },
+    "exact_gold_adjudication_queue.jsonl": {
+      "bytes": 177082,
+      "line_count": 125,
+      "sha256": "86bab7d67cead1113613bad1760d380e222697cdfcfad403f9efca12a4adc2b2"
+    },
+    "exact_gold_adjudication_tasks_blind.jsonl": {
+      "bytes": 147867,
+      "line_count": 125,
+      "sha256": "efc15417cad9bdb82dc16b571d7f6b6e7412c054199512b118d7a38eb5852ef0"
+    },
+    "metrics.json": {
+      "bytes": 6183,
+      "line_count": 229,
+      "sha256": "3a22c2c8bba3efc65e87d9e377db85c57b405153d00d4906f0a85204c8311762"
+    },
+    "protocol_adjudication_queue.jsonl": {
+      "bytes": 165786,
+      "line_count": 122,
+      "sha256": "93d58a0153edbdf7d33722c64bfcaaeb63879bb6e6dd190eb2fe912b287a53d2"
+    },
+    "protocol_adjudication_tasks_blind.jsonl": {
+      "bytes": 141547,
+      "line_count": 122,
+      "sha256": "e60387811597976629dedccf6531c913c015ed03430b03ecb13ef47813106d5d"
+    },
+    "report.md": {
+      "bytes": 1255,
+      "line_count": 24,
+      "sha256": "b8768f5d0ee52b1a72d30a00d3cef46bf67daf0b4eb7280c51c5b1dafb603fdf"
+    }
+  },
+  "generated_at_utc": "2026-07-19T15:00:47.558840+00:00"
+}

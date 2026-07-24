@@ -1,0 +1,621 @@
+% Migrated from docs/paper/aaai/writing_outline_v0.4.2_structure_only.md
+% Source SHA-256: 026d074badf5f119708ab5c8cb36f1bdf8208a70503dfa7d70d4a784caf00045
+\documentclass[letterpaper]{article}
+\usepackage[submission]{aaai2027-course}
+\usepackage[hyphens]{url}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+\urlstyle{rm}
+\def\UrlFont{\rm}
+\usepackage{natbib}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{listings}
+\usepackage{xeCJK}
+
+\setCJKmainfont[AutoFakeBold=2.5]{Noto Serif CJK SC}
+\setCJKsansfont[AutoFakeBold=2.5]{Noto Sans CJK SC}
+\setCJKmonofont{Noto Sans Mono CJK SC}
+\XeTeXlinebreaklocale "zh"
+\XeTeXlinebreakskip = 0pt plus 1pt
+\emergencystretch=1.5em
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcounter{paperalgorithm}
+\lstset{
+  basicstyle=\scriptsize\ttfamily,
+  columns=fullflexible,
+  keepspaces=true,
+  breaklines=true,
+  showstringspaces=false,
+  frame=single,
+  xleftmargin=0.6em,
+  xrightmargin=0.6em
+}
+
+\title{From Maps to Traces: Structure-Induced Evidence Organization for Fact Checking}
+\author{Anonymous Authors}
+\affiliations{Anonymous Affiliation}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+基于原始报道的事实核查不仅要检索相关文本，更要将分散证据组织为适合判别器使用的声明视图。现有方法往往需要复杂的组织形式，使得原始证据经过复杂的组织变换才能作为判别器输入，我们的核心洞见是，证据组织并非中性的输入格式化：typed claim--evidence map 随证据前缀演化产生的结构增量，本身就能构成有效的 selector supervision——每个候选的价值可以由其如何解决 claim atoms、扩展结构覆盖并补充当前证据状态来刻画，而无需读取事实标签、gold/teacher-provided evidence supervision 或 verifier feedback。基于这一洞见，我们提出一个 \textbf{decompose--align--organize} 框架 Map2Trace：将声明分解为可核查 atoms，在 Atom-Union 候选池上构建保留来源映射的 typed Evidence Map，再从 map-induced state transitions 中诱导训练偏好并学习 state-conditioned evidence selector，该框架同时生成紧凑的 verifier-facing evidence prefix以及选择过程的可审计轨迹。在 LIAR-RAW 与 RAWFC 上，Map2Trace 的性能超过了最强可比基线；在 SciFact 中，同一设置下也在两项 abstract-level 指标上取得表中最高结果。而后续实验，我们进行了完整机制拆解，结果表明，证据组织是实质性影响 verifier 的建模选择，而不是无关紧要的输入格式。同时，针对LLM标注过程，我们用严格的人工对齐实验确定了LLM标注与人类标注具有一致性。我们在匿名仓库 \url{ANONYMIZED_URL} 开源完整实现、实验配置，以及全部生成的中间产物、过程数据与审计轨迹，并且提供证据构建过程可视化工具。
+
+\end{abstract}
+
+\section{Introduction}
+
+自动事实核查已经从仅根据声明或元数据预测真实性，发展到显式检索外部证据并联合完成判定。LIAR 提供真实政治声明及细粒度标签，但不包含用于检索的 gold evidence \citep{Wang2017LIAR}；FEVER 将证据句检索与 SUPPORTS/REFUTES/NOT-ENOUGH-INFO 判定结合起来 \citep{Thorne2018FEVER}，HoVer 进一步扩展到跨多篇文档的多跳验证 \citep{Jiang2020HoVer}，SciFact 则要求在科学摘要语料中同时识别证据和判定立场 \citep{Wadden2020SciFact}。在真实世界场景中，CofCED 从与声明关联的原始报道中级联选择 report 和 sentence，并据此构建 LIAR-RAW 与 RAWFC \citep{Yang2022CofCED}；AVeriTeC 则将证据来源扩展到开放网页 \citep{Schlichtkrull2023AVeriTeC}。这些任务的发展使系统不仅需要“找到相关内容”，还需要决定最终判别器应当看到哪些证据。
+
+已有方法从多个方向解决证据使用问题。CofCED 使用 coarse-to-fine cascaded selectors 对原始报道进行压缩 \citep{Yang2022CofCED}；GEAR 与 KGAT 通过图结构传播多条候选证据的交互信息 \citep{Zhou2019GEAR,Liu2019KGAT}；L-Defense 和 G-Defense 分别生成相互竞争的解释与图式防御结构 \citep{Wang2024LDefense,Wang2026GDefense}；DelphiAgent 使用多智能体反馈形成判定 \citep{Xiong2025DelphiAgent}，KG-CRAFT 则结合知识图谱与对比问题组织多阶段推理 \citep{Lourenco2026KGCRAFT}。这些系统在判定前利用证据，经过不同的处理流程得到供最终判别器使用的证据形式，但是，\textbf{evidence unit -- claim subfact} 的显式对应关系以及 evidence set 的构造路径，并不总是作为一等输出被保留。本文据此采用一个 \textbf{decompose--align--organize} 的设计视角，构造一套可显式观察且可审计的自动事实核查证据选择流程。
+
+声明分解已被用于生成可核查子问题、构造程序化验证步骤，以及在开放语料中提高复杂声明的检索与验证能力 \citep{Chen2022ClaimDecomp,Pan2023ProgramFC,Chen2023WildEvidence}。我们将声明分解嵌入整套证据选择流程，既作为上游输入，也作为可审计结构的起点：先得到可独立检查的 claim atoms，再显式记录每条候选证据与 atoms 的 typed alignments，最后在判定前形成一条 atom-aware ordered evidence trace。
+
+序列化证据选择同样已有充分先例。DQN-based evidence selection 将已选证据纳入序列决策状态 \citep{Wan2021DQN}；natural-logic-guided retrieval 根据既有证据更新形式证明状态并动态终止检索 \citep{Aly2022NaturalLogic}；证据缺失研究直接分析 verifier 何时错误地把不完整输入视为充分 \citep{Atanasova2022Insufficient}；近期 user-centric evidence ranking 比较 one-shot 与 incremental ranking，并直接优化让互补且充分的信息更早出现 \citep{Alt2026EvidenceRanking}。在 raw-report setting 中，FFRR 使用黑盒 LLM 的细粒度反馈训练检索策略 \citep{Zhang2024FFRR}。因此，本文研究另一种监督边界：能否以 typed Evidence Map 在不同 prefix state 下发生的结构变化为主要信号，并仅用 map quality、retrieval relevance 与冻结候选索引作确定性区分，自动产生不依赖 verdict/gold/verifier feedback 的 selector 训练偏好。
+
+为回答该问题，本文提出一种 atom-aware、structure-induced 的证据组织方法。给定声明及其相关报道，系统依次执行 claim atomization、claim-aware chunking、Atom-Union retrieval 和 Evidence Map annotation。训练阶段在每个 rollout state 中根据结构增益形成确定性的 structure-induced ordering，并由 winner-vs-rest pairs 学习非负线性 structural marginal score。推理阶段，固定 selector 访问完整候选池并产生 audit ordering；再根据证据解析程度以及证据容量策略，产生判别器实际可见的 evidence prefix，并用于最终 verifier 的训练。
+
+本文的主要贡献如下：
+
+\begin{enumerate}
+\item 提出一种中间表示，将 claim atoms、candidate--atom alignments、chunk identity 与逐步 map-induced state transition 组织为可审计的 ordered evidence trace。
+\item 提出一种 structure-induced state-conditioned selector：它以 Evidence Map 的状态转移为主要信号重建 winner-vs-rest preferences，并学习 prefix-dependent structural marginal score，而不使用事实标签、gold evidence trace、gold/teacher-provided evidence order fields 或 verifier feedback。
+\item 在 LIAR-RAW、RAWFC 与 SciFact 上评估该方法，以及详细的机制分析对方法进行拆解，指出具体在何处形成了增益，同时针对LLM标注过程通过独立人工双标与第三人盲化仲裁，证明了该标注的可信度。
+\end{enumerate}
+
+\section{Related Work}
+
+\subsection{Fact Checking over Raw Reports}
+
+Raw-report fact checking 使用与声明相关、但尚未被人工核查报告整理成最终解释的新闻报道。CofCED 首先从 top-$K$ reports 中级联筛选解释性句子，并提出 LIAR-RAW 与 RAWFC 两个数据集 \citep{Yang2022CofCED}。DeReC 使用 dense sentence retrieval 与紧凑的 DeBERTa classifier，强调检索方法在该场景下的效率与可扩展性 \citep{Qazi2025DeReC}。LLM 时代的方法进一步改变了 evidence-to-verdict interface：L-Defense 生成相互竞争的正反解释 \citep{Wang2024LDefense}，RAFTS 通过检索与对比论证完成判定 \citep{Yue2024RAFTS}，DelphiAgent 以多角色、多轮反馈形成共识 \citep{Xiong2025DelphiAgent}，G-Defense 与 KG-CRAFT 分别引入 subclaim graph 和 knowledge-graph-guided contrastive reasoning \citep{Wang2026GDefense,Lourenco2026KGCRAFT}。FFRR 则以黑盒 LLM 的细粒度任务反馈训练 retrieval policy \citep{Zhang2024FFRR}。多数方法使用了复杂的证据组织形式，比如基于图又或者基于解释的推理，而基于 Verifier 反馈的方式又不可避免地产生黑盒导致审计困难。因此，本文将注意力落在原始证据上，与依赖 downstream feedback 监督的 selector 方法相比，我们以 typed Evidence Map 的结构状态变化为主要偏好信号，据此构造 selector 以及选出 verifier-facing ordering，所有构建过程均支持严格的审计。
+
+\subsection{Claim Decomposition and Structured Evidence}
+
+Claim decomposition 常被用于降低复杂声明的检索和验证难度。Literal/implied subquestion generation 将复杂声明转化为可回答的子问题 \citep{Chen2022ClaimDecomp}，ProgramFC 将复杂核查过程表示为由多个子任务组成的程序 \citep{Pan2023ProgramFC}，wild-evidence verification 结合声明分解、两阶段检索与 claim-focused summaries 处理开放语料 \citep{Chen2023WildEvidence}。另一方面，GEAR、KGAT、G-Defense 与 KG-CRAFT 已展示图结构在证据聚合、subclaim dependency 和对比推理中的作用 \citep{Zhou2019GEAR,Liu2019KGAT,Wang2026GDefense,Lourenco2026KGCRAFT}。本文同样使用了Evidence Map ，但该 map 并不承担 verdict reasoning，而是在方法中作为服务于证据选择的 typed intermediate representation，显式连接 claim atoms、evidence units 与 source spans，并为每个 prefix state 计算结构变化。
+
+\subsection{Sequential Evidence Ordering and Sufficiency}
+
+已有工作已经研究逐步证据选择、紧凑证据集和充分前缀。DQN-based selection 将精确证据搜索建模为序列决策 \citep{Wan2021DQN}；natural-logic-guided retrieval 根据已检索证据的证明状态选择后续文档并决定是否停止 \citep{Aly2022NaturalLogic}；insufficient-evidence analysis 说明 verifier 可能无法可靠识别缺失信息 \citep{Atanasova2022Insufficient}。User-centric evidence ranking 更直接地研究 complementary evidence 和 early sufficient prefix，并显示 incremental ranking 与一次性排序具有不同能力 \citep{Alt2026EvidenceRanking}。
+
+这些工作表明，候选证据的贡献取决于当前已选上下文。本文的区别在于监督来源：我们的 selector 不依赖 gold evidence、verdict-conditioned rewards 或者其他 downstream feedback，而是以固定 candidate pool 上 typed claim--evidence map 的状态转移为主要信号，并用 map quality、retrieval relevance 与冻结候选索引作确定性区分，产生随 prefix 变化的结构选择偏好。
+
+\section{Methodology}
+
+\subsection{Overview}
+
+整体方法如图~\ref{fig:framework} 所示。
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.98\textwidth]{AAAI-FC-main.pdf}
+\caption{Structure-induced, label- and verifier-independent evidence
+organization. Claim atoms and source-linked evidence units are fused into an
+Atom-Union candidate pool and aligned through a typed Evidence Map.
+Prefix-conditioned map transitions induce winner-vs-rest preferences, which
+are distilled into a continuous state-conditioned selector without verdict
+labels, gold evidence order, or verifier feedback. The frozen selector produces
+a source-linked full-pool-access audit ordering; a separate capacity and
+context policy exposes only an order-preserving prefix to the label-token
+verifier. Gold labels are used solely for downstream verifier training.}
+\label{fig:framework}
+\end{figure*}
+
+给定声明 $c$ 及相关报道集合 $\mathcal R$，整体方法由三个层级组成：
+
+\begin{enumerate}
+\item \textbf{Upstream input construction.} 上游模块完成声明分解、evidence chunk 切分以及候选池构建从而作为 map 构建以及selector的输入，完整的上游构建产物分别为 claim atoms $\mathcal A=\{a_i\}_{i=1}^{m}$、 evidence units $\mathcal U=\{u_j\}$、Atom-Union candidate pool $\mathcal C$。
+\item \textbf{Structure-induced evidence organization.} 为组织证据，首先构建 typed Evidence Map，记录 candidate--atom relation。基于当前 prefix 已覆盖的 atoms、已有 relations 和重复程度，算法在每个 rollout state 重新诱导 winner-vs-rest preferences，并训练 structural marginal scorer。推理时，固定 scorer 在完整候选池上逐步更新结构状态并重新评分，达到解析率与证据容量限制后，最终产生ordered trace $\mathcal T$。
+\item \textbf{Downstream verification.} 将 claim、atom cues 与ordered trace $\mathcal T$ 中的 evidence text 渲染为 prompt，并对 LLM Verifier 微调，最终输出为声明 $c$ 的真实性标签 $y$ 以及ordered trace $\mathcal T$。
+\end{enumerate}
+
+\subsection{Task Definition}
+
+给定声明 $c$、相关报道集合 $\mathcal R$ 和离散标签空间 $\mathcal Y$，系统需要预测其事实标签 $y\in\mathcal Y$。由报道得到候选证据集合 $\mathcal C=\{u_j\}_{j=1}^{n}$。分解后声明的结构单元集合记为 $\mathcal A$，候选与结构单元之间的 typed alignment 记为 $M$。因此，证据组织问题的输入实例可写为
+
+\[
+\mathcal X=(c,\mathcal A,\mathcal C,M,p).
+\]
+
+我们定义如下序列目标：
+
+\[
+J(\pi)
+=\sum_{t=1}^{L}\gamma_t\,
+\Delta_{\mathrm{str}}\!\left(u_{\pi_t}\mid \mathcal T_{<t},\mathcal X\right),
+\qquad \gamma_1\ge\gamma_2\ge\cdots\ge 0,
+\]
+
+其中 $\mathcal T=(u_{\pi_1},\ldots,u_{\pi_L})$ 是ordered evidence trace，$\Delta_{\mathrm{str}}$ 表示候选相对于既有前缀的结构边际贡献。Trace 的构建过程 $\mathcal T$ 在解析率 $\rho_{tartget}$ 以及证据预算 $(K_{min}, K_{max})$ 限制下停止，下游策略根据 Token 预算从 $\mathcal T$ 投影出 verifier-visible prefix $\mathcal T^{\mathrm{vis}}$，最终预测为
+
+\[
+\mathcal T^{\mathrm{vis}}=P_B(\mathcal T),
+\qquad
+\hat y=\arg\max_{y\in\mathcal Y}
+p_{\theta_{\mathrm{ver}}}(y\mid c,\mathcal A,\mathcal T^{\mathrm{vis}}).
+\]
+
+\subsection{Upstream Input Construction}
+
+\subsubsection{Claim Atomization.}
+
+Claim decomposition 已被用于生成核查子问题和构造复杂声明验证流程 \citep{Chen2022ClaimDecomp,Pan2023ProgramFC,Chen2023WildEvidence}。本文采用这一思想的目的是用分解后的 Atom Claims 定义后续 retrieval 与 selection 的有界状态空间。Atomizer 只读取 claim，不读取外部报道或事实标签，并遵循独立性以及完整性约束：不引入 claim 之外的事实；每个 atom 必须是语义完整的 proposition。该模块通过受约束的结构化生成得到 atoms 与 queries。实现上，该模块使用了 LLM 来完成 Atom 的分解，详细的调用参数以及prompt等信息将在附录报告。
+
+\subsubsection{Claim-aware Evidence Chunking.}
+
+Chunking 作为上游支撑模块，为每篇 report 切分出 evidence units $u_j=[s_a,\ldots,s_b]$。切分目标是在保留局部语境的同时避免把大量无关文本送入检索器和 map annotator。该切分器并非单纯的句子级切分，而是在考虑表达完整语义并与claim相关的前提下为可能的多个句子划定边界。
+
+具体而言，我们将相邻句之间的语义突变与 Claim 相关性变化共同建模为边界信号，并选择超过自适应阈值的局部峰值作为切分点：
+
+\[
+\begin{aligned}
+    b_i=&w_{\mathrm{sem}}\!\left[1-\cos(\mathbf h_i,\mathbf h_{i+1})\right]+w_{\mathrm{rel}}\!\left|r(s_i,c)-r(s_{i+1},c)\right|,\\
+    i\in&\mathcal B\iff b_i\ge \mu_b+\lambda\sigma_b\ \land\ b_i\ge\max(b_{i-1},b_{i+1}).
+\end{aligned}
+\]
+
+其中，\(\mathbf h_i\) 是句子 \(s_i\) 的语义表示，\(r(s_i,c)\) 是句子相对于 claim \(c\) 的相关性，\(\mathcal B\) 为选出的切分边界。它表达的是：当相邻句之间出现显著的语义转折或 Claim 相关性变化，且该变化构成局部峰值时，在此处划分 evidence unit。
+
+\subsubsection{Atom-Union Candidate Pool Construction.}
+
+Atom-Union 旨在兼顾原始声明的全局相关性与细粒度 atom coverage，同时在进入 Evidence Map 标注和后续 selector 之前，将候选池限制在有界且可控的规模。为统一 claim-level route 与 atom-level routes，我们将原始 claim $c$ 和 atom queries $\{q_i\}_{i=1}^{m}$ 统一记为查询视图
+\[
+x\in\mathcal Q=\{c,q_1,\ldots,q_m\}.
+\]
+对于任意查询视图 $x$ 和 evidence unit $u_j$，定义统一的 multi-signal retrieval score：
+\[
+\begin{aligned}
+s(x,u_j)
+={}&\beta_1\,\operatorname{norm}\!\left(\cos(e_x,e_{u_j})\right)\\
++&\beta_2\,\operatorname{norm}\!\left(\operatorname{LexF1}(x,u_j)\right)\\
++&\beta_3\,\operatorname{norm}\!\left(\operatorname{BM25}(x,u_j)\right).
+\end{aligned}
+\]
+其中，$\operatorname{norm}(\cdot)$ 表示在当前 retrieval route 内进行的分数归一化；$e_x$ 与 $e_{u_j}$ 是查询和 evidence unit 的 dense representations。BM25 遵循经典 probabilistic relevance framework \citep{Robertson2009BM25}。
+
+基于上述统一评分函数，claim-level route 与 atom-level route 使用同样的检索策略检索全局相关的 evidence units：
+
+\[
+    \mathcal B = \operatorname{TopK}_{k_b}\{u_j:s(c,u_j)\}, R_i = \operatorname{TopK}_{k_a}\{u_j:s(q_i,u_j)\}.
+\]
+
+随后，系统使用 reciprocal rank fusion 聚合不同 atom routes \citep{Cormack2009RRF}：
+\[
+\mathcal A_{\mathrm{route}}
+=
+\operatorname{RRF}(R_1,\ldots,R_m).
+\]
+最后，将 atom-level 聚合结果与 claim-level pool 合并，按照 stable text/source key 去重，并使用 maximal marginal relevance 平衡候选相关性与多样性 \citep{Goldstein1998MMR}：
+\[
+\mathcal C
+=
+\operatorname{MMR}\!\left(
+\operatorname{Dedup}
+\left(
+\mathcal B\cup\mathcal A_{\mathrm{route}}
+\right)
+\right).
+\]
+
+其中，claim-level route 保留对完整声明的全局相关性，atom-level routes 补充对细粒度子命题的覆盖，二者共同形成供 Evidence Map 与 selector 使用的 Atom-Union candidate pool $\mathcal C$。
+
+\subsection{Evidence Organization}
+
+\subsubsection{Typed Evidence Map.}
+
+图式证据表示已被用于多证据聚合与 subclaim reasoning \citep{Zhou2019GEAR,Liu2019KGAT,Wang2026GDefense,Lourenco2026KGCRAFT}。本文的 Evidence Map 用途不同：它不执行 verdict-oriented message passing，而是为 candidate selection 提供 typed state。对每个 candidate--atom pair：
+
+\[
+M(u_j,a_i)=(r_{ij},d_{ij},c_{ij}),
+\]
+
+Relation 类型满足
+
+\[
+\begin{aligned}
+r_{ij}\in\{&\text{support},\text{refute},\text{qualify},\\
+             &\text{background},\text{irrelevant}\}.
+\end{aligned}
+\]
+
+其中 $d_{ij}$ 是有序 directness，$c_{ij}\in[0,1]$ 是 map annotator 的自评置信度。Relation、directness 与 confidence 由受约束的 LLM annotator 生成。该过程经过人类对齐实验的一致性检查，因此可作为具有一定可信度的标注结果。
+
+\subsubsection{Structure-induced Preferences.}
+
+本文以 Evidence Map 的状态变化为主要信号诱导偏好。每个 atom 的 map-induced state 记为 $h_i^{(t)}$，其取值属于 $\{U,S,R,Q,C\}$，并初始化状态为 $U$；整体状态为 $H^{(t)}=\{h_i^{(t)}\}_{i=1}^{m}$。这些状态描述 evidence acquisition progress，分别记录尚未覆盖、观察到 support、refute、qualify 或相互冲突的 map relations。
+
+为了训练后续的selector，我们根据结构增益强弱来挑选候选证据，具体而言，能够为改变更多的 atom 的 map-induced state 的 evidence 更优先作为正偏好，在每个 prefix state，最高优先级候选作为 winner，并与其余候选构成 winner-vs-rest pairs：
+
+\[
+\mathcal P_t=\{(u_t^+,u^-):u^-\in\mathcal C_t\setminus\{u_t^+\}\}.
+\]
+
+选中 winner 后更新结构状态与 prefix，再生成下一轮 preferences，因此同一候选的偏好关系可以随 prefix 改变。该过程不读取 verdict label、gold/teacher-provided evidence order fields 或 verifier feedback。
+
+\textbf{State-conditioned Selector.}
+
+挑选证据偏好对所用的规则只用于构造 pairwise preference constraints，而不直接充当最终排序策略。词典序规则能够表达清晰的结构优先级，但其决策边界较为刚性：一旦高优先级条件触发，coverage、relation novelty、redundancy、source diversity 与 evidence cost 等其他信号便难以共同参与权衡。
+
+为此，本文将离散的规则偏好蒸馏为连续、state-conditioned 的 structural scorer。该 scorer 在保留结构监督方向的同时，对多个弱信号进行联合加权，并在 prefix 更新后重新估计候选的边际贡献。
+
+具体而言，每个候选在 state $t$ 下被映射为若干组结构边际特征：
+
+\[
+\phi^{(t)}(u)=\left[
+\begin{gathered}
+\phi_{\mathrm{state}},\ \phi_{\mathrm{coverage/relation}},\
+\ \phi_{\mathrm{novelty}},\\
+\phi_{\mathrm{quality}},\ \phi_{\mathrm{retrieval}},\
+\ \phi_{\mathrm{cost}}
+\end{gathered}
+\right].
+\]
+
+这些 feature groups 分别描述当前结构状态的推进、新 atom/relation 信息、来源与文本新颖性、map annotation quality、检索相关性和上下文成本，实际实现中，我们共构建了12维的结构边际特征，于是 Utility 函数具有以下的表示：
+
+\[
+S_\theta^{\mathrm{str}}(u\mid\mathcal T_{<t},H^{(t)})
+=b+\sum_{\ell\ne\mathrm{cost}}w_\ell\phi_\ell^{(t)}(u)
+-w_c\phi_{\mathrm{cost}}^{(t)}(u),
+\]
+
+其中 $w_\ell=\operatorname{softplus}(\theta_\ell)$、$w_c=\operatorname{softplus}(\theta_c)$，保证非 cost 特征的方向可解释。所有正向特征与 cost 权重均从 equal-weight neutral initialization 开始。
+
+参数学习使用经典 pairwise logistic ranking objective \citep{Burges2005RankNet}：
+
+\[
+\begin{aligned}
+\mathcal L(\theta)
+={}\frac{1}{|\mathcal P|}
+\sum_{(u^+,u^-)\in\mathcal P}\log\!\left(1+\exp\!\left[
+-S_\theta^{\mathrm{str}}(u^+)+S_\theta^{\mathrm{str}}(u^-)
+\right]\right).
+\end{aligned}
+\]
+
+\subsubsection{Evidence Ordering.}
+
+训练完成后，固定 $S_\theta^{\mathrm{str}}$ 在每一步对剩余候选重新提取 state-dependent features：
+
+\[
+u_t=\arg\max_{u\in\mathcal C_t}
+S_\theta^{\mathrm{str}}(u\mid\mathcal T_{<t},H^{(t)}).
+\]
+
+选中 $u_t$ 后，系统更新 atom state、已见 relation、source coverage 与 novelty statistics，再重新计算下一步分数，以此来逐步构建Evidence Trace。我们使用 target-resolution-aware min–max policy 来决定 Trace 构建何时停止， 具体而言，第 \(t\) 步的 resolved-atom rate 定义为
+
+\[
+\rho_t=\frac{1}{|\mathcal A|}\sum_{a_i\in\mathcal A}
+\mathbb I[h_i^{(t)}\in{S,R,Q,C}],
+\]
+
+并将 $\rho_t\ge\rho_{\mathrm{target}}$ 时定义为令 target\_resolved 状态。为避免由少量证据造成过早停止，min–max policy 至少保留 $k_{\min}$ 条证据；达到该下界后，在首个满足 target\_resolved 的位置停止，否则继续扩展至 $k_{\max}$ 或审计序列末尾。
+
+\subsection{Downstream Verification}
+
+\subsubsection{Verifier Rendering and Prediction.}
+
+除 claim 外，verifier prompt renderer 对每个可见 step 只输出简短的 atom cue 与 evidence 原文，同时，为了避免部分超长 evidence 把 Prompt 无限制拉长，我们设定了Token 预算策略 $\mathcal T^{\mathrm{vis}}=P_B(\mathcal T)$ 超出 Token 预算限制的部分将被按evidence unit 软截断。Verifier 将标签映射为单 token answer choices。若标签集合为 $\mathcal Y=\{y_1,\ldots,y_C\}$，映射 $g:\mathcal Y\rightarrow\{A,B,\ldots\}$，训练目标为：
+
+\[
+\mathcal L_{\mathrm{ver}}=-\sum_n
+\log p_{\theta_{\mathrm{ver}}}\left(g(y_n)\mid
+\operatorname{Render}(c_n,\mathcal A_n,\mathcal T_n^{\mathrm{vis}})\right).
+\]
+
+Verifier 使用参数高效适配的自回归语言模型实现；LoRA 通过低秩更新降低微调成本 \citep{Hu2022LoRA}。具体 backbone、checkpoint、rendering style 与训练超参数统一在 Experiments 中报告。
+
+\section{Experiments}
+
+\subsection{Research Questions}
+
+实验围绕六个问题展开：
+
+\begin{itemize}
+\item \textbf{RQ1：} 本文提出方法Map2TraceMap2Trace在 LIAR-RAW 与 RAWFC 上相对于可比的同任务基线表现如何？
+\item \textbf{RQ2：} Map2Trace能否适用于标签体系和证据来源均不同的 SciFact？
+\item \textbf{RQ3：} 在完整流程流程中，主要收益来自什么组件？
+\item \textbf{RQ4：} Map标注各个字段能够多大程度影响最终结果？
+\item \textbf{RQ5：} 证据容量与不同的截断策略会如何影响判别性能和上下文成本？
+\item \textbf{RQ6：} 依赖 LLM 标注的结果，是否具有可信度？与人类标注的一致性如何？
+\end{itemize}
+
+\subsection{Datasets and Evaluation Protocol}
+
+\textbf{LIAR-RAW} \citep{Yang2022CofCED} 提供 12.8K 条真实政治声明及六类细粒度标签与声明关联原始报道，\textbf{RAWFC}
+同样由 \citep{Yang2022CofCED} 提出，包含来自 Snopes 的三分类声明以及相关 raw reports \citep{Yang2022CofCED}。本文使用其官方 split，报告 test accuracy 与 macro-P/R/F1。
+
+\textbf{SciFact} \citep{Wadden2020SciFact} 包含 1.4K expert-written claims、5,183 篇 scientific abstracts，以及 abstract-level stance 与 sentence-level rationale annotations。由于官方未开源完整测试集，本文使用 development split报告结果.
+
+\subsection{Implementation Details}
+
+\textbf{LLM-based structural annotation.} 本文的Atom分解以及evidence map结构标注均使用统一 LLM API 完成，调用模型名为 \texttt{\detokenize{deepseek-v4-flash}} \citep{DeepSeekAI2026V4}，关闭思考模式\textbf{Temperature} 设定为 0，\textbf{Top-$p$} 设定为1.0，并限制最大Token输出为2048。实验冻结了全部标注产物，并在匿名仓库中完整给出用于严格复现。
+
+\textbf{Retrieval and selector.} LIAR-RAW/RAWFC 使用 \texttt{BAAI/bge-base-en-v1.5} \citep{Xiao2023BGE} 作为稠密检索编码器。 SciFact 使用相同 dense encoder 的 open-corpus retrieval。Preference training 在每个样本的 top-20 candidates 上执行五步 rollout，训练 30 epochs，learning rate 为 0.05，并从 equal-weight neutral initialization 开始；推理阶段的 audit ordering 则访问通过去重与有效性检查的完整候选池。
+
+\textbf{Verifier and context policy.} 三个数据集均使用 Ministral-3-8B-Instruct-2512 \citep{MistralAI2025Ministral3} 和 LoRA verifier。完整输入最长 1,024 tokens。Verifier 通过候选 label tokens 的 logits 作确定性判定，不使用生成式 sampling temperature 或 thinking mode。训练设置为四卡 ZeRO-2、BF16、per-device batch size 1、gradient accumulation 4、Learning rate $2\times10^{-5}$、Eval/save per step 100、Patience 12、AdamW、weight decay 0.01、warmup ratio 0.03、cosine-with-restarts scheduler，以及作用于 attention/MLP projections 的 LoRA $r=16$、$\alpha=32$、dropout 0.1。
+
+\subsection{Claim Atomization Reliability Study}
+
+为审计 claim atomization 这一上游输入，我们从 LIAR-RAW 与 RAWFC validation data 各抽取 100 条 claims（70\% 随机、30\% 困难优先），得到 257 个 atoms。两位标注者独立评估 faithfulness、atomicity 与 completeness；所有主维度 exact mismatches 以及一个 claim-level 内部冲突均由第三位标注者在看不到 A/B 标签时独立仲裁。
+
+\begin{table}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{1.5pt}
+\renewcommand{\arraystretch}{1.08}
+\caption{Human reliability results for claim atomization.}
+\label{tab:atom-reliability}
+\begin{tabularx}{\columnwidth}{@{}Y l r r r r@{}}
+\toprule
+\textbf{Dimension} & \textbf{Gold $N$} & \textbf{Pass} & \textbf{Exact} & \textbf{$\kappa$} & \textbf{AC1} \\
+\midrule
+Faithfulness & 257 atoms & 99.22\% & 95.72\% & 0.133 & 0.955 \\
+Atomicity & 257 atoms & 95.72\% & 88.72\% & 0.306 & 0.866 \\
+Complete coverage & 200 claims & 99.00\% & 95.48\% & -0.023 & 0.953 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+表~\ref{tab:atom-reliability}表明，由LLM完成的 claim atomization 在本次 LIAR-RAW/RAWFC 审计样本上高度符合独立人工质量判断。最终 human gold 中，99.22\% 的 atoms 被判定为 faithful，95.72\% 满足单一、可独立核验的 atomicity 要求，且 99.00\% 的 claims 获得 complete atom coverage；对应的 dataset-stratified claim-cluster bootstrap 95\% 区间分别为 98.02\%--100.00\%、92.80\%--98.12\% 和 97.50\%--100.00\%。即使要求同一 claim 的所有 atoms 同时通过 faithfulness 与 atomicity，并完整覆盖原 claim，仍有 187/200（93.50\%）达到 strict pass。因此，该实验支持将当前 atomization 视为质量较高且可用于后续 retrieval 与 Evidence Map 构建的可靠上游结构输入。
+
+\subsection{Evidence Map Annotation Reliability Study (Exp2; Placeholder)}
+
+\textbf{占位说明。} Exp2 将独立审计 Evidence Map 中 candidate--atom pair 的 \texttt{\detokenize{relation}}、\texttt{\detokenize{directness}} 与 \texttt{\detokenize{confidence}} 标注。当前版本只冻结结果位置与报告口径；在正式双标、分歧仲裁和 artifact audit 完成前不填入数值，也不据此扩展本文的结果或贡献表述。
+
+\begin{table}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\renewcommand{\arraystretch}{1.08}
+\caption{Planned Evidence Map annotation reliability study (Exp2).}
+\label{tab:map-reliability-placeholder}
+\begin{tabularx}{\columnwidth}{@{}l Y@{}}
+\toprule
+\textbf{Field} & \textbf{Planned audit} \\
+\midrule
+Relation & Human Cohen's $\kappa$; LLM overall/per-relation accuracy; confusion matrix. \\
+Directness & Human Spearman $\rho$; LLM ordinal agreement (TBD); ordinal error analysis. \\
+Confidence & Human target definition TBD; LLM comparison and calibration/ECE target TBD. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+表注：Exp2 衡量结构标注本身的可靠性；RQ4 的 component ablation 衡量 map signals 对下游结果的敏感性，二者不是同一个问题。\texttt{\detokenize{gold_confidence}} 记录的是人工标注者自信度，填入结果前需另行冻结其与 LLM confidence 的比较及校准目标，不能预先把它等同于事实 gold。
+
+\subsection{Main Results}
+
+\subsubsection{LIAR-RAW and RAWFC Results}
+
+下表按资源与协议分块，并将两个数据集的 P/R/F1 分别展开为独立列。方法名逐行引用原论文，数值统一显示为 percentages。对于原论文仅标注 P/R/F1、未进一步说明 classification averaging 的结果，本文保留其原始指标名，不替其补写 macro 口径；LIAR-family、gold-evidence、dataset-wise best variant 与 relative-gain-only 结果均在表下注明。
+
+\begin{table*}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.2pt}
+\renewcommand{\arraystretch}{1.04}
+\caption{Published comparisons for raw-report fact checking. All numbers are percentages.}
+\label{tab:published-raw-report}
+\begin{tabularx}{\textwidth}{@{}Y *{6}{r}@{}}
+\toprule
+\textbf{Method} & \multicolumn{3}{c}{\textbf{LIAR-RAW}} & \multicolumn{3}{c}{\textbf{RAWFC}} \\
+\cmidrule(lr){2-4}\cmidrule(l){5-7}
+& \textbf{P} & \textbf{R} & \textbf{F1} & \textbf{P} & \textbf{R} & \textbf{F1} \\
+\midrule
+\multicolumn{7}{@{}l}{\textbf{Same dataset family and original associated-report setting}} \\
+CofCED \citep{Yang2022CofCED} & 29.48 & 29.55 & 28.93 & 52.99 & 50.99 & 51.07 \\
+L-Defense LLaMA2 \citep{Wang2024LDefense} & 31.63 & 31.71 & 31.40 & 60.95 & 60.00 & 60.12 \\
+L-Defense ChatGPT \citep{Wang2024LDefense} & 30.55 & 32.20 & 30.53 & 61.72 & 61.01 & 61.20 \\
+G-Defense default \citep{Wang2026GDefense} & 33.09$\pm$1.01 & 31.55$\pm$0.84 & 31.55$\pm$0.51 & 64.99$\pm$0.78 & 64.52$\pm$1.02 & 64.31$\pm$1.20 \\
+G-Defense best variant$^{\ddagger}$ \citep{Wang2026GDefense} & 34.17 & 32.37 & 32.49 & 66.29 & 65.49 & 65.50 \\
+DeReC-qwen \citep{Qazi2025DeReC} & 35.94 & 32.24 & 33.13 & 65.58 & 64.56 & 64.60 \\
+\textbf{Ours (Ministral-3-8B LoRA)} & \textbf{38.37} & \textbf{35.87} & \textbf{36.66} & 67.17 & 65.98 & 66.12 \\
+\textbf{Ours (Llama-3.1-8B FullFT)} & -- & -- & -- & \textbf{69.09} & \textbf{69.06} & \textbf{69.00} \\
+\multicolumn{7}{@{}l}{\textbf{Modified, external-search, or LIAR-family evidence setting}} \\
+FFRR(d+q) \citep{Zhang2024FFRR} & 34.50 & 32.60 & 33.50 & 56.50 & 57.40 & 57.00 \\
+FactLLaMAKnow$^{\dagger}$ \citep{Cheung2023FactLLaMA} & 32.46 & 32.05 & 30.44 & 56.11 & 55.50 & 55.65 \\
+HiSS$^{\dagger}$ \citep{Zhang2023HiSS} & 46.80 & 31.30 & 37.50 & 53.40 & 54.40 & 53.90 \\
+RAFTS$^{\dagger}$ \citep{Yue2024RAFTS} & 47.10 & 37.90 & 42.00 & 62.80 & 52.60 & 57.30 \\
+AFEV / Fact in Fragments$^{\dagger}$ \citep{Zheng2025AFEV} & 48.20 & 40.30 & 43.90 & 63.30 & 57.60 & 60.20 \\
+\multicolumn{7}{@{}l}{\textbf{Gold-evidence, multi-stage large-LLM, or relative-score contextual reference}} \\
+DelphiAgent GPT-4o \citep{Xiong2025DelphiAgent} & 31.33 & 28.36 & 28.36 & 68.05 & 68.03 & 68.04 \\
+RAV$^{\S}$ \citep{Shukla2025RAV} & -- & -- & 29.33 & -- & -- & 67.53 \\
+Entailed Opinion / TBE-3$^{\S}$ \citep{Kumar2025EntailedOpinion} & 55.00 & 54.00 & 54.00 & 88.00 & 88.00 & 88.00 \\
+KG-CRAFT$_{\mathrm{L3.3}}$ \citep{Lourenco2026KGCRAFT} & 77.38 & 70.67 & 73.87 & 81.63 & 81.53 & 81.58 \\
+LQ-FJS$^{\P}$ \citep{Wang2026LQFJS} & -- & -- & +7.2 & -- & -- & +4.5 \\
+\bottomrule
+\end{tabularx}
+\vspace{1mm}
+\parbox{\textwidth}{\scriptsize $^{\dagger}$The first three metrics are reported on LIAR rather than strict LIAR-RAW. $^{\ddagger}$The best public G-Defense variant is selected separately for each dataset (LLaMA3.1 on LIAR-RAW; background on RAWFC); the L-Defense rows likewise show that its dataset-wise best scores come from different backbones. $^{\S}$Gold/author-written evidence is used, and RAV reports only macro-F1. $^{\P}$LQ-FJS reports F1 gains over its stated SOTA, not absolute F1. Dashes denote unavailable or unrun results.}
+\end{table*}
+
+\subsubsection{SciFact Full-Pipeline Development Results}
+
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3.5pt}
+\renewcommand{\arraystretch}{1.08}
+\caption{SciFact full-pipeline development results.}
+\label{tab:scifact-results}
+\begin{tabularx}{\textwidth}{@{}Y r r r r r@{}}
+\toprule
+\textbf{Method} & \textbf{Year} & \textbf{Sent. Selection-only} & \textbf{Sent. Selection+Label} & \textbf{Abstract Label-only} & \textbf{Abstract Label+Rationale} \\
+\midrule
+VeriSci \citep{Wadden2020SciFact} & 2020 & 48.30 & 43.10 & 52.10 & 50.00 \\
+VerT5erini \citep{Pradeep2021VerT5erini} & 2021 & 60.87 & 57.10 & 65.07 & 61.72 \\
+ParagraphJoint \citep{Li2021ParagraphJoint} & 2021 & 64.70 & 55.20 & 65.10 & 59.90 \\
+ARSJoint \citep{Zhang2021ARSJoint} & 2021 & 66.20 & 57.80 & 66.70 & 62.40 \\
+QMUL-SDS \citep{Zeng2021QMULSDS} & 2021 & 67.83 & 60.54 & 63.40 & 61.10 \\
+RerrFact \citep{Rana2022RerrFact} & 2022 & 76.37 & 63.76 & 64.59 & 64.02 \\
+PrunE \citep{Fang2025PrunE} & 2025 & 62.96 & 53.29 & 63.21 & 60.10 \\
+\textbf{Ours: structure-only} & -- & 39.95 & 38.65 & 71.98 & 64.78 \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+方法归属逐行引用其原论文；VeriSci 至 RerrFact 的 development-set 数值转录自 \citet{Rana2022RerrFact} Table 4，PrunE 数值来自 \citet{Fang2025PrunE} Table 2。PrunE 使用 top-150 bigram-TF-IDF universe，并在 development inference 中采样 12 个候选摘要，因此只导入其自身结果行，不混入其重训 baseline rows。
+
+\textbf{结果表述。} 已完成的 structure-only SciFact evaluation 获得 71.98 abstract Label-only F1 和 64.78 abstract Label+Rationale F1；sentence Selection-only 与 Selection+Label F1 分别为 39.95 和 38.65。该结果说明相同的结构监督流程能够在 SciFact official-development setting 中完成端到端评估，但也显示 abstract-level label prediction 与 exact sentence localization 之间仍有明显差距。单独报告的 verifier-only claim-label validation diagnostic 为 82.97 macro-F1，不替代上述官方 full-pipeline 指标。由于同一 development split 参与 checkpoint selection，本文不据此宣称 zero-shot transfer、hidden-test 或整体 SciFact SOTA。
+
+\FloatBarrier
+\subsection{Selector Mechanism Ablation}
+
+为了回答RQ3，从而验证组件增益来源，本消融验证证据选择机制的各组件（候选池来源、学习与否、证据顺序）的必要性。所有实验均在 LIAR-RAW 上进行，使用与主方法相同的 verifier 训练设置（Ministral-3-8B + LoRA）。设计如下：
+
+\begin{itemize}
+\item \textbf{s0 no\_evidence}：verifier 不接收任何证据，仅看 claim，作为性能下界。
+\item \textbf{s1 random}：从未经检索的原始证据池中随机选择证据。
+\item \textbf{s2 baseline\_pool\_only}：selector 仅用raw claim 产生的候选池 baseline pool。
+\item \textbf{s3 atom\_route\_only}：仅用 atom-route 产生的候选池，不用 baseline pool，验证 union 的必要性。
+\item \textbf{s4 no\_selector}：完整 Atom-Union 池，但只使用原始检索分数，不经过selector。
+\item \textbf{s5 no\_learned}：完整 map 驱动的贪心构链，但 selector 权重为手工设定（无学习）。
+\item \textbf{s6 shuffle}：用主方法的 learned selector 生成 trace 后打乱顺序，验证证据有序性的价值。
+\end{itemize}
+
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.08}
+\caption{Selector-mechanism ablation on LIAR-RAW.}
+\label{tab:selector-ablation}
+\begin{tabularx}{\columnwidth}{@{}Y r r@{}}
+\toprule
+\textbf{变体} & \textbf{Acc.} & \textbf{Macro-F1} \\
+\midrule
+s0 no\_evidence & 30.70 & 31.02 \\
+s1 random & 31.25 & 31.68 \\
+s2 baseline\_pool\_only & 33.81 & 34.51 \\
+s3 atom\_route\_only & 31.15 & 32.11 \\
+s4 no\_selector & 35.01 & 35.37 \\
+s5 no\_learned & 34.85 & 34.92 \\
+s6 trace\_shuffle & 31.7 & 32.90 \\
+full & 35.97 & 36.66 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+表~\ref{tab:selector-ablation}报告了各消融设置在 LIAR-RAW 上的 verifier 性能，结果支持以下关键结论：
+
+\begin{enumerate}
+\item 证据本身有用，random优于no\_evidence，即使随机证据也能带来提升，说明证据对判别有基础价值。
+\item baseline\_pool\_only与atom\_route\_only都优于random，表明证据经过一定程度的处理后，已经能取得不错的性能，同时raw claim 产生的候选池起到的是主导作用
+\item s4与s5则证明证据经过进一步组织，能得到更近一步的性能。同时表明，仅靠map驱动构链而不经过权重学习，达不到最优性能。
+\item 而s6的结果则指明了，证据的排序方式对最终结果有较大影响，这说明在目前基于注意力机制的判别器的制约下，需要关注证据的排序而不能只关注证据选择。
+\end{enumerate}
+
+\subsubsection{Evidence Map Ablation}
+
+Atom-evidence map $M(u_j,a_i)=(r_{ij},d_{ij},c_{ij})$ 是 selector 决策的结构化中间表示，多个边际特征均依赖它，且 greedy chain 的 atom 状态转移与 minmax 截断位置 $K^\ast$ 也由 relation 与 directness 驱动。为了回答RQ4，本消融逐元去除 map 的三个信号，检验每个信号对最终判别的贡献。
+
+本实验设置如下：所有变体共享与主方法完全相同的设置，仅改变 map 信号输入；selector 权重在各自退化特征上重新训练。具体变体如下：
+
+\begin{itemize}
+\item \textbf{full\_map}（主方法）：完整 map，无退化，作为基准。
+\item \textbf{no\_relation}：将每个 pair 的 relation $r_{ij}$ 退化为 background，使 atom 永不进入 $S/R/Q$。
+\item \textbf{no\_directness}：将 directness $d_{ij}$ 退化为中性档，使解析增益 $\delta(d)$ 下降，且无法独立触发 OPEN 转移。
+\item \textbf{no\_confidence}：将 confidence $c_{ij}$ 强制为 1.0，使 $\max(c,0.5)$ clip 失效，解析增益被人为放大。
+\item \textbf{no\_map}：$r,d,c$ 全部退化，6 个 map 相关特征置零，selector 仅靠 retrieval/text novelty。
+\end{itemize}
+
+\begin{table}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{1.5pt}
+\renewcommand{\arraystretch}{1.08}
+\caption{Evidence Map ablation on LIAR-RAW.}
+\label{tab:map-ablation}
+\begin{tabularx}{\columnwidth}{@{}Y r r r r r@{}}
+\toprule
+\textbf{变体} & \textbf{Acc.} & \textbf{M-F1} & \textbf{$\bar\rho$} & \textbf{$\bar{K^\ast}$} & \textbf{$K^\ast{=}5$} \\
+\midrule
+\textbf{full\_map} & 35.97 & 36.66 & 0.774 & 6.23 & 68.9\% \\
+no\_relation & 35.25 & 35.53 & 0.000 & 9.69 & 0.8\% \\
+no\_directness & 34.37 & 34.16 & 0.000 & 9.69 & 0.8\% \\
+no\_confidence & 33.01 & 33.19 & 0.774 & 6.23 & 68.6\% \\
+no\_map & 33.57 & 34.32 & 0.000 & 9.69 & 0.8\% \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+表~\ref{tab:map-ablation}报告 LIAR-RAW 上的 verifier 性能，以及各变体 trace 的平均 atom 解析率 $\bar\rho$ 与 minmax 截断后的平均证据容量 $\bar{K^\ast}$。$\bar{K^\ast}$ 直观反映 map 对证据容量的调控：解析率越高，越多样本在 $k_{\min}{=}5$ 处提前停止。有以下观察：
+
+\begin{enumerate}
+\item 完整 map 优于 no\_map，证明 LLM 结构化标注为 selector 提供了 retrieval score 之外的有效信号。
+\item 证据容量调控是 map 价值的主要通道。 full\_map 有 68.9\% 的样本在 $K^\ast{=}5$ 提前停止（解析达标），平均仅用 6.23 条证据；而 no\_map / no\_relation / no\_directness 因解析失效，多数样本跑满 $K^\ast{=}10$，显示为 $\bar{K^\ast}$ 接近10。这说明 map 的核心作用不只是"选更好的证据"，更是"判断何时证据已足够"，从而在证据充分性与上下文噪声之间取得平衡。
+\item relation / directness / confidence分别提供了不同程度的增益，值得注意的是，尽管no\_relation数值上接近full\_map，但是其证据容量增加了50\%，这说明 map 的核心价值在于让 selector 用更少的证据、更低的上下文成本达到同等甚至更优的判别，而非仅在最终 F1 上拉开差距；在证据预算受限或长上下文噪声敏感的场景下，这一效率优势更为关键。
+\end{enumerate}
+
+\subsubsection{Verifier-Visible Evidence Capacity and Prefix-Policy Sensitivity}
+
+Prompt evidence policy 将 learned selector 生成的 audit ordering 投影为 verifier 实际可见的 evidence prefix，并由此决定最终证据容量 $K^\ast$。为隔离下游容量控制与上游证据排序的影响，本消融固定 claim atoms、candidate pool、Evidence Map、learned selector weights 及其生成的 full-pool-access ordering，仅改变 verifier-visible prefix policy。每种 policy 均一致地用于构建 train、validation 和 test prompts，并在相同训练配置下分别训练 verifier，使用 validation performance 选择 checkpoint。
+
+本文比较以下三类 policy：
+
+\begin{itemize}
+\item \textbf{fixed-$k$}：保留 audit ordering 的前 $k$ 项，对应 minmax$(k,k)$，其中 $k\in\{3,5,7,9\}$。
+\item \textbf{minmax$(k_{\min},k_{\max})$}：至少保留 $k_{\min}$ 项；此后若 map-induced structural coverage proxy 达到目标则停止，否则最多扩展至 $k_{\max}$。取 $(k_{\min},k_{\max})\in\{(3,8),(3,10),(5,10),(5,12),(7,12)\}$，其中 $(5,10)$ 为主方法配置。
+\item \textbf{budget-$B$}：依据累计 evidence-side token cost 截取不超过预算 $B$ 的最长前缀，其中 $B\in\{512,768,1024\}$。
+\end{itemize}
+
+上述 policy 首先给出目标前缀，renderer 随后统一执行 1,024-token context guard；当 audit trace 本身短于目标容量或 context guard 删除尾部 evidence 时，最终 verifier-visible evidence count $K^\ast$ 会小于 policy 的目标容量。
+
+\begin{table}[b]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{1.2pt}
+\renewcommand{\arraystretch}{1.08}
+\caption{Verifier-visible prefix-policy sensitivity on the LIAR-RAW test set. Accuracy and Macro-F1 are percentages.}
+\label{tab:prefix-policy}
+\begin{tabularx}{\columnwidth}{@{}Y r r r r r@{}}
+\toprule
+\textbf{Policy} & \textbf{Acc.} & \textbf{M-F1} & \textbf{$\bar{K^\ast}$} & \textbf{$\bar{T}_{\mathrm{prompt}}$} & \textbf{Trunc.} \\
+\midrule
+fixed $k{=}3$ & 33.17 & 34.12 & 2.99 & 436.33 & 0.00\% \\
+fixed $k{=}5$ & 33.25 & 33.91 & 4.95 & 603.45 & 0.16\% \\
+fixed $k{=}7$ & 34.13 & 34.03 & 6.84 & 751.29 & 3.60\% \\
+fixed $k{=}9$ & 34.77 & 34.81 & 8.36 & 867.65 & 25.18\% \\
+minmax $(3,8)$ & 33.17 & 33.84 & 4.24 & 540.19 & 4.16\% \\
+minmax $(3,10)$ & 33.57 & 33.86 & 4.54 & 562.51 & 12.07\% \\
+\textbf{minmax $(5,10)$} & \textbf{35.97} & \textbf{36.66} & 5.96 & 677.90 & 12.15\% \\
+minmax $(5,12)$ & 35.17 & 35.22 & 6.07 & 686.65 & 20.62\% \\
+minmax $(7,12)$ & 33.25 & 34.50 & 7.47 & 798.46 & 22.70\% \\
+budget $B{=}512$ & 35.01 & 36.05 & 9.17 & 923.07 & 30.46\% \\
+budget $B{=}768$ & 34.05 & 34.93 & 9.47 & 949.29 & 93.37\% \\
+budget $B{=}1024$ & 34.45 & 35.03 & 9.47 & 949.29 & 93.45\% \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+表~\ref{tab:prefix-policy}报告 LIAR-RAW test set（$n{=}1251$）上的 accuracy、Macro-F1 与实际上下文成本。$\bar{K^\ast}$ 表示经过 context guard 后 verifier 实际接收的平均 evidence 数量；$\bar{T}_{\mathrm{prompt}}$ 表示不含 target 的完整输入 prompt 的平均 tokenizer token 数；Prompt 截断率表示 policy 给出的目标前缀被统一的 1,024-token guard 删除尾部 evidence 的样本比例。
+
+该容量实验体现出几个关键观察:1) 固定容量增加并未带来稳定的 Macro-F1 增益: fixed-$k$ 的 accuracy 随 $k$ 从 3 增至 9 整体上升，但 Macro-F1 在 34.12、33.91、34.03 和 34.81 之间波动；与此同时，$\bar{K^\ast}$ 从 2.99 增至 8.36，$\bar{T}_{\mathrm{prompt}}$ 从 436.33 增至 867.65，Prompt 截断率从 0.00\% 增至 25.18\%。这表明扩大固定 prefix 会持续增加上下文成本，却不保证相应的 Macro-F1 提升; 2) 结构条件停止呈现出更有利的性能—成本组合: 相比表现最好的 fixed 配置 $k{=}9$，minmax$(5,10)$ 的 Macro-F1 数值上高 1.85 个百分点，同时平均少使用 2.40 条 evidence 和 189.75 个 prompt tokens；相比 budget-$B{=}512$，其 Macro-F1 数值上高 0.61 个百分点，同时平均少使用 3.22 条 evidence 和 245.17 个 prompt tokens。
+
+总体而言，在上游 learned selector ordering 固定时，判别性能并不随 verifier-visible evidence 数量或 prompt 长度单调提高，prefix 的选择依据与有效容量需要共同考虑。在本实验网格中，利用结构覆盖状态进行样本级停止的 minmax$(5,10)$ 取得了最高性能，并以中等上下文成本优于固定取证和单纯扩大 token budget。
+
+\FloatBarrier
+\section{Limitations}
+
+首先，claim decomposition 并不总能稳定提高事实核查表现，错误拆分、遗漏限定条件或过度细分仍可能向 retrieval 与 Evidence Map 传播 \citep{Hu2025DecompositionDilemmas}。为审计并量化这一风险，我们在 200 条 claims、257 个 atoms 上完成两位标注者的独立双标与第三人盲化仲裁。最终 gold 的 faithfulness、atomicity 与 complete coverage 通过率分别为 99.22\%、95.72\% 和 99.00\%。这些结果支持本研究审计样本内的 atomization artifact 高度符合人工质量判断，并将 atomicity 定位为主要残余风险。由于样本来自两个 validation set 的等量抽样且过采样困难样本，该结论不能外推为 claim decomposition 普遍可靠，也不能证明它会因果性地改善 downstream verification。
+
+第二，Evidence Map 仍依赖 LLM API，且 Exp1 只覆盖 claim atomization，不能外推为对 relation、directness 或 confidence 标注的验证。Exp2 的独立双标、仲裁与校准分析仍待完成；冻结缓存、prompt/schema hash、调用日期与调用元数据提高了可复现性和 artifact-level 可审计性，但不能将这些结构标注等同于人工 gold supervision。
+
+第三，source linkage 不等于 source credibility。Trace 能回到原始 report 和 span，但本文没有判断新闻来源是否可信，也没有防止多个报道复制同一错误信息。上游 candidate pool 的召回上限同样限制所有后续选择。
+
+第四，map-induced covered-atom rate 是结构代理，不等价于人工或逻辑意义上的 evidence sufficiency。既有研究表明 verifier 可能在缺失信息时仍做出高置信度判断 \citep{Atanasova2022Insufficient}。本文仅将 covered-atom rate 用作 prefix projection 代理，不对其与真实性、充分性或下游性能之间的关系作经验性结论。
+
+第五，ordered evidence trace 是系统构造过程的 inspectable artifact，不自动说明 verifier 的因果决策依据。Rationale 与解释研究区分可读性、sufficiency、comprehensiveness 和 faithfulness \citep{Lei2016Rationalizing,DeYoung2020ERASER,Jacovi2020Faithfulness}，而这些指标本身也可能受到分布偏移和优化目标的影响 \citep{Hsia2024Goodhart}。本文没有将 audit trace 表述为模型推理解释。
+
+最后，greedy state-conditioned ordering 不保证全局最短或全局最优。本文的机制证据仅来自两个种子上的 fixed-$K$ validation diagnostics，且 verifier 与 input organization 的训练分布同时变化；它不支持显著性、因果、普遍顺序优势或稳健 co-adaptation 主张。主结果表以各数据集的单个 canonical run 为准，不提供多种子均值或方差。SciFact 结果来自 official development split 且该 split 参与 checkpoint selection，因而只支持该方法在相应 scientific fact-checking setting 中的描述性适用性结论。精确句级证据定位仍明显弱于 abstract-level verification。
+
+\section{Conclusion}
+
+本文研究了在最终事实判定之前，如何显式构造 atom-indexed、source-linked evidence trace。方法将 claim atomization、Atom-Union retrieval 与 typed Evidence Map 连接起来，并以 map-induced state transitions 为主要偏好信号；map quality、retrieval relevance 与冻结候选索引只用于确定性区分，不读取 verdict label、gold/teacher-provided evidence order 或 verifier feedback。学习到的 state-conditioned structural scorer 访问完整候选池并产生 full-pool-access audit ordering，独立 prefix policy 再产生 verifier-visible evidence。Exp1 的独立双标与第三人仲裁显示，生成 atoms 在 faithfulness、atomicity 与 complete coverage 上分别有 99.22\%、95.72\% 和 99.00\% 被最终 human gold 判为合格，支持自动 atomization 在本研究审计范围内高度符合人工质量判断，并可作为后续结构构建的可靠上游输入；这一证据只覆盖 claim atomization，不验证 Evidence Map 的 relation、directness 或 confidence。LIAR-RAW 与 RAWFC test evaluation、SciFact official-development evaluation，以及 LIAR-RAW two-seed fixed-$K$ diagnostics，共同支持这一 selector supervision boundary 在不同事实核查场景中的可行性；crossover 同时表明 organization effect 的方向和幅度会随 verifier training distribution 与训练种子变化。系统保留可回查的 source-linked evidence organization artifact，但本文不把它等同于 verifier 的忠实解释，也不主张普遍顺序优势。
+
+\bibliography{references}
+
+\end{document}

@@ -44,6 +44,59 @@ class _FakeTokenizer:
         return prompt
 
 
+class MistralCommonFakeTokenizer:
+    eos_token_id = 0
+
+    def __init__(self) -> None:
+        self._token_to_id: dict[str, int] = {}
+        self._id_to_token: dict[int, str] = {}
+
+    def _encode(self, text: str) -> list[int]:
+        ids: list[int] = []
+        for token in str(text).split():
+            token_id = self._token_to_id.get(token)
+            if token_id is None:
+                token_id = len(self._token_to_id) + 1
+                self._token_to_id[token] = token_id
+                self._id_to_token[token_id] = token
+            ids.append(token_id)
+        return ids
+
+    def __call__(
+        self,
+        text: str,
+        *,
+        truncation: bool = False,
+        add_special_tokens: bool = False,
+    ) -> dict[str, list[int]]:
+        del truncation
+        ids = self._encode(text)
+        if add_special_tokens:
+            ids.insert(0, self.eos_token_id)
+        return {"input_ids": ids}
+
+    def decode(self, token_ids: list[int], *, skip_special_tokens: bool = True) -> str:
+        return " ".join(
+            self._id_to_token[token_id]
+            for token_id in token_ids
+            if not skip_special_tokens or token_id != self.eos_token_id
+        )
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        tokenize: bool = False,
+        add_generation_prompt: bool = True,
+        **kwargs: object,
+    ) -> str | list[int]:
+        del kwargs
+        prompt = "\n".join(f"{message['role']}: {message['content']}" for message in messages)
+        if add_generation_prompt:
+            prompt += "\nassistant:"
+        return self._encode(prompt) if tokenize else prompt
+
+
 def test_trace_lite_prompt_fields_are_rendered_without_forbidden_trace_metadata(tmp_path: Path) -> None:
     raw_path, trace_path = _write_minimal_inputs(tmp_path)
 
@@ -734,6 +787,222 @@ def test_mrec_prompt_evidence_budget_policy_records_max_length_guard(tmp_path: P
     assert report["max_length_guard"]["on_violation"] == "warn"
     assert report["max_length_guard"]["config_conflict"] is True
     assert report["max_length_guard"]["violation_count"] == 1
+
+
+def test_prompt_budget_requires_explicit_final_prompt_budget() -> None:
+    with pytest.raises(ValueError, match="requires a positive prompt_token_budget"):
+        build_trace_verifier_data._normalize_prompt_evidence_config(
+            {"policy": "prompt_budget", "min_evidence_count": 1},
+            fallback_top_k=10,
+            prompt_cfg={"max_length": 1024},
+        )
+
+
+@pytest.mark.parametrize("prompt_budget", [512, 768, 1024])
+def test_prompt_budget_selects_largest_exact_verifier_prefix(
+    tmp_path: Path,
+    prompt_budget: int,
+) -> None:
+    raw_path, trace_path = _write_mrec_policy_inputs(tmp_path)
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    for idx, (candidate, step) in enumerate(zip(trace["candidate_pool"], trace["mrec_steps"])):
+        long_text = " ".join([f"evidence{idx}"] * 190)
+        candidate["text"] = long_text
+        step["evidence_text"] = long_text
+        step["token_cost"] = 1
+    trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
+
+    tokenizer = MistralCommonFakeTokenizer()
+    prompt_cfg = {
+        "auto_length": False,
+        "max_length": 1400,
+        "output_mode": "label_only",
+        "label_format": "letter",
+    }
+    base_candidates = build_trace_verifier_data._selected_candidates(
+        trace,
+        list(range(len(trace["candidate_pool"]))),
+        selection_mode="trace",
+    )
+    prefix_counts: list[int] = []
+    for count in range(1, len(base_candidates) + 1):
+        claim, rendered, _, _ = build_trace_verifier_data._apply_trace_prompt_style(
+            claim="Original claim",
+            candidates=base_candidates[:count],
+            trace=trace,
+            trace_prompt_style="mrec_min",
+        )
+        rendered_row = build_trace_verifier_data.build_training_row(
+            {
+                "event_id": "event-mrec-policy",
+                "claim": claim,
+                "label": "true",
+                "label_schema": "liar6",
+                "explain": "",
+                "candidates": rendered,
+            },
+            tokenizer,
+            prompt_cfg,
+        )
+        prefix_counts.append(int(rendered_row["prompt_token_count"]))
+    target_reserve = int(rendered_row["target_token_count"])
+    effective_budget = min(prompt_budget, 1400 - target_reserve)
+    expected_count = max(
+        count
+        for count, token_count in enumerate(prefix_counts, start=1)
+        if token_count <= effective_budget
+    )
+
+    rows, report = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=tokenizer,
+        prompt_cfg=prompt_cfg,
+        selection_mode="trace",
+        trace_prompt_style="mrec_min",
+        expected_selector_name="test_selector",
+        top_k=99,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+        prompt_evidence_config={
+            "policy": "prompt_budget",
+            "min_evidence_count": 1,
+            "max_evidence_count": 4,
+            "prompt_token_budget": prompt_budget,
+            "max_length_guard": {
+                "enabled": True,
+                "build_prompt_max_length": 1400,
+                "sft_train_max_length": 1400,
+                "reserve_tokens": 0,
+                "on_violation": "error",
+            },
+        },
+    )
+
+    row = rows[0]
+    assert row["selector_trace"]["selected_indices"] == list(range(expected_count))
+    assert row["evidence_count"] == expected_count
+    assert len(row["candidates"]) == expected_count
+    assert len(row["mrec_prompt_steps"]) == expected_count
+    assert len(row["prompt_input_ids"]) == row["prompt_token_count"] <= prompt_budget
+    assert row["prompt_evidence_prompt_token_budget"] == prompt_budget
+    assert row["prompt_evidence_effective_prompt_token_budget"] == effective_budget
+    assert row["prompt_evidence_considered_count"] == 4
+    assert row["prompt_evidence_selected_token_cost"] == expected_count
+    assert row["prompt_evidence_partial_evidence"] is False
+    assert row["was_truncated"] is False
+    assert row.get("evidence_text_truncated", False) is False
+    if expected_count < len(prefix_counts):
+        assert prefix_counts[expected_count] > effective_budget
+        assert row["prompt_evidence_stop_reason"] == "prompt_token_budget_exhausted"
+    assert report["prompt_evidence"]["prompt_token_budget"] == prompt_budget
+    assert report["max_length_guard"]["violation_count"] == 0
+
+
+def test_prompt_budget_explicitly_truncates_oversized_first_evidence(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_mrec_policy_inputs(tmp_path)
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    oversized = " ".join(["oversized"] * 1200)
+    trace["candidate_pool"][0]["text"] = oversized
+    trace["mrec_steps"][0]["evidence_text"] = oversized
+    trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
+
+    rows, _ = build_trace_verifier_data._build_split(
+        split="val",
+        source_type="trace",
+        source_path=trace_path,
+        raw_path=raw_path,
+        dataset=None,
+        label_schema="liar6",
+        tokenizer=MistralCommonFakeTokenizer(),
+        prompt_cfg={
+            "auto_length": False,
+            "max_length": 1024,
+            "output_mode": "label_only",
+            "label_format": "letter",
+        },
+        selection_mode="trace",
+        trace_prompt_style="mrec_min",
+        expected_selector_name="test_selector",
+        top_k=99,
+        random_seed=0,
+        expected_chunk_mmr_fingerprint="fp",
+        sample_limit=None,
+        show_progress=False,
+        prompt_evidence_config={
+            "policy": "prompt_budget",
+            "min_evidence_count": 1,
+            "max_evidence_count": 4,
+            "prompt_token_budget": 512,
+            "max_length_guard": {
+                "enabled": True,
+                "build_prompt_max_length": 1024,
+                "sft_train_max_length": 1024,
+                "on_violation": "error",
+            },
+        },
+    )
+
+    row = rows[0]
+    assert row["selector_trace"]["selected_indices"] == [0]
+    assert row["evidence_count"] == len(row["candidates"]) == len(row["mrec_prompt_steps"]) == 1
+    assert row["candidates"][0]["text"].startswith("Check: First cue")
+    assert len(row["candidates"][0]["text"].split()) < len(oversized.split())
+    assert len(row["prompt_input_ids"]) == row["prompt_token_count"] <= 512
+    assert row["prompt_evidence_partial_evidence"] is True
+    assert row["prompt_evidence_stop_reason"] == "prompt_token_budget_single_evidence_truncated"
+    assert row["was_truncated"] is True
+    assert row["evidence_text_truncated"] is True
+
+
+def test_prompt_budget_fails_when_fixed_prompt_cannot_retain_first_evidence(tmp_path: Path) -> None:
+    raw_path, trace_path = _write_mrec_policy_inputs(tmp_path)
+    raw_rows = json.loads(raw_path.read_text(encoding="utf-8"))
+    raw_rows[0]["claim"] = " ".join(["claim"] * 500)
+    raw_path.write_text(json.dumps(raw_rows), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="too small to retain a non-empty first evidence"):
+        build_trace_verifier_data._build_split(
+            split="val",
+            source_type="trace",
+            source_path=trace_path,
+            raw_path=raw_path,
+            dataset=None,
+            label_schema="liar6",
+            tokenizer=MistralCommonFakeTokenizer(),
+            prompt_cfg={
+                "auto_length": False,
+                "max_length": 1024,
+                "output_mode": "label_only",
+                "label_format": "letter",
+            },
+            selection_mode="trace",
+            trace_prompt_style="mrec_min",
+            expected_selector_name="test_selector",
+            top_k=99,
+            random_seed=0,
+            expected_chunk_mmr_fingerprint="fp",
+            sample_limit=None,
+            show_progress=False,
+            prompt_evidence_config={
+                "policy": "prompt_budget",
+                "min_evidence_count": 1,
+                "max_evidence_count": 4,
+                "prompt_token_budget": 100,
+                "max_length_guard": {
+                    "enabled": True,
+                    "build_prompt_max_length": 1024,
+                    "sft_train_max_length": 1024,
+                    "on_violation": "error",
+                },
+            },
+        )
 
 
 def test_mrec_prompt_evidence_state_budget_keeps_state_changing_lookahead(tmp_path: Path) -> None:

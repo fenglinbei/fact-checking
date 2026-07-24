@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-07-18T00:00:00.000Z" agent="Codex" version="24.7.17" type="device" compressed="false">
+  <diagram id="verifier-prompt-flow-v0-4-2" name="Prompt &amp; Verifier Insert">
+    <mxGraphModel dx="900" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="420" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Replace the current narrow Verifier panel with this editable insert. -->
+        <mxCell id="panel" value="" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#FAFAFB;strokeColor=#D0D0D0;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="10" width="370" height="875" as="geometry"/>
+        </mxCell>
+        <mxCell id="header" value="Prompt &amp; Verifier" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=24;fontStyle=1;fontColor=#111111;" vertex="1" parent="1">
+          <mxGeometry x="55" y="20" width="340" height="34" as="geometry"/>
+        </mxCell>
+
+        <!-- Incoming full audit ordering. -->
+        <mxCell id="audit_in" value="Tᵃᵘᵈⁱᵗ" style="rounded=1;arcSize=10;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#4B5563;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontStyle=1;fontColor=#374151;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="0" y="100" width="68" height="38" as="geometry"/>
+        </mxCell>
+
+        <!-- 7. Order-preserving resolve-aware prefix projection. -->
+        <mxCell id="policy_card" value="" style="rounded=1;arcSize=10;whiteSpace=wrap;html=0;fillColor=#F3EEF9;strokeColor=#7E57A8;strokeWidth=2.5;" vertex="1" parent="1">
+          <mxGeometry x="56" y="66" width="338" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="badge7" value="7" style="rounded=1;arcSize=12;whiteSpace=wrap;html=0;fillColor=#4B2385;strokeColor=#4B2385;fontFamily=Helvetica;fontSize=17;fontStyle=1;fontColor=#FFFFFF;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="68" y="77" width="28" height="28" as="geometry"/>
+        </mxCell>
+        <mxCell id="policy_title" value="Resolve-aware Prefix" style="text;html=0;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=20;fontStyle=1;fontColor=#4B2385;" vertex="1" parent="1">
+          <mxGeometry x="104" y="76" width="274" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="chip1" value="u₄" style="rounded=1;arcSize=12;whiteSpace=wrap;html=0;fillColor=#EAF7E3;strokeColor=#78B663;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;fontColor=#1F2937;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="70" y="112" width="36" height="29" as="geometry"/></mxCell>
+        <mxCell id="chip2" value="u₃" style="rounded=1;arcSize=12;whiteSpace=wrap;html=0;fillColor=#EAF7E3;strokeColor=#78B663;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;fontColor=#1F2937;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="111" y="112" width="36" height="29" as="geometry"/></mxCell>
+        <mxCell id="chip3" value="u₁" style="rounded=1;arcSize=12;whiteSpace=wrap;html=0;fillColor=#EAF7E3;strokeColor=#78B663;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;fontColor=#1F2937;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="152" y="112" width="36" height="29" as="geometry"/></mxCell>
+        <mxCell id="chip4" value="u₇" style="rounded=1;arcSize=12;whiteSpace=wrap;html=0;fillColor=#EAF7E3;strokeColor=#78B663;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;fontColor=#1F2937;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="193" y="112" width="36" height="29" as="geometry"/></mxCell>
+        <mxCell id="chip5" value="u₉" style="rounded=1;arcSize=12;whiteSpace=wrap;html=0;fillColor=#EAF7E3;strokeColor=#78B663;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;fontColor=#1F2937;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="234" y="112" width="36" height="29" as="geometry"/></mxCell>
+        <mxCell id="chip_tail" value="…" style="rounded=1;arcSize=12;whiteSpace=wrap;html=0;fillColor=#EEEEF1;strokeColor=#A3A3AA;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;fontColor=#777777;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="278" y="112" width="38" height="29" as="geometry"/></mxCell>
+        <mxCell id="chip_cap" value="≤10" style="rounded=1;arcSize=12;whiteSpace=wrap;html=0;fillColor=#EEEEF1;strokeColor=#A3A3AA;strokeWidth=1.5;fontFamily=Helvetica;fontSize=15;fontColor=#777777;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="321" y="112" width="55" height="29" as="geometry"/></mxCell>
+        <mxCell id="policy_rule" value="K_sel = first k≥5 with ρₖ=1; else 10" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=16;fontColor=#4B2385;" vertex="1" parent="1">
+          <mxGeometry x="70" y="148" width="306" height="24" as="geometry"/>
+        </mxCell>
+        <mxCell id="policy_note" value="audit order preserved · no re-score / re-order" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=14;fontStyle=2;fontColor=#6B5A7D;" vertex="1" parent="1">
+          <mxGeometry x="70" y="168" width="306" height="20" as="geometry"/>
+        </mxCell>
+
+        <!-- mrec_min rendering happens before the generic tokenizer-aware prompt fitting. -->
+        <mxCell id="fit_card" value="" style="rounded=1;arcSize=10;whiteSpace=wrap;html=0;fillColor=#EEF4F7;strokeColor=#6C8796;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="56" y="210" width="338" height="66" as="geometry"/>
+        </mxCell>
+        <mxCell id="fit_title" value="mrec_min Evidence Rendering" style="text;html=0;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=18;fontStyle=1;fontColor=#385B6D;" vertex="1" parent="1">
+          <mxGeometry x="72" y="218" width="300" height="24" as="geometry"/>
+        </mxCell>
+        <mxCell id="fit_rule" value="uⱼ →  Check: atom cue  +  raw evidence" style="text;html=0;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=15;fontColor=#4B6572;" vertex="1" parent="1">
+          <mxGeometry x="72" y="244" width="304" height="22" as="geometry"/>
+        </mxCell>
+
+        <!-- Verifier-visible serialization. -->
+        <mxCell id="prompt_card" value="" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#7E57A8;strokeWidth=2.5;" vertex="1" parent="1">
+          <mxGeometry x="56" y="298" width="338" height="296" as="geometry"/>
+        </mxCell>
+        <mxCell id="prompt_header" value="Verifier-visible Prompt" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#4B2385;strokeColor=#4B2385;fontFamily=Helvetica;fontSize=18;fontStyle=1;fontColor=#FFFFFF;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="57" y="299" width="336" height="37" as="geometry"/>
+        </mxCell>
+        <mxCell id="context_note" value="Tokenizer-aware tail-drop · L_ctx≤1024 · K_final≤K_sel" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=13;fontStyle=2;fontColor=#6B5A7D;" vertex="1" parent="1">
+          <mxGeometry x="70" y="337" width="310" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="system_band" value="SYSTEM  ·  use only claim + retrieved evidence" style="rounded=1;arcSize=6;whiteSpace=wrap;html=0;fillColor=#F3EEF9;strokeColor=#D0C3DE;strokeWidth=1.5;fontFamily=Helvetica;fontSize=15;fontStyle=1;fontColor=#4B2385;align=left;verticalAlign=middle;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="70" y="357" width="310" height="31" as="geometry"/>
+        </mxCell>
+        <mxCell id="user_title" value="USER · Task / Labels A–F / Rules" style="text;html=0;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=15;fontStyle=1;fontColor=#374151;" vertex="1" parent="1">
+          <mxGeometry x="72" y="391" width="300" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="claim_box" value="Claim:  c" style="rounded=1;arcSize=6;whiteSpace=wrap;html=0;fillColor=#F8F8F9;strokeColor=#C8C8CC;strokeWidth=1.5;fontFamily=Helvetica;fontSize=16;fontStyle=1;fontColor=#222222;align=left;verticalAlign=middle;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="70" y="414" width="310" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="ev1_box" value="[1]  Check: a₂ cue&#xa;      raw evidence u₄" style="rounded=1;arcSize=6;whiteSpace=wrap;html=0;fillColor=#F4FAF1;strokeColor=#A8C99B;strokeWidth=1.5;fontFamily=Helvetica;fontSize=16;fontColor=#263326;align=left;verticalAlign=middle;spacingLeft=9;" vertex="1" parent="1">
+          <mxGeometry x="70" y="449" width="310" height="39" as="geometry"/>
+        </mxCell>
+        <mxCell id="ev2_box" value="[2]  Check: a₁ cue&#xa;      raw evidence u₃" style="rounded=1;arcSize=6;whiteSpace=wrap;html=0;fillColor=#F4FAF1;strokeColor=#A8C99B;strokeWidth=1.5;fontFamily=Helvetica;fontSize=16;fontColor=#263326;align=left;verticalAlign=middle;spacingLeft=9;" vertex="1" parent="1">
+          <mxGeometry x="70" y="493" width="310" height="39" as="geometry"/>
+        </mxCell>
+        <mxCell id="ev_more" value="…" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=18;fontColor=#6B7280;" vertex="1" parent="1">
+          <mxGeometry x="70" y="533" width="310" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="assistant_band" value="ASSISTANT  ·  Label:" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#F3EEF9;strokeColor=#D0C3DE;strokeWidth=1;fontFamily=Helvetica;fontSize=16;fontStyle=1;fontColor=#4B2385;align=left;verticalAlign=middle;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="70" y="552" width="310" height="27" as="geometry"/>
+        </mxCell>
+
+        <!-- Serialized boundary: these fields remain sidecar diagnostics. -->
+        <mxCell id="hidden_card" value="" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#F1F1F1;strokeColor=#A8A8A8;strokeWidth=1.8;dashed=1;dashPattern=5 4;" vertex="1" parent="1">
+          <mxGeometry x="56" y="611" width="338" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="hidden_x" value="×" style="ellipse;whiteSpace=wrap;html=0;aspect=fixed;fillColor=#A8A8A8;strokeColor=#888888;strokeWidth=1.5;fontFamily=Helvetica;fontSize=18;fontStyle=1;fontColor=#FFFFFF;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="68" y="626" width="27" height="27" as="geometry"/>
+        </mxCell>
+        <mxCell id="hidden_text" value="Audit-only · not serialized&#xa;state ρₖ (policy only) · relation · score · provenance" style="text;html=0;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=14;fontColor=#777777;" vertex="1" parent="1">
+          <mxGeometry x="104" y="619" width="276" height="44" as="geometry"/>
+        </mxCell>
+
+        <!-- 8. Next-label-token classification. -->
+        <mxCell id="verifier_card" value="" style="rounded=1;arcSize=10;whiteSpace=wrap;html=0;fillColor=#F3EEF9;strokeColor=#4B2385;strokeWidth=2.5;" vertex="1" parent="1">
+          <mxGeometry x="56" y="692" width="338" height="73" as="geometry"/>
+        </mxCell>
+        <mxCell id="badge8" value="8" style="rounded=1;arcSize=12;whiteSpace=wrap;html=0;fillColor=#4B2385;strokeColor=#4B2385;fontFamily=Helvetica;fontSize=17;fontStyle=1;fontColor=#FFFFFF;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="69" y="704" width="28" height="28" as="geometry"/>
+        </mxCell>
+        <mxCell id="verifier_title" value="Label-token Verifier" style="text;html=0;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=20;fontStyle=1;fontColor=#4B2385;" vertex="1" parent="1">
+          <mxGeometry x="105" y="701" width="266" height="28" as="geometry"/>
+        </mxCell>
+        <mxCell id="verifier_formula" value="ŷ = arg max  logit(y),   y ∈ {A,…,F}" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=16;fontColor=#39234F;" vertex="1" parent="1">
+          <mxGeometry x="72" y="733" width="306" height="24" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="out_a" value="A" style="ellipse;whiteSpace=wrap;html=0;aspect=fixed;fillColor=#FFFFFF;strokeColor=#7E57A8;strokeWidth=1.8;fontFamily=Helvetica;fontSize=16;fontStyle=1;fontColor=#4B2385;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="72" y="784" width="34" height="34" as="geometry"/></mxCell>
+        <mxCell id="out_b" value="B" style="ellipse;whiteSpace=wrap;html=0;aspect=fixed;fillColor=#FFFFFF;strokeColor=#7E57A8;strokeWidth=1.8;fontFamily=Helvetica;fontSize=16;fontStyle=1;fontColor=#4B2385;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="119" y="784" width="34" height="34" as="geometry"/></mxCell>
+        <mxCell id="out_c" value="C" style="ellipse;whiteSpace=wrap;html=0;aspect=fixed;fillColor=#FFFFFF;strokeColor=#7E57A8;strokeWidth=1.8;fontFamily=Helvetica;fontSize=16;fontStyle=1;fontColor=#4B2385;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="166" y="784" width="34" height="34" as="geometry"/></mxCell>
+        <mxCell id="out_d" value="D" style="ellipse;whiteSpace=wrap;html=0;aspect=fixed;fillColor=#FFFFFF;strokeColor=#7E57A8;strokeWidth=1.8;fontFamily=Helvetica;fontSize=16;fontStyle=1;fontColor=#4B2385;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="213" y="784" width="34" height="34" as="geometry"/></mxCell>
+        <mxCell id="out_e" value="E" style="ellipse;whiteSpace=wrap;html=0;aspect=fixed;fillColor=#FFFFFF;strokeColor=#7E57A8;strokeWidth=1.8;fontFamily=Helvetica;fontSize=16;fontStyle=1;fontColor=#4B2385;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="260" y="784" width="34" height="34" as="geometry"/></mxCell>
+        <mxCell id="out_f" value="F" style="ellipse;whiteSpace=wrap;html=0;aspect=fixed;fillColor=#FFFFFF;strokeColor=#7E57A8;strokeWidth=1.8;fontFamily=Helvetica;fontSize=16;fontStyle=1;fontColor=#4B2385;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="307" y="784" width="34" height="34" as="geometry"/></mxCell>
+        <mxCell id="prediction" value="ŷ" style="ellipse;whiteSpace=wrap;html=0;aspect=fixed;fillColor=#4B2385;strokeColor=#34165F;strokeWidth=2.2;fontFamily=Helvetica;fontSize=17;fontStyle=1;fontColor=#FFFFFF;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="354" y="784" width="34" height="34" as="geometry"/></mxCell>
+
+        <mxCell id="gold" value="gold y  [train only]" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#FFF7E8;strokeColor=#D99A2B;strokeWidth=1.8;dashed=1;dashPattern=6 4;fontFamily=Helvetica;fontSize=15;fontColor=#8A5A05;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="71" y="839" width="153" height="31" as="geometry"/>
+        </mxCell>
+        <mxCell id="loss" value="CE on next label token" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#FFF7E8;strokeColor=#D99A2B;strokeWidth=1.8;fontFamily=Helvetica;fontSize=15;fontColor=#8A5A05;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="247" y="839" width="141" height="31" as="geometry"/>
+        </mxCell>
+
+        <!-- Inference/data flow. -->
+        <mxCell id="e_audit_policy" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeWidth=2.5;strokeColor=#4B5563;" edge="1" parent="1" source="audit_in" target="policy_card"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_policy_fit" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeWidth=2.5;strokeColor=#4B5563;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="policy_card" target="fit_card"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_fit_prompt" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeWidth=2.5;strokeColor=#4B5563;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="fit_card" target="prompt_card"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_prompt_verifier" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeWidth=2.5;strokeColor=#4B5563;exitX=1;exitY=0.96;entryX=1;entryY=0.5;" edge="1" parent="1" source="prompt_card" target="verifier_card"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="402" y="585"/><mxPoint x="402" y="728"/></Array></mxGeometry></mxCell>
+        <mxCell id="e_verifier_prediction" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeWidth=2.3;strokeColor=#4B2385;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="verifier_card" target="prediction"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- Training supervision never enters the serialized prompt. -->
+        <mxCell id="e_gold_loss" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#D99A2B;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="gold" target="loss"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_loss_verifier" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#D99A2B;dashed=1;dashPattern=6 4;exitX=0.5;exitY=0;entryX=1;entryY=0.5;" edge="1" parent="1" source="loss" target="verifier_card"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="405" y="854"/><mxPoint x="405" y="728"/></Array></mxGeometry></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

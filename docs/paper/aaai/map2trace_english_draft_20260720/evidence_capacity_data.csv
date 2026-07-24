@@ -1,0 +1,13 @@
+family,code,policy,macro_f1,mean_prompt_tokens,status
+fixed,F3,fixed k=3,34.12,436.33,final
+fixed,F5,fixed k=5,33.91,603.45,final
+fixed,F7,fixed k=7,34.03,751.29,final
+fixed,F9,fixed k=9,34.81,867.65,final
+minmax,M3-8,"minmax (3,8)",33.84,540.19,final
+minmax,M3-10,"minmax (3,10)",33.86,562.51,final
+minmax,M5-10,"minmax (5,10)",36.66,677.90,final
+minmax,M5-12,"minmax (5,12)",35.22,686.65,final
+minmax,M7-12,"minmax (7,12)",34.50,798.46,final
+budget,B512,budget B=512,32.8794,461.3573,measured
+budget,B768,budget B=768,34.4490,710.3973,measured
+budget,B1024,budget B=1024,35.0310,949.2870,measured

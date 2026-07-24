@@ -1,0 +1,26 @@
+extends: scifact_atom_union_fullpool_minmax9_9.yaml
+
+experiment:
+  case_suffix: __atom_union_structure_only_fullpool_minmax9_9
+  run_label: scifact-atom-union-structure-only-fullpool
+  run_header_label: scifact-atom-union-structure-only-fullpool-minmax9-9
+
+trace:
+  output_root: outputs/selectors/scifact_atom_anchor/06_traces_structure_only
+  weight_file: outputs/selectors/scifact_atom_anchor/05_selector_structure_only/weights.json
+  selector_name: mrec_greedy_transition_v0_2_learned_marginal_structure_only_fullpool
+  adaptive_policy: learned_marginal_proxy_v0_2
+  selection_policy: learned_marginal_proxy
+  splits: [train, val, test]
+  weight_training:
+    # The phase-13 structure-only wrapper invokes the strict trainer explicitly.
+    # Keep generic proxy auto-training disabled so a missing artifact fails closed.
+    enabled: false
+    output_dir: outputs/selectors/scifact_atom_anchor/05_selector_structure_only
+    candidate_top_n: 20
+    rollout_steps: 5
+    epochs: 30
+    learning_rate: 0.05
+
+swanlab:
+  experiment_name: scifact__ministral3_8b__atom_union_structure_only_fullpool_minmax9_9

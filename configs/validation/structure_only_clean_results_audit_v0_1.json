@@ -1,0 +1,151 @@
+{
+  "schema_version": "structure-only-clean-results-audit-input-v0.1",
+  "input_policy": {
+    "fallback_allowed": false,
+    "search_allowed": false,
+    "require_within_repo": true,
+    "forbidden_root_fragments": [
+      "learned_marginal_proxy"
+    ]
+  },
+  "sections": {
+    "verifier_crossover_s_o": {
+      "kind": "crossover",
+      "summary_root": "outputs/selector_mechanism_gate/liar_raw_structure_only_core_gate_v0_1/matched_verifier_crossover_step800_val",
+      "required_summary_root_fragments": [
+        "matched_verifier_crossover_step800_val"
+      ],
+      "summary_schema_version": "structure-only-matched-verifier-crossover-summary-v0.1",
+      "checkpoint": "checkpoint-800",
+      "split": "val",
+      "expected_event_count": 1234,
+      "expected_event_id_sequence_sha256": "65038f1f222b7d990642970ebf7281434abdb17fe61ec1e14ed0c937e8ee6549",
+      "prompt_cells": {
+        "O": "one_shot__fixed5",
+        "S": "stateful__fixed5"
+      },
+      "verifiers": {
+        "V_S": {
+          "run_root": "outputs/sentence_trace_method/liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_structure_only_fullpool_minmax5_10_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw",
+          "summary_output_dir": "verifier_s",
+          "minimum_global_step": 800,
+          "expected_adapter_sha256": "7b7512cd8f5a37d7087be935c3d768db04a29dd3bd479131bd1c5c7681b9374a",
+          "required_root_fragments": [
+            "learned_marginal_structure_only_fullpool_minmax5_10"
+          ]
+        },
+        "V_O": {
+          "run_root": "outputs/sentence_trace_method/liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_structure_only_one_shot_fullpool_minmax5_10_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw",
+          "summary_output_dir": "verifier_o",
+          "minimum_global_step": 800,
+          "expected_adapter_sha256": "24e661e8efec049f19e4427a4488de57ce4dc7aec97e412315029412f8779aa3",
+          "required_root_fragments": [
+            "learned_marginal_structure_only_one_shot_fullpool_minmax5_10"
+          ]
+        }
+      }
+    },
+    "liar_main": {
+      "kind": "standard",
+      "run_root": "outputs/sentence_trace_method/liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_structure_only_fullpool_minmax5_10_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw",
+      "required_root_fragments": [
+        "liar_raw__ministral3_8b",
+        "learned_marginal_structure_only_fullpool_minmax5_10"
+      ],
+      "checkpoint": "best",
+      "label_schema": "liar6",
+      "splits": [
+        "test"
+      ],
+      "expected_num_samples": {
+        "test": 1251
+      }
+    },
+    "rawfc_clean": {
+      "kind": "standard",
+      "run_root": "outputs/sentence_trace_method/rawfc__ministral3_8b__atom_anchor_v0_2_learned_marginal_structure_only_fullpool_minmax5_10_baseline20_lora_r16a32_d010_ebs16_lr1em5_ep12_eval50_pat8_rawfc",
+      "required_root_fragments": [
+        "rawfc__ministral3_8b",
+        "learned_marginal_structure_only_fullpool_minmax5_10_baseline20"
+      ],
+      "checkpoint": "best",
+      "label_schema": "rawfc3",
+      "splits": [
+        "val",
+        "test"
+      ],
+      "expected_num_samples": {
+        "val": 200,
+        "test": 200
+      }
+    },
+    "scifact_clean": {
+      "kind": "scifact",
+      "run_root": "outputs/sentence_trace_method/scifact__ministral3_8b__atom_union_structure_only_fullpool_minmax9_9_lora_ebs16_lr2em5_ep12_eval100_pat8",
+      "required_root_fragments": [
+        "scifact__ministral3_8b",
+        "atom_union_structure_only_fullpool_minmax9_9"
+      ],
+      "checkpoint": "best",
+      "label_schema": "scifact3",
+      "expected_num_samples": {
+        "val": 300,
+        "test": 300
+      },
+      "expected_trace": "outputs/selectors/scifact_atom_anchor/06_traces_structure_only/selection_trace_val.jsonl"
+    },
+    "verifier_crossover_r_s": {
+      "kind": "crossover",
+      "summary_root": "outputs/selector_mechanism_gate/liar_raw_structure_only_core_gate_v0_1/retrieval_stateful_matched_verifier_crossover_step800_val",
+      "required_summary_root_fragments": [
+        "retrieval_stateful_matched_verifier_crossover_step800_val"
+      ],
+      "summary_schema_version": "retrieval-stateful-matched-verifier-crossover-summary-v0.1",
+      "checkpoint": "checkpoint-800",
+      "split": "val",
+      "expected_event_count": 1234,
+      "expected_event_id_sequence_sha256": "65038f1f222b7d990642970ebf7281434abdb17fe61ec1e14ed0c937e8ee6549",
+      "prompt_cells": {
+        "R": "retrieval__fixed5",
+        "S": "stateful__fixed5"
+      },
+      "verifiers": {
+        "V_R": {
+          "run_root": "outputs/sentence_trace_method/liar_raw__ministral3_8b__atom_anchor_v0_2_retrieval_order_matched_fullpool_minmax5_10_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw",
+          "summary_output_dir": "verifier_r",
+          "minimum_global_step": 800,
+          "required_root_fragments": [
+            "retrieval_order_matched_fullpool_minmax5_10"
+          ]
+        },
+        "V_S": {
+          "run_root": "outputs/sentence_trace_method/liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_structure_only_fullpool_minmax5_10_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw",
+          "summary_output_dir": "verifier_s",
+          "minimum_global_step": 800,
+          "expected_adapter_sha256": "7b7512cd8f5a37d7087be935c3d768db04a29dd3bd479131bd1c5c7681b9374a",
+          "required_root_fragments": [
+            "learned_marginal_structure_only_fullpool_minmax5_10"
+          ]
+        }
+      }
+    },
+    "liar_no_map": {
+      "kind": "standard",
+      "run_root": "outputs/sentence_trace_method/liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_structure_only_no_map_fullpool_minmax5_10_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw",
+      "required_root_fragments": [
+        "liar_raw__ministral3_8b",
+        "learned_marginal_structure_only_no_map_fullpool_minmax5_10"
+      ],
+      "checkpoint": "best",
+      "label_schema": "liar6",
+      "splits": [
+        "val",
+        "test"
+      ],
+      "expected_num_samples": {
+        "val": 1234,
+        "test": 1251
+      }
+    }
+  }
+}

@@ -1,0 +1,62 @@
+<!--
+  Small-scale human evaluation: blinded sequence preference.
+
+  Public input fields only:
+    blind_task_id, claim_en, claim_zh, sequence_a_html, sequence_b_html
+
+  Submitted fields:
+    overall_preference (required), data_issue (optional), notes (optional)
+-->
+<View>
+  <View name="task_meta" style="background:#f5f5f5;padding:8px 12px;border-radius:4px;margin-bottom:12px">
+    <Text name="task_id" value="Blind task ID: $blind_task_id" style="font-size:12px;color:#666" />
+  </View>
+
+  <View name="instruction" style="border-left:4px solid #607d8b;padding:10px 14px;margin-bottom:14px;background:#fafafa">
+    <Text name="instruction_title" value="Task / 任务" style="font-size:14px;font-weight:bold;color:#37474f" />
+    <Text name="instruction_en" value="Which ordered evidence sequence would better help an independent fact-checker form an accurate and well-grounded judgment? Judge the evidence content and organization, not writing style or persuasiveness." style="font-size:14px;line-height:1.6" />
+    <Text name="instruction_zh" value="哪一个有序证据序列更能帮助独立事实核查者形成准确且有依据的判断？请依据证据内容与组织方式判断，不得按文风或“说服力”选择。" style="font-size:13px;line-height:1.5;color:#666;margin-top:5px" />
+  </View>
+
+  <View name="claim_block" style="border:1px solid #d9d9d9;padding:10px 14px;border-radius:5px;margin-bottom:14px;background:#fff">
+    <Text name="claim_heading" value="Claim (English is authoritative)" style="font-size:14px;font-weight:bold;color:#333" />
+    <Text name="claim_en" value="$claim_en" style="font-size:15px;line-height:1.65" />
+    <Text name="claim_zh_heading" value="中文辅助：" style="font-size:11px;color:#888;margin-top:6px" />
+    <Text name="claim_zh" value="$claim_zh" style="font-size:13px;line-height:1.5;color:#666" />
+  </View>
+
+  <View name="sequence_a_block" style="border:1px solid #bdbdbd;padding:12px 14px;border-radius:5px;margin-bottom:14px;background:#fff">
+    <Header value="Sequence A" style="font-size:16px" />
+    <HyperText name="sequence_a" value="$sequence_a_html" />
+  </View>
+
+  <View name="sequence_b_block" style="border:1px solid #bdbdbd;padding:12px 14px;border-radius:5px;margin-bottom:18px;background:#fff">
+    <Header value="Sequence B" style="font-size:16px" />
+    <HyperText name="sequence_b" value="$sequence_b_html" />
+  </View>
+
+  <Header value="Overall preference / 总体偏好" style="font-size:15px" />
+  <Choices name="overall_preference" toName="instruction_en" choice="single" required="true">
+    <Choice value="strongly_prefer_a" alias="Strongly prefer A / 明显偏好 A" />
+    <Choice value="prefer_a" alias="Prefer A / 偏好 A" />
+    <Choice value="tie" alias="Tie / 两者相当" />
+    <Choice value="prefer_b" alias="Prefer B / 偏好 B" />
+    <Choice value="strongly_prefer_b" alias="Strongly prefer B / 明显偏好 B" />
+  </Choices>
+
+  <View name="issue_block" style="border-top:1px solid #eee;margin-top:18px;padding-top:12px">
+    <Header value="Data issue (optional) / 数据问题（可选）" style="font-size:13px" />
+    <Choices name="data_issue" toName="instruction_en" choice="multiple">
+      <Choice value="translation" alias="Translation / 翻译问题" />
+      <Choice value="missing_or_malformed_evidence" alias="Missing or malformed evidence / 证据缺失或损坏" />
+      <Choice value="duplicate_evidence" alias="Duplicate evidence / 重复证据" />
+      <Choice value="source_or_format" alias="Source or display format / 来源或显示格式问题" />
+      <Choice value="other" alias="Other / 其他" />
+    </Choices>
+    <TextArea name="notes" toName="instruction_en" rows="3" placeholder="Optional note. If you selected a data issue, briefly identify it without guessing which system produced either side." />
+  </View>
+
+  <View name="submit_check" style="background:#f5f5f5;padding:8px 12px;border-radius:4px;margin-top:12px">
+    <Text name="submit_check_text" value="Before submitting, confirm that the choice reflects fact-checking usefulness rather than prose quality." style="font-size:12px;color:#555" />
+  </View>
+</View>

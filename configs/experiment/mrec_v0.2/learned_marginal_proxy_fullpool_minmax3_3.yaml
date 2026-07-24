@@ -1,0 +1,19 @@
+extends: learned_marginal_proxy_fullpool_policy.yaml
+
+experiment:
+  name: liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax3_3
+  case_suffix: __atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax3_3
+  run_label: atom-anchor-v0.2-learned-proxy-fullpool-minmax3-3
+  run_header_label: atom-anchor-v0.2-learned-proxy-fullpool-minmax3-3-full
+
+prompt_evidence:
+  policy: minmax
+  min_evidence_count: 3
+  max_evidence_count: 3
+  evidence_token_budget: null
+
+swanlab:
+  experiment_name: liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_proxy_fullpool_minmax3_3
+
+sentence_trace_method:
+  top_k: 3

@@ -1,0 +1,97 @@
+{
+  "schema_version": "structure_only_mechanism_gate_preregistration_v0_1",
+  "created_date": "2026-07-17",
+  "scope": "LIAR-RAW validation-only frozen-verifier input-organization gate",
+  "capacity_contract": {
+    "policy": "fixed_topk",
+    "K": 5,
+    "common_support": "intersection of events with exactly K visible evidence items in every selector arm",
+    "was_truncated": false,
+    "evidence_text_truncated": false
+  },
+  "frozen_verifier": {
+    "run_dir": "outputs/sentence_trace_method/liar_raw__ministral3_8b__atom_anchor_v0_2_learned_marginal_structure_only_fullpool_minmax5_10_lora_ebs16_lr2em5_ep12_eval100_pat8_liarw/train",
+    "checkpoint": "best",
+    "checkpoint_equivalent_step": 800,
+    "adapter_sha256": "7b7512cd8f5a37d7087be935c3d768db04a29dd3bd479131bd1c5c7681b9374a",
+    "logit_adjust": false,
+    "interpretation": "diagnostic input-organization gate under a verifier trained on stateful prompts"
+  },
+  "selector_contract": {
+    "shared_candidate_pool": true,
+    "shared_event_sequence": true,
+    "one_shot_and_stateful_weight_fingerprint": "fdad087dbb6c",
+    "cells": [
+      "retrieval__fixed5",
+      "hard_structure__fixed5",
+      "one_shot__fixed5",
+      "stateful__fixed5",
+      "shuffle_seed0",
+      "shuffle_seed1",
+      "shuffle_seed2",
+      "shuffle_seed3",
+      "shuffle_seed4"
+    ]
+  },
+  "activity_gate": {
+    "comparison": "stateful versus one_shot",
+    "measure": "fraction of common-support events with a different visible UID set or order",
+    "minimum_rate": 0.1
+  },
+  "inference": {
+    "primary_metric": "macro_f1",
+    "bootstrap_samples": 20000,
+    "randomization_samples": 20000,
+    "seed": 20260717,
+    "alpha": 0.05
+  },
+  "comparisons": {
+    "primary": [
+      {
+        "name": "S_minus_O",
+        "old": "one_shot__fixed5",
+        "new": "stateful__fixed5",
+        "question": "Does state-conditioned rescoring improve over a frozen initial ranking?"
+      }
+    ],
+    "secondary_holm_family": [
+      {
+        "name": "S_minus_H",
+        "old": "hard_structure__fixed5",
+        "new": "stateful__fixed5",
+        "question": "Does learned continuous utility improve over the stateful hard rule?"
+      },
+      {
+        "name": "H_minus_R",
+        "old": "retrieval__fixed5",
+        "new": "hard_structure__fixed5",
+        "question": "Does the structure-induced rule improve over retrieval order?"
+      },
+      {
+        "name": "S_minus_shuffle_seed0",
+        "old": "shuffle_seed0",
+        "new": "stateful__fixed5",
+        "question": "Does stateful presentation order improve over a strict same-set shuffle?"
+      }
+    ],
+    "shuffle_robustness_diagnostics": [
+      "S_minus_shuffle_seed1",
+      "S_minus_shuffle_seed2",
+      "S_minus_shuffle_seed3",
+      "S_minus_shuffle_seed4"
+    ]
+  },
+  "decision_rule": {
+    "green": "macro-F1 delta >= 0.005 and paired-bootstrap 95% CI lower bound > 0",
+    "yellow": "macro-F1 delta > 0 but the green rule is not met",
+    "red": "macro-F1 delta <= 0",
+    "secondary_green_requires_holm": true,
+    "order_robustness": "at least four of five shuffle-seed macro-F1 deltas must be positive for a robust order claim",
+    "method_branches": {
+      "H_minus_R_red": "structure mechanism unsupported; do not scale the clean mechanism story",
+      "H_minus_R_positive_and_S_minus_H_red": "retain the hard structure rule and drop learned-utility benefit",
+      "S_minus_O_red": "drop the state-conditioned rescoring benefit claim",
+      "S_minus_shuffle_not_robust": "drop the presentation-order benefit claim without rejecting evidence selection"
+    }
+  }
+}

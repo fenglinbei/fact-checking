@@ -1,0 +1,632 @@
+% Curated references for the structure-only AAAI paper draft.
+% Existing fact-checking keys intentionally follow
+% docs/paper/fact_checking_survey_20260625/refs.bib.
+
+% -----------------------------------------------------------------------------
+% Task definitions, datasets, and surveys
+% -----------------------------------------------------------------------------
+
+@inproceedings{Vlachos2014FactChecking,
+  title = {Fact Checking: Task Definition and Dataset Construction},
+  author = {Vlachos, Andreas and Riedel, Sebastian},
+  booktitle = {Proceedings of the ACL 2014 Workshop on Language Technologies and Computational Social Science},
+  pages = {18--22},
+  year = {2014},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.3115/v1/W14-2508},
+  url = {https://aclanthology.org/W14-2508/}
+}
+
+@inproceedings{Wang2017LIAR,
+  title = {{``Liar, Liar Pants on Fire''}: A New Benchmark Dataset for Fake News Detection},
+  author = {Wang, William Yang},
+  booktitle = {Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers)},
+  pages = {422--426},
+  year = {2017},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/P17-2067},
+  url = {https://aclanthology.org/P17-2067/}
+}
+
+@inproceedings{Alhindi2018LIARPlus,
+  title = {Where is Your Evidence: Improving Fact-checking by Justification Modeling},
+  author = {Alhindi, Tariq and Petridis, Savvas and Muresan, Smaranda},
+  booktitle = {Proceedings of the First Workshop on Fact Extraction and VERification},
+  pages = {85--90},
+  year = {2018},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/W18-5513},
+  url = {https://aclanthology.org/W18-5513/}
+}
+
+@inproceedings{Thorne2018FEVER,
+  title = {{FEVER}: A Large-scale Dataset for Fact Extraction and Verification},
+  author = {Thorne, James and Vlachos, Andreas and Christodoulopoulos, Christos and Mittal, Arpit},
+  booktitle = {Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long Papers)},
+  pages = {809--819},
+  year = {2018},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/N18-1074},
+  url = {https://aclanthology.org/N18-1074/}
+}
+
+@inproceedings{Augenstein2019MultiFC,
+  title = {{MultiFC}: A Real-World Multi-Domain Dataset for Evidence-Based Fact Checking of Claims},
+  author = {Augenstein, Isabelle and Lioma, Christina and Wang, Dongsheng and Chaves Lima, Lucas and Hansen, Casper and Hansen, Christian and Simonsen, Jakob Grue},
+  booktitle = {Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing},
+  pages = {4685--4697},
+  year = {2019},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/D19-1475},
+  url = {https://aclanthology.org/D19-1475/}
+}
+
+@inproceedings{Jiang2020HoVer,
+  title = {{HoVer}: A Dataset for Many-Hop Fact Extraction and Claim Verification},
+  author = {Jiang, Yichen and Bordia, Shikha and Zhong, Zheng and Dognin, Charles and Singh, Maneesh and Bansal, Mohit},
+  booktitle = {Findings of the Association for Computational Linguistics: EMNLP 2020},
+  pages = {3441--3460},
+  year = {2020},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2020.findings-emnlp.309},
+  url = {https://aclanthology.org/2020.findings-emnlp.309/}
+}
+
+@inproceedings{Wadden2020SciFact,
+  title = {Fact or Fiction: Verifying Scientific Claims},
+  author = {Wadden, David and Lin, Shanchuan and Lo, Kyle and Wang, Lucy Lu and van Zuylen, Madeleine and Cohan, Arman and Hajishirzi, Hannaneh},
+  booktitle = {Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing},
+  pages = {7534--7550},
+  year = {2020},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2020.emnlp-main.609},
+  url = {https://aclanthology.org/2020.emnlp-main.609/}
+}
+
+@inproceedings{Aly2021FEVEROUS,
+  title = {{FEVEROUS}: Fact Extraction and Verification Over Unstructured and Structured Information},
+  author = {Aly, Rami and Guo, Zhijiang and Schlichtkrull, Michael and Thorne, James and Vlachos, Andreas and Christodoulopoulos, Christos and Cocarascu, Oana and Mittal, Arpit},
+  booktitle = {Proceedings of the Neural Information Processing Systems Track on Datasets and Benchmarks},
+  year = {2021},
+  url = {https://arxiv.org/abs/2106.05707}
+}
+
+@inproceedings{Yang2022CofCED,
+  title = {A Coarse-to-fine Cascaded Evidence-Distillation Neural Network for Explainable Fake News Detection},
+  author = {Yang, Zhiwei and Ma, Jing and Chen, Hechang and Lin, Hongzhan and Luo, Ziyang and Chang, Yi},
+  booktitle = {Proceedings of the 29th International Conference on Computational Linguistics},
+  pages = {2608--2621},
+  year = {2022},
+  publisher = {International Committee on Computational Linguistics},
+  url = {https://aclanthology.org/2022.coling-1.230/}
+}
+
+@inproceedings{Wadden2022SciFactOpen,
+  title = {{SciFact}-Open: Towards Open-Domain Scientific Claim Verification},
+  author = {Wadden, David and Lo, Kyle and Kuehl, Bailey and Cohan, Arman and Beltagy, Iz and Wang, Lucy Lu and Hajishirzi, Hannaneh},
+  booktitle = {Findings of the Association for Computational Linguistics: EMNLP 2022},
+  pages = {4719--4734},
+  year = {2022},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2022.findings-emnlp.347},
+  url = {https://aclanthology.org/2022.findings-emnlp.347/}
+}
+
+@inproceedings{Schlichtkrull2023AVeriTeC,
+  title = {{AVeriTeC}: A Dataset for Real-world Claim Verification with Evidence from the Web},
+  author = {Schlichtkrull, Michael and Guo, Zhijiang and Vlachos, Andreas},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume = {36},
+  year = {2023},
+  url = {https://papers.nips.cc/paper_files/paper/2023/hash/cd86a30526cd1aff61d6f89f107634e4-Abstract-Datasets_and_Benchmarks.html}
+}
+
+@article{Guo2021Survey,
+  title = {A Survey on Automated Fact-Checking},
+  author = {Guo, Zhijiang and Schlichtkrull, Michael and Vlachos, Andreas},
+  journal = {Transactions of the Association for Computational Linguistics},
+  volume = {10},
+  pages = {178--206},
+  year = {2022},
+  doi = {10.1162/tacl_a_00454},
+  url = {https://doi.org/10.1162/tacl_a_00454}
+}
+
+@article{Nakov2021Assisting,
+  title = {Automated Fact-Checking for Assisting Human Fact-Checkers},
+  author = {Nakov, Preslav and Corney, David and Hasanain, Maram and Alam, Firoj and Elsayed, Tamer and Barr{\'o}n-Cede{\~n}o, Alberto and Papotti, Paolo and Shaar, Shaden and Da San Martino, Giovanni},
+  journal = {arXiv preprint arXiv:2103.07769},
+  year = {2021},
+  doi = {10.48550/arXiv.2103.07769},
+  url = {https://arxiv.org/abs/2103.07769}
+}
+
+% -----------------------------------------------------------------------------
+% Evidence modeling, claim decomposition, and fact-checking systems
+% -----------------------------------------------------------------------------
+
+@inproceedings{Popat2018DeClarE,
+  title = {{DeClarE}: Debunking Fake News and False Claims using Evidence-Aware Deep Learning},
+  author = {Popat, Kashyap and Mukherjee, Subhabrata and Yates, Andrew and Weikum, Gerhard},
+  booktitle = {Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing},
+  pages = {22--32},
+  year = {2018},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/D18-1003},
+  url = {https://aclanthology.org/D18-1003/}
+}
+
+@inproceedings{Nie2019NSMN,
+  title = {Combining Fact Extraction and Verification with Neural Semantic Matching Networks},
+  author = {Nie, Yixin and Chen, Haonan and Bansal, Mohit},
+  booktitle = {Proceedings of the AAAI Conference on Artificial Intelligence},
+  volume = {33},
+  pages = {6859--6866},
+  year = {2019},
+  doi = {10.1609/aaai.v33i01.33016859},
+  url = {https://ojs.aaai.org/index.php/AAAI/article/view/4655}
+}
+
+@inproceedings{Zhou2019GEAR,
+  title = {{GEAR}: Graph-based Evidence Aggregating and Reasoning for Fact Verification},
+  author = {Zhou, Jie and Han, Xu and Yang, Cheng and Liu, Zhiyuan and Wang, Lifeng and Li, Changcheng and Sun, Maosong},
+  booktitle = {Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics},
+  pages = {892--901},
+  year = {2019},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/P19-1085},
+  url = {https://aclanthology.org/P19-1085/}
+}
+
+@inproceedings{Soleimani2020BERT,
+  title = {{BERT} for Evidence Retrieval and Claim Verification},
+  author = {Soleimani, Amir and Monz, Christof and Worring, Marcel},
+  booktitle = {Advances in Information Retrieval},
+  pages = {359--366},
+  year = {2020},
+  publisher = {Springer International Publishing},
+  doi = {10.1007/978-3-030-45442-5_45},
+  url = {https://arxiv.org/abs/1910.02655}
+}
+
+@inproceedings{Liu2019KGAT,
+  title = {Fine-grained Fact Verification with Kernel Graph Attention Network},
+  author = {Liu, Zhenghao and Xiong, Chenyan and Sun, Maosong and Liu, Zhiyuan},
+  booktitle = {Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics},
+  pages = {7342--7351},
+  year = {2020},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2020.acl-main.655},
+  url = {https://aclanthology.org/2020.acl-main.655/}
+}
+
+@inproceedings{Chen2022ClaimDecomp,
+  title = {Generating Literal and Implied Subquestions to Fact-check Complex Claims},
+  author = {Chen, Jifan and Sriram, Aniruddh and Choi, Eunsol and Durrett, Greg},
+  booktitle = {Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing},
+  pages = {3495--3516},
+  year = {2022},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2022.emnlp-main.229},
+  url = {https://aclanthology.org/2022.emnlp-main.229/}
+}
+
+@inproceedings{Pan2023ProgramFC,
+  title = {Fact-Checking Complex Claims with Program-Guided Reasoning},
+  author = {Pan, Liangming and Wu, Xiaobao and Lu, Xinyuan and Luu, Anh Tuan and Wang, William Yang and Kan, Min-Yen and Nakov, Preslav},
+  booktitle = {Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)},
+  pages = {6981--7004},
+  year = {2023},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2023.acl-long.386},
+  url = {https://aclanthology.org/2023.acl-long.386/}
+}
+
+@inproceedings{Zhang2023HiSS,
+  title = {Towards {LLM}-based Fact Verification on News Claims with a Hierarchical Step-by-Step Prompting Method},
+  author = {Zhang, Xuan and Gao, Wei},
+  booktitle = {Proceedings of the 13th International Joint Conference on Natural Language Processing and the 3rd Conference of the Asia-Pacific Chapter of the Association for Computational Linguistics (Volume 1: Long Papers)},
+  pages = {996--1011},
+  year = {2023},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2023.ijcnlp-main.64},
+  url = {https://aclanthology.org/2023.ijcnlp-main.64/}
+}
+
+@inproceedings{Cheung2023FactLLaMA,
+  title = {{FactLLaMA}: Optimizing Instruction-Following Language Models with External Knowledge for Automated Fact-Checking},
+  author = {Cheung, Tsun-Hin and Lam, Kin-Man},
+  booktitle = {2023 Asia Pacific Signal and Information Processing Association Annual Summit and Conference},
+  pages = {846--853},
+  year = {2023},
+  publisher = {IEEE},
+  doi = {10.1109/APSIPAASC58517.2023.10317251},
+  url = {https://doi.org/10.1109/APSIPAASC58517.2023.10317251}
+}
+
+@inproceedings{Chen2023WildEvidence,
+  title = {Complex Claim Verification with Evidence Retrieved in the Wild},
+  author = {Chen, Jifan and Kim, Grace and Sriram, Aniruddh and Durrett, Greg and Choi, Eunsol},
+  booktitle = {Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers)},
+  pages = {3569--3587},
+  year = {2024},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2024.naacl-long.196},
+  url = {https://aclanthology.org/2024.naacl-long.196/}
+}
+
+@inproceedings{Zhang2023FER,
+  title = {From Relevance to Utility: Evidence Retrieval with Feedback for Fact Verification},
+  author = {Zhang, Hengran and Zhang, Ruqing and Guo, Jiafeng and de Rijke, Maarten and Fan, Yixing and Cheng, Xueqi},
+  booktitle = {Findings of the Association for Computational Linguistics: EMNLP 2023},
+  pages = {6373--6384},
+  year = {2023},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2023.findings-emnlp.422},
+  url = {https://aclanthology.org/2023.findings-emnlp.422/}
+}
+
+@inproceedings{Wan2021DQN,
+  title = {A {DQN}-based Approach to Finding Precise Evidences for Fact Verification},
+  author = {Wan, Hai and Chen, Haicheng and Du, Jianfeng and Luo, Weilin and Ye, Rongzhen},
+  booktitle = {Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers)},
+  pages = {1030--1039},
+  year = {2021},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2021.acl-long.83},
+  url = {https://aclanthology.org/2021.acl-long.83/}
+}
+
+@inproceedings{Aly2022NaturalLogic,
+  title = {Natural Logic-guided Autoregressive Multi-hop Document Retrieval for Fact Verification},
+  author = {Aly, Rami and Vlachos, Andreas},
+  booktitle = {Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing},
+  pages = {6123--6135},
+  year = {2022},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2022.emnlp-main.411},
+  url = {https://aclanthology.org/2022.emnlp-main.411/}
+}
+
+@article{Atanasova2022Insufficient,
+  title = {Fact Checking with Insufficient Evidence},
+  author = {Atanasova, Pepa and Simonsen, Jakob Grue and Lioma, Christina and Augenstein, Isabelle},
+  journal = {Transactions of the Association for Computational Linguistics},
+  volume = {10},
+  pages = {746--763},
+  year = {2022},
+  publisher = {MIT Press},
+  doi = {10.1162/tacl_a_00486},
+  url = {https://aclanthology.org/2022.tacl-1.43/}
+}
+
+@inproceedings{Zhang2024FFRR,
+  title = {Reinforcement Retrieval Leveraging Fine-grained Feedback for Fact Checking News Claims with Black-Box {LLM}},
+  author = {Zhang, Xuan and Gao, Wei},
+  booktitle = {Proceedings of the 2024 Joint International Conference on Computational Linguistics, Language Resources and Evaluation},
+  pages = {13786--13797},
+  year = {2024},
+  publisher = {ELRA and ICCL},
+  doi = {10.18653/v1/2024.lrec-main.1209},
+  url = {https://aclanthology.org/2024.lrec-main.1209/}
+}
+
+@inproceedings{Yue2024RAFTS,
+  title = {Retrieval Augmented Fact Verification by Synthesizing Contrastive Arguments},
+  author = {Yue, Zhenrui and Zeng, Huimin and Shang, Lanyu and Liu, Yifan and Zhang, Yang and Wang, Dong},
+  booktitle = {Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)},
+  pages = {10331--10343},
+  year = {2024},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2024.acl-long.556},
+  url = {https://aclanthology.org/2024.acl-long.556/}
+}
+
+@inproceedings{Zheng2024RAV,
+  title = {Evidence Retrieval is Almost All You Need for Fact Verification},
+  author = {Zheng, Liwen and Li, Chaozhuo and Zhang, Xi and Shang, Yu-Ming and Huang, Feiran and Jia, Haoran},
+  booktitle = {Findings of the Association for Computational Linguistics: ACL 2024},
+  pages = {9274--9281},
+  year = {2024},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2024.findings-acl.551},
+  url = {https://aclanthology.org/2024.findings-acl.551/}
+}
+
+@inproceedings{Wang2024LDefense,
+  title = {Explainable Fake News Detection With Large Language Model via Defense Among Competing Wisdom},
+  author = {Wang, Bo and Ma, Jing and Lin, Hongzhan and Yang, Zhiwei and Yang, Ruichao and Tian, Yuan and Chang, Yi},
+  booktitle = {Proceedings of the ACM Web Conference 2024},
+  pages = {2452--2463},
+  year = {2024},
+  publisher = {Association for Computing Machinery},
+  doi = {10.1145/3589334.3645471},
+  url = {https://doi.org/10.1145/3589334.3645471}
+}
+
+@article{Xiong2025DelphiAgent,
+  title = {{DelphiAgent}: A Trustworthy Multi-Agent Verification Framework for Automated Fact Verification},
+  author = {Xiong, Cheng and Zheng, Gengfeng and Ma, Xiao and Li, Chunlin and Zeng, Jiangfeng},
+  journal = {Information Processing \& Management},
+  volume = {62},
+  number = {6},
+  pages = {104241},
+  year = {2025},
+  doi = {10.1016/j.ipm.2025.104241},
+  url = {https://doi.org/10.1016/j.ipm.2025.104241}
+}
+
+@inproceedings{Qazi2025DeReC,
+  title = {When Retrieval Outperforms Generation: Dense Evidence Retrieval for Scalable Fake News Detection},
+  author = {Qazi, Alamgir Munir and McCrae, John P. and Nasir, Jamal Abdul},
+  booktitle = {Proceedings of the 5th Conference on Language, Data and Knowledge},
+  pages = {255--265},
+  year = {2025},
+  publisher = {Unior Press},
+  url = {https://aclanthology.org/2025.ldk-1.26/}
+}
+
+@article{Wang2026GDefense,
+  title = {A Graph-Enhanced Defense Framework for Explainable Fake News Detection with {LLM}},
+  author = {Wang, Bo and Ma, Jing and Lin, Hongzhan and Yang, Zhiwei and Yang, Ruichao and Tian, Yuan and Chang, Yi},
+  journal = {ACM Transactions on Information Systems},
+  volume = {44},
+  number = {5},
+  pages = {1--36},
+  year = {2026},
+  note = {Article 112},
+  publisher = {Association for Computing Machinery},
+  doi = {10.1145/3810244},
+  url = {https://doi.org/10.1145/3810244}
+}
+
+@inproceedings{Lourenco2026KGCRAFT,
+  title = {{KG-CRAFT}: Knowledge Graph-based Contrastive Reasoning with {LLMs} for Enhancing Automated Fact-checking},
+  author = {Louren{\c{c}}o, V{\'i}tor and Paes, Aline and Weyde, Tillman and Depeige, Audrey and Dubey, Mohnish},
+  booktitle = {Proceedings of the 19th Conference of the European Chapter of the Association for Computational Linguistics (Volume 1: Long Papers)},
+  pages = {6419--6439},
+  year = {2026},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2026.eacl-long.302},
+  url = {https://aclanthology.org/2026.eacl-long.302/}
+}
+
+@inproceedings{Hu2025DecompositionDilemmas,
+  title = {Decomposition Dilemmas: Does Claim Decomposition Boost or Burden Fact-Checking Performance?},
+  author = {Hu, Qisheng and Long, Quanyu and Wang, Wenya},
+  booktitle = {Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers)},
+  pages = {6313--6336},
+  year = {2025},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2025.naacl-long.320},
+  url = {https://aclanthology.org/2025.naacl-long.320/}
+}
+
+@inproceedings{Alt2026EvidenceRanking,
+  title = {User-Centric Evidence Ranking for Attribution and Fact Verification},
+  author = {Alt, Guy and Hirsch, Eran and Basch, Serwar and Dagan, Ido and Glickman, Oren},
+  booktitle = {Proceedings of the 19th Conference of the European Chapter of the Association for Computational Linguistics (Volume 1: Long Papers)},
+  pages = {7215--7237},
+  year = {2026},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2026.eacl-long.340},
+  url = {https://aclanthology.org/2026.eacl-long.340/}
+}
+
+% -----------------------------------------------------------------------------
+% Retrieval, rank fusion, reranking, pairwise learning, and adaptation
+% -----------------------------------------------------------------------------
+
+@article{Robertson2009BM25,
+  title = {The Probabilistic Relevance Framework: {BM25} and Beyond},
+  author = {Robertson, Stephen E. and Zaragoza, Hugo},
+  journal = {Foundations and Trends in Information Retrieval},
+  volume = {3},
+  number = {4},
+  pages = {333--389},
+  year = {2009},
+  doi = {10.1561/1500000019},
+  url = {https://doi.org/10.1561/1500000019}
+}
+
+@inproceedings{Cormack2009RRF,
+  title = {Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods},
+  author = {Cormack, Gordon V. and Clarke, Charles L. A. and Buettcher, Stefan},
+  booktitle = {Proceedings of the 32nd International ACM SIGIR Conference on Research and Development in Information Retrieval},
+  pages = {758--759},
+  year = {2009},
+  publisher = {Association for Computing Machinery},
+  doi = {10.1145/1571941.1572114},
+  url = {https://doi.org/10.1145/1571941.1572114}
+}
+
+@inproceedings{Goldstein1998MMR,
+  title = {The Use of {MMR}, Diversity-Based Reranking for Reordering Documents and Producing Summaries},
+  author = {Carbonell, Jaime and Goldstein, Jade},
+  booktitle = {Proceedings of the 21st Annual International ACM SIGIR Conference on Research and Development in Information Retrieval},
+  pages = {335--336},
+  year = {1998},
+  publisher = {Association for Computing Machinery},
+  doi = {10.1145/290941.291025},
+  url = {https://doi.org/10.1145/290941.291025}
+}
+
+@inproceedings{Burges2005RankNet,
+  title = {Learning to Rank Using Gradient Descent},
+  author = {Burges, Christopher J. C. and Shaked, Tal and Renshaw, Erin and Lazier, Ari and Deeds, Matt and Hamilton, Nicole and Hullender, Gregory N.},
+  booktitle = {Proceedings of the 22nd International Conference on Machine Learning},
+  pages = {89--96},
+  year = {2005},
+  publisher = {Association for Computing Machinery},
+  doi = {10.1145/1102351.1102363},
+  url = {https://doi.org/10.1145/1102351.1102363}
+}
+
+@inproceedings{Hu2022LoRA,
+  title = {{LoRA}: Low-Rank Adaptation of Large Language Models},
+  author = {Hu, Edward J. and Shen, Yelong and Wallis, Phillip and Allen-Zhu, Zeyuan and Li, Yuanzhi and Wang, Shean and Wang, Lu and Chen, Weizhu},
+  booktitle = {International Conference on Learning Representations},
+  year = {2022},
+  url = {https://openreview.net/forum?id=nZeVKeeFYf9}
+}
+
+@article{Xiao2023BGE,
+  title = {{C-Pack}: Packed Resources for General Chinese Embeddings},
+  author = {Xiao, Shitao and Liu, Zheng and Zhang, Peitian and Muennighoff, Niklas and Lian, Defu and Nie, Jian-Yun},
+  journal = {arXiv preprint arXiv:2309.07597},
+  year = {2023},
+  doi = {10.48550/arXiv.2309.07597},
+  url = {https://arxiv.org/abs/2309.07597},
+  note = {Technical report associated with the BAAI General Embedding (BGE) model family}
+}
+
+@article{DeepSeekAI2024V3,
+  title = {{DeepSeek-V3} Technical Report},
+  author = {{DeepSeek-AI}},
+  journal = {arXiv preprint arXiv:2412.19437},
+  year = {2024},
+  doi = {10.48550/arXiv.2412.19437},
+  url = {https://arxiv.org/abs/2412.19437},
+  note = {Model-family technical report; it does not precisely identify the separate v4-flash API alias used by the annotation service}
+}
+
+@misc{MistralAI2025Ministral3,
+  title = {{Ministral 3 8B Instruct 2512}},
+  author = {{Mistral AI}},
+  year = {2025},
+  howpublished = {Hugging Face model card},
+  url = {https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512},
+  note = {Official model card; the released experiment manifest should additionally record the exact model snapshot}
+}
+
+% -----------------------------------------------------------------------------
+% Interpretability, faithfulness, and calibration limitations
+% -----------------------------------------------------------------------------
+
+@inproceedings{Lei2016Rationalizing,
+  title = {Rationalizing Neural Predictions},
+  author = {Lei, Tao and Barzilay, Regina and Jaakkola, Tommi},
+  booktitle = {Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing},
+  pages = {107--117},
+  year = {2016},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/D16-1011},
+  url = {https://aclanthology.org/D16-1011/}
+}
+
+@inproceedings{DeYoung2020ERASER,
+  title = {{ERASER}: A Benchmark to Evaluate Rationalized {NLP} Models},
+  author = {DeYoung, Jay and Jain, Sarthak and Rajani, Nazneen Fatema and Lehman, Eric and Xiong, Caiming and Socher, Richard and Wallace, Byron C.},
+  booktitle = {Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics},
+  pages = {4443--4458},
+  year = {2020},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2020.acl-main.408},
+  url = {https://aclanthology.org/2020.acl-main.408/}
+}
+
+@inproceedings{Jacovi2020Faithfulness,
+  title = {Towards Faithfully Interpretable {NLP} Systems: How Should We Define and Evaluate Faithfulness?},
+  author = {Jacovi, Alon and Goldberg, Yoav},
+  booktitle = {Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics},
+  pages = {4198--4205},
+  year = {2020},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2020.acl-main.386},
+  url = {https://aclanthology.org/2020.acl-main.386/}
+}
+
+@inproceedings{Hsia2024Goodhart,
+  title = {Goodhart's Law Applies to {NLP}'s Explanation Benchmarks},
+  author = {Hsia, Jennifer and Pruthi, Danish and Singh, Aarti and Lipton, Zachary C.},
+  booktitle = {Findings of the Association for Computational Linguistics: EACL 2024},
+  pages = {1322--1335},
+  year = {2024},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2024.findings-eacl.88},
+  url = {https://aclanthology.org/2024.findings-eacl.88/}
+}
+
+@inproceedings{Guo2017Calibration,
+  title = {On Calibration of Modern Neural Networks},
+  author = {Guo, Chuan and Pleiss, Geoff and Sun, Yu and Weinberger, Kilian Q.},
+  booktitle = {Proceedings of the 34th International Conference on Machine Learning},
+  series = {Proceedings of Machine Learning Research},
+  volume = {70},
+  pages = {1321--1330},
+  year = {2017},
+  publisher = {PMLR},
+  url = {https://proceedings.mlr.press/v70/guo17a.html}
+}
+
+% -----------------------------------------------------------------------------
+% SciFact systems and comparison-table sources
+% -----------------------------------------------------------------------------
+
+@inproceedings{Wadden2021SCIVER,
+  title = {Overview and Insights from the {SCIVER} Shared Task on Scientific Claim Verification},
+  author = {Wadden, David and Lo, Kyle},
+  booktitle = {Proceedings of the Second Workshop on Scholarly Document Processing},
+  pages = {124--129},
+  year = {2021},
+  publisher = {Association for Computational Linguistics},
+  url = {https://aclanthology.org/2021.sdp-1.16/}
+}
+
+@inproceedings{Pradeep2021VerT5erini,
+  title = {Scientific Claim Verification with {VerT5erini}},
+  author = {Pradeep, Ronak and Ma, Xueguang and Nogueira, Rodrigo and Lin, Jimmy},
+  booktitle = {Proceedings of the 12th International Workshop on Health Text Mining and Information Analysis},
+  pages = {94--103},
+  year = {2021},
+  publisher = {Association for Computational Linguistics},
+  url = {https://aclanthology.org/2021.louhi-1.11/}
+}
+
+@inproceedings{Li2021ParagraphJoint,
+  title = {A Paragraph-level Multi-task Learning Model for Scientific Fact-Verification},
+  author = {Li, Xiangci and Burns, Gully A. and Peng, Nanyun},
+  booktitle = {Proceedings of the Workshop on Scientific Document Understanding co-located with AAAI 2021},
+  series = {CEUR Workshop Proceedings},
+  volume = {2831},
+  year = {2021},
+  url = {https://ceur-ws.org/Vol-2831/paper8.pdf}
+}
+
+@inproceedings{Zeng2021QMULSDS,
+  title = {{QMUL-SDS} at {SCIVER}: Step-by-Step Binary Classification for Scientific Claim Verification},
+  author = {Zeng, Xia and Zubiaga, Arkaitz},
+  booktitle = {Proceedings of the Second Workshop on Scholarly Document Processing},
+  pages = {116--123},
+  year = {2021},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2021.sdp-1.15},
+  url = {https://aclanthology.org/2021.sdp-1.15/}
+}
+
+@inproceedings{Zhang2021ARSJoint,
+  title = {Abstract, Rationale, Stance: A Joint Model for Scientific Claim Verification},
+  author = {Zhang, Zhiwei and Li, Jiyi and Fukumoto, Fumiyo and Ye, Yanming},
+  booktitle = {Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing},
+  pages = {3580--3586},
+  year = {2021},
+  publisher = {Association for Computational Linguistics},
+  doi = {10.18653/v1/2021.emnlp-main.290},
+  url = {https://aclanthology.org/2021.emnlp-main.290/}
+}
+
+@inproceedings{Rana2022RerrFact,
+  title = {{RerrFact}: Reduced Evidence Retrieval Representations for Scientific Claim Verification},
+  author = {Rana, Ashish and Khanna, Deepanshu and Ghosal, Tirthankar and Singh, Muskaan and Singh, Harpreet and Rana, Prashant Singh},
+  booktitle = {Proceedings of the Second Workshop on Scientific Document Understanding},
+  year = {2022},
+  url = {https://ceur-ws.org/Vol-3164/paper11.pdf}
+}
+
+@inproceedings{Fang2025PrunE,
+  title = {Automatic Scientific Claims Verification with Pruned Evidence Graph},
+  author = {Fang, Liri and Fu, Dongqi and Torvik, Vetle I.},
+  booktitle = {ICLR 2025 Workshop on Agentic AI},
+  year = {2025},
+  url = {https://openreview.net/forum?id=cYAFwjY2bY}
+}
