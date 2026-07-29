@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 from fact_checking.data.constants import COVERAGE_LABEL2ID, label2id_for_schema
+from sft.checkpoint_selection import normalize_evidence_arm
 from sft.data.types import PreparedSample
 from sft.runtime.model_loading import is_mistral_common_tokenizer
 
@@ -82,6 +83,9 @@ class LabelTokenDataset(Dataset):
                 "target": sample.target,
                 "gold_label": sample.gold_label,
                 "gold_explain": sample.gold_explain,
+                "event_id": sample.event_id,
+                "evidence_arm": normalize_evidence_arm(sample.evidence_arm),
+                "assignment_id": sample.assignment_id,
             }
             if coverage_enabled:
                 coverage_gold_id = COVERAGE_LABEL2ID.get(str(sample.coverage_label), -1)
@@ -163,6 +167,9 @@ class LabelTokenCollator:
                 "target": str(row["target"]),
                 "gold_label": str(row["gold_label"]),
                 "gold_explain": str(row["gold_explain"]),
+                "event_id": str(row["event_id"]),
+                "evidence_arm": str(row["evidence_arm"]),
+                "assignment_id": str(row["assignment_id"]),
             }
             if coverage_enabled:
                 item["coverage_label"] = str(row["coverage_label"])

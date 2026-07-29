@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+export CODEX_HOME=/data/liaozijie/.codex
+
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+export HTTP_PROXY=http://127.0.0.1:7890
+export HTTPS_PROXY=http://127.0.0.1:7890
+export all_proxy=socks5h://127.0.0.1:7890
+export ALL_PROXY=socks5h://127.0.0.1:7890
+export no_proxy=localhost,127.0.0.1,::1
+export NO_PROXY=localhost,127.0.0.1,::1
+
+if [ -x /data/liaozijie/clashctl/ensure-mihomo.sh ]; then
+    /data/liaozijie/clashctl/ensure-mihomo.sh
+fi

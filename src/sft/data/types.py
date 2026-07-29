@@ -22,3 +22,6 @@ class PreparedSample:
     label_schema: str = "liar6"
     prompt_input_ids: list[int] | None = None
     coverage_label: str = ""
+    event_id: str = ""
+    evidence_arm: str = ""
+    assignment_id: str = ""

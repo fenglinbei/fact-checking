@@ -13,6 +13,7 @@ from fact_checking.data.types import SampleRecord, SentenceRecord
 from fact_checking.utils.logging import init_logger
 from fact_checking.utils.text import clean_text, robust_sentence_split
 from sft.data.types import PreparedSample
+from sft.checkpoint_selection import normalize_evidence_arm
 from sft.runtime.adapters import checkpoint_has_hf_artifacts, is_peft_model
 
 logger = init_logger(__name__)
@@ -62,6 +63,9 @@ def load_prebuilt_samples(
             label_schema=label_schema,
             prompt_input_ids=_coerce_prompt_input_ids(row.get("prompt_input_ids")),
             coverage_label=str(row.get("coverage_label", "")),
+            event_id=str(row.get("event_id") or ""),
+            evidence_arm=normalize_evidence_arm(row.get("evidence_arm")),
+            assignment_id=str(row.get("assignment_id") or ""),
         ))
     return samples
 

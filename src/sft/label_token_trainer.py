@@ -33,8 +33,12 @@ from sft.data.sampling import select_mini_val_rows
 from sft.dataset.loaders import build_dataloader
 from sft.eval import build_eval_metrics, deduplicate_by_sample_idx
 from sft.checkpoint_selection import (
+    arm_balanced_metrics_from_records,
+    checkpoint_candidate_is_better,
     checkpoint_selection_score as _checkpoint_selection_score,
+    checkpoint_tiebreak_mean_ce,
     macro_f1_bootstrap_se_from_records,
+    normalize_evidence_arm,
     select_one_standard_error_checkpoint,
     true_side_macro_f1 as _true_side_macro_f1,
 )
@@ -206,6 +210,7 @@ def _compute_label_token_losses(
     return {
         "loss": loss,
         "ce_loss": ce_loss,
+        "ce_per_sample": ce_per_sample,
         "ordinal_loss": ordinal_loss,
         "coverage_ce_loss": coverage_ce_loss,
     }
@@ -531,6 +536,8 @@ def _save_latest_training_state(
     active_logger,
     enabled: bool,
     completed: bool = False,
+    best_mean_ce: float | None = None,
+    best_step: int | None = None,
 ) -> bool:
     if not enabled:
         return False
@@ -565,6 +572,10 @@ def _save_latest_training_state(
             "no_improve_count": int(no_improve_count),
             "max_train_steps": int(max_train_steps),
         }
+        if best_mean_ce is not None:
+            meta["best_mean_ce"] = _json_score(best_mean_ce)
+        if best_step is not None:
+            meta["best_step"] = int(best_step)
         meta_path = _latest_state_meta_path(tmp_state_dir)
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         published = _publish_latest_state_directory(
@@ -620,6 +631,8 @@ def _write_training_complete(
     global_step: int,
     best_score: float,
     active_logger,
+    best_mean_ce: float | None = None,
+    best_step: int | None = None,
 ) -> None:
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
@@ -628,6 +641,10 @@ def _write_training_complete(
             "global_step": int(global_step),
             "best_score": _json_score(best_score),
         }
+        if best_mean_ce is not None:
+            payload["best_mean_ce"] = _json_score(best_mean_ce)
+        if best_step is not None:
+            payload["best_step"] = int(best_step)
         (output_dir / "training_complete.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -698,6 +715,7 @@ def _evaluate_label_token(
     all_coverage_sample_indices: list[torch.Tensor] = []
     all_losses: list[torch.Tensor] = []
     all_ce_losses: list[torch.Tensor] = []
+    all_ce_per_sample: list[torch.Tensor] = []
     all_ordinal_losses: list[torch.Tensor] = []
     all_coverage_ce_losses: list[torch.Tensor] = []
     pad_id = -100
@@ -743,6 +761,11 @@ def _evaluate_label_token(
 
             pred_ids = accelerator.pad_across_processes(pred_ids, dim=0, pad_index=pad_id)
             gold_ids = accelerator.pad_across_processes(gold_ids, dim=0, pad_index=pad_id)
+            ce_per_sample = accelerator.pad_across_processes(
+                losses["ce_per_sample"].detach().float(),
+                dim=0,
+                pad_index=0,
+            )
             sample_indices = accelerator.pad_across_processes(
                 batch["sample_indices"],
                 dim=0,
@@ -750,11 +773,13 @@ def _evaluate_label_token(
             )
             gathered_pred = accelerator.gather(pred_ids)
             gathered_gold = accelerator.gather(gold_ids)
+            gathered_ce_per_sample = accelerator.gather(ce_per_sample)
             gathered_sample_indices = accelerator.gather(sample_indices)
             valid_mask = (gathered_gold != pad_id) & (gathered_sample_indices != sample_pad_id)
             if valid_mask.any():
                 all_pred_ids.append(gathered_pred[valid_mask].cpu())
                 all_gold_ids.append(gathered_gold[valid_mask].cpu())
+                all_ce_per_sample.append(gathered_ce_per_sample[valid_mask].cpu())
                 all_sample_indices.append(gathered_sample_indices[valid_mask].cpu())
 
             if coverage_pred_ids is not None and coverage_gold_ids is not None:
@@ -802,7 +827,15 @@ def _evaluate_label_token(
     pred_np = torch.cat(all_pred_ids).numpy()
     gold_np = torch.cat(all_gold_ids).numpy()
     sample_indices_np = torch.cat(all_sample_indices).numpy()
+    ce_per_sample_np = torch.cat(all_ce_per_sample).numpy()
+    ce_by_sample_idx: dict[int, float] = {}
+    for sample_idx, ce_loss in zip(sample_indices_np.tolist(), ce_per_sample_np.tolist()):
+        ce_by_sample_idx.setdefault(int(sample_idx), float(ce_loss))
     pred_np, gold_np, sample_indices_np = deduplicate_by_sample_idx(pred_np, gold_np, sample_indices_np)
+    ce_per_sample_np = np.asarray(
+        [ce_by_sample_idx[int(sample_idx)] for sample_idx in sample_indices_np.tolist()],
+        dtype=np.float64,
+    )
     coverage_by_sample_idx: dict[int, tuple[int, int]] = {}
     coverage_eval_payload: dict[str, Any] = {}
     if all_coverage_gold_ids:
@@ -840,19 +873,35 @@ def _evaluate_label_token(
             "coverage_per_class": coverage_metrics.get("per_class", {}),
         }
 
+    arm_prediction_records: list[dict[str, object]] = []
     prediction_records: list[dict[str, object]] = []
-    if accelerator.is_main_process and dataset_samples is not None:
-        for sample_idx, pred_id, gold_id in zip(sample_indices_np.tolist(), pred_np.tolist(), gold_np.tolist()):
+    if dataset_samples is not None:
+        for sample_idx, pred_id, gold_id, ce_loss in zip(
+            sample_indices_np.tolist(),
+            pred_np.tolist(),
+            gold_np.tolist(),
+            ce_per_sample_np.tolist(),
+        ):
             sample = dataset_samples[int(sample_idx)]
+            arm_record: dict[str, object] = {
+                "sample_idx": int(sample_idx),
+                "event_id": str(sample.event_id),
+                "evidence_arm": normalize_evidence_arm(sample.evidence_arm),
+                "assignment_id": str(sample.assignment_id),
+                "pred_id": int(pred_id),
+                "gold_id": int(gold_id),
+                "ce_loss": float(ce_loss),
+            }
+            arm_prediction_records.append(arm_record)
+            if not accelerator.is_main_process:
+                continue
             letter = letter_order[int(pred_id)]
             record: dict[str, object] = {
-                "sample_idx": int(sample_idx),
+                **arm_record,
                 "prompt": str(sample.prompt),
                 "target": str(sample.target),
                 "raw_output": f"{label_prefix}{_choice_text(label_prefix, letter)}",
-                "pred_id": int(pred_id),
                 "pred_label": _label_name(int(pred_id), labels=labels),
-                "gold_id": int(gold_id),
                 "gold_label": str(sample.gold_label),
                 "gold_explain": str(sample.gold_explain),
             }
@@ -882,6 +931,7 @@ def _evaluate_label_token(
         log_predictions_limit=log_predictions_limit,
         log_prediction_examples=accelerator.is_main_process,
     )
+    metrics.update(arm_balanced_metrics_from_records(arm_prediction_records, labels=labels))
     if all_losses:
         metrics["eval_loss"] = float(torch.cat(all_losses).mean().item())
         metrics["eval_ce_loss"] = float(torch.cat(all_ce_losses).mean().item())
@@ -1233,6 +1283,7 @@ def main() -> None:
 
     global_step = 0
     best_score = float("-inf")
+    best_mean_ce = float("inf")
     best_step: int | None = None
     eval_history: list[dict[str, Any]] = []
     no_improve_count = 0
@@ -1254,6 +1305,10 @@ def main() -> None:
         resume_next_batch_index = int(resume_meta.get("next_batch_index", 0))
         if resume_meta.get("best_score") is not None:
             best_score = float(resume_meta.get("best_score"))
+        if resume_meta.get("best_mean_ce") is not None:
+            best_mean_ce = float(resume_meta.get("best_mean_ce"))
+        if resume_meta.get("best_step") is not None:
+            best_step = int(resume_meta.get("best_step"))
         no_improve_count = int(resume_meta.get("no_improve_count", 0))
         saved_max_steps = int(resume_meta.get("max_train_steps", max_train_steps))
         if accelerator.is_main_process and saved_max_steps != max_train_steps:
@@ -1271,7 +1326,7 @@ def main() -> None:
     stop_request = _install_stop_signal_handlers(active_logger)
 
     def run_eval_and_maybe_save_best(step: int) -> None:
-        nonlocal best_score, best_step, no_improve_count, should_stop
+        nonlocal best_score, best_mean_ce, best_step, no_improve_count, should_stop
         eval_metrics = _evaluate_label_token(
             model=model,
             dataloader=val_dl,
@@ -1291,6 +1346,7 @@ def main() -> None:
             max_train_steps=max_train_steps,
         )
         score = _checkpoint_selection_score(eval_metrics, train_cfg)
+        mean_ce = checkpoint_tiebreak_mean_ce(eval_metrics)
         macro_f1 = float(eval_metrics["macro_f1"])
         true_side = _true_side_macro_f1(eval_metrics)
         per_class = eval_metrics.get("per_class", {})
@@ -1334,25 +1390,47 @@ def main() -> None:
                             float(label_metrics.get("recall", 0.0)),
                             float(label_metrics.get("f1", 0.0)),
                         )
+            if bool(eval_metrics.get("arm_balanced_valid", False)):
+                active_logger.info(
+                    "[eval] paired arms: macro_f1 evitrace=%.4f s4=%.4f mean=%.4f; "
+                    "mean_ce evitrace=%.4f s4=%.4f mean=%.4f",
+                    float(eval_metrics["macro_f1_evitrace"]),
+                    float(eval_metrics["macro_f1_s4"]),
+                    float(eval_metrics["arm_balanced_macro_f1"]),
+                    float(eval_metrics["mean_ce_evitrace"]),
+                    float(eval_metrics["mean_ce_s4"]),
+                    float(eval_metrics["arm_balanced_mean_ce"]),
+                )
 
+        tracking_metrics = {
+            "eval/loss": float(eval_metrics.get("eval_loss", float("nan"))),
+            "eval/ce_loss": float(eval_metrics.get("eval_ce_loss", float("nan"))),
+            "eval/ordinal_loss": float(eval_metrics.get("eval_ordinal_loss", float("nan"))),
+            "eval/accuracy": float(eval_metrics["accuracy"]),
+            "eval/macro_precision": float(eval_metrics["macro_precision"]),
+            "eval/macro_recall": float(eval_metrics["macro_recall"]),
+            "eval/macro_f1": macro_f1,
+            "eval/macro_f1_se": macro_f1_se,
+            "eval/true_side_macro_f1": true_side,
+            "eval/checkpoint_selection_score": score,
+            "eval/parse_error_rate": float(eval_metrics["parse_error_rate"]),
+            "eval/ordinal_mae": float(eval_metrics.get("ordinal_mae", float("nan"))),
+            "eval/ordinal_mae_norm": float(eval_metrics.get("ordinal_mae_norm", float("nan"))),
+            "eval/extreme_error_rate": float(eval_metrics.get("extreme_error_rate", float("nan"))),
+        }
+        for key in (
+            "macro_f1_evitrace",
+            "macro_f1_s4",
+            "arm_balanced_macro_f1",
+            "mean_ce_evitrace",
+            "mean_ce_s4",
+            "arm_balanced_mean_ce",
+        ):
+            if key in eval_metrics:
+                tracking_metrics[f"eval/{key}"] = float(eval_metrics[key])
         log_metrics(
             accelerator,
-            {
-                "eval/loss": float(eval_metrics.get("eval_loss", float("nan"))),
-                "eval/ce_loss": float(eval_metrics.get("eval_ce_loss", float("nan"))),
-                "eval/ordinal_loss": float(eval_metrics.get("eval_ordinal_loss", float("nan"))),
-                "eval/accuracy": float(eval_metrics["accuracy"]),
-                "eval/macro_precision": float(eval_metrics["macro_precision"]),
-                "eval/macro_recall": float(eval_metrics["macro_recall"]),
-                "eval/macro_f1": macro_f1,
-                "eval/macro_f1_se": macro_f1_se,
-                "eval/true_side_macro_f1": true_side,
-                "eval/checkpoint_selection_score": score,
-                "eval/parse_error_rate": float(eval_metrics["parse_error_rate"]),
-                "eval/ordinal_mae": float(eval_metrics.get("ordinal_mae", float("nan"))),
-                "eval/ordinal_mae_norm": float(eval_metrics.get("ordinal_mae_norm", float("nan"))),
-                "eval/extreme_error_rate": float(eval_metrics.get("extreme_error_rate", float("nan"))),
-            },
+            tracking_metrics,
             step=step,
             backend=tracking_setup.backend,
         )
@@ -1393,6 +1471,20 @@ def main() -> None:
             for key in ("eval_coverage_ce_loss", "coverage_accuracy", "coverage_macro_f1"):
                 if key in eval_metrics:
                     step_metrics[key] = float(eval_metrics[key])
+            step_metrics["arm_balanced_valid"] = bool(eval_metrics.get("arm_balanced_valid", False))
+            if eval_metrics.get("arm_balanced_reason") is not None:
+                step_metrics["arm_balanced_reason"] = str(eval_metrics["arm_balanced_reason"])
+            for key in (
+                "arm_balanced_num_events",
+                "macro_f1_evitrace",
+                "macro_f1_s4",
+                "arm_balanced_macro_f1",
+                "mean_ce_evitrace",
+                "mean_ce_s4",
+                "arm_balanced_mean_ce",
+            ):
+                if key in eval_metrics:
+                    step_metrics[key] = eval_metrics[key]
             artifacts = _save_eval_artifacts(
                 output_dir=output_dir,
                 global_step=step,
@@ -1465,8 +1557,16 @@ def main() -> None:
                             step,
                         )
                     should_stop = True
-        elif score > best_score:
+        elif checkpoint_candidate_is_better(
+            score=score,
+            mean_ce=mean_ce,
+            step=step,
+            best_score=best_score,
+            best_mean_ce=best_mean_ce,
+            best_step=best_step,
+        ):
             best_score = score
+            best_mean_ce = mean_ce
             best_step = int(step)
             save_model(accelerator, model, tokenizer, output_dir / "best")
             no_improve_count = 0
@@ -1591,6 +1691,8 @@ def main() -> None:
                         max_train_steps=max_train_steps,
                         active_logger=active_logger,
                         enabled=True,
+                        best_mean_ce=best_mean_ce,
+                        best_step=best_step,
                     )
 
                 if empty_cache_steps > 0 and global_step % empty_cache_steps == 0:
@@ -1619,6 +1721,8 @@ def main() -> None:
             max_train_steps=max_train_steps,
             active_logger=active_logger,
             enabled=save_latest_state,
+            best_mean_ce=best_mean_ce,
+            best_step=best_step,
         )
         if accelerator.is_main_process:
             if latest_state_saved:
@@ -1650,6 +1754,8 @@ def main() -> None:
         global_step=global_step,
         best_score=best_score,
         active_logger=active_logger,
+        best_mean_ce=best_mean_ce,
+        best_step=best_step,
     )
     _end_training_after_final_checkpoint(accelerator, output_dir, active_logger)
 

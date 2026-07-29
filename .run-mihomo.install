@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -u
+
+CLASH_HOME=/data/liaozijie/clashctl
+exec "$CLASH_HOME/bin/mihomo" \
+    -d "$CLASH_HOME/resources" \
+    -f "$CLASH_HOME/resources/runtime.yaml" \
+    >>"$CLASH_HOME/mihomo.log" 2>&1

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -u
+
+CLASH_HOME=/data/liaozijie/clashctl
+RUNTIME_DIR="$CLASH_HOME/run"
+PID_FILE="$RUNTIME_DIR/mihomo.pid"
+LOG_FILE="$CLASH_HOME/mihomo.log"
+
+mkdir -p "$RUNTIME_DIR"
+
+if [ -s "$PID_FILE" ]; then
+    mihomo_pid=$(cat "$PID_FILE")
+    if kill -0 "$mihomo_pid" 2>/dev/null; then
+        exit 0
+    fi
+    rm -f "$PID_FILE"
+fi
+
+if pgrep -f '^/root/clashctl/bin/mihomo .*runtime.yaml$' >/dev/null; then
+    exit 0
+fi
+
+/usr/sbin/start-stop-daemon \
+    --start \
+    --background \
+    --make-pidfile \
+    --pidfile "$PID_FILE" \
+    --startas "$CLASH_HOME/run-mihomo.sh"

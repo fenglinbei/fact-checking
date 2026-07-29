@@ -1,0 +1,73 @@
+\paragraph{Balanced cross-verifier mechanism check.}
+To test whether the central selector contrasts in
+Table~\ref{tab:selector-ablation} transfer beyond a single verifier, we
+conduct a paired LIAR-RAW follow-up using
+\texttt{Qwen3-4B-Instruct-2507} and
+\texttt{Meta-Llama-3.1-8B-Instruct}. Each backbone is fine-tuned under
+two complementary mixed-arm assignments and three seeds, giving 12
+runs. Every training claim appears with exactly one evidence arm;
+the complementary assignment reverses that arm for every claim.
+Each assignment therefore contains 5,025 EviTrace and 5,025
+retrieval-ordered examples, balanced within gold-label
+$\times$ single-/multi-atom strata. Checkpoints are selected by the
+mean validation Macro-F1 over the two arms. We use the native chat
+template of each backbone and the same method-blind LIAR-6 prompt.
+Training uses LoRA with $r=16$, $\alpha=32$, dropout $0.05$, attention
+and MLP projection targets, BF16 ZeRO-2, an effective batch size of 16,
+a learning rate of $2\times10^{-5}$, 12 epochs, and a maximum length of
+2,048 tokens.
+
+The \emph{Main} comparison ($1{,}250$ claims) evaluates the final
+verifier-visible EviTrace sequence against the source-score
+retrieval-only top-$K_i$ sequence from the same Atom-Union pool, using
+the same final evidence count $K_i$ but not enforcing equal token
+counts. The \emph{Order-only} comparison fixes the EviTrace evidence
+set and text and changes only its order: EviTrace order versus
+source-score reordering. We exclude 98 claims whose two orders are
+identical, leaving $1{,}152$ claims. Results are averaged first over
+assignment and seed, then equally over the two backbones. We compute
+gold-label-stratified, claim-clustered bootstrap intervals with 10,000
+replicates and claim-level arm-swap tests with 100,000 randomizations;
+the two primary Macro-F1 tests receive Holm correction.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{AAAI-FC-cross-verifier-singlecol.pdf}
+\caption{Balanced cross-verifier mechanism evaluation on LIAR-RAW.
+\textbf{(a)} Conditional paired correctness wins, normalized over
+predictions for which only one arm is correct. Evi and Ctl denote
+EviTrace and the matched control; the corresponding tie rates (both
+correct or both incorrect) are 86.07\% for Main and 88.87\% for
+Order-only.
+\emph{Main} compares the complete EviTrace sequence with the
+source-score retrieval-only control at the same claim-specific evidence
+count. \emph{Order-only} holds the evidence set and text fixed and
+compares EviTrace order with source-score reordering.
+\textbf{(b)} Panel-level EviTrace-minus-control Macro-F1 differences
+with gold-label-stratified, claim-clustered bootstrap 95\% confidence
+intervals. Results aggregate two verifier backbones, two complementary
+training assignments, and three seeds; claims, rather than the 12
+repeated run outputs, are the independent units. Holm-adjusted
+$p$-values are .029 for Main and .065 for Order-only.}
+\label{fig:cross-verifier-mechanism}
+\end{figure}
+
+Figure~\ref{fig:cross-verifier-mechanism} provides a cross-verifier
+check of the two central selector contrasts. In Main, EviTrace obtains
+33.49 Macro-F1 versus 32.20 for retrieval only, a gain of 1.29 points
+(95\% CI $[0.26,2.35]$; Holm-adjusted $p=.029$), with positive
+backbone-specific differences for both Qwen3 ($+1.80$) and LLaMA-3.1
+($+0.77$). Its conditional win rate among correctness-discordant pairs
+is 53.95\%. This corroborates the Full-versus-Retrieval-only contrast
+and supports a small cross-verifier benefit from evidence selection and
+overall organization, although the interval still includes effects
+below the prespecified one-point SESOI. Under Order-only, EviTrace
+obtains 33.27 versus 32.60 Macro-F1 ($\Delta=+0.67$; 95\% CI
+$[-0.04,1.39]$; Holm-adjusted $p=.065$) and a 52.97\% conditional win
+rate. Both backbones have positive point estimates, but the pooled
+interval crosses zero. This same-set source-score reordering is a
+stricter order control, not the random \emph{Shuffled trace} in
+Table~\ref{tab:selector-ablation}; the two results are complementary.
+Together they suggest that trace organization is useful, but the
+cross-verifier experiment alone does not establish a reliable
+ordering-only improvement.
