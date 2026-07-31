@@ -1,0 +1,60 @@
+\documentclass[letterpaper]{article}
+\usepackage[submission]{aaai2027}
+\usepackage[hyphens]{url}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+\urlstyle{rm}
+\def\UrlFont{\rm}
+\usepackage{natbib}
+\usepackage{caption}
+\frenchspacing
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{listings}
+
+\pdfinfo{
+/TemplateVersion (2027.1)
+}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\setcounter{secnumdepth}{2}
+\numberwithin{equation}{section}
+\numberwithin{table}{section}
+\numberwithin{figure}{section}
+
+\newcommand{\methodname}{EviTrace}
+\newcommand{\placeholder}[1]{%
+  \textcolor{red}{\textbf{[TODO--AUTHOR: #1]}}%
+}
+\newcommand{\todovalue}{%
+  \textcolor{red}{\textbf{[TODO--AUTHOR]}}%
+}
+\newcommand{\todoauthor}{%
+  \textcolor{red}{\textbf{TODO--AUTHOR:}}%
+}
+
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=true,
+  breakatwhitespace=false,
+  columns=fullflexible,
+  frame=single,
+  keepspaces=true,
+  showstringspaces=false,
+  aboveskip=4pt,
+  belowskip=4pt
+}
+
+\begin{document}
+\section*{Appendix}
+\appendix
+
+\input{supplementary_sections/method}
+\input{supplementary_sections/verifier}
+\input{supplementary_sections/experiments}
+
+\bibliography{references}
+
+\end{document}

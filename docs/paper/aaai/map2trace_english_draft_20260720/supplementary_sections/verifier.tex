@@ -1,0 +1,454 @@
+% Supplementary-material fragment: verifier training, rendering, and reproducibility.
+% This file is intended to be included with \input{...}; it has no preamble.
+% TODO--AUTHOR items must be resolved against the frozen release artifacts.
+\providecommand{\todovalue}{\textbf{[TODO--AUTHOR]}}
+\providecommand{\todoauthor}{\textbf{TODO--AUTHOR:}}
+
+\section{Verifier Training, Rendering, and Reproducibility Details}
+\label{sec:supp-verifier}
+
+\paragraph{Scope.}
+This section documents the parameter-efficient verifier runs based on
+low-rank adaptation (LoRA), together with the exact prompt construction,
+training objective, checkpoint rule, and deterministic label-token
+inference path.  The settings below define a reference LoRA recipe and its
+dataset-specific variants.  They should not be interpreted as a claim that
+one numerically identical configuration applies to every experiment;
+dataset-specific differences are stated explicitly.
+
+\subsection{From an Ordered Trace to the Verifier Input}
+\label{sec:supp-verifier-renderer}
+
+\paragraph{Prompt-visible evidence prefix.}
+The selector first produces an ordered trace
+$\mathcal{T}=(u_1,\ldots,u_T)$.  The renderer consumes an
+order-preserving prefix rather than reranking the trace.  Under the
+\texttt{minmax} policy, it appends evidence in trace order and consults the
+stored \texttt{target\_resolved} flag after each appended step.  This flag is
+the implementation record that the step's replayed resolved-atom rate has
+reached its configured target.  Writing $q_t\in\{0,1\}$ for the flag and
+$H=\min(T,K_{\max})$, let
+\[
+\mathcal Q=\{t:K_{\min}\leq t\leq H,\ q_t=1\}.
+\]
+The visible length is
+\begin{equation}
+K^\star =
+\begin{cases}
+\min\mathcal Q,&\mathcal Q\neq\varnothing,\\
+H,&\mathcal Q=\varnothing.
+\end{cases}
+\label{eq:supp-visible-prefix}
+\end{equation}
+Candidate exhaustion can therefore yield fewer than $K_{\min}$ units.
+The reference count policies are minmax$(5,10)$ for LIAR-RAW and RAWFC
+and minmax$(9,9)$ for SciFact.  Equation~\ref{eq:supp-visible-prefix}
+describes the verifier-visible prefix policy; it is distinct from the
+selector's construction of the longer audit ordering.
+
+\paragraph{Trace rendering.}
+For the \texttt{mrec\_min} style, each selected candidate is aligned to
+its trace step.  The renderer obtains the step-specific cue, falling back
+to an atom-derived or generic verification cue when the step does not
+provide one, and serializes the unit exactly as
+\begin{lstlisting}
+Check: <STEP-SPECIFIC CUE>
+<ORIGINAL EVIDENCE TEXT>
+\end{lstlisting}
+The outer evidence formatter then enumerates these strings as
+\texttt{[1]}, \texttt{[2]}, and so on, preserving trace order.  A cue is
+therefore attached to each visible evidence unit; the same atom cue may
+appear for more than one unit.  Trace metadata such as operation,
+relation, directness, covered-atom identifiers, and before/after atom
+states remains in the audit artifact but is not serialized in the
+\texttt{mrec\_min} verifier prompt.
+
+\paragraph{Complete prompt template.}
+The system message is instantiated with the dataset task name:
+\begin{lstlisting}
+You are a careful fact-checking assistant for <TASK-NAME> claims. Classify claims using only the claim and retrieved evidence supplied by the user.
+\end{lstlisting}
+The user message is:
+\begin{lstlisting}
+Classify the claim into exactly one <TASK-NAME> label.
+
+Labels:
+<SCHEMA-SPECIFIC LABEL DEFINITIONS>
+
+Rules:
+- Use the retrieved evidence as the primary source.
+- Do not invent facts not supported by the evidence.
+- Respond with exactly one line: Label: <a single letter from A-<LAST>>
+
+Claim:
+<CLAIM>
+
+Evidence:
+[1] Check: <CUE-1>
+<EVIDENCE-1>
+[2] Check: <CUE-2>
+<EVIDENCE-2>
+...
+[K] Check: <CUE-K>
+<EVIDENCE-K>
+\end{lstlisting}
+If no evidence is available, the evidence block is the literal string
+\texttt{(no evidence available)}.  The placeholder
+\texttt{<SCHEMA-SPECIFIC LABEL DEFINITIONS>} expands as follows.
+
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.08}
+\caption{Exact label-token schemas and label descriptions inserted into the verifier prompt.}
+\label{tab:supp-label-schemas}
+\begin{tabular}{p{0.13\textwidth}p{0.10\textwidth}p{0.69\textwidth}}
+\hline
+\textbf{Dataset} & \textbf{Token} & \textbf{Label and prompt definition}\\
+\hline
+LIAR-RAW & A & pants-fire: completely false and implausible\\
+         & B & false: false based on the available evidence\\
+         & C & barely-true: mostly false, with only a small element of truth\\
+         & D & half-true: partly true and partly false\\
+         & E & mostly-true: mostly true, with minor missing context or caveats\\
+         & F & true: accurate based on the available evidence\\
+\hline
+RAWFC & A & false: false based on the available evidence\\
+      & B & half: partly true and partly false\\
+      & C & true: accurate based on the available evidence\\
+\hline
+SciFact & A & support: the scientific claim is supported by the retrieved abstract evidence\\
+        & B & contradict: the scientific claim is contradicted by the retrieved abstract evidence\\
+        & C & nei: the retrieved abstract evidence is insufficient to support or contradict the scientific claim\\
+\hline
+\end{tabular}
+\end{table*}
+
+The system and user messages are passed to the base tokenizer's native
+chat template with \texttt{add\_generation\_prompt=true}; no handwritten
+common chat wrapper is substituted across backbones.  For the
+MistralCommon tokenizer path, the tokenized chat-template output is stored
+with the built example and reused directly.  The training dataset then
+appends the tokenized prefix \texttt{Label:} after the assistant-generation
+header.  Thus, the supervised decision is the single token immediately
+following \texttt{Label:}, rather than a generated explanation or a
+multi-token answer string.
+
+\subsection{Restricted Label-Token Training and Inference}
+\label{sec:supp-label-token}
+
+Let $\mathcal{Y}=(y_0,\ldots,y_{C-1})$ denote the ordered label schema and
+let $g(y_j)$ be its letter token.  Because \texttt{Label:} does not end in
+whitespace, the implementation tokenizes the choice text as
+\texttt{\char32 A}, \texttt{\char32 B}, and so forth.  It verifies at run
+startup that every choice text maps to exactly one tokenizer token.
+Given the final hidden position after the prompt and \texttt{Label:}, only
+the logits of these $C$ permitted tokens are retained:
+\begin{equation}
+p_{nj} =
+\frac{\exp z_{n,g(y_j)}}{\sum_{k=0}^{C-1}\exp z_{n,g(y_k)}}.
+\label{eq:supp-restricted-softmax}
+\end{equation}
+
+\paragraph{Class-weighted cross entropy.}
+For class weights $w_j>0$, the implemented batch loss normalizes by the
+sum of the sample weights:
+\begin{equation}
+\mathcal{L}_{\mathrm{wCE}}
+=
+\frac{
+\sum_{n=1}^{N} w_{y_n}\bigl[-\log p_{n,y_n}\bigr]
+}{
+\sum_{n=1}^{N} w_{y_n}
+}.
+\label{eq:supp-weighted-ce}
+\end{equation}
+The LIAR-RAW LoRA configuration uses weights
+$(1.2,1.0,1.5,1.0,1.0,1.8)$ in the ordered class list
+(pants-fire, false, barely-true, half-true, mostly-true, true).
+The reference RAWFC and SciFact LoRA configurations use unit class weights.
+
+\paragraph{Optional ordinal auxiliary loss.}
+The implementation optionally exploits the natural LIAR-RAW label order.
+With $r(y_j)=j$, define the normalized ordinal distance
+\[
+d_{nj}=\frac{|r(y_j)-r(y_n)|}{C-1}.
+\]
+The auxiliary loss is
+\begin{equation}
+\mathcal{L}_{\mathrm{ord}}
+=
+\frac{
+\sum_{n=1}^{N}w_{y_n}\sum_{j=0}^{C-1}p_{nj}d_{nj}
+}{
+\sum_{n=1}^{N}w_{y_n}
+},
+\label{eq:supp-ordinal}
+\end{equation}
+and optimizes
+\begin{equation}
+\mathcal{L}_{\mathrm{ver}}
+=
+\mathcal{L}_{\mathrm{wCE}}
++\alpha_t\mathcal{L}_{\mathrm{ord}}.
+\label{eq:supp-verifier-loss}
+\end{equation}
+For the reference LIAR-RAW and RAWFC LoRA configurations, $\alpha=0.2$ and
+$\alpha_t=\alpha\min(1,t/(0.3T_{\mathrm{train}}))$, i.e., the auxiliary
+coefficient is linearly warmed up over the first 30\% of planned update
+steps.  The SciFact configuration disables this term.  In every case, the
+resolved run configuration controls whether the option is active.
+
+\paragraph{Deterministic decoding.}
+At inference time, the prediction is
+\begin{equation}
+\widehat{y}_n
+=
+\arg\max_{y_j\in\mathcal{Y}}z_{n,g(y_j)}.
+\label{eq:supp-label-argmax}
+\end{equation}
+No autoregressive generation, beam search, text parser, sampling
+temperature, or ``thinking'' mode participates in this decision.  The
+human-readable string \texttt{Label: X} in prediction artifacts is
+assembled after the argmax.  Unless a run is explicitly marked otherwise,
+label-prior logit adjustment is disabled.
+
+\subsection{Reference LoRA Optimization Recipe}
+\label{sec:supp-lora-recipe}
+
+The base model parameters are frozen and the optimizer updates only LoRA
+parameters~\citep{Hu2022LoRA}.  LoRA is applied to
+\texttt{q\_proj}, \texttt{k\_proj}, \texttt{v\_proj},
+\texttt{o\_proj}, \texttt{gate\_proj}, \texttt{up\_proj}, and
+\texttt{down\_proj}, with rank $r=16$, scaling $\alpha=32$, dropout
+$0.1$, no trainable bias, and no additional modules-to-save.  This gives
+41,943,040 trainable parameters out of 8,072,204,288 (0.5196\%) for the
+archived Llama-3.1-8B setup and 53,608,448 out of 8,971,634,688
+(0.5975\%) for the archived Ministral-3-8B setup.
+
+The common recipe uses BF16, AdamW, weight decay $0.01$, a 3\% linear
+warm-up, a cosine-with-restarts schedule with two cycles, gradient clipping
+at $1.0$, gradient checkpointing, longest-in-batch dynamic padding, length
+bucketed training, and DeepSpeed ZeRO-2.  The maximum input length is
+1,024 tokens.  With four data-parallel processes, per-device batch size
+one and four accumulation steps give an effective batch size of 16.
+The epoch cap is 12 and the canonical trainer seed is 42.  The archived
+LIAR-RAW logs requested FlashAttention~2 but recorded that it was
+unavailable and therefore used the model's default attention
+implementation.
+
+\begin{table}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\renewcommand{\arraystretch}{1.08}
+\caption{Dataset-specific settings for the reference LoRA verifier recipe. No performance values are reported in this table.}
+\label{tab:supp-lora-settings}
+\begin{tabular}{lrrrr}
+\hline
+\textbf{Dataset} & \textbf{LR} & \textbf{Eval/save} & \textbf{Patience} & \textbf{Prefix}\\
+\hline
+LIAR-RAW & $2{\times}10^{-5}$ & 100 & 8 / 12$^\dagger$ & minmax$(5,10)$\\
+RAWFC & $1{\times}10^{-5}$ & 50 & 8 & minmax$(5,10)$\\
+SciFact & $2{\times}10^{-5}$ & 100 & 12 & minmax$(9,9)$\\
+\hline
+\end{tabular}
+\vspace{2pt}
+
+\footnotesize $^\dagger$Llama / Ministral in the archived LIAR-RAW
+reference configurations.  Intervals and patience are measured in
+optimizer-update evaluations, not epochs.
+\end{table}
+
+\paragraph{Checkpoint selection.}
+For an ordinary single-arm run, each evaluation checkpoint is ranked by
+validation macro-F1.  When an experiment provides a valid matched-arm
+evaluation, the implementation instead uses arm-balanced macro-F1.
+Scores equal to within an absolute tolerance of $10^{-12}$ are broken
+first by lower validation mean cross entropy and then by the earlier
+optimizer step.  The best adapter and the final adapter are saved
+separately.  Early-stopping patience counts consecutive evaluation events
+without an improvement under this same ordering; it is not a count of
+epochs.
+
+\subsection{Length Budgeting and Truncation}
+\label{sec:supp-truncation}
+
+For the reference dataset runs in
+Table~\ref{tab:supp-lora-settings}, prompt construction and trainer
+tokenization enforce the same 1,024-token limit.  Before rendering, the
+prefix policy chooses the evidence units
+described in Equation~\ref{eq:supp-visible-prefix}.  The prompt builder
+then reserves the tokenizer-specific target allowance, including the
+end-of-sequence allowance used by the builder, and defines
+\begin{equation}
+B_{\mathrm{prompt}}=L_{\max}-L_{\mathrm{target\ reserve}}.
+\end{equation}
+If the rendered prompt exceeds this budget, complete evidence units are
+removed from the \emph{tail}, preserving the relative order of all retained
+units.  The prompt is rebuilt and re-tokenized after every removal.  If a
+single remaining unit still does not fit, the generic fallback performs a
+binary search for the longest token prefix of that evidence text that
+fits; if even that is impossible, it emits the no-evidence prompt.
+
+Built examples set \texttt{preserve\_prompt\_prefix=true}.  Consequently,
+the label-token dataset does not silently left-truncate an overlength
+protected prompt after appending \texttt{Label:}; it raises an error and
+requires the build-time evidence budget to be corrected.  The frozen
+release should report the following diagnostics for each split:
+\begin{itemize}
+    \item number and fraction of rows with tail-unit removal;
+    \item evidence count before and after removal;
+    \item number of rows invoking within-unit text truncation;
+    \item number of rows ending below $K_{\min}$ because of exhaustion or
+    length constraints; and
+    \item prompt-token percentiles under the exact verifier tokenizer.
+\end{itemize}
+\noindent\todoauthor populate these diagnostics from the final
+archived build manifests and add their SHA-256 checksums.
+
+\subsection{Reproducibility Ledger}
+\label{sec:supp-repro-ledger}
+
+\paragraph{Immutable model and artifact snapshots.}
+Public model names alone do not identify immutable weights or chat
+templates.  The release manifest should freeze the following fields.
+
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.08}
+\caption{Model, tokenizer, and adapter snapshot ledger.}
+\label{tab:supp-model-snapshots}
+\begin{tabular}{p{0.18\textwidth}p{0.28\textwidth}p{0.16\textwidth}p{0.28\textwidth}}
+\hline
+\textbf{Role} & \textbf{Public identifier} & \textbf{Immutable revision} & \textbf{Checksums / release record}\\
+\hline
+Verifier backbone &
+\path{mistralai/Ministral-3-8B-Instruct-2512} &
+\todovalue &
+Weight index or consolidated-weight SHA-256; tokenizer and
+\texttt{chat\_template.jinja} SHA-256: \todovalue\\
+Verifier backbone &
+\path{meta-llama/Meta-Llama-3.1-8B-Instruct} &
+\todovalue &
+Weight-index SHA-256; tokenizer and tokenizer-config SHA-256:
+\todovalue\\
+Cross-verifier backbone &
+\path{Qwen/Qwen3-4B-Instruct-2507} &
+\todovalue &
+Weight-index SHA-256; tokenizer, tokenizer-config, and chat-template
+SHA-256: \todovalue\\
+LoRA adapters &
+One adapter directory per frozen run &
+Best optimizer step: \todovalue &
+\texttt{adapter\_config.json}, adapter-weight, resolved-config, and
+prediction-file SHA-256: \todovalue\\
+Prompt data &
+Built train/validation/test JSONL files &
+Schema version: \todovalue &
+Row counts, prompt-template hash, and JSONL SHA-256:
+\todovalue\\
+\hline
+\end{tabular}
+\end{table*}
+
+\paragraph{Software and execution environment.}
+
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.08}
+\caption{Software and hardware information to freeze with the release. ``Recorded constraint'' is not a substitute for the exact installed version.}
+\label{tab:supp-software-hardware}
+\begin{tabular}{p{0.22\textwidth}p{0.30\textwidth}p{0.36\textwidth}}
+\hline
+\textbf{Item} & \textbf{Recorded constraint / behavior} & \textbf{Exact released value}\\
+\hline
+Code & Python implementation in this repository &
+Git commit, dirty-state flag, and patch archive:
+\todovalue\\
+Python / OS & Python 3.10+; Linux &
+Python, distribution, and kernel versions:
+\todovalue\\
+PyTorch stack & PyTorch 2.6.0 with CUDA 12.4 wheels is pinned in
+\texttt{requirements.txt} &
+Installed PyTorch, CUDA runtime, cuDNN, and NCCL versions:
+\todovalue\\
+Training libraries &
+Transformers $\geq4.39$, PEFT $\geq0.12$, Accelerate $\geq1.8$,
+DeepSpeed $\geq0.15$ &
+Exact versions and environment lock file:
+\todovalue\\
+Attention backend &
+Default model attention in the audited LIAR-RAW LoRA logs after the
+FlashAttention~2 availability check failed &
+Confirm backend independently for every released run:
+\todovalue\\
+Numeric modes & BF16 training; TF32 enabled on supported CUDA devices &
+Determinism flags and any environment variables:
+\todovalue\\
+Accelerators & NVIDIA L20 family reported by the experiment notes &
+Number of hosts, GPUs per host, GPU memory, driver, and topology:
+\todovalue\\
+Host resources & Not frozen in current artifacts &
+CPU model/count, RAM, local-storage type, and interconnect:
+\todovalue\\
+\hline
+\end{tabular}
+\end{table*}
+
+\paragraph{Compute and monetary cost.}
+Wall time must be measured from the frozen run logs rather than inferred
+from the epoch cap, because early stopping and resumed runs change the
+actual cost.  GPU-hours are computed as the number of simultaneously
+allocated GPUs multiplied by elapsed wall-clock hours.
+
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.08}
+\caption{Compute ledger for the released LoRA verifier runs. This table deliberately contains no task-performance values.}
+\label{tab:supp-compute-cost}
+\begin{tabular}{p{0.17\textwidth}p{0.17\textwidth}p{0.12\textwidth}p{0.12\textwidth}p{0.12\textwidth}p{0.18\textwidth}}
+\hline
+\textbf{Dataset} & \textbf{Backbone} & \textbf{GPU count/type} &
+\textbf{Wall time} & \textbf{GPU-hours} & \textbf{Peak memory / cost}\\
+\hline
+LIAR-RAW & Ministral-3-8B & \todovalue &
+\todovalue & \todovalue &
+\todovalue\\
+LIAR-RAW & Llama-3.1-8B & \todovalue &
+\todovalue & \todovalue &
+\todovalue\\
+RAWFC & Ministral-3-8B & \todovalue &
+\todovalue & \todovalue &
+\todovalue\\
+RAWFC & Llama-3.1-8B & \todovalue &
+\todovalue & \todovalue &
+\todovalue\\
+SciFact & Ministral-3-8B & \todovalue &
+\todovalue & \todovalue &
+\todovalue\\
+LIAR-RAW cross-verifier & Qwen3-4B & \todovalue &
+\todovalue & \todovalue &
+\todovalue\\
+LIAR-RAW cross-verifier & Llama-3.1-8B & \todovalue &
+\todovalue & \todovalue &
+\todovalue\\
+\hline
+\end{tabular}
+\end{table*}
+
+\noindent\todoauthor state the accounting basis for monetary
+cost (institutional hardware, cloud list price, or amortized internal
+rate), report verifier-training and verifier-inference costs separately,
+and indicate whether failed, calibration, and ablation runs are included.
+If energy or carbon estimates are reported, also record the measurement
+tool, power-usage effectiveness assumption, grid region, and date.
+
+\FloatBarrier

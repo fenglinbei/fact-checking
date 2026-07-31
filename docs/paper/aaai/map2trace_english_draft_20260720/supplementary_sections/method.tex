@@ -1,0 +1,683 @@
+\providecommand{\placeholder}[1]{\textbf{[TODO--AUTHOR: #1]}}
+
+\section{Supplementary Method Details}
+\label{supp:method-details}
+
+This supplement specifies the implementation behind the method in the main
+paper.  We use \(c\) for a claim, \(a_i\) for its \(i\)-th atomic
+verification unit, and \(u_j\) for a candidate evidence passage.  Unless
+otherwise stated, all normalizations are performed independently within a
+claim's candidate set.  We write
+\(\operatorname{clip}(x)=\min(1,\max(0,x))\).
+
+\subsection{Canonical Claim Atomization}
+\label{supp:atomization}
+% Implementation source: src/fact_checking/selectors/claim_atomization.py
+
+\paragraph{Prompt and output schema.}
+Claim decomposition is performed once, before retrieval, using an
+OpenAI-compatible chat-completions endpoint.  The logical model name in the
+frozen configuration is \texttt{deepseek-v4-flash}; the exact provider
+snapshot and invocation interval should be recorded as
+\placeholder{atomizer provider snapshot/revision and UTC invocation date
+window}.  The request uses temperature \(0\), top-\(p=1\), a maximum of 2,048
+generated tokens, JSON-object response mode, and disabled model ``thinking.''
+The prompt version is \texttt{claim\_atomization\_v0\_1}, and the parsed schema
+version is \texttt{claim\_atoms\_v1}.  The exact system prompt is:
+
+\begin{lstlisting}
+You create canonical atomic verification units for fact-checking.
+Use only the given claim. Do not use outside knowledge.
+Return strictly valid JSON.
+\end{lstlisting}
+
+The exact user template is:
+
+\begin{lstlisting}
+Claim:
+{claim}
+
+Decompose the claim into 1 to 6 atomic verification units.
+
+Rules:
+- Each atom must be a complete proposition with clear truth conditions.
+- Do not create standalone entity, date, number, or topic fragments.
+- Keep dates, quantities, negation, modality, attribution, comparison targets,
+  offices, locations, and scope inside the proposition.
+- Split only when the claim contains multiple separately verifiable
+  propositions.
+- A single-sentence claim making one factual assertion should usually have one
+  atom.
+- Preserve the claim's meaning; do not add facts not present in the claim.
+- The query_rendering is only a retrieval view of the same atom, not an
+  independent question.
+
+Return JSON exactly in this schema:
+{
+  "complexity": "simple|moderate|complex",
+  "claim_atoms": [
+    {
+      "atom_id": "A1",
+      "proposition": "...",
+      "importance": 1.0,
+      "type":
+        "entity|quantity|date|comparison|causal|attribution|policy|other",
+      "keywords": ["..."],
+      "query_rendering": "...?"
+    }
+  ]
+}
+\end{lstlisting}
+
+\paragraph{Validation and deterministic fallback.}
+The parser first attempts to decode the complete response as JSON and then,
+if necessary, extracts the first balanced JSON object.  It requires between
+one and six nonempty proposition objects.  Invalid complexity values become
+\texttt{moderate}; invalid atom types become \texttt{other}; importance is
+clipped to \([0.05,1]\); and a missing terminal question mark is appended to
+\texttt{query\_rendering}.  Exact duplicate propositions are removed after
+lowercasing and whitespace normalization, and the surviving atoms are
+renumbered \(A1,A2,\ldots\).  Transient API failures are retried up to five
+times after the initial request, and a schema-related generation failure can
+trigger at most two additional generations.
+
+If no valid output is obtained, the system emits one atom whose proposition
+is the complete claim, whose importance is \(1\), and whose type is
+\texttt{other}.  Its retrieval rendering is:
+
+\begin{lstlisting}
+What evidence verifies whether this claim is true: {claim}?
+\end{lstlisting}
+
+\subsection{Sentence Segmentation and Claim-Aware Chunking}
+\label{supp:chunking}
+% Implementation sources:
+% src/fact_checking/build/chunking.py
+% src/fact_checking/utils/text.py
+
+Raw reports are whitespace-normalized and split with the regular expression:
+\begin{lstlisting}
+(?<=[.!?])\s+(?=["'(\[]*[A-Z0-9])
+\end{lstlisting}
+Before splitting, the following abbreviations are protected:
+\texttt{mr.}, \texttt{mrs.}, \texttt{ms.}, \texttt{dr.}, \texttt{prof.},
+\texttt{sr.}, \texttt{jr.}, \texttt{st.}, \texttt{vs.}, \texttt{etc.},
+\texttt{i.e.}, \texttt{e.g.}, \texttt{u.s.}, \texttt{u.k.}, \texttt{no.},
+and \texttt{fig.}.  Chunk length is measured with
+\texttt{[A-Za-z0-9\%\$]+} word tokens.
+
+For sentence \(s_i\), claim relevance is
+\begin{equation}
+\begin{aligned}
+r_i={}&0.70\,\operatorname{mm}(\operatorname{cos}(c,s_i))\\
+&+0.20\,\operatorname{mm}(\operatorname{LexF1}(c,s_i))\\
+&+0.10\,\operatorname{mm}(\operatorname{BM25L}(c,s_i)),
+\end{aligned}
+\label{eq:supp-sentence-relevance}
+\end{equation}
+where \(\operatorname{mm}\) is within-report min--max scaling and returns zero
+for a constant vector.  The boundary score between adjacent sentences is
+\begin{equation}
+\begin{aligned}
+b_i={}&w_{\mathrm{sem}}
+\left(1-\operatorname{cos}(h_i,h_{i+1})\right)\\
+&+w_{\mathrm{rel}}\lvert r_i-r_{i+1}\rvert .
+\end{aligned}
+\label{eq:supp-boundary}
+\end{equation}
+The standard configuration uses
+\(w_{\mathrm{sem}}=0.75\), \(w_{\mathrm{rel}}=0.25\), and selects a positive
+local maximum only when
+\(b_i\geq \operatorname{mean}(b)+0.5\operatorname{std}(b)\).
+If \(s_{i+1}\) starts with
+\{\textit{he, she, they, it, this, that, these, those}\}, \(0.10\) is
+subtracted from \(b_i\), with a floor at zero, to discourage a split before a
+likely anaphoric continuation.
+
+Chunks contain at most three sentences, at most 150 word tokens, and normally
+at least 20 word tokens.  A one-sentence chunk is retained when its relevance
+is at least \(0.55\).  An overlong span is recursively split at its highest
+internal boundary.  An undersized span is merged with a feasible adjacent
+span by, in order, greater embedding similarity, greater neighbor relevance,
+and a right-neighbor tie break; a retained high-relevance singleton is exempt
+from this merge.
+
+The resolved RAWFC-tight configuration uses the same algorithm with
+\(w_{\mathrm{sem}}=0.65\), \(w_{\mathrm{rel}}=0.35\), a local-peak
+threshold of \(\operatorname{mean}(b)+0.35\operatorname{std}(b)\), and at
+most two sentences per chunk.  Its remaining length, singleton, and
+coreference settings are unchanged.
+
+\subsection{Hybrid Claim- and Atom-Conditioned Retrieval}
+\label{supp:retrieval}
+% Implementation sources:
+% src/fact_checking/retrieval/embedder.py
+% src/fact_checking/retrieval/text_utils.py
+% src/fact_checking/retrieval/mmr.py
+% src/fact_checking/selectors/atom_conditioned_retrieval.py
+% src/fact_checking/selectors/atom_retrieval_union.py
+
+\paragraph{Dense representation.}
+The BGE encoder~\citep{Xiao2023BGE} prepends
+\begin{lstlisting}
+Represent this sentence for searching relevant passages:
+\end{lstlisting}
+to queries, but not to passages.  It uses \texttt{AutoModel}, attention-masked
+mean pooling of the final hidden states, and \(L_2\) normalization.  The
+maximum encoded length is 256 tokens and the batch size is 64.
+\placeholder{frozen embedding checkpoint revision and retrieval precision by
+run}.
+
+\paragraph{Lexical scores.}
+Lexical tokens are lowercased matches of
+\texttt{[A-Za-z0-9\_'-]+}.  We remove the following fixed stopword set:
+\begin{lstlisting}
+a an the and or to of on in for by with is are was were be been being
+that this it as at from will would could should can may might do does
+did have has had not but if than then into their there about literally
+\end{lstlisting}
+For query and passage content-token multisets \(Q\) and \(D\), the overlap is
+\(o=\sum_{t\in Q\cap D}\min(\operatorname{tf}_Q(t),
+\operatorname{tf}_D(t))\).  We use precision \(o/|D|\), recall \(o/|Q|\), and
+their harmonic mean \(\operatorname{LexF1}\).
+
+The implementation's third route is deliberately named
+\emph{BM25-like} (\(\operatorname{BM25L}\)): unlike corpus-statistical
+BM25~\citep{Robertson2009BM25}, it does not estimate document frequency
+from a corpus.  For each distinct content token in the query,
+\begin{equation}
+\begin{aligned}
+\iota_t(D)
+&=\log\!\left(1+\frac{1}{1+f_t}\right)+0.5,\\
+\operatorname{BM25L}(Q,D)
+&=\sum_{\substack{t\in\operatorname{uniq}(Q)\\f_t>0}}
+\iota_t(D)\,
+\frac{f_t(k_1+1)}
+{f_t+k_1(1-b+b|D|/\overline d)},\\
+k_1&=1.2,\quad b=0.75,\quad \overline d=18,
+\end{aligned}
+\label{eq:supp-bm25-like}
+\end{equation}
+where \(f_t=\operatorname{tf}_D(t)\).  Thus the bracketed factor is a local,
+frequency-based surrogate, not a corpus-statistical inverse document
+frequency.
+
+\paragraph{Route scoring and fusion.}
+For query \(q\) and candidate \(u\), the route score is
+\begin{equation}
+\begin{aligned}
+H(q,u)={}&0.70\,\operatorname{mm}(d(q,u))\\
+&+0.20\,\operatorname{mm}(\operatorname{LexF1}(q,u))\\
+&+0.10\,\operatorname{mm}(\operatorname{BM25L}(q,u)).
+\end{aligned}
+\label{eq:supp-hybrid-route}
+\end{equation}
+Min--max scaling returns an all-zero vector when the score range is below
+\(10^{-8}\).  Each atom uses its \texttt{query\_rendering}, falling back to
+its proposition, and retains its top \(k_a\) routes.  Atom routes are fused
+by reciprocal-rank fusion (RRF)~\citep{Cormack2009RRF}:
+\begin{equation}
+\begin{aligned}
+\operatorname{RRF}(u)
+&=\sum_{a:\,u\in R_a}
+\frac{w_a}{60+\operatorname{rank}_a(u)},\\
+w_a&=1.
+\end{aligned}
+\label{eq:supp-rrf}
+\end{equation}
+Passages are deduplicated by lowercasing and collapsing whitespace.  Before
+truncation to \(k_{\mathrm{pool}}\), the atom pool is ordered by decreasing
+RRF, decreasing maximum atom-route hybrid score, decreasing number of
+matched atoms, and increasing original candidate index.
+
+We then take the deduplicated union of a claim-level route and the atom pool.
+Its pre-MMR relevance is
+\begin{equation}
+\begin{aligned}
+q(u)={}&\max\!\left(H(c,u),\max_a H(a,u)\right)\\
+&+\operatorname{RRF}(u)+0.004\,n_{\mathrm{route}}(u).
+\end{aligned}
+\label{eq:supp-union-relevance}
+\end{equation}
+After within-claim min--max scaling of \(q\), maximal marginal relevance
+(MMR)~\citep{Goldstein1998MMR} chooses the next candidate according to
+\begin{equation}
+\begin{aligned}
+&\lambda q(u)
+-(1-\lambda)\max_{v\in S}\operatorname{cos}(u,v),\\
+&\lambda=0.70.
+\end{aligned}
+\label{eq:supp-mmr}
+\end{equation}
+The frozen per-dataset retrieval sizes are
+\placeholder{table of claim-route size, \(k_a\), atom-pool size, and final
+union-pool size for each dataset}.
+
+\subsection{Evidence Map Annotation}
+\label{supp:evidence-map}
+% Implementation source:
+% src/fact_checking/selectors/evidence_map_selector.py
+
+\paragraph{Pair-level annotation prompt.}
+The Evidence Mapper receives the claim, the fixed atom list, and the retrieved
+passages; it cannot alter the atoms.  The exact model snapshot and processing
+interval are the DeepSeek API model \texttt{deepseek-v4-flash}, with response
+system fingerprint
+\texttt{fp\_8b330d02d0\_prod0820\_fp8\_kvcache\_20260402}; recorded
+invocations span 2026-06-21 17:07:40 to 2026-07-10 20:41:13 UTC.  Requests use
+temperature \(0\), top-\(p=1\), at
+most 8,192 generated tokens, JSON-object response mode, and disabled model
+``thinking.''  The system prompt is:
+
+\begin{lstlisting}
+You are a fact-checking evidence analyst. Use only the claim, fixed atomic
+verification units, and evidence passages supplied by the user. Do not
+create, remove, merge, split, or rename atoms. Return valid JSON only.
+\end{lstlisting}
+
+The user prompt instantiates the following exact schema and field policy:
+
+\begin{lstlisting}
+Task: map each evidence passage to the fixed atomic verification units.
+Do not create, remove, merge, split, or rename atoms.
+Return one JSON object. Use this schema and do not add other fields:
+{"candidate_atom_alignments":[{"evidence_id":"E01","atom_id":"A1",
+"relation":"support|refute|qualify|mixed|insufficient|background|irrelevant",
+"directness":"direct|partial|context|none",
+"evidence_role":"primary_support|primary_refute|partial_support|
+partial_refute|qualifying_context|background_context|duplicate|irrelevant",
+"key_spans":["short quote"],"duplicate_group":"G1","confidence":0.0}]}
+
+Field guide:
+- candidate_atom_alignments.evidence_id: one of the evidence IDs below.
+- candidate_atom_alignments.atom_id: one of the fixed atom IDs below.
+- candidate_atom_alignments.relation: support, refute, qualify, mixed,
+  insufficient, background, or irrelevant.
+- candidate_atom_alignments.directness: direct, partial, context, or none.
+- candidate_atom_alignments.evidence_role: primary_support, primary_refute,
+  partial_support, partial_refute, qualifying_context, background_context,
+  duplicate, or irrelevant.
+- candidate_atom_alignments.key_spans: short substrings copied from the
+  passage.
+- candidate_atom_alignments.duplicate_group: same group ID for near-duplicate
+  passages; use an empty string if none.
+- candidate_atom_alignments.confidence: 0.0 to 1.0 for how certain the
+  pair-level alignment is.
+
+Output policy:
+- Omit irrelevant evidence-atom pairs instead of listing them.
+- If an evidence passage has no useful relation to any atom, output no row
+  for that passage.
+- Return at most one row for each evidence_id and atom_id pair.
+- If no informative pairs exist, return
+  {"candidate_atom_alignments":[]}.
+
+Claim:
+{claim}
+
+Fixed atomic verification units:
+A1: {atom proposition}
+...
+
+Evidence passages:
+E01: {passage}
+...
+\end{lstlisting}
+
+\paragraph{The complete annotation ontology.}
+The mapper uses seven relation labels and four directness labels.  These are
+the actual annotation categories; the four relation rows in the main paper
+are an abstract transition representation obtained by grouping them.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}p{0.22\linewidth}X
+p{0.24\linewidth}@{}}
+\hline
+Mapper relation & Pair-level meaning & Transition group \\
+\hline
+\texttt{support} & Evidence favors the atom. & support \\
+\texttt{refute} & Evidence contradicts the atom. & refute \\
+\texttt{qualify} & Evidence adds a condition or material qualification. &
+qualify \\
+\texttt{mixed} & The same passage contains materially supporting and
+opposing/qualifying content. & qualify \\
+\texttt{insufficient} & The passage concerns the atom but cannot resolve it. &
+non-resolving \\
+\texttt{background} & Context related to the atom without resolving it. &
+non-resolving \\
+\texttt{irrelevant} & No useful relation to the atom. & non-resolving \\
+\hline
+\end{tabularx}
+\caption{Full Evidence Mapper relation ontology and its state-machine
+projection.}
+\label{tab:supp-map-relations}
+\end{table}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabularx}{\linewidth}{lXc}
+\hline
+Directness & Meaning & Numeric factor \\
+\hline
+\texttt{direct} & Directly resolves the targeted proposition. & \(1.00\) \\
+\texttt{partial} & Addresses only part of the proposition or resolves it
+indirectly. & \(0.65\) \\
+\texttt{context} & Supplies contextual material. & \(0.25\) \\
+\texttt{none} & Supplies no resolving connection. & \(0.00\) \\
+\hline
+\end{tabularx}
+\caption{Full directness ontology.}
+\label{tab:supp-map-directness}
+\end{table}
+
+The role field takes one of
+\texttt{primary\_support}, \texttt{primary\_refute},
+\texttt{partial\_support}, \texttt{partial\_refute},
+\texttt{qualifying\_context}, \texttt{background\_context},
+\texttt{duplicate}, or \texttt{irrelevant}.
+
+\paragraph{Validation, collapse, and fallback.}
+Rows with unknown evidence or atom identifiers are discarded.  Invalid
+relations and directness values become \texttt{irrelevant} and \texttt{none},
+respectively; confidence is clipped to \([0,1]\); at most three copied spans
+of at most 240 characters each are retained.  Malformed \texttt{key\_spans}
+arrays receive a narrow JSON repair.  Duplicate pair rows are removed and
+the result is sorted by evidence ID and atom ID.
+
+For candidate-level features, pair rows are collapsed as follows.  Covered
+atoms exclude only \texttt{background} and \texttt{irrelevant} pairs.  A
+candidate containing both support and refute pairs is labeled
+\texttt{mixed}; otherwise relation priority is
+\[
+\texttt{refute}>\texttt{qualify}>\texttt{mixed}>\texttt{support}>
+\texttt{insufficient}>\texttt{background}>\texttt{irrelevant}.
+\]
+Directness priority is
+\(\texttt{direct}>\texttt{partial}>\texttt{context}>\texttt{none}\).
+Confidence is the maximum pair confidence, the first nonempty duplicate group
+is used, and up to three distinct spans are retained.  A passage with no
+valid pair receives the explicit fallback
+\(\{\texttt{relation=irrelevant},\texttt{directness=none},
+\texttt{confidence=0}\}\).  A missing or invalid map applies the same
+fallback to every passage.
+
+\paragraph{Candidate map quality.}
+Let \(A(u)\) be the atoms covered by a candidate after collapse.  Atom
+importance \(i_a\) is converted to
+\[
+\widehat i_a =
+\begin{cases}
+\operatorname{clip}_{[0.05,1]}(i_a/5),& i_a>1,\\
+\operatorname{clip}_{[0.05,1]}(i_a),& i_a\leq 1,
+\end{cases}
+\]
+and
+\[
+\operatorname{cov}(u)=
+\frac{\sum_{a\in A(u)}\widehat i_a}{\sum_a\widehat i_a}.
+\]
+With directness score \(d\), polar-relation score \(p\), confidence \(\gamma\),
+span-presence indicator \(s\), and background penalty \(g\), map quality is
+\begin{equation}
+\begin{aligned}
+m(u)=\operatorname{clip}\!\bigl(&
+0.35\operatorname{cov}(u)+0.25d+0.20p\\
+&+0.10\gamma+0.10s-0.20g\bigr).
+\end{aligned}
+\label{eq:supp-map-quality}
+\end{equation}
+Here \(d\) is given in Table~\ref{tab:supp-map-directness};
+\(p=1\) for support/refute, \(0.60\) for qualify/mixed, \(0.15\) for
+background, and \(0\) otherwise.  The penalty is \(1\) for irrelevant,
+\(0.9\) for background, \(0.8\) for directness none, \(0.55\) for context,
+and \(0\) otherwise.
+
+\subsection{Atom State and Transition Semantics}
+\label{supp:state}
+% Implementation sources:
+% src/fact_checking/selectors/minimal_resolving_chain.py
+% src/fact_checking/selectors/mrec_learned_marginal.py
+
+Each atom has one hard state:
+\[
+\begin{aligned}
+U&=\text{unresolved},\quad S=\text{supported},\\
+R&=\text{refuted},\quad Q=\text{qualified},\\
+C&=\text{conflicted}.
+\end{aligned}
+\]
+For transition purposes, support maps to \(S\), refute to \(R\), and qualify
+or mixed to \(Q\).  Insufficient, background, and irrelevant are
+non-resolving.  The complete deterministic transition is:
+
+\begin{table}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lccccc}
+\hline
+Incoming group & \(U\) & \(S\) & \(R\) & \(Q\) & \(C\) \\
+\hline
+support & \(S\) & \(S\) & \(C\) & \(Q\) & \(C\) \\
+refute & \(R\) & \(C\) & \(R\) & \(Q\) & \(C\) \\
+qualify/mixed & \(Q\) & \(Q\) & \(Q\) & \(Q\) & \(Q\) \\
+non-resolving & \(U\) & \(S\) & \(R\) & \(Q\) & \(C\) \\
+\hline
+\end{tabular}
+\caption{Atom-state transition function.}
+\label{tab:supp-state-transition}
+\end{table}
+
+A passage may be aligned to multiple atoms, but a trace step has one target
+pair and updates only that atom.  For a selected candidate, each valid pair is
+assigned an operation and a target utility
+\begin{equation}
+v(a,u)=\pi_{\mathrm{op}}+10\,i_a+m(u)+0.1\,b(u),
+\label{eq:supp-target-pair}
+\end{equation}
+where \(b(u)\) is the available base retrieval score and
+\(\pi_{\mathrm{op}}\) is \(100,80,35,10,0\) for
+\textsc{Open}, \textsc{Contrast}, \textsc{Corroborate}, \textsc{Bridge}, and
+\textsc{Fallback}, respectively.  Ties are broken by relation priority
+refute \(>\) qualify/mixed \(>\) support \(>\) insufficient, then map quality,
+base score, and atom ID.  \textsc{Open} resolves an unresolved atom;
+\textsc{Contrast} creates \(C\) for opposed support/refute or \(Q\) for a
+qualification; \textsc{Corroborate} preserves a matching resolved state; and
+\textsc{Bridge}/\textsc{Fallback} preserve the prior state.
+
+\subsection{Twelve-Dimensional Marginal Utility}
+\label{supp:marginal-features}
+% Implementation source:
+% src/fact_checking/selectors/mrec_learned_marginal.py
+
+At selection step \(t\), every eligible candidate is represented by
+\(\phi_t(u)\in[0,1]^{12}\).  Let \(p_U(a)\) be the current unresolved mass,
+let
+\[
+\delta(r)\in\{1,0.65,0.25,0\}
+\]
+be the directness factor, and let \(\gamma_{ua}\) be pair confidence.  For
+each resolving pair, define
+\[
+\begin{aligned}
+g_{ua}&=\operatorname{clip}\!\left(
+p_U(a)\,\delta(r_{ua})\,
+\max(\gamma_{ua},0.5)\right),\\
+g_a(u)&=\max_{(u,a)}g_{ua}.
+\end{aligned}
+\]
+The features are:
+
+\begin{enumerate}
+\item \texttt{resolution\_delta}:
+  \(\sum_a g_a(u)/|A|\).
+\item \texttt{entropy\_reduction}: unresolved mass moved to a resolving
+  state, averaged over atoms.  With the current one-hot state realization,
+  this equals the preceding gain numerically.
+\item \texttt{new\_atom\_coverage}: number of candidate-covered atoms not
+  covered by an earlier selected step, divided by \(|A|\).
+\item \texttt{new\_relation\_for\_atom}: one iff any candidate pair introduces
+  a relation not previously observed for that atom.
+\item \texttt{stance\_tension}: the maximum
+  \(\delta(r)\max(\gamma,0.5)\) for a qualifying relation after any resolved
+  state, support after refute/conflict, or refute after support/conflict.
+\item \texttt{corroboration\_gain}: the maximum
+  \(\delta(r)\max(\gamma,0.5)\) for a previously seen resolving relation,
+  multiplied by \(\max(\text{source novelty},\text{text novelty})\).
+\item \texttt{source\_novelty}: zero iff a nonempty source key has already
+  appeared, and one otherwise.
+\item \texttt{text\_novelty}: zero iff either normalized evidence text or its
+  nonempty duplicate-group ID has already appeared, and one otherwise.
+\item \texttt{map\_confidence}: maximum pair confidence for the candidate.
+\item \texttt{map\_quality}: \(m(u)\) from
+  Eq.~\eqref{eq:supp-map-quality}.
+\item \texttt{retrieval\_score}: the first available value among hybrid,
+  baseline-hybrid, and base score, clipped to \([0,1]\).
+\item \texttt{cost\_ratio}: token cost divided by the configured token budget;
+  when no budget is configured, the maximum candidate cost in the pool is
+  the denominator.
+\end{enumerate}
+
+\subsection{Scorer Fitting and Greedy Selection}
+\label{supp:scorer-selector}
+% Implementation sources:
+% src/fact_checking/selectors/mrec_learned_marginal.py
+% src/fact_checking/selectors/minimal_resolving_chain.py
+
+\paragraph{Pairwise scorer fitting.}
+The marginal scorer is
+\begin{equation}
+\begin{aligned}
+F_\theta(u\mid z_t)
+={}&\beta+\sum_{k=1}^{11}w_k\phi_{t,k}(u)\\
+&-w_c\phi_{t,12}(u),\qquad w_k,w_c\geq0.
+\end{aligned}
+\label{eq:supp-marginal-score}
+\end{equation}
+Nonnegativity is enforced with a softplus parameterization.  The bias is
+fixed at zero.  At each training rollout step, the deterministic
+structure-only ranking tuple is, in descending preference,
+\[
+\begin{aligned}
+(&\text{direct resolving},\\
+&\text{partial/non-direct resolving},\\
+&\text{new-atom coverage},\ \text{new relation},\\
+&\text{map quality},\ \text{retrieval score},\\
+&\text{earlier original index}).
+\end{aligned}
+\]
+The first candidate is paired against every remaining candidate.  For a
+preferred/nonpreferred pair \((u^+,u^-)\), the RankNet-style full-batch
+objective~\citep{Burges2005RankNet} is
+\[
+\begin{aligned}
+\Delta_\theta(u^+,u^-)
+&=F_\theta(u^+)-F_\theta(u^-),\\
+\mathcal{L}
+&=\frac{1}{|\mathcal{P}|}
+\sum_{(u^+,u^-)\in\mathcal{P}}
+\operatorname{softplus}\!\left(
+-\Delta_\theta(u^+,u^-)\right).
+\end{aligned}
+\]
+Training uses the top 20 candidates, five rollout steps, and full-batch CPU
+Adam with learning rate \(0.05\) for 30 epochs in the reference fit.
+All positive weights and the cost weight are initialized to one; no
+regularizer, scheduler, or bias update is used.  After each rollout winner,
+state is replayed with the candidate's pair having highest directness, then
+highest confidence, then lexicographically smallest atom ID.
+
+\paragraph{Stateful selector pseudocode.}
+The deployed ranking recomputes features after every selection:
+
+\begin{enumerate}
+\item Initialize all atom states to \(U\); initialize the selected set, source
+  set, normalized-text set, duplicate-group set, and observed
+  atom--relation set to empty.
+\item Form the eligible set by excluding already selected candidates and any
+  candidate whose normalized text or nonempty duplicate group has already
+  been selected.  In budgeted modes, also exclude a candidate that would
+  exceed the remaining token budget.
+\item For every eligible \(u\), compute \(\phi_t(u)\) from the current state
+  and score it with Eq.~\eqref{eq:supp-marginal-score}.
+\item Choose the maximum-score candidate.  Deterministic tie breaks use, in
+  order: larger \texttt{resolution\_delta}, larger
+  \texttt{entropy\_reduction}, larger \texttt{stance\_tension}, larger
+  \texttt{new\_atom\_coverage}, larger
+  \texttt{new\_relation\_for\_atom}, larger
+  \texttt{map\_confidence}, lower token cost, and lower original index.
+\item Select the candidate's target evidence--atom pair using
+  Eq.~\eqref{eq:supp-target-pair}; append the trace record; update only the
+  target atom's hard and soft states; and update the novelty and observed
+  relation sets.
+\item Repeat until the candidate pool is exhausted, or until an explicitly
+  configured trace horizon, utility threshold, or token budget is reached.
+\end{enumerate}
+
+\paragraph{Why a full ordering is retained.}
+For the reported full-ordering configuration, the trace horizon is the
+candidate-pool size.  The resulting \(T_{\mathrm{full}}\) is an internal audit
+artifact, not the evidence sequence automatically exposed downstream.
+Retaining it permits controlled capacity ablations and sampling of multiple
+prefix lengths from exactly the same stateful ordering, without rerunning the
+selector and thereby changing earlier decisions.  Operationally, the
+implementation therefore builds the complete ordering first and truncates it
+only when materializing an ablation or verifier prompt.
+
+\subsection{Trace Projection and Prompt Rendering}
+\label{supp:projection}
+% Implementation sources:
+% src/fact_checking/build/prompts.py
+% scripts/phase5_selectors/build/build_trace_verifier_data.py
+
+The capacity controller projects \(T_{\mathrm{full}}\) to a prefix.  Each
+trace step stores \texttt{target\_resolved}, which is set when that step's
+replayed resolved-atom rate reaches the configured
+\(\rho_{\mathrm{target}}\).  Under the min--max rule, the renderer scans in
+order and, after at least \(K_{\min}\) steps, stops at the first step carrying
+this flag, subject to \(K_{\max}\):
+\[
+\begin{aligned}
+H&=\min\{|T_{\mathrm{full}}|,K_{\max}\},\\
+\mathcal R&=\{t:K_{\min}\leq t\leq H,\
+\rho_t\geq\rho_{\mathrm{target}}\}.
+\end{aligned}
+\]
+\begin{equation}
+K_{\mathrm{count}}=
+\begin{cases}
+\min\mathcal R,&\mathcal R\neq\varnothing,\\
+H,&\mathcal R=\varnothing,
+\end{cases}
+\label{eq:supp-count-projection}
+\end{equation}
+Fixed-count and token-cap controllers use the corresponding longest feasible
+prefix.  The
+reference count policies are listed in
+Table~\ref{tab:supp-lora-settings}; the complete RQ3 controller grid is
+listed in Table~\ref{tab:supp-capacity-grid}.
+
+Prompt construction is tokenizer-aware.  The maximum training sequence length
+is 1,024 tokens; after reserving target tokens, complete evidence units are
+removed from the tail until the chat prompt fits.  Thus ordinary truncation
+preserves trace order and never removes an interior unit.  If the fixed prompt
+plus the sole remaining evidence unit is still too long, an emergency
+fallback retains the longest tokenizer prefix of that evidence that fits;
+if even an empty evidence item cannot fit, no evidence is retained.
+
+For the minimal trace view, selected step \(t\) is rendered exactly as
+\begin{lstlisting}
+Check: <step-specific cue>
+<raw evidence text>
+\end{lstlisting}
+in selector order.  The renderer uses the stored cue and falls back to the
+target atom proposition, then to a generic verification cue, when it is
+missing.  The same atom cue can therefore occur in multiple steps, but every
+evidence unit has exactly one cue.  Operation, state, transition reason,
+confidence, relation, directness, and other trace metadata remain in the
+audit artifact and are not inserted into this prompt view.
+
+\FloatBarrier

@@ -1,0 +1,884 @@
+% Technical-supplement fragment for EviTrace.
+% This file is intended to be included with \input{...}; it is not a
+% standalone document.  Author-supplied metadata that is not recoverable
+% from the frozen experiment artifacts is deliberately left as a visible
+% placeholder.
+\providecommand{\placeholder}[1]{\textbf{[TODO--AUTHOR: #1]}}
+
+\section{Additional Experimental Details}
+\label{sec:supp-experiments}
+
+This supplement records the data transformations, evaluation rules,
+controlled-analysis protocols, and artifact contracts used in the paper.
+Conditioned on the frozen atomization and Evidence Map response caches,
+downstream preprocessing is deterministic.  All reported verifier backbones
+are adapted with LoRA.  The evidence scorer and verifier are trained
+separately: the pairwise scorer objective uses map-induced preferences,
+whereas the verifier uses label-token cross-entropy.
+
+\subsection{Datasets, Versions, and Preprocessing}
+\label{sec:supp-data}
+
+\subsubsection{Dataset releases and splits}
+
+Table~\ref{tab:supp-dataset-splits} gives the exact number of claims loaded
+from each release.  LIAR-RAW and RAWFC associate each claim with raw,
+claim-linked reports~\citep{Yang2022CofCED}.  SciFact uses the released
+corpus of 5,183 scientific abstracts~\citep{Wadden2020SciFact}.
+
+\begin{table}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Dataset} & \textbf{Train} & \textbf{Val./Dev.}
+& \textbf{Test} & \textbf{Total} \\
+\midrule
+LIAR-RAW & 10,065 & 1,274 & 1,251 & 12,590 \\
+RAWFC    & 1,612  & 200   & 200   & 2,012 \\
+SciFact  & 809    & 300   & 300   & 1,409 \\
+\bottomrule
+\end{tabular}
+\caption{Claim counts in the files consumed by the pipeline.  The SciFact
+test file contains claims but no public verdict or rationale labels.}
+\label{tab:supp-dataset-splits}
+\end{table}
+
+\begin{table}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{llrrr}
+\toprule
+\textbf{Dataset} & \textbf{Label} & \textbf{Train}
+& \textbf{Val./Dev.} & \textbf{Test} \\
+\midrule
+LIAR-RAW & pants-fire  & 812  & 115 & 86 \\
+         & false       & 1,958& 259 & 249 \\
+         & barely-true & 1,611& 236 & 210 \\
+         & half-true   & 2,087& 244 & 263 \\
+         & mostly-true & 1,950& 251 & 238 \\
+         & true        & 1,647& 169 & 205 \\
+\midrule
+RAWFC & false & 514 & 66 & 66 \\
+      & half  & 537 & 67 & 67 \\
+      & true  & 561 & 67 & 67 \\
+\midrule
+SciFact & support    & 332 & 124 & -- \\
+        & contradict & 173 & 64  & -- \\
+        & NEI        & 304 & 112 & -- \\
+\bottomrule
+\end{tabular}
+\caption{Class counts after label normalization.  Dashes denote hidden
+SciFact test labels.}
+\label{tab:supp-class-counts}
+\end{table}
+
+The LIAR-RAW six-class order is
+\(\{\textit{pants-fire},\textit{false},\textit{barely-true},
+\textit{half-true},\textit{mostly-true},\textit{true}\}\).
+RAWFC's source labels \(1/3/5\) are mapped to
+\(\textit{false}/\textit{half}/\textit{true}\), respectively.
+For SciFact, a claim with no annotated evidence in the labeled release is
+assigned NEI; otherwise the released evidence stance is normalized to
+\textit{support} or \textit{contradict}.  The prediction aliases supplied
+to the verifier are A--F for LIAR-RAW and A--C for the three-class tasks.
+The alias-to-label mapping is fixed before training and is inverted before
+metric computation.
+
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabularx}{\textwidth}{@{}lXXX@{}}
+\toprule
+\textbf{Dataset} & \textbf{Source and access}
+& \textbf{Frozen release identifier} & \textbf{Integrity record} \\
+\midrule
+LIAR-RAW &
+Official CofCED/LIAR-RAW release with claim-linked reports &
+\placeholder{release date/version or archive identifier} &
+\placeholder{SHA-256 for train/val/test and license/access note} \\
+RAWFC &
+Official CofCED/RAWFC release with Snopes-linked report text &
+\placeholder{release date/version or archive identifier} &
+\placeholder{SHA-256 for train/val/test and license/access note} \\
+SciFact &
+Official release containing \texttt{corpus.jsonl} and the three claim files &
+\placeholder{release date and source archive URL} &
+\placeholder{SHA-256 for the archive and four extracted files} \\
+\bottomrule
+\end{tabularx}
+\caption{Dataset provenance fields to be frozen with the camera-ready
+artifact.  Hashes refer to the unmodified downloaded files.}
+\label{tab:supp-dataset-provenance}
+\end{table*}
+
+\subsubsection{Text normalization and report materialization}
+
+All claims and report fields are converted to strings, non-breaking spaces
+and line breaks are replaced by ordinary spaces, consecutive whitespace is
+collapsed, and leading/trailing whitespace is removed.  Empty report
+elements are discarded.  LIAR-RAW preserves each released
+\texttt{event\_id}, report identifier, link, and domain.  For RAWFC, every
+non-empty element of the released \texttt{evidence} list is materialized as
+one report with a deterministic within-claim index.  SciFact abstracts are
+indexed by the released document identifier and zero-based sentence
+position; titles and sentence boundaries from the release are preserved.
+Retrieval queries are formed from the normalized claim and its atom
+renderings; verifier evidence is formed from the indexed report or abstract
+fields described above.
+
+For raw reports that are not already sentence-tokenized, sentence splitting
+protects a fixed list of common abbreviations and splits at sentence-final
+punctuation followed by a capital letter or digit.  Empty sentences and
+sentences shorter than 10 characters are removed.  Each retained sentence
+keeps its claim, report, and sentence identifiers, so every selected unit
+can be traced back to its source.
+
+\subsubsection{Claim-aware chunks and candidate pools}
+
+The exact adjacent-boundary chunker, its token definition, and both resolved
+parameterizations are specified in Section~\ref{supp:chunking}.  The released
+manifest records the chunk text, sentence interval, anchor sentence, token
+count, relevance, boundary scores, and resolved chunker configuration.
+
+Multi-path retrieval issues one query for the complete claim and one query
+for each atom.  Each atom route retains 20 candidates.  Candidate relevance
+combines normalized dense, lexical-overlap, and BM25-like scores using
+weights \(0.70/0.20/0.10\); MMR uses \(\lambda=0.70\).
+The claim-route and atom-route results are deduplicated using the canonical
+text key defined in Section~\ref{supp:retrieval} to form the Atom--Union
+pool.  Ties are broken by the frozen candidate index.
+
+\subsection{Evaluation Protocol}
+\label{sec:supp-evaluation}
+
+\subsubsection{Classification metrics}
+
+Let \(C\) be the number of labels.  For class \(c\), precision, recall, and
+F1 are
+\begin{equation}
+\begin{aligned}
+P_c&=\frac{TP_c}{TP_c+FP_c},\\
+R_c&=\frac{TP_c}{TP_c+FN_c},\\
+F_{1,c}&=\frac{2P_cR_c}{P_c+R_c}.
+\end{aligned}
+\end{equation}
+A ratio with a zero denominator is defined as zero.  Macro scores are the
+unweighted arithmetic means over the fixed label inventory:
+\begin{equation}
+\begin{aligned}
+P_{\mathrm{macro}}&=\frac{1}{C}\sum_c P_c,\\
+R_{\mathrm{macro}}&=\frac{1}{C}\sum_c R_c,\\
+F_{1,\mathrm{macro}}&=\frac{1}{C}\sum_c F_{1,c}.
+\end{aligned}
+\end{equation}
+Thus Macro-F1 is not computed as the harmonic mean of
+\(P_{\mathrm{macro}}\) and \(R_{\mathrm{macro}}\).
+Accuracy is the number of correctly classified claims divided by the
+number of evaluated claims.  LIAR-RAW and RAWFC results use the official
+test examples and report percentages.
+
+The verifier predicts through label-token scoring rather than unconstrained
+free-form parsing.  At the answer position, the logit of each allowed
+single-token alias is extracted, the highest-logit alias is selected, and
+the frozen alias map converts it to the dataset label.  A missing or
+non-finite alias logit is treated as an evaluation error and is recorded,
+not silently removed.
+
+For SciFact, the released prediction schema, evaluation command, and raw
+evaluation output are preserved in the artifact bundle.  No SciFact headline
+result is reproduced in this supplement.
+
+\subsubsection{Training, selection, and repeated runs}
+
+All reported verifier runs use LoRA.  The common and dataset-specific
+optimization settings are given in
+Table~\ref{tab:supp-lora-settings}; the released resolved configuration,
+rather than a short experiment name, is the authoritative hyperparameter
+record.  LIAR-RAW and RAWFC use their respective validation splits for
+configuration and checkpoint choices, followed by one official-test
+evaluation.
+
+\placeholder{State the number of independent runs represented
+by every main-table cell.  If a cell is a single canonical run, label it as
+such; otherwise report the aggregation rule and dispersion.}
+
+\subsubsection{Baseline provenance and comparison scope}
+
+The primary LIAR-RAW/RAWFC comparison is restricted to systems that consume
+the claim-linked reports at inference.  Systems using a corpus-wide
+benchmark, multiple benchmarks, open-web search, or gold evidence are
+retained only as broader-access context.  A published score is transcribed
+without recomputation unless the corresponding row is explicitly marked as
+a reproduction.  Table~\ref{tab:supp-baseline-provenance} is the
+camera-ready provenance ledger; each entry must point to a concrete source
+table and state whether the source reports one run, a mean, or a selected
+best run.
+
+\begin{table*}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabularx}{\textwidth}{@{}p{0.10\textwidth}
+p{0.22\textwidth}YYY@{}}
+\toprule
+\textbf{Scope} & \textbf{Methods} & \textbf{Evidence/backbone}
+& \textbf{Score provenance} & \textbf{Aggregation/comparability note} \\
+\midrule
+Paired reports &
+dEFEND; SBERT-FC; GenFE; GenFE-MT &
+\placeholder{input boundary and backbone/size per row} &
+\placeholder{source paper, table, split, and metric per row} &
+\placeholder{copied/reproduced; runs and best/mean/single} \\
+Paired reports &
+MUSER; CofCED &
+\placeholder{input boundary and backbone/size per row} &
+\placeholder{source paper or cited reproduction and table} &
+\placeholder{runs and aggregation; note reproduction status} \\
+Paired reports &
+L-Defense; G-Defense; EVICheck; DelphiAgent &
+\placeholder{LLMs, auxiliary components, and report access} &
+\placeholder{source paper, exact variant, table, and split} &
+\placeholder{runs and any additional supervision} \\
+Broader access &
+DeReC; FFRR; ReAct; Verify-and-Edit; RAV &
+\placeholder{benchmark/web/gold evidence and backbone} &
+\placeholder{source paper or cited reproduction and table} &
+Context only; not ranked as a matched paired-report comparison \\
+SciFact &
+VERISCI; Paragraph-Joint; PrunE; QMUL-SDS; VerT5erini; ARSJoint; RerrFact &
+\placeholder{corpus, retrieval universe, and backbone per row} &
+\placeholder{source paper, table, development split, scorer} &
+\placeholder{pipeline vs.\ evidence-provided setting and runs} \\
+\bottomrule
+\end{tabularx}
+\caption{Baseline provenance template.  This table must be completed from
+the cited publications before release; a method name alone is not a
+reproducible score source.}
+\label{tab:supp-baseline-provenance}
+\end{table*}
+
+\subsection{Controlled Analyses for RQ2}
+\label{sec:supp-rq2}
+
+All RQ2 analyses use LIAR-RAW and the Ministral-3-8B verifier unless a
+cross-verifier comparison is explicitly named.  Within each ablation
+family, the claim atoms, report chunks, evaluation examples, label mapping,
+and LoRA training recipe are held fixed.  Variant-specific evidence traces
+are materialized for train, validation, and test, and the verifier is
+LoRA-tuned on the representation it receives at evaluation; the experiment
+does not replace evidence only at test time.
+
+\subsubsection{Evidence-organization variants}
+
+For each claim \(i\), let \(K_i\) be the number of complete evidence units
+visible under the full EviTrace condition.  Every evidence-bearing control
+in Table~\ref{tab:supp-selector-mechanics} is capped at the same \(K_i\); if its
+pool contains fewer than \(K_i\) units, it exposes the entire pool and logs
+the underfill.  Count matching is performed after deduplication and before
+prompt token guarding.
+
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabularx}{\textwidth}{@{}l l l X@{}}
+\toprule
+\textbf{Variant} & \textbf{Candidate pool} & \textbf{Ranking/order}
+& \textbf{Mechanical intervention} \\
+\midrule
+No evidence & none & none &
+The verifier receives the claim and label instruction but no evidence
+units. \\
+Random & raw report pool & uniform random order &
+Sample \(K_i\) units without replacement from the claim's raw evidence
+pool and preserve the sampled order.
+\placeholder{insert the frozen sampling seed.} \\
+Claim route only & claim-route pool & retrieval score &
+Remove every atom-route-only candidate; take the highest-scoring \(K_i\)
+claim-query candidates. \\
+Atom routes only & atom-route pool & retrieval score &
+Remove the whole-claim route; deduplicate the union of atom-query routes
+and take its highest-scoring \(K_i\) candidates. \\
+Retrieval only & Atom--Union & retrieval score &
+Use the full union pool but replace state-conditioned scoring with
+descending frozen retrieval score. \\
+Rule only & Atom--Union & map-priority trace &
+At each prefix, choose the lexicographic
+\(\Delta_{\mathrm{map}}\) winner using direct/non-direct state progress,
+new-atom coverage, relation novelty, map quality, retrieval relevance,
+and stable index; no learned \(S_\theta\) is used. \\
+Shuffled trace & Atom--Union & random permutation &
+Keep the evidence set and \(K_i\) produced by \(S_\theta\), then apply one
+frozen random permutation to its order.
+\placeholder{insert the shuffle seed and tie policy.} \\
+EviTrace (Full) & Atom--Union & \(S_\theta\) trace &
+Iteratively score remaining candidates, append the deterministic
+argmax, update atom states, and stop under the full capacity policy. \\
+\bottomrule
+\end{tabularx}
+\caption{Mechanical definitions for the evidence-organization ablation.
+All evidence-bearing variants are matched to the full method's
+claim-specific visible evidence count.}
+\label{tab:supp-selector-mechanics}
+\end{table*}
+
+\subsubsection{Evidence Map field interventions}
+
+The four map-field variants keep the same Atom--Union pool and
+minmax\((5,10)\) capacity policy, alter only the named map input, regenerate
+all dependent state features and preferences, and retrain the scorer on the
+degraded representation.  For \emph{No relation},
+\(r_{ij}\leftarrow\textit{background}\) for every pair.  For
+\emph{No directness}, \(d_{ij}\leftarrow\textit{context}\).  For
+\emph{Constant confidence}, \(c_{ij}\leftarrow1.0\).  For
+\emph{Map disabled}, all map-derived features and state transitions are
+disabled and retrieval-derived features remain available.  The full
+condition retains the original LLM-generated
+\((r_{ij},d_{ij},c_{ij})\).  The average visible \(K\) is reported because
+these interventions may change whether the resolution-based stopping
+condition fires.
+
+\subsubsection{Balanced cross-verifier mechanism experiment}
+\label{sec:supp-cross-verifier}
+
+This experiment uses
+\texttt{Qwen3-4B-Instruct-2507} and
+\texttt{Meta-Llama-3.1-8B-Instruct}.  Each backbone is LoRA-tuned under two
+complementary mixed-arm assignments and three random seeds, yielding
+\(2\times2\times3=12\) runs.  In one assignment, each training claim is
+assigned to exactly one evidence arm; the complementary assignment reverses
+the arm for every claim.  Each assignment contains 5,025 EviTrace and 5,025
+retrieval-ordered examples, balanced within
+gold-label \(\times\) single-/multi-atom strata.  Checkpoints are selected
+by the mean validation Macro-F1 over the two arms.
+
+Both backbones use their native chat templates and the same method-blind
+LIAR-6 label prompt.  The frozen recipe is LoRA rank 16, alpha 32, dropout
+0.05, attention and MLP projection targets, BF16 ZeRO-2, effective batch
+size 16, learning rate \(2\times10^{-5}\), 12 epochs, and maximum length
+2,048 tokens.
+
+The \emph{Main} comparison uses 1,250 test claims.  It contrasts the final
+verifier-visible EviTrace sequence with a source-score retrieval-only
+top-\(K_i\) sequence drawn from the same Atom--Union pool.  The evidence
+count is equal within each claim, but token counts are not forced to be
+identical.  The \emph{Order-only} comparison fixes the selected evidence
+identities, texts, and count and changes only their order: EviTrace order
+versus descending source-score order.  The 98 claims for which the two
+orders are identical are excluded by this comparison's fixed eligibility
+rule, leaving 1,152 claims.
+
+Predictions are first averaged over assignment and seed within a backbone
+and are then combined with equal backbone weight.  Claims, not the 12
+repeated predictions, are the independent units.  A
+gold-label-stratified, claim-clustered bootstrap with 10,000 replicates
+provides the 95\% confidence interval for the paired Macro-F1 difference.
+The randomization test swaps the two arm predictions independently at the
+claim level 100,000 times.  The Main and Order-only hypotheses form one
+family and their two \(p\)-values are Holm-adjusted.
+
+For descriptive paired accuracy, a claim is a win when EviTrace alone is
+correct, a loss when the control alone is correct, and a tie when both are
+correct or both are incorrect.  The conditional win rate is
+\begin{equation}
+\operatorname{CWR} =
+\frac{N(\text{EviTrace correct, control wrong})}
+{N(\text{exactly one arm correct})}.
+\end{equation}
+Main obtains a \(+1.29\)-point Macro-F1 difference
+(95\% CI \([0.26,2.35]\), Holm-adjusted \(p=.029\)) and a 53.95\%
+conditional win rate.  Order-only obtains \(+0.67\) points
+(95\% CI \([-0.04,1.39]\), Holm-adjusted \(p=.065\)) and a 52.97\%
+conditional win rate.  The latter interval crosses zero and is interpreted
+as suggestive rather than conclusive evidence of an ordering-only effect.
+
+\subsection{Evidence-Capacity Sensitivity for RQ3}
+\label{sec:supp-rq3}
+
+All capacity conditions reuse the same ordered trace and differ only in the
+prefix made visible to the verifier.  A fixed-\(k\) policy retains the first
+\(k\) complete evidence units.  A minmax\((k_{\min},k_{\max})\) policy
+shows at least \(k_{\min}\) units, then stops at the first stored
+\texttt{target\_resolved} flag---derived from the replayed resolved-atom
+rate with \(\rho_{\mathrm{target}}=1.0\)---and otherwise continues up to
+\(k_{\max}\).  A budget-\(B\) policy appends complete units while its
+capacity guard remains satisfied.  Pool exhaustion may produce an
+underfilled prefix and is recorded separately from a resolution stop.  The
+later tokenizer guard normally removes complete tail units; only its
+single-unit emergency fallback may truncate within evidence text, as
+specified in Section~\ref{sec:supp-truncation}.
+
+\begin{table}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{llrr}
+\toprule
+\textbf{Family} & \textbf{Setting} & \textbf{Macro-F1}
+& \textbf{Mean toks.} \\
+\midrule
+fixed & \(k=3\) & 34.12 & 436.33 \\
+fixed & \(k=5\) & 33.91 & 603.45 \\
+fixed & \(k=7\) & 34.03 & 751.29 \\
+fixed & \(k=9\) & 34.81 & 867.65 \\
+\midrule
+minmax & \((3,8)\)  & 33.84 & 540.19 \\
+minmax & \((3,10)\) & 33.86 & 562.51 \\
+minmax & \((5,10)\) & 36.66 & 677.90 \\
+minmax & \((5,12)\) & 35.22 & 686.65 \\
+minmax & \((7,12)\) & 34.50 & 798.46 \\
+\midrule
+budget & \(B=512\)  & 32.88 & 461.36 \\
+budget & \(B=768\)  & 34.45 & 710.40 \\
+budget & \(B=1024\) & 35.03 & 949.29 \\
+\bottomrule
+\end{tabular}
+\caption{Complete LIAR-RAW capacity grid underlying the RQ3 figure.
+Prompt-token means are computed after final rendering with the verifier
+tokenizer.}
+\label{tab:supp-capacity-grid}
+\end{table}
+
+The policy family, parameter values, trace fingerprint, tokenizer revision,
+and prompt template are stored with every point.  The capacity plot reports
+all evaluated settings rather than only the best setting.  Its connecting
+lines are visual guides, not fitted learning curves, and the table contains
+point estimates rather than a claim of monotonicity.
+
+\placeholder{State the validation criterion used to select
+minmax(5,10) as the primary setting and confirm that no test metric was used
+for policy selection.}
+
+\placeholder{Add the median, 95th percentile, maximum, actual
+visible-\(K\) distribution, and truncation/underfill rates for every
+capacity condition.}
+
+\subsection{Human Audit Protocol and Metrics}
+\label{sec:supp-human}
+
+\subsubsection{Sampling and annotation procedure}
+
+The atomization audit draws a frozen validation-set sample from LIAR-RAW and
+RAWFC.  Sampling combines a uniform component with a
+difficulty-prioritized component containing long claims or claims with
+negation, comparison, numerical, date, or extremum cues.  Exact item
+identifiers and the sampling script are retained in the audit manifest;
+sample totals and summary outcomes remain in the main paper.
+
+Two annotators independently assess atom faithfulness, atomicity, and
+claim-level completeness.  Faithfulness asks whether an atom is entailed by
+the original claim without adding information.  Atomicity asks whether it
+is a minimal independently verifiable proposition.  Completeness records
+how many independently verifiable propositions in the claim are omitted by
+the atom set.  Inter-annotator agreement is computed on the two initial
+annotations before adjudication; adjudication is used only to construct the
+final audit label.
+
+The Evidence Map audit draws candidate--atom pairs from both datasets and
+follows the natural relation distribution rather than balancing classes.
+Two annotators independently assign relation, directness, and self-reported
+confidence; both annotations are retained as empirical human references.
+The annotation task is a local text-pair judgment and does not ask
+annotators to search the Web or determine the claim's overall verdict.
+
+\placeholder{Describe annotator educational/professional
+background and relevant NLP or fact-checking experience.}
+
+\placeholder{State whether each annotator and adjudicator was
+an author, and describe any prior exposure to the sampled items.}
+
+\placeholder{Report the training/calibration procedure,
+guideline version, calibration set size, acceptance criterion, and whether
+running agreement checks were performed.}
+
+\placeholder{State the implemented blinding: mutual annotator
+blinding; visibility of LLM labels, model confidence, and veracity labels;
+and the information shown to the adjudicator.}
+
+\placeholder{Report compensation, payment basis, approximate
+workload and completion time per annotator, and recruitment procedure.}
+
+\placeholder{Provide the institutional ethics/IRB
+approval, exemption, or non-human-subjects determination and the consent
+procedure.}
+
+\subsubsection{Audit label spaces}
+
+Atom faithfulness and atomicity are binary.  Completeness uses
+\(\{0,1,2,3+\}\) missed propositions; the reported complete-coverage
+statistic is the binary event \(\textit{missed}=0\).
+The implementation-level human relation inventory is
+\[
+\begin{aligned}
+\{&\textit{support},\textit{refute},\textit{qualify},\textit{mixed},\\
+&\textit{insufficient},\textit{background},\textit{irrelevant}\},
+\end{aligned}
+\]
+and directness is
+\(\{\textit{direct},\textit{partial},\textit{context},\textit{none}\}\).
+The compact relation display in the main paper is an abstract grouping for
+explaining state transitions, not the stored annotation schema.  Human
+agreement and LLM--human alignment are computed in the implementation-level
+label spaces above.
+
+\subsubsection{Atomization metrics}
+
+For \(N\) double-annotated units, exact agreement is
+\[
+A_{\mathrm{exact}}=\frac{1}{N}\sum_{i=1}^{N}
+\mathbb{1}[a_i=b_i].
+\]
+Cohen's kappa is
+\[
+\kappa=\frac{p_o-p_e}{1-p_e},
+\]
+where \(p_o\) is observed agreement and \(p_e\) is agreement expected from
+the two annotators' marginal label frequencies.  Because the atom-quality
+labels are highly imbalanced, the paper also reports Gwet's AC1.  For \(q\)
+categories with mean marginal proportion \(\pi_k\),
+\[
+\begin{aligned}
+P_e^{\mathrm{AC1}}
+&=\frac{1}{q-1}\sum_{k=1}^{q}\pi_k(1-\pi_k),\\
+\mathrm{AC1}
+&=\frac{p_o-P_e^{\mathrm{AC1}}}
+{1-P_e^{\mathrm{AC1}}}.
+\end{aligned}
+\]
+
+After adjudication, the pass rate is the fraction of units whose final
+label passes the named criterion.  A claim receives the strict all-pass
+label only when completeness has zero omissions and every atom is both
+faithful and atomic.  Confidence intervals for final pass rates use 5,000
+dataset-stratified, claim-clustered bootstrap replicates; all atoms from one
+claim stay in the same resample.  Pre-adjudication agreement and
+post-adjudication pass rate are reported separately because they answer
+different questions.
+
+\subsubsection{Evidence Map agreement and alignment}
+
+Relation reliability uses exact agreement and Cohen's \(\kappa\).
+Directness assigns ordinal scores
+\(\textit{none}=0\), \(\textit{context}=1\),
+\(\textit{partial}=2\), and \(\textit{direct}=3\), and reports Spearman's
+rank correlation.  Within-one agreement is
+\[
+A_{\leq1}=\frac{1}{N}\sum_i
+\mathbb{1}\!\left[|d_i^{(A)}-d_i^{(B)}|\leq1\right].
+\]
+For an LLM label \(\hat y_i\) and human labels
+\(y_i^{(A)},y_i^{(B)}\), average exact alignment is
+\[
+A_{\mathrm{avg}}=
+\frac{1}{2N}\sum_i
+\left(\mathbb{1}[\hat y_i=y_i^{(A)}]
++      \mathbb{1}[\hat y_i=y_i^{(B)}]\right),
+\]
+whereas either-annotator alignment is
+\[
+A_{\mathrm{either}}=
+\frac{1}{N}\sum_i
+\mathbb{1}[\hat y_i\in\{y_i^{(A)},y_i^{(B)}\}].
+\]
+The corresponding directness measures use the same definitions, with the
+within-one tolerance applied to the ordinal scores.
+
+For calibration, let \(c_i\in[0,1]\) be the LLM confidence and define the
+soft human-match target
+\[
+z_i=\tfrac12\left(
+\mathbb{1}[\hat y_i=y_i^{(A)}]
++\mathbb{1}[\hat y_i=y_i^{(B)}]\right).
+\]
+Using five equal-width confidence bins \(\mathcal B_b\), define
+\[
+\begin{aligned}
+\bar c_b&=\frac{1}{|\mathcal B_b|}
+\sum_{i\in\mathcal B_b}c_i,\\
+\bar z_b&=\frac{1}{|\mathcal B_b|}
+\sum_{i\in\mathcal B_b}z_i.
+\end{aligned}
+\]
+Expected calibration error~\citep{Guo2017Calibration} and Brier score are
+\begin{align}
+\mathrm{ECE}
+&=\sum_{b=1}^{5}\frac{|\mathcal B_b|}{N}
+\left|\bar c_b-\bar z_b\right|,\\
+\mathrm{Brier}
+&=\frac{1}{N}\sum_{i=1}^{N}(c_i-z_i)^2.
+\end{align}
+Human confidence values are annotator self-reports, not factual gold
+probabilities.  The summary values remain in the main paper; this supplement
+fixes the metric definitions used to obtain them.
+
+\subsection{Case-Study Reading Guide}
+\label{sec:supp-case}
+
+The main paper's case-study figure visualizes one complete, source-linked
+trace.
+The top block contains the original claim and its atom identifiers.  Each
+trace row then records the selected evidence identifier and text, its
+source report, the mapped relation/directness/confidence, its retrieval
+score and state-conditioned utility, and the atom-state transition induced
+after appending the unit.  The bottom block contains the stop reason, the
+exact verifier-visible ordered prefix, the allowed label tokens, the
+predicted label, and the dataset label.  Candidate identities remain stable
+across the retrieval pool, map, trace, and rendered prompt, so the displayed
+sequence can be replayed from the released artifacts.
+
+Candidates that are retrieval-relevant but add no prefix-dependent utility
+remain in the candidate ledger with a ``not selected'' status.  This makes
+the example useful for inspecting what the selector exposed to the
+verifier and how its explicit atom states changed.  It does not reveal the
+verifier's latent chain of thought, and the displayed state trace is not
+claimed to be a causal explanation of the verifier prediction.
+
+\placeholder{State the case-selection rule (random,
+pre-registered diagnostic, or illustrative), dataset/split/event ID, gold
+and predicted labels, and whether the example was selected before viewing
+the final prediction.}
+
+\placeholder{Add the stable report/chunk identifiers and
+source-link availability statement for every evidence unit in the figure.}
+
+\placeholder{Add at least one incorrect-prediction or
+conflicting-evidence example, or state explicitly that Figure 4 is a single
+illustrative example rather than a representative qualitative sample.}
+
+\subsection{Limitations}
+\label{sec:supp-limitations}
+
+\paragraph{Scope and external validity.}
+The experiments cover English political claims, Snopes claims, and
+scientific claims, with the controlled RQ2/RQ3 analyses concentrated on
+LIAR-RAW and one primary 8B verifier.  The cross-verifier experiment adds
+a 4B and an 8B verifier but does not establish invariance across model scales,
+languages, retrieval corpora, or time periods.
+
+\paragraph{Upstream dependence.}
+EviTrace cannot recover evidence absent from its candidate pool.
+Atomization errors, omitted qualifiers, report parsing errors, and
+LLM-generated Evidence Map errors can propagate through state updates and
+stopping.  Human auditing supports the quality of the sampled structures
+but does not establish that every generated annotation is correct.  A
+claim-linked report is also not necessarily a credible source: reports may
+repeat a false statement, omit context, or duplicate one another.
+
+\paragraph{Selector and capacity assumptions.}
+The autoregressive selector is greedy and is not guaranteed to find a
+globally optimal sequence.  Its stopping rule treats map-derived atom
+resolution as an operational proxy for evidence sufficiency, which need
+not coincide with logical sufficiency or a human fact-checker's judgment.
+Changes to map fields may affect both selected content and visible
+capacity.  Conflicting evidence is represented in the explicit atom state,
+but the final resolution of that conflict is delegated to the verifier.
+
+\paragraph{Interpretation boundary.}
+The trace is an inspectable record of retrieved units, selection order, and
+explicit state transitions.  It is not a faithful transcript of the
+verifier's hidden reasoning and does not, by itself, prove that a selected
+unit causally determined the prediction.  The single case study illustrates
+artifact-level auditability, not population-level interpretability.
+
+\paragraph{Statistical and operational uncertainty.}
+\placeholder{State which reported cells are single runs and
+which aggregate multiple seeds, then describe the resulting uncertainty
+and any unmeasured API nondeterminism.}
+The RAWFC test set contains only 200 claims, so small point differences
+should be interpreted cautiously.  LLM annotation also introduces
+provider dependence, cost, possible model updates behind an API name, and
+failure modes that may not be reproduced without the frozen response
+cache.
+
+\paragraph{Benchmark exposure and temporal drift.}
+The external annotation models and pretrained verifier backbones may have
+encountered benchmark claims or related fact checks during pretraining; this
+cannot be ruled out from public model documentation alone.  Moreover,
+evidence availability and the truth status of time-sensitive claims can
+change after dataset construction.  Results should therefore be interpreted
+as benchmark measurements at the frozen data and model snapshots, not as
+guarantees for future claims.
+
+\subsection{Ethical Considerations}
+\label{sec:supp-ethics}
+
+\paragraph{Human annotation.}
+Annotators evaluated text pairs and generated structures; they did not
+make deployment decisions about people or organizations.
+\placeholder{Insert the ethics/IRB determination, informed
+consent language, recruitment, compensation, workload, annotator
+background, author/non-author status, and data-retention policy.}
+Because political and fact-checking reports can contain offensive language
+or allegations about identifiable people, the final version should also
+state what content warning, withdrawal option, and support procedure were
+provided.
+
+\paragraph{Potential misuse and human oversight.}
+Incorrect fact-checking labels can cause reputational, political, or
+informational harm.  EviTrace should not be used as an autonomous arbiter,
+content-removal system, or substitute for professional review in
+high-stakes settings.  A deployment should retain source links, expose
+uncertainty and conflicting evidence, permit correction and appeal, and
+require a human reviewer before consequential action.
+
+\paragraph{Bias and representativeness.}
+The datasets reflect the editorial practices, topic distributions, and
+source coverage of their creators.  Political ideology, demographic
+groups, less-covered regions, and non-English claims may therefore receive
+unequal evidence coverage or error rates.  A source's inclusion in a
+claim-linked bundle must not be interpreted as a credibility endorsement.
+Subgroup and temporal audits are required before use outside the benchmark
+setting.
+
+\paragraph{Privacy, copyright, and licensing.}
+Raw reports can contain names, quotations, and copyrighted text.  The
+artifact should distribute identifiers, manifests, and reconstruction
+instructions when redistribution rights do not permit republishing the
+full report text.  Dataset, model, embedding-model, and API licenses and
+terms of service must be listed, and any personal data should be handled
+under the source dataset's research-use conditions.
+\placeholder{Confirm the redistribution decision and license
+for each dataset, model adapter, prompt/response cache, and annotation
+export.}
+
+\paragraph{External-service data handling.}
+Atomization and Evidence Map construction transmit the claim and the
+minimum required evidence text to an external model endpoint.  A production
+deployment should avoid sending secrets or unnecessary personal data and
+should provide a local-processing alternative where confidentiality
+requires it.
+\placeholder{Identify the API provider and region; state the
+applicable terms, logging/retention and model-training policy, deletion
+mechanism, access controls, encryption, and any institutional data-processing
+approval.}
+
+\paragraph{Compute and environmental cost.}
+Training and retrieval used NVIDIA L20 accelerators, and preprocessing uses
+an external LLM API.
+\placeholder{Clarify node/GPU count, L20 memory, CPU/RAM,
+software versions, wall-clock time, GPU-hours, API request/token counts,
+monetary cost, and any energy/carbon estimate or mitigation.}
+
+\subsection{Reproducibility Artifact Checklist}
+\label{sec:supp-artifacts}
+
+Tables~\ref{tab:supp-artifact-checklist-core}
+and~\ref{tab:supp-artifact-checklist} list the minimum reconstruction
+package.  The split presentation is only for two-column layout; together
+the two tables form one checklist.
+
+\begin{table*}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.1pt}
+\begin{tabularx}{\textwidth}{@{}p{0.13\textwidth}X X
+p{0.12\textwidth}@{}}
+\toprule
+\textbf{Artifact} & \textbf{Required contents}
+& \textbf{Integrity/provenance field} & \textbf{Release status} \\
+\midrule
+Data manifest &
+Source URL, release date, split counts, class counts, licenses, raw-file
+paths &
+SHA-256 of every downloaded file &
+\placeholder{TODO} \\
+Preprocessing code &
+Text cleaning, sentence splitting, chunking, report materialization,
+label normalization &
+Git commit and resolved configuration &
+\placeholder{TODO} \\
+Prompt/schema bundle &
+Atomization and map prompts, JSON schemas, parsers, retry and fallback
+rules &
+Prompt/schema hashes and API model/date &
+\placeholder{TODO} \\
+LLM annotation cache &
+Frozen requests, responses, parsed records, errors, and retry metadata &
+Per-file hash and provider request metadata &
+\placeholder{TODO} \\
+Retrieval bundle &
+Embedder revision, chunk manifest, route results, deduplication, pool
+fingerprints &
+Model revision and cache fingerprints &
+\placeholder{TODO} \\
+Scorer bundle &
+Preference pairs, feature definitions, resolved training config, weights,
+and supervision audit &
+Weight hash, seed, and input-manifest hashes &
+\placeholder{TODO} \\
+Trace bundle &
+Candidate ledger, selected order, per-step score/state, stop reason, and
+visible-prefix fingerprint &
+Stable event/evidence IDs and JSONL hashes &
+\placeholder{TODO} \\
+\bottomrule
+\end{tabularx}
+\caption{Core data, preprocessing, mapping, scorer, and trace artifacts
+required for reconstruction.}
+\label{tab:supp-artifact-checklist-core}
+\end{table*}
+
+\begin{table*}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.1pt}
+\begin{tabularx}{\textwidth}{@{}p{0.13\textwidth}X X
+p{0.12\textwidth}@{}}
+\toprule
+\textbf{Artifact} & \textbf{Required contents}
+& \textbf{Integrity/provenance field} & \textbf{Release status} \\
+\midrule
+Verifier bundle &
+Base-model revision, LoRA adapter, tokenizer/chat template, resolved
+optimizer config, checkpoint choice &
+Model/adapter/tokenizer hashes and seed &
+\placeholder{TODO} \\
+Evaluation bundle &
+Claim-level predictions, label maps, metric implementation, confusion
+matrices, and raw metric JSON &
+Prediction and script hashes &
+\placeholder{TODO} \\
+RQ2 statistics &
+The 12 cross-verifier run outputs, assignment manifests, bootstrap and
+arm-swap scripts &
+Seeds, claim universe hash, Holm family definition &
+\placeholder{TODO} \\
+RQ3 grid &
+All 12 rendered builds, prompt-token counts, visible-\(K\), truncation and
+underfill diagnostics &
+Shared-trace and tokenizer fingerprints &
+\placeholder{TODO} \\
+Human audit &
+Sampling script/stats, task files without revealed LLM labels, guideline,
+raw double annotations, adjudication, metric script &
+Task/guideline/result hashes and anonymized annotator IDs &
+\placeholder{TODO} \\
+Case studies &
+Case-selection rule, complete candidate ledger, source identifiers,
+rendered trace, prediction &
+Event ID and source/trace fingerprints &
+\placeholder{TODO} \\
+Environment and cost &
+Hardware topology, OS/driver/CUDA, library lockfile, wall time, GPU-hours,
+API usage &
+Machine-readable environment manifest &
+\placeholder{TODO} \\
+\bottomrule
+\end{tabularx}
+\caption{Verifier, evaluation, audit, case-study, and environment artifacts
+required for reconstruction.}
+\label{tab:supp-artifact-checklist}
+\end{table*}
+
+Every released manifest should record the creating command, UTC timestamp,
+code commit, resolved configuration, upstream input hashes, output hashes,
+and completion status.  A mutable \texttt{latest} path is not an
+authoritative citation; tables and figures should point to immutable run
+identifiers.  The artifact landing page, archival DOI, and release license
+are:
+\placeholder{insert repository URL, archival DOI, release
+date, and license.}
